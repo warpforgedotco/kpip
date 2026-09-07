@@ -87,6 +87,10 @@ namespace = "kpip._vendor"
 protected-files = ["VENDORED.md", "vendor.txt"]
 patches-dir = "tools/vendoring/patches"
 
+[tool.vendoring.license.directories]
+# Git source archives retain the distribution's hyphenated name.
+nab-resolver = "nab_resolver"
+
 [tool.vendoring.transformations]
 substitute = [
     { match = "(?m)^import urllib3\\.connection$", replace = "from urllib3 import connection" },
