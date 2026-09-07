@@ -1,5 +1,5 @@
 diff --git a/src/kpip/_vendor/nab_resolver/conflict.py b/src/kpip/_vendor/nab_resolver/conflict.py
-index e573c14..c7ad5d7 100644
+index 48119d5..a3c1a13 100644
 --- a/src/kpip/_vendor/nab_resolver/conflict.py
 +++ b/src/kpip/_vendor/nab_resolver/conflict.py
 @@ -164,9 +164,12 @@ def conflict_resolution(
@@ -262,26 +262,10 @@ index c771106..eebbef5 100644
 +    _register_fallback_parent(resolver, existing_pkg.package, existing_index)
      return True
 diff --git a/src/kpip/_vendor/nab_resolver/partial_solution.py b/src/kpip/_vendor/nab_resolver/partial_solution.py
-index c330a27..f2245b6 100644
+index f056652..919398a 100644
 --- a/src/kpip/_vendor/nab_resolver/partial_solution.py
 +++ b/src/kpip/_vendor/nab_resolver/partial_solution.py
-@@ -149,6 +149,15 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
-     def __len__(self) -> int:
-         return sum(1 for _ in self)
- 
-+    def __bool__(self) -> bool:
-+        """Test the common untouched snapshot in constant time."""
-+        shadow = self._shadow
-+        if not shadow:
-+            return bool(self._live)
-+        if any(value is not _ABSENT for value in shadow.values()):
-+            return True
-+        return any(package not in shadow for package in self._live)
-+
- 
- def _take_snapshot(
-     live: dict[PackageType, _ValueType],
-@@ -187,6 +196,7 @@ _ASSIGNMENT_FIELDS: Final = (
+@@ -197,6 +197,7 @@ _ASSIGNMENT_FIELDS: Final = (
      "positive",
      "cum_positive",
      "cum_negative",
@@ -289,7 +273,7 @@ index c330a27..f2245b6 100644
  )
  
  
-@@ -194,8 +204,10 @@ class Assignment(Generic[PackageType, VersionType]):
+@@ -204,8 +205,10 @@ class Assignment(Generic[PackageType, VersionType]):
      """A single entry in the partial solution trail."""
  
      __slots__ = (
@@ -300,7 +284,7 @@ index c330a27..f2245b6 100644
          "cum_negative",
          "cum_positive",
          "decision_level",
-@@ -238,6 +250,12 @@ class Assignment(Generic[PackageType, VersionType]):
+@@ -248,6 +251,12 @@ class Assignment(Generic[PackageType, VersionType]):
      cum_negative: RangeProtocol[VersionType] | None
      """Latest negative accumulated range for the package as of this entry."""
  
@@ -313,7 +297,7 @@ index c330a27..f2245b6 100644
      def __init__(  # noqa: PLR0913, PLR0917 - one parameter per field
          self,
          package: PackageType,
-@@ -250,19 +268,21 @@ class Assignment(Generic[PackageType, VersionType]):
+@@ -260,19 +269,21 @@ class Assignment(Generic[PackageType, VersionType]):
          positive: bool = True,  # noqa: FBT001, FBT002
          cum_positive: RangeProtocol[VersionType] | None = None,
          cum_negative: RangeProtocol[VersionType] | None = None,
@@ -336,7 +320,7 @@ index c330a27..f2245b6 100644
  
      @override
      def __eq__(self, other: object) -> bool:
-@@ -408,10 +428,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -418,10 +429,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
  
          Computes ``positive - negative``, cached per package.
          """
@@ -352,7 +336,7 @@ index c330a27..f2245b6 100644
  
          positive = self._positive_ranges.get(package)
          negative = self._negative_ranges.get(package)
-@@ -431,7 +453,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -441,7 +454,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
          cache[package] = result
          return result
  
@@ -363,7 +347,7 @@ index c330a27..f2245b6 100644
          """Recompute the package's range, advancing the epoch if it emptied."""
          self._effective_range_cache.pop(package, None)
          self._changed.add(package)
-@@ -439,9 +463,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -449,9 +464,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
          assert effective is not None
          if effective.is_empty:
              self._contradiction_epoch += 1
@@ -378,7 +362,7 @@ index c330a27..f2245b6 100644
          self._decision_level += 1
          exact_range = self._range_type.singleton(version)
  
-@@ -462,9 +489,11 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -472,9 +490,11 @@ class PartialSolution(Generic[PackageType, VersionType]):
              positive=True,
              cum_positive=exact_range,
              cum_negative=self._negative_ranges.get(package),
@@ -390,7 +374,7 @@ index c330a27..f2245b6 100644
  
      def derive(
          self,
-@@ -473,12 +502,14 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -483,12 +503,14 @@ class PartialSolution(Generic[PackageType, VersionType]):
          *,
          positive: bool,
          cause: Incompatibility[PackageType, VersionType],
@@ -406,7 +390,7 @@ index c330a27..f2245b6 100644
          See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propagation
          """
          if positive:
-@@ -503,7 +534,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -513,7 +535,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
              )
              self._negative_ranges[package] = new_range
  
@@ -415,7 +399,7 @@ index c330a27..f2245b6 100644
  
          assignment = Assignment(
              package=package,
-@@ -515,9 +546,11 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -525,9 +547,11 @@ class PartialSolution(Generic[PackageType, VersionType]):
              positive=positive,
              cum_positive=self._positive_ranges.get(package),
              cum_negative=self._negative_ranges.get(package),
@@ -427,7 +411,7 @@ index c330a27..f2245b6 100644
  
      def backtrack(self, target_level: int) -> None:
          """Remove all assignments above target_level.
-@@ -535,55 +568,44 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -545,55 +569,44 @@ class PartialSolution(Generic[PackageType, VersionType]):
          # Trail levels never decrease, so this pops exactly the assignments above
          # target_level; every other package keeps the positive and negative ranges
          # its cached effective range was derived from.
@@ -497,7 +481,7 @@ index c330a27..f2245b6 100644
  
          if last_pos is None:
              self._positive_ranges.pop(package, None)
-@@ -595,10 +617,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -605,10 +618,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
          else:
              self._negative_ranges[package] = last_neg
  
@@ -512,7 +496,7 @@ index c330a27..f2245b6 100644
              self._undecided.add(package)
          else:
              self._undecided.discard(package)
-@@ -610,6 +634,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -620,6 +635,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
          """
          return _take_snapshot(self._decided_versions, self._decision_snapshots)
  
@@ -523,7 +507,7 @@ index c330a27..f2245b6 100644
      def _freeze_decisions(self, package: PackageType) -> None:
          """Preserve the package's decided version in outstanding snapshots."""
          for holder in self._decision_snapshots:
-@@ -675,15 +703,18 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -685,15 +704,18 @@ class PartialSolution(Generic[PackageType, VersionType]):
          if is_positive and cum_positive is None:
              return False
  
@@ -1511,10 +1495,10 @@ index 4385af4..6de29ba 100644
      merged: list[Interval] = [intervals[0]]
      for lower, lower_inclusive, upper, upper_inclusive in intervals[1:]:
 diff --git a/src/kpip/_vendor/nab_resolver/resolver.py b/src/kpip/_vendor/nab_resolver/resolver.py
-index 2a881be..f6f6d1b 100644
+index 72787f5..ebcbd77 100644
 --- a/src/kpip/_vendor/nab_resolver/resolver.py
 +++ b/src/kpip/_vendor/nab_resolver/resolver.py
-@@ -236,6 +236,14 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
+@@ -233,6 +233,14 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
          """
          ...
  
@@ -1529,7 +1513,7 @@ index 2a881be..f6f6d1b 100644
      def receive_partial_solution_hint(
          self,
          positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
-@@ -315,11 +323,12 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
+@@ -311,11 +319,12 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
  
  
  class BaseProvider(Generic[PackageType, VersionType]):
@@ -1545,7 +1529,7 @@ index 2a881be..f6f6d1b 100644
      :class:`ResolverProvider` methods with nothing to do when there is no async
      layer, no queued clauses and no widening.  A subclass still owes
      ``choose_version``, ``has_satisfying_version``, ``get_dependencies``,
-@@ -339,6 +348,10 @@ class BaseProvider(Generic[PackageType, VersionType]):
+@@ -335,6 +344,10 @@ class BaseProvider(Generic[PackageType, VersionType]):
          del package
          return True
  
@@ -1556,7 +1540,16 @@ index 2a881be..f6f6d1b 100644
      def receive_partial_solution_hint(
          self,
          positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
-@@ -619,10 +632,7 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -555,7 +568,7 @@ def _as_root_requirements(
+     requirements: Mapping[PackageType, RangeProtocol[VersionType]]
+     | Sequence[RootRequirement[PackageType, VersionType]],
+ ) -> Sequence[RootRequirement[PackageType, VersionType]]:
+-    """Accept either shape ``Resolver.resolve`` takes and return the sequence."""
++    """Accept either shape ``Resolver.solve`` takes and return the sequence."""
+     if _is_root_sequence(requirements):
+         return requirements
+     # The parameters are spelled out because ``constraint`` is a contravariant
+@@ -615,10 +628,7 @@ class Resolver(Generic[PackageType, VersionType]):
          """
          self.provider = provider
  
@@ -1568,7 +1561,7 @@ index 2a881be..f6f6d1b 100644
  
          self.observer: ResolverObserver[PackageType, VersionType] = (
              observer or ResolverObserver()
-@@ -649,6 +659,16 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -645,6 +655,16 @@ class Resolver(Generic[PackageType, VersionType]):
          self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(
              list
          )
@@ -1585,7 +1578,7 @@ index 2a881be..f6f6d1b 100644
  
          # Per clause, the contradiction epoch in which one of its terms was
          # last seen contradicted; unit propagation skips a clause whose stamp
-@@ -664,9 +684,16 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -660,9 +680,16 @@ class Resolver(Generic[PackageType, VersionType]):
          )
          self.stats: ResolverStats[PackageType] = ResolverStats()
  
@@ -1603,7 +1596,7 @@ index 2a881be..f6f6d1b 100644
  
          # Memoises the tiebreak tuple in choose_package_to_decide.
          self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
-@@ -677,9 +704,11 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -673,9 +700,11 @@ class Resolver(Generic[PackageType, VersionType]):
          self.decision_queue: DecisionQueue[PackageType] = DecisionQueue()
          self.priority_epoch = 0
  
@@ -1618,7 +1611,7 @@ index 2a881be..f6f6d1b 100644
  
          # relation_cache_on goes off while the memo's hit rate does not pay for
          # the key it builds. A window of probes decides that: relation_gate_hits
-@@ -702,6 +731,23 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -698,6 +727,23 @@ class Resolver(Generic[PackageType, VersionType]):
          self.range_token_by_id: dict[int, int] = {}
          self.interned_ranges: list[RangeProtocol[Any]] = []
  
@@ -1642,7 +1635,7 @@ index 2a881be..f6f6d1b 100644
      def as_term_range(self, range_: RangeProtocol[Any]) -> RangeProtocol[VersionType]:
          """Return the term constraint to record for a supplied range.
  
-@@ -828,10 +874,10 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -824,10 +870,10 @@ class Resolver(Generic[PackageType, VersionType]):
          # Provider-driven force back-track. When the provider returns
          # a tentative candidate and queues blockers, jump to the
          # blockers before the candidate is decided.
@@ -1655,7 +1648,7 @@ index 2a881be..f6f6d1b 100644
              if triggering is not None:
                  return triggering
  
-@@ -839,51 +885,96 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -835,51 +881,96 @@ class Resolver(Generic[PackageType, VersionType]):
              decide.record_no_versions(self, next_package, had_pending=had_pending)
              return next_package
  
@@ -1782,7 +1775,7 @@ index 2a881be..f6f6d1b 100644
      def _build_result(self) -> Solution[PackageType, VersionType]:
          """Build the final result, including only reachable packages.
  
-@@ -905,10 +996,15 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -901,10 +992,15 @@ class Resolver(Generic[PackageType, VersionType]):
          """Reset solver state for a new resolution."""
          self.incompatibilities.clear()
          self.package_to_incompatibilities.clear()
@@ -1798,7 +1791,7 @@ index 2a881be..f6f6d1b 100644
  
          self.constraints = constraints or {}
          self.root_package_order.clear()
-@@ -927,7 +1023,7 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -923,7 +1019,7 @@ class Resolver(Generic[PackageType, VersionType]):
          self.term_range_keepalive.clear()
  
          # Re-asked here, so a hook installed since the last resolve is honoured.
