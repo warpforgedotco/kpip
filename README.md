@@ -311,8 +311,8 @@ was already taken on PyPI. A naming session on August 31, 2026 followed: `piper`
 `pipy`, `cip`, `qpip`… one suggestion after another ran into an existing
 package.
 
-Then xelf suggested [**KPIP!**](https://discord.com/channels/267624335836053506/267624335836053506/1544063332800274552), after floating `krrpip`: a nod to **KRRT**, the
-creator's handle, with `pip` keeping the purpose recognizable.
+Then xelf suggested [**KPIP!**](https://discord.com/channels/267624335836053506/267624335836053506/1544063332800274552), after floating `krrpip`: a nod to **KRRT7**, the
+creator's Discord handle, with `pip` keeping the purpose recognizable.
 
 Short and personal: **kpip** stuck.
 
@@ -325,7 +325,14 @@ public workloads in [uv](https://github.com/astral-sh/uv). The
 behind the experiments here: curiosity, reproducible measurements, and a
 willingness to be wrong.
 
-Thank you to the Astral team for their work on uv and their contributions to
+Thank you to [Damian Shaw](https://github.com/notatallshaw) for his work on
+[nab](https://github.com/notatallshaw/nab). kpip uses its `nab-resolver`
+component, a PubGrub dependency resolver written in Python, with local
+adaptations documented in the [vendoring manifest](src/kpip/_vendor/VENDORED.md).
+That foundation supports kpip's experiments across the whole installation
+workflow, from startup and resolution to caching and installation.
+
+Thank you to the [Astral team](https://github.com/astral-sh) for their work on uv and their contributions to
 the Python ecosystem. Their work helped inspire the questions this project
 explores. Thank you also for getting me into the
 [Codex for OSS](https://openai.com/form/codex-for-oss/) program.
