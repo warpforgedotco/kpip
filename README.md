@@ -47,19 +47,6 @@ to question the idea that you need Rust to write a "blazingly fast" program.
 [uv](https://github.com/astral-sh/uv) gave me a concrete target: could I make
 pip's familiar workflow that fast in Python?
 
-That is a question I want to investigate through implementation and
-measurement. How far can Python go when performance shapes the design from
-the start, and where do its limits actually show up?
-
-I want the results to be useful to pip. That means understanding which changes
-make the familiar workflow faster, what they cost in complexity, and whether
-they can preserve the behavior people depend on.
-
-This is a place to try architectural changes, measure the whole installation
-workflow, and work out which improvements can make their way upstream.
-Some experiments narrow compatibility to isolate a performance effect;
-turning those results into changes suitable for pip is part of the work.
-
 ## Installation
 
 Install kpip from PyPI with pip:
@@ -114,24 +101,9 @@ If kpip is installed inside the environment it should manage, omit
 
 ## Questions I'm still exploring
 
-- How can kpip improve on uv's user experience? Where could commands,
-  defaults, and error messages make installing packages easier to understand?
+- How can kpip improve on uv's user experience?
 - What would a better developer experience look like, both for people using
   kpip in their workflows and for contributors working on its internals?
-- Can the [project layout and architecture](https://github.com/KRRT7/xray#x-ray-performance-laboratory) make the code easier to navigate,
-  change, and test while keeping it fast?
-- Which improvements hold up across real dependency graphs, source builds,
-  and different machines, beyond the workloads used to develop them?
-- How much do the gains depend on a warm cache, and what happens on a first
-  install or when cached data can no longer be reused?
-- Which experiments can preserve pip's compatibility requirements, and how
-  much of their benefit survives adapting them to pip's architecture?
-- Where does a faster path add more complexity than its measured benefit
-  justifies?
-
-These questions guide the experiments. A useful result can be a faster
-implementation, a tradeoff made clearer, or evidence that an idea should be
-left behind.
 
 ## Commands
 
@@ -149,17 +121,7 @@ Run `kpip <command> --help` for command-specific options.
 ## Benchmarking
 
 A fast microbenchmark is a lead, not a conclusion. Following the spirit of the
-[X-Ray Performance Laboratory](https://github.com/KRRT7/xray), kpip treats
-performance as a question to investigate:
-
-- **Measure the whole workflow.** Less time in the resolver only helps if it
-  improves the command the user runs.
-- **Make comparisons reproducible.** Keep inputs, interpreters, target
-  environments, and cache conditions comparable.
-- **Keep the behavior.** An optimization that skips required work needs more
-  work, even if the timing looks good.
-- **Keep the negative results.** Knowing where an idea fails helps the next
-  experiment.
+[X-Ray Performance Laboratory](https://github.com/KRRT7/xray).
 
 The [Hyperfine](https://github.com/sharkdp/hyperfine) harness compares kpip and
 uv using the same inputs and isolated targets. uv is an external performance
@@ -186,39 +148,10 @@ See the [benchmark guide](scripts/benchmark/README.md) for workload selection,
 recording quiet-machine baselines, exporting raw Hyperfine results, and
 comparing two commits.
 
-### Evaluating user and developer experience
+## Upstream
 
-I want to evaluate usability with concrete tasks, too. For each experiment,
-record the starting conditions, the intended outcome, and where someone gets
-stuck. Compare the same task before and after the change; when comparing with
-uv, use equivalent inputs and goals.
-
-| Question | Evidence to collect |
-| --- | --- |
-| Does an error help someone recover? | Whether they can identify the cause and complete the next step; time, failed attempts, and documentation lookups needed. |
-| Is a common workflow simpler? | Commands, manual edits, and retries needed to reach the same correct result. |
-| Can a contributor find and change the relevant code? | Time to locate the implementation, make a small change, and find and run the relevant tests; wrong turns and help needed. |
-
-Record participants' familiarity with the tools and keep their feedback
-alongside the counts and timings. Fewer commands only help if people can
-understand what those commands do. These are criteria for future experiments;
-the benchmark harness above measures runtime performance.
-
-## Upstream is the destination
-
-kpip is a workshop for improvements that can benefit pip. The intention is
-for the useful implementation work, tests, and evidence to flow upstream,
-rather than grow into a permanent, separate package-manager ecosystem.
-
-That takes more than transferring commits. Each candidate improvement needs:
-
-- a reproducible measurement of the problem and the improvement;
-- behavioral and compatibility tests that preserve pip's contract;
-- a focused implementation adapted to pip's architecture; and
-- an honest account of tradeoffs and results that did not hold up.
-
-An experiment landing here is the beginning of that process. Adoption depends
-on whether it can meet pip's compatibility and maintenance needs.
+kpip is meant to be upstreamed into pip. The intention is
+for the useful implementation work, tests, and evidence to flow upstream.
 
 ## Design
 
@@ -239,23 +172,6 @@ runtime dependency rules between packages, the resolver flow, and every
 persistent cache.
 
 ## Development
-
-Contributions can start with a confusing workflow or a result that challenges
-an assumption here. Useful starting points include:
-
-- **A workflow that trips you up.** Share what you wanted to do, the commands
-  you tried, the output, and what you expected. Explain where you needed to
-  leave the CLI to look for help.
-- **A slow install others can reproduce.** Include a minimal requirements
-  file, the exact command, tool and Python versions, platform, cache conditions,
-  and raw timings. The [benchmark guide](scripts/benchmark/README.md) explains
-  how to record comparable runs.
-- **An experiment that questions the design.** State the assumption, describe
-  how you tested it, and share the results—including regressions or an idea
-  that made no measurable difference.
-
-Bring a concrete example to an issue or a pull request. Reports and
-measurements are useful contributions even without an implementation.
 
 Set up the test and typing environments:
 
