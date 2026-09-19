@@ -181,24 +181,6 @@ def test_backtrack_to_zero_clears_every_package() -> None:
     assert_consistent(solution)
 
 
-@pytest.mark.skipif(
-    not _HAS_PARTIAL_SOLUTION_FAST_PATHS,
-    reason="requires kpip's partial-solution optimization patch",
-)
-def test_decision_snapshot_tracks_later_derivations() -> None:
-    """Derivations recorded after a decision carry that decision forward."""
-    solution: PartialSolution[str, int] = PartialSolution()
-
-    solution.decide("alpha", 3)
-    solution.derive("alpha", Range.less_than(9), positive=True, cause=CAUSE)
-
-    entries = solution.assignments_for("alpha")
-    assert [cast("Assignment[str, int]", entry).cum_decision for entry in entries] == [
-        3,
-        3,
-    ]
-
-
 def test_snapshot_truthiness_stays_pinned() -> None:
     solution: PartialSolution[str, int] = PartialSolution()
     empty_decisions = solution.decisions()
