@@ -173,6 +173,8 @@ class _ResolverWheelArchive:
 
 def _open_resolver_wheel_archive(
     path_text: str,
+    *,
+    metadata_only: bool = False,
 ) -> _ResolverWheelArchive | zipfile.ZipFile:
     """Open a wheel for metadata-only reads, preferring the faster reader.
 
@@ -180,12 +182,16 @@ def _open_resolver_wheel_archive(
     doesn't cover (zip64, encryption, an unusual compression method, or any
     other parsing surprise) -- so this only ever costs the speedup, never
     correctness.
+
+    ``metadata_only`` keeps just the ``.dist-info`` members a metadata read
+    opens, which is every member a caller that wants no layout back will
+    ask for.  A caller that keeps the layout needs the whole directory.
     """
 
     try:
         file = open(path_text, "rb", buffering=0)  # noqa: SIM115
 
-        archive = WheelArchive(file)
+        archive = WheelArchive(file, metadata_only=metadata_only)
 
         if any(member[0] not in {0, 8} for member in archive.members.values()):
             file.close()
@@ -1145,7 +1151,10 @@ class CandidateMaterializer:
                         remove_temp_directory(vcs_path)
 
             else:
-                with _open_resolver_wheel_archive(path_text) as archive:
+                with _open_resolver_wheel_archive(
+                    path_text,
+                    metadata_only=True,
+                ) as archive:
                     try:
                         dist_info_dir = wheel_dist_info_dir(
                             archive,

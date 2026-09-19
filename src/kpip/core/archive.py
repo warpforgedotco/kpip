@@ -17,6 +17,12 @@ import zlib
 END_OF_CENTRAL_DIRECTORY = struct.Struct("<4s4H2LH")
 CENTRAL_DIRECTORY_HEADER = struct.Struct("<4s6H3L5H2L")
 LOCAL_FILE_HEADER = struct.Struct("<4s5H3L2H")
+CENTRAL_DIRECTORY_SIZES = struct.Struct("<3H")
+"""The name, extra and comment sizes at offset 28 of a central record."""
+
+# What a ``metadata_only`` archive keeps: the members a metadata read opens.
+_METADATA_SUFFIX_LENGTH = len(b".dist-info/METADATA")
+_WHEEL_SUFFIX_LENGTH = len(b".dist-info/WHEEL")
 
 _LOCAL_HEADER_HEADROOM = 512
 
@@ -107,6 +113,9 @@ class WheelArchive:
             raise WheelhouseUnavailable
         directory_end = len(directory)
         unpack_record = CENTRAL_DIRECTORY_HEADER.unpack_from
+        if self._metadata_only:
+            self._read_metadata_records(directory, entries, unpack_record)
+            return
         offset = 0
         for _ in range(entries):
             if offset + 46 > directory_end:
@@ -145,11 +154,6 @@ class WheelArchive:
                 raise WheelhouseUnavailable
             name_bytes = directory[offset + 46 : name_end]
             offset = record_end
-            if self._metadata_only and (
-                not name_bytes.endswith(b".dist-info/METADATA")
-                or name_bytes.count(b"/") != 1
-            ):
-                continue
             member = (
                 compression,
                 crc,
@@ -169,6 +173,100 @@ class WheelArchive:
             if name in self.members:
                 raise WheelhouseUnavailable
             self.members[name] = member
+            self.modes[name] = external_attr
+
+    def _read_metadata_records(self, directory, entries, unpack_record) -> None:
+        """Collect only the ``.dist-info`` members a metadata read opens.
+
+        A wheel's central directory has one record per shipped file -- for a
+        large project, thousands -- and a metadata read opens two of them.
+        Walking past a record needs only the three sizes that give its
+        length, so the full record is unpacked, decoded and validated for
+        the members this archive can actually hand back, and the rest cost
+        one small unpack each.
+        """
+        directory_end = len(directory)
+        unpack_sizes = CENTRAL_DIRECTORY_SIZES.unpack_from
+        # ``startswith`` at an offset tests the buffer in place, so a member
+        # this read skips never materialises its name.
+        starts_with = directory.startswith
+        offset = 0
+        for _ in range(entries):
+            if offset + 46 > directory_end:
+                raise WheelhouseUnavailable
+            if not starts_with(b"PK\x01\x02", offset):
+                raise WheelhouseUnavailable
+            name_size, extra_size, comment_size = unpack_sizes(directory, offset + 28)
+            name_end = offset + 46 + name_size
+            record_end = name_end + extra_size + comment_size
+            if record_end > directory_end:
+                raise WheelhouseUnavailable
+            record_start = offset
+            offset = record_end
+            if not (
+                (
+                    name_size > _METADATA_SUFFIX_LENGTH
+                    and starts_with(
+                        b".dist-info/METADATA",
+                        name_end - _METADATA_SUFFIX_LENGTH,
+                    )
+                )
+                or (
+                    name_size > _WHEEL_SUFFIX_LENGTH
+                    and starts_with(
+                        b".dist-info/WHEEL",
+                        name_end - _WHEEL_SUFFIX_LENGTH,
+                    )
+                )
+            ):
+                continue
+            name_bytes = directory[record_start + 46 : name_end]
+            if name_bytes.count(b"/") != 1:
+                continue
+            (
+                _,
+                _,
+                _,
+                flags,
+                compression,
+                _,
+                _,
+                crc,
+                compressed_size,
+                uncompressed_size,
+                _,
+                _,
+                _,
+                _,
+                _,
+                external_attr,
+                local_offset,
+            ) = unpack_record(directory, record_start)
+            if (
+                flags & 1
+                or compressed_size == 0xFFFFFFFF
+                or uncompressed_size == 0xFFFFFFFF
+                or local_offset == 0xFFFFFFFF
+            ):
+                raise WheelhouseUnavailable
+            if name_bytes.isascii():
+                name = name_bytes.decode("ascii")
+            else:
+                try:
+                    name = name_bytes.decode("utf-8" if flags & 0x800 else "cp437")
+                except UnicodeDecodeError as exc:
+                    raise WheelhouseUnavailable from exc
+            if compression != 8 and compression != 0:
+                self.needs_zipfile = True
+            if name in self.members:
+                raise WheelhouseUnavailable
+            self.members[name] = (
+                compression,
+                crc,
+                compressed_size,
+                uncompressed_size,
+                local_offset,
+            )
             self.modes[name] = external_attr
 
     def namelist(self) -> list[str]:

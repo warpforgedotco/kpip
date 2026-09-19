@@ -110,10 +110,17 @@ class TestWheelArchiveMatchesRealZipfile:
         with path.open("rb") as file:
             archive = WheelArchive(file, metadata_only=True)
 
-            assert archive.namelist() == ["pkg-1.0.dist-info/METADATA"]
+            assert sorted(archive.namelist()) == [
+                "pkg-1.0.dist-info/METADATA",
+                "pkg-1.0.dist-info/WHEEL",
+            ]
             assert (
                 archive.read("pkg-1.0.dist-info/METADATA")
                 == members["pkg-1.0.dist-info/METADATA"]
+            )
+            assert (
+                archive.read("pkg-1.0.dist-info/WHEEL")
+                == members["pkg-1.0.dist-info/WHEEL"]
             )
 
     def test_many_small_members(self, tmp_path: Path) -> None:
