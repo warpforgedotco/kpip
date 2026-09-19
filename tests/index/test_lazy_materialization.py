@@ -24,9 +24,9 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
     original = candidate_materialization._open_resolver_wheel_archive
 
-    def counting(path: str):  # type: ignore[no-untyped-def]
+    def counting(path: str, **kwargs):  # type: ignore[no-untyped-def]
         calls.append(path)
-        return original(path)
+        return original(path, **kwargs)
 
     monkeypatch.setattr(
         candidate_materialization, "_open_resolver_wheel_archive", counting
