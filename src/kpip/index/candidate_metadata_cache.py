@@ -25,7 +25,14 @@ CacheValue = tuple[str, str, tuple[str, ...], tuple[str, ...], str | None]
 class CandidateMetadataCache(SqliteBackedCache):
     """Process-local metadata cache backed by an incremental SQLite database."""
 
-    __slots__ = ("_pending_deletes", "_pending_puts", "decoded", "entries")
+    __slots__ = (
+        "_bulk",
+        "_bulk_read_done",
+        "_pending_deletes",
+        "_pending_puts",
+        "decoded",
+        "entries",
+    )
 
     SCHEMA = "CREATE TABLE IF NOT EXISTS candidate_metadata (key TEXT PRIMARY KEY, value BLOB);"
 
@@ -37,6 +44,11 @@ class CandidateMetadataCache(SqliteBackedCache):
 
         self._pending_puts: dict[CacheKey, CacheValue] = {}
         self._pending_deletes: set[CacheKey] = set()
+
+        # Undecoded rows from the one bulk read, keyed as stored. ``None``
+        # once a bulk read declined, which leaves lookups reading per key.
+        self._bulk: dict[str, bytes] | None = None
+        self._bulk_read_done = False
 
     @staticmethod
     def valid_value(value: object) -> bool:
@@ -52,19 +64,50 @@ class CandidateMetadataCache(SqliteBackedCache):
             and (value[4] is None or isinstance(value[4], str))
         )
 
+    def _bulk_read(self, conn: sqlite3.Connection) -> None:
+        """Read every row once, so later lookups cost a dict probe.
+
+        A resolve probes this cache once per candidate release, and a
+        backtracking one probes thousands -- each a prepared statement, an
+        index descent and a row fetch.  Reading the table whole amortises
+        that into a single scan.  ``MAX_ENTRIES`` already caps what this
+        cache will hold in memory, so a database above it keeps the
+        per-key reads rather than loading more than that budget allows.
+        """
+        self._bulk_read_done = True
+        try:
+            count = conn.execute(
+                "SELECT count(*) FROM candidate_metadata",
+            ).fetchone()
+            if count is not None and count[0] <= MAX_ENTRIES:
+                self._bulk = dict(
+                    conn.execute("SELECT key, value FROM candidate_metadata"),
+                )
+        except sqlite3.Error:
+            self._bulk = None
+
     def _load(self, key: CacheKey) -> CacheValue | None:
         """Read one row out of the database, validate it and memoize it."""
+        encoded = json.dumps(key)
         with self.lock:
             try:
                 conn = self._reader()
-                row = (
-                    None
-                    if conn is None
-                    else conn.execute(
+                if conn is None:
+                    return None
+                if not self._bulk_read_done:
+                    self._bulk_read(conn)
+                bulk = self._bulk
+                if bulk is not None:
+                    # The bulk read holds every row, so absence is a miss.
+                    # It keeps them rather than handing each out once: an
+                    # entry ``_evict`` drops has to be readable again.
+                    blob = bulk.get(encoded)
+                    row = None if blob is None else (blob,)
+                else:
+                    row = conn.execute(
                         "SELECT value FROM candidate_metadata WHERE key = ?",
-                        (json.dumps(key),),
+                        (encoded,),
                     ).fetchone()
-                )
             except sqlite3.Error:
                 return None
         if row is None:
