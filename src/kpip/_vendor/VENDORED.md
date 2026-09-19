@@ -14,7 +14,7 @@ uv run --group vendoring vendoring sync -v
 | urllib3 | 2.6.3 | MIT |
 | certifi | 2026.7.22 | MPL-2.0 |
 | idna | 3.18 | BSD-3-Clause |
-| nab-resolver | [`02aed6c9e0c4`](https://github.com/notatallshaw/nab/commit/02aed6c9e0c42f282a246a694a697efe415cd811) | MIT |
+| nab-resolver | [`bd5a5bdf72c8`](https://github.com/notatallshaw/nab/commit/bd5a5bdf72c876a9532a1e7a6215a42a36dcc630) | MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
 | tomli | 2.4.1 | MIT |
 
@@ -31,13 +31,16 @@ the same tracked tree.
 | Distribution | Patch | Purpose |
 | --- | --- | --- |
 | certifi | `certifi.patch` | Resolve `cacert.pem` through the `kpip._vendor.certifi` resource package. |
-| nab-resolver | `nab-resolver.patch` | Preserve kpip's late-extras invalidation contract and provider priority invalidations; accelerate large discrete ranges, membership, dependency-clause construction, exact-parent clause dispatch, and backtracking; compare infinity bounds safely. The startup-oriented value types, root hashing, and snapshot truthiness optimization are supplied by upstream. |
+| nab-resolver | `nab-resolver.patch` | Preserve kpip's late-extras invalidation contract and provider priority invalidations; accelerate large discrete ranges, membership, dependency-clause construction, exact-parent clause dispatch, and unit propagation; compare infinity bounds safely. The startup-oriented value types, root hashing, snapshot truthiness, backtracking, and reused decision and derivation ranges are supplied by upstream. |
 
 The resolver is pinned to an exact upstream commit from the `nab-resolver`
 subdirectory. It includes [nab PR #1204](https://github.com/notatallshaw/nab/pull/1204),
 whose short-circuit snapshot truthiness scan replaces our earlier local
-implementation. The remaining optimizations and provider hooks are layered
-on top through `nab-resolver.patch`.
+implementation, plus [nab PR #1212](https://github.com/notatallshaw/nab/pull/1212)
+and [nab PR #1213](https://github.com/notatallshaw/nab/pull/1213), whose
+affected-package backtracking and reused decision and derivation ranges replace
+our local versions of the same. The remaining optimizations and provider hooks
+are layered on top through `nab-resolver.patch`.
 
 ## Windows launchers
 
