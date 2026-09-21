@@ -8,6 +8,7 @@ import stat
 import sys
 
 from kpip.core.errors import InstallationError
+from kpip.platform.clone import replace_contents
 
 
 def rewrite_shebang(path: str, executable: str | None) -> None:
@@ -32,8 +33,7 @@ def rewrite_shebang(path: str, executable: str | None) -> None:
     if first_line.rstrip(b"\r")[len(b"#!python") :].startswith(b"w"):
         interpreter = _windowed(interpreter)
 
-    with open(path, "wb") as file:
-        file.write(f"#!{interpreter}\n".encode() + rest)
+    replace_contents(path, f"#!{interpreter}\n".encode() + rest)
 
 
 def _windowed(executable: str) -> str:
