@@ -46,11 +46,21 @@ class DecisionQueue(Generic[PackageType]):
         self._rebuild_at = _REBUILD_MINIMUM
 
     def clear(self) -> None:
-        """Drop every key, for a resolve that starts over."""
+        """Drop every key, for a resolve that starts over or backtracks wholesale.
+
+        A cleared queue holds no keys, so the next scan has to evaluate every
+        undecided package, not only the ones the solution reports as changed.
+        The scan decides that by comparing epochs, so the stored epoch is set
+        to one no caller ever passes.  Resetting it to zero instead matched a
+        resolver whose epoch had never advanced: a mid-solve clear (a
+        dependency-invalidation backtrack) then left every package outside
+        the changed set keyless, and the heap ran dry with packages still
+        undecided.
+        """
         self._heap.clear()
         self._keys.clear()
         self._unready.clear()
-        self._epoch = 0
+        self._epoch = -1
         self._rebuild_at = _REBUILD_MINIMUM
 
     def pick(
