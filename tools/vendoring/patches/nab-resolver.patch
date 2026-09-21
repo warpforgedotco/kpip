@@ -58,7 +58,7 @@ diff --git a/src/kpip/_vendor/nab_resolver/decide.py b/src/kpip/_vendor/nab_reso
 index 9dd16ee..822a662 100644
 --- a/src/kpip/_vendor/nab_resolver/decide.py
 +++ b/src/kpip/_vendor/nab_resolver/decide.py
-@@ -71,10 +71,18 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
+@@ -71,10 +71,18 @@
              tiebreak_cache[package] = tiebreak
          return (ready_penalty, priority, tiebreak)
  
@@ -78,6 +78,21 @@ index 9dd16ee..822a662 100644
          resolver.priority_epoch,
          key_inputs_arrived,
      )
+@@ -154,6 +162,14 @@
+     if positive is None:
+         return
+ 
++    # Only a range type that folds state into ``&`` beyond the version set can
++    # refine a range it already contains; for the plain ``Range`` the
++    # intersection of a subset is the subset, so there is nothing to derive
++    # and no intersection to pay for.  Such a type opts in with a truthy
++    # ``refines_on_intersection`` class attribute.
++    if not getattr(type(positive), "refines_on_intersection", False):
++        return
++
+     # Intersect first: an unchanged range short-circuits before the costlier
+     # subset test, which then separates a refinement from a narrowing.
+     folded = positive & requirement
 diff --git a/src/kpip/_vendor/nab_resolver/incompat_index.py b/src/kpip/_vendor/nab_resolver/incompat_index.py
 index c771106..eebbef5 100644
 --- a/src/kpip/_vendor/nab_resolver/incompat_index.py

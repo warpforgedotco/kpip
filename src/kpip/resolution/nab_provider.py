@@ -95,6 +95,10 @@ class NabProvider:
         self._descent_attempts: dict[str, int] = {}
         self._descent_last: dict[str, Version] = {}
         self._yanked_versions: dict[str, frozenset[Version]] = {}
+        self._dependency_range_memo: dict[
+            tuple[str, str],
+            tuple[tuple[Version, ...], tuple[Requirement, ...], Range[Version]],
+        ] = {}
         self._matching_memo: dict[
             str, tuple[tuple[Version, ...], RangeProtocol[Version], list[Version]]
         ] = {}
@@ -1578,23 +1582,47 @@ class NabProvider:
                 )
                 continue
             allowed = self._versions(dependency_key)
-            if dependency_constraints:
-                selected = [
-                    candidate
-                    for candidate in allowed
-                    if dependency.specifier.contains(candidate, allow_prereleases=True)
-                    and all(
-                        constraint.specifier.contains(candidate, allow_prereleases=True)
-                        for constraint in dependency_constraints
-                    )
-                ]
+            # The same specifier on the same catalog recurs across parents
+            # and across re-decisions of one parent; each evaluation scans
+            # every release.  ``allowed`` is replaced when the dependency's
+            # requirement changes, so its identity covers what the scan reads.
+            memo_key = (dependency_key, dependency.specifier.text)
+            memo = self._dependency_range_memo.get(memo_key)
+            if (
+                memo is not None
+                and memo[0] is allowed
+                and memo[1] == dependency_constraints
+            ):
+                dependency_range = memo[2]
             else:
-                selected = [
-                    candidate
-                    for candidate in allowed
-                    if dependency.specifier.contains(candidate, allow_prereleases=True)
-                ]
-            dependency_range = self._finite_range(selected)
+                if dependency_constraints:
+                    selected = [
+                        candidate
+                        for candidate in allowed
+                        if dependency.specifier.contains(
+                            candidate, allow_prereleases=True
+                        )
+                        and all(
+                            constraint.specifier.contains(
+                                candidate, allow_prereleases=True
+                            )
+                            for constraint in dependency_constraints
+                        )
+                    ]
+                else:
+                    selected = [
+                        candidate
+                        for candidate in allowed
+                        if dependency.specifier.contains(
+                            candidate, allow_prereleases=True
+                        )
+                    ]
+                dependency_range = self._finite_range(selected)
+                self._dependency_range_memo[memo_key] = (
+                    allowed,
+                    dependency_constraints,
+                    dependency_range,
+                )
             previous = dependencies.get(dependency_key)
             dependencies[dependency_key] = (
                 dependency_range if previous is None else previous & dependency_range

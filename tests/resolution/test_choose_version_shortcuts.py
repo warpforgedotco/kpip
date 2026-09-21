@@ -78,3 +78,34 @@ def test_version_filter_is_memoized_until_the_versions_or_range_move(
     adapter.choose_version("demo", Range.from_versions(V[:2]))
 
     assert adapter._matching_memo["demo"][2] == V[:2]
+
+
+def test_dependency_ranges_are_memoized_per_specifier_and_catalog(
+    monkeypatch: Any,
+) -> None:
+    """The same specifier on the same catalog is scanned once, across parents
+    and re-decisions, until the catalog or the constraints move."""
+    adapter = _adapter()
+    versions = tuple(V)
+    scans: list[str] = []
+    monkeypatch.setattr(adapter, "_versions", lambda package: versions)
+    real_finite = adapter._finite_range
+
+    def counting(selected: Any) -> Any:
+        scans.append("scan")
+        return real_finite(selected)
+
+    monkeypatch.setattr(adapter, "_finite_range", counting)
+    monkeypatch.setattr(adapter, "_prefetch_available_versions", lambda deps: None)
+    adapter.requirements["parent"] = parse_requirement("parent")
+    adapter.records[("parent", V[0])] = type(
+        "R", (), {"dependencies": (parse_requirement("child>=1.1"),)}
+    )()
+
+    first = adapter.get_dependencies("parent", V[0])
+    adapter._dependency_cache.clear()
+    second = adapter.get_dependencies("parent", V[0])
+
+    assert first == second
+    assert scans == ["scan"]
+    assert set(str(v) for v in first["child"]._as_points()) == {"1.1", "2.0", "2.1"}
