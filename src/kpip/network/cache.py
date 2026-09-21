@@ -70,8 +70,21 @@ class SafeFileCache:
         self._temporary_serial = 0
 
     def get_cache_path(self, name: str) -> str:
+        """Where the entry for ``name`` lives: one fan-out level, 256 wide.
+
+        The layout used to nest five single-character levels, pip's shape,
+        which spreads a large cache thinly but makes a fresh cache create a
+        directory or three for nearly every entry it stores: 9,218 mkdirs and
+        the stats behind them for the 3,372 entries of one cold resolve, each
+        a release and re-acquire of the interpreter lock behind the resolver.
+        One level keeps a cache of a hundred thousand entries at a few
+        hundred files per directory, which any filesystem in use serves
+        directly, and a fresh cache creates at most 256 directories.  The
+        HTTP cache bucket's version was bumped with this change, so an older
+        cache is left where it is rather than mixed with.
+        """
         hashed = hashlib.sha224(name.encode()).hexdigest()
-        return os.path.join(self.directory, *hashed[:5], hashed)
+        return os.path.join(self.directory, hashed[:2], hashed)
 
     @staticmethod
     def read_combined_header(file: BinaryIO) -> int | None:

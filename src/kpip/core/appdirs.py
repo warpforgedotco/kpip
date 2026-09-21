@@ -21,7 +21,9 @@ def user_cache_dir(appname: str) -> str:
     return os.path.join(home, ".cache", appname)
 
 
-HTTP_CACHE_BUCKET = versioned_bucket("http", 1)
+# Version 2: entries nest one 256-wide level deep instead of five (see
+# network/cache.py:get_cache_path).
+HTTP_CACHE_BUCKET = versioned_bucket("http", 2)
 WHEEL_CACHE_BUCKET = versioned_bucket("wheels", 2)
 
 
