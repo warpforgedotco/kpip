@@ -175,6 +175,11 @@ def test_install_target_keeps_site_packages_clean(script: KpipTestEnvironment) -
 
 
 def test_install_upgrade_and_force_reinstall(script: KpipTestEnvironment) -> None:
+    # The in-place mutation below must not reach the cache tree for a forced
+    # reinstall to restore the file. Under the hardlink default on Linux and
+    # Windows the installed file shares the cache's inode, as with uv, so the
+    # reinstall semantics are pinned under clone mode.
+    script.environ["KPIP_LINK_MODE"] = "clone"
     package = script.site_packages_path / "smokeupgrade" / "__init__.py"
     create_basic_wheel_for_package(script, "smokeupgrade", "1.0")
     create_basic_wheel_for_package(script, "smokeupgrade", "2.0")

@@ -1,13 +1,16 @@
 """Lightweight copy-on-write cloning primitives.
 
-
-
 Installation hot paths import this module without pulling in the broader
-
 filesystem utility stack.  Platform-specific fallback modules are loaded only
-
 when the native clone operation is unavailable.
 
+Per regular file, the order is a reflink (Linux ``FICLONE``), then a hard
+link, then a plain copy.  ``KPIP_LINK_MODE`` picks the policy the way uv's
+``--link-mode`` does: ``hardlink`` is the default on Linux and Windows,
+``clone`` (reflink, else copy) on macOS, and ``copy`` skips both.  A hard link
+shares its inode with the cache tree it came from, so anything that later
+rewrites an installed file must break the link first: :func:`replace_contents`
+does that for the installer's own rewrites.
 """
 
 from __future__ import annotations
@@ -24,6 +27,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     CloneFile = Callable[[bytes, bytes, int], int]
+
+    Devices = tuple[int, int]
 
 _FICLONE = 0x40049409
 
@@ -86,17 +91,63 @@ def _darwin_clone(source: str, destination: str) -> bool:
     raise OSError(error, os.strerror(error), destination)
 
 
-_reflink_unsupported: set[str] = set()
+_reflink_unsupported: set[int] = set()
 
-"""Destination directories whose filesystem rejected FICLONE outright.
+"""Destination devices whose filesystem rejected FICLONE outright.
 
 ``ioctl`` is issued on the destination descriptor, so support is a property
-of the destination filesystem, and one that does not change mid-run.  Without
-this, a cache tree cloned onto ext4, overlayfs or tmpfs pays an open, an
-exclusive create, the failing ioctl and an unlink for every file before
-falling back to a copy.  Keying on the directory rather than ``st_dev`` keeps
-the check free: the caller already holds the path, whereas a device number
-costs the stat this is trying to avoid.
+of the destination filesystem, and one that does not change mid-run.  ext4,
+overlayfs and tmpfs all answer ``EOPNOTSUPP``; without this memo every file
+cloned onto them pays an open, an exclusive create, the failing ioctl and an
+unlink before falling back.  Keyed by ``st_dev``: an earlier version keyed on
+the destination directory to save a stat, which meant paying that failing
+sequence once per directory in the tree.  :func:`clone_path` now resolves the
+device pair once per call and threads it through the walk, so the per-file
+check is a set lookup.
+"""
+
+_LINK_MODES = ("clone", "hardlink", "copy")
+
+_link_mode: str | None = None
+
+"""``KPIP_LINK_MODE`` as resolved on first use; ``None`` until then."""
+
+
+def _configured_link_mode() -> str:
+    """Resolve ``KPIP_LINK_MODE``, defaulting the way uv's ``--link-mode`` does.
+
+    ``hardlink`` is the cheapest way to put a cached file into a target on a
+    filesystem without copy-on-write, and it is uv's default on Linux and
+    Windows.  It also means an installed file *is* the cache's file: anything
+    that later rewrites it in place, without unlinking first, rewrites the
+    cache too.  macOS defaults to ``clone``, where ``clonefile`` gives an
+    independent copy for free.  ``clone`` still tries a reflink first on
+    Linux, so btrfs and XFS get independent files at hard link cost; ``copy``
+    skips both, which is what a user who edits installed files wants.
+    """
+
+    global _link_mode
+
+    if _link_mode is None:
+        value = os.environ.get("KPIP_LINK_MODE", "").strip().lower()
+
+        if value not in _LINK_MODES:
+            value = "clone" if sys.platform == "darwin" else "hardlink"
+
+        _link_mode = value
+
+    return _link_mode
+
+
+_hardlink_unsupported: set[Devices] = set()
+
+"""``(source, destination)`` device pairs where ``os.link`` cannot work.
+
+A hard link needs both paths on one filesystem that supports links.  ``EXDEV``
+says they are not on one, ``EPERM`` is what FAT, exFAT and some FUSE
+filesystems answer, and ``EOPNOTSUPP``/``ENOSYS`` cover the rest.  None of
+those change mid-run, so a device pair is judged once.  ``EMLINK`` is per
+file and is not memoised.
 """
 
 
@@ -110,9 +161,9 @@ configurations) the ioctl succeeds but behaves like a full copy, which made
 uv's clone-by-default install ~30x slower than hardlinking on XFS-on-EBS
 (astral-sh/uv#18259).  Successful clones of probe-sized files are timed while
 a device is undecided, and a device whose measured throughput stays below
-what any metadata-only clone achieves is demoted to the plain-copy fallback.
-Keyed by ``st_dev`` from the ``fstat`` the mode read already pays for: a
-successful FICLONE implies source and destination share that device.
+what any metadata-only clone achieves is demoted to the hard-link fallback.
+Keyed by the source ``st_dev``: a successful FICLONE implies source and
+destination share that device.
 """
 
 _reflink_fast: set[int] = set()
@@ -171,15 +222,18 @@ def _record_reflink_timing(device: int, size: int, elapsed_ns: int) -> None:
         _reflink_probe[device] = (bytes_total, ns_total)
 
 
-def _linux_reflink(source: str, destination: str) -> bool:
+def _linux_reflink(
+    source: str,
+    destination: str,
+    source_device: int,
+    destination_device: int,
+) -> bool:
     """Clone one regular file with the Linux FICLONE ioctl when available."""
 
     if not sys.platform.startswith("linux"):
         return False
 
-    destination_parent = os.path.dirname(destination)
-
-    if destination_parent in _reflink_unsupported:
+    if destination_device in _reflink_unsupported or source_device in _reflink_slow:
         return False
 
     try:
@@ -195,14 +249,9 @@ def _linux_reflink(source: str, destination: str) -> bool:
 
         mode = stat.S_IMODE(source_stat.st_mode)
 
-        device = source_stat.st_dev
-
-        if device in _reflink_slow:
-            return False
-
         probing = (
             source_stat.st_size >= _REFLINK_PROBE_MIN_FILE_BYTES
-            and device not in _reflink_fast
+            and source_device not in _reflink_fast
         )
 
         destination_fd = os.open(
@@ -219,7 +268,7 @@ def _linux_reflink(source: str, destination: str) -> bool:
 
             if probing:
                 _record_reflink_timing(
-                    device,
+                    source_device,
                     source_stat.st_size,
                     time.perf_counter_ns() - started,
                 )
@@ -240,7 +289,7 @@ def _linux_reflink(source: str, destination: str) -> bool:
                 errno.ENOSYS,
                 errno.EOPNOTSUPP,
             }:
-                _reflink_unsupported.add(destination_parent)
+                _reflink_unsupported.add(destination_device)
 
                 return False
 
@@ -263,28 +312,87 @@ def _linux_reflink(source: str, destination: str) -> bool:
     return True
 
 
+def _hardlink(
+    source: str,
+    destination: str,
+    source_device: int,
+    destination_device: int,
+) -> bool:
+    """Hard link one regular file into place when the filesystems allow it.
+
+    One syscall and no data movement.  The link shares mode and timestamps
+    with ``source``, so there is no ``copystat`` to pay.  Only reached when
+    :func:`_configured_link_mode` is ``hardlink``.
+    """
+
+    pair = (source_device, destination_device)
+
+    if pair in _hardlink_unsupported:
+        return False
+
+    try:
+        os.link(source, destination)
+
+    except OSError as exc:
+        if exc.errno == errno.EMLINK:
+            return False
+
+        if exc.errno in {
+            errno.EXDEV,
+            errno.EPERM,
+            errno.EACCES,
+            errno.EOPNOTSUPP,
+            errno.ENOTSUP,
+            errno.EINVAL,
+            getattr(errno, "ENOSYS", -1),
+        }:
+            _hardlink_unsupported.add(pair)
+
+            return False
+
+        raise
+
+    return True
+
+
 def clone_path(source: str, destination: str) -> None:
     """Copy a cache path using copy-on-write cloning whenever possible.
 
-
-
     Both paths must be absent from concurrent mutation. If ``destination`` is
-
     an existing directory, directory contents are merged while duplicate files
-
     are rejected.
 
+    Regular files that cannot be cloned are hard linked on Linux and Windows,
+    sharing their inode with ``source``, and copied when that fails or when
+    ``KPIP_LINK_MODE`` is ``clone`` or ``copy``.
     """
 
-    source_text = os.fspath(source)
+    _clone(os.fspath(source), os.fspath(destination), None)
 
-    destination_text = os.fspath(destination)
 
-    destination_exists = os.path.lexists(destination_text)
+def _devices(source: str, destination: str, destination_exists: bool) -> Devices:
+    """Resolve the ``(source, destination)`` device pair once per clone.
+
+    Every entry below ``source`` shares its device: a cache tree contains no
+    mount points.  An absent ``destination`` lands on its parent's device, and
+    the directories created beneath it inherit that.
+    """
+
+    if destination_exists:
+        parent = destination
+
+    else:
+        parent = os.path.dirname(destination) or os.curdir
+
+    return os.lstat(source).st_dev, os.stat(parent).st_dev
+
+
+def _clone(source: str, destination: str, devices: Devices | None) -> None:
+    destination_exists = os.path.lexists(destination)
 
     if not destination_exists:
         try:
-            if _darwin_clone(source_text, destination_text):
+            if _darwin_clone(source, destination):
                 return
 
         except OSError as exc:
@@ -293,33 +401,38 @@ def clone_path(source: str, destination: str) -> None:
 
             destination_exists = True
 
+    if devices is None:
+        devices = _devices(source, destination, destination_exists)
+
     if not destination_exists:
-        source_is_link = os.path.islink(source_text)
+        source_is_link = os.path.islink(source)
 
         return _clone_absent(
-            source_text,
-            destination_text,
-            os.path.isdir(source_text) and not source_is_link,
+            source,
+            destination,
+            os.path.isdir(source) and not source_is_link,
             source_is_link,
+            devices,
         )
 
     if not (
-        os.path.isdir(source_text)
-        and not os.path.islink(source_text)
-        and os.path.isdir(destination_text)
-        and not os.path.islink(destination_text)
+        os.path.isdir(source)
+        and not os.path.islink(source)
+        and os.path.isdir(destination)
+        and not os.path.islink(destination)
     ):
         raise FileExistsError(
             errno.EEXIST,
             "copy-on-write destination already exists",
-            destination_text,
+            destination,
         )
 
-    with os.scandir(source_text) as entries:
+    with os.scandir(source) as entries:
         for entry in entries:
-            clone_path(
-                os.path.join(source_text, entry.name),
-                os.path.join(destination_text, entry.name),
+            _clone(
+                os.path.join(source, entry.name),
+                os.path.join(destination, entry.name),
+                devices,
             )
 
 
@@ -328,6 +441,7 @@ def _clone_absent(
     destination: str,
     is_directory: bool,
     is_symlink: bool,
+    devices: Devices,
 ) -> None:
     """Clone ``source`` onto a ``destination`` known not to exist.
 
@@ -345,7 +459,7 @@ def _clone_absent(
             os.mkdir(destination, source_mode | stat.S_IWUSR | stat.S_IXUSR)
 
         except FileExistsError:
-            return clone_path(source, destination)
+            return _clone(source, destination, devices)
 
         import shutil
 
@@ -357,6 +471,7 @@ def _clone_absent(
                         os.path.join(destination, entry.name),
                         entry.is_dir(follow_symlinks=False),
                         entry.is_symlink(),
+                        devices,
                     )
 
             # Restores the source mode, including the owner write and search
@@ -378,7 +493,41 @@ def _clone_absent(
 
         return
 
-    if not _linux_reflink(source, destination):
-        import shutil
+    source_device, destination_device = devices
 
-        shutil.copy2(source, destination, follow_symlinks=False)
+    mode = _configured_link_mode()
+
+    if mode != "copy" and _linux_reflink(
+        source, destination, source_device, destination_device
+    ):
+        return
+
+    if mode == "hardlink" and _hardlink(
+        source, destination, source_device, destination_device
+    ):
+        return
+
+    import shutil
+
+    shutil.copy2(source, destination, follow_symlinks=False)
+
+
+def replace_contents(path: str, contents: bytes) -> None:
+    """Rewrite ``path`` in a fresh inode, keeping its mode.
+
+    An installed file may be a hard link into a cache tree; opening it for
+    writing would rewrite the cache too.  Unlinking first leaves the cache's
+    inode untouched, and the explicit ``chmod`` restores the mode regardless
+    of the umask.
+    """
+
+    mode = stat.S_IMODE(os.lstat(path).st_mode)
+
+    os.unlink(path)
+
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+
+    with os.fdopen(descriptor, "wb") as file:
+        file.write(contents)
+
+    os.chmod(path, mode)

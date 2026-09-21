@@ -32,7 +32,7 @@ from kpip.install.wheel_scripts import (
     generate_entry_point_files,
     rewrite_shebang,
 )
-from kpip.platform.clone import clone_path
+from kpip.platform.clone import clone_path, replace_contents
 
 if TYPE_CHECKING:
     from types import CodeType
@@ -327,8 +327,7 @@ def _rewrite_metadata(
             break
 
     if rewritten != contents:
-        with open(path, "wb") as file:
-            file.write(rewritten)
+        replace_contents(path, rewritten)
 
         return record_metadata_internal(rewritten)
 
