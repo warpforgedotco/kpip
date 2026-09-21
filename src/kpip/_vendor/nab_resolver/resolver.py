@@ -674,6 +674,9 @@ class Resolver(Generic[PackageType, VersionType]):
         # Keyed by (package, dep_package, dep_constraint, dep_positive); used
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
         self.dependency_index: dict[Any, int] = {}
+        # (package, version) -> the dependency mapping whose clauses were
+        # added for that decision; see _decide_next.
+        self._dependency_clauses_recorded: dict[tuple[Any, Any], Any] = {}
 
         self.solution: PartialSolution[Any, Any] = PartialSolution(
             range_type=range_type
@@ -888,6 +891,28 @@ class Resolver(Generic[PackageType, VersionType]):
         )
 
         dependencies = self.provider.get_dependencies(next_package, chosen_version)
+        # A backjump undoes decisions that are then made again, almost always
+        # with the same version (on a 700-package graph, 52,000 of 53,000
+        # decisions replayed an earlier one).  The dependency clauses those
+        # decisions add are facts about the release, kept across backtracks
+        # and interned on re-add, so re-adding them only pays the interning.
+        # When the provider hands back the same dependency mapping it did
+        # last time -- a fresh mapping means its dependencies moved, say
+        # from an extra merged in since -- the clauses are already in place.
+        recorded: dict[tuple[Any, Any], Any] | None = self._dependency_clauses_recorded
+        try:
+            previous = recorded.get((next_package, chosen_version))  # type: ignore[union-attr]
+        except TypeError:
+            # An unhashable version cannot be a key; the shortcut stands down.
+            recorded = None
+            previous = None
+        if previous is dependencies:
+            invalidated = self._backtrack_dependency_invalidations()
+            if invalidated is not None:
+                return invalidated
+            return next_package
+        if recorded is not None:
+            recorded[(next_package, chosen_version)] = dependencies
         widened = (
             self.provider.widen_decision(next_package, chosen_version)
             if dependencies
@@ -991,6 +1016,7 @@ class Resolver(Generic[PackageType, VersionType]):
     ) -> None:
         """Reset solver state for a new resolution."""
         self.incompatibilities.clear()
+        self._dependency_clauses_recorded.clear()
         self.package_to_incompatibilities.clear()
         self.dependency_parent_incompatibilities.clear()
         self.dependency_parent_fallbacks.clear()
