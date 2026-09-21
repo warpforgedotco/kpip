@@ -93,6 +93,7 @@ class NabProvider:
         self.ignore_requires_python = self.context.ignore_requires_python
         self._descent_prefetched: set[tuple[str, Version]] = set()
         self._descent_attempts: dict[str, int] = {}
+        self._descent_last: dict[str, Version] = {}
         self._descent_order: dict[
             str, tuple[tuple[Version, ...], tuple[Version, ...], dict[Version, int]]
         ] = {}
@@ -643,21 +644,30 @@ class NabProvider:
     ) -> None:
         """Start metadata for the releases a backtrack would try next.
 
-        Only a package decided repeatedly is descending; speculating on a
-        first decision that stands is pure cost.
+        Only a package whose chosen version just dropped is descending.  The
+        resolver asks for a package's choice far more often than it decides
+        it -- ranking what to decide next re-asks every open package -- so a
+        repeat of the same answer, or a pin re-affirmed while merging extras,
+        is not a descent.  Counting those opened a window under nearly every
+        package of a large graph: airflow's cold lock fetched metadata for
+        ~10,000 releases this way and used ~900.
         """
         if _DESCENT_PREFETCH_WINDOW <= 0 or not isinstance(
             self.provider, CandidateProvider
         ):
             return
 
+        chosen = newest_first[index]
+        last = self._descent_last.get(package)
+        self._descent_last[package] = chosen
+
+        if last is None or chosen >= last:
+            return
+
         attempts = self._descent_attempts.get(package, 0) + 1
         self._descent_attempts[package] = attempts
 
-        if attempts < 2:
-            return
-
-        size = min(_DESCENT_PREFETCH_WINDOW, 1 << min(attempts - 1, 5))
+        size = min(_DESCENT_PREFETCH_WINDOW, 1 << min(attempts, 5))
 
         try:
             self._start_descent_window(package, newest_first, index, size)
