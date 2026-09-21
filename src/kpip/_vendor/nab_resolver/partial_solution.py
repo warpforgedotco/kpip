@@ -321,6 +321,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self._contradiction_epoch = contradiction_epoch
         self._range_type = range_type
         self._assignments: list[Assignment[PackageType, VersionType]] = []
+        # The decisions the last backtrack undid, oldest first; the resolver
+        # replays them.
+        self.undone_decisions: list[tuple[PackageType, VersionType]] = []
         self._decision_level = 0
         self._positive_ranges: dict[PackageType, RangeProtocol[VersionType]] = {}
         self._negative_ranges: dict[PackageType, RangeProtocol[VersionType]] = {}
@@ -559,6 +562,8 @@ class PartialSolution(Generic[PackageType, VersionType]):
         _detach_snapshots(self._decision_snapshots)
 
         self._decision_level = target_level
+        undone: list[tuple[PackageType, VersionType]] = []
+        self.undone_decisions = undone
         if (
             not self._assignments
             or self._assignments[-1].decision_level <= target_level
@@ -569,8 +574,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
         changed_packages: dict[PackageType, None] = {}
         assignments = self._assignments
         while assignments and assignments[-1].decision_level > target_level:
-            changed_packages[assignments.pop().package] = None
+            assignment = assignments.pop()
+            changed_packages[assignment.package] = None
+            if assignment.is_decision:
+                undone.append((assignment.package, assignment.version))  # type: ignore[arg-type]
 
+        undone.reverse()
         # Untouched packages keep their cached state.
         self._changed.update(changed_packages)
         for package in changed_packages:
