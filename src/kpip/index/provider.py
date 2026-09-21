@@ -216,6 +216,12 @@ class CandidateProvider:
 
         self.prefetcher = None
 
+        # Set under cache_lock before shutdown starts.  Lookahead callbacks
+        # run on metadata workers that outlive the catalog prefetcher's
+        # shutdown, and one that started catalog work then would create a
+        # prefetcher nobody closes.
+        self.closing = False
+
         self.prefetch_policy = PrefetchPolicy()
 
         self.materializer_internal = None
@@ -2789,6 +2795,9 @@ class CandidateProvider:
                     extras,
                 )
 
+                if self.closing:
+                    return
+
                 if metadata is not None and metadata.dependencies:
                     self.prefetch_available_versions(
                         metadata.dependencies,
@@ -2815,7 +2824,8 @@ class CandidateProvider:
         """Fetch independent project catalogs in bounded background workers."""
 
         if (
-            len(requirements) < (1 if lookahead else 2)
+            self.closing
+            or len(requirements) < (1 if lookahead else 2)
             or self.session is None
             or not self.prefetch_remote_sources
         ):
@@ -2857,11 +2867,15 @@ class CandidateProvider:
         if not unique:
             return
 
-        if self.prefetcher is None:
-            self.prefetcher = Prefetcher(
-                self.load_prefetched_versions,
-                max_workers=_CATALOG_WORKERS,
-            )
+        with self.cache_lock:
+            if self.closing:
+                return
+
+            if self.prefetcher is None:
+                self.prefetcher = Prefetcher(
+                    self.load_prefetched_versions,
+                    max_workers=_CATALOG_WORKERS,
+                )
 
         pending = (
             tuple(unique.items())
@@ -2878,6 +2892,9 @@ class CandidateProvider:
                 self.prefetcher.submit(key, (requirement, key))
 
     def close(self) -> None:
+        with self.cache_lock:
+            self.closing = True
+
         if self.prefetcher is not None:
             self.prefetcher.close()
 

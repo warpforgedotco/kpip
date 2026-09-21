@@ -1489,3 +1489,30 @@ def test_catalog_prefetch_chains_to_the_dependencies_of_the_top_candidate(
     assert "child-a" in loaded
     assert "child-b" not in loaded
     assert "child-c" not in loaded
+
+
+def test_lookahead_after_close_does_not_revive_the_catalog_prefetcher() -> None:
+    """A metadata worker's callback can outlive ``close``; catalog work it
+    would start then must be dropped, not run on a prefetcher nobody closes."""
+
+    class Session:
+        @staticmethod
+        def has_fresh_cached_response(url: str) -> bool:
+            del url
+            return False
+
+        def get(self, url: str) -> object:
+            raise AssertionError(f"fetched {url} after close")
+
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=Session(),
+    )
+    provider.close()
+
+    provider.prefetch_available_versions((parse_requirement("late"),), lookahead=True)
+    provider.prefetch_available_versions(
+        (parse_requirement("later"), parse_requirement("latest")),
+    )
+
+    assert provider.prefetcher is None
