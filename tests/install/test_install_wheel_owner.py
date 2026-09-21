@@ -324,7 +324,15 @@ def test_compiled_batch_installs_in_parallel(
     assert len(list(target.rglob("*.pyc"))) == 4
 
 
-def test_fresh_target_reuses_copy_on_write_wheel_archive(tmp_path: Path) -> None:
+def test_fresh_target_reuses_copy_on_write_wheel_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Under KPIP_LINK_MODE=clone the target must not share inodes with the
+    # cache; the hardlink default on Linux and Windows deliberately does.
+    from kpip.platform import clone
+
+    monkeypatch.setattr(clone, "_link_mode", None)
+    monkeypatch.setenv("KPIP_LINK_MODE", "clone")
     wheel = make_wheel_internal(
         tmp_path,
         extra_files={

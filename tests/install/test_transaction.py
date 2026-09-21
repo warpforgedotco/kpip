@@ -91,7 +91,15 @@ def test_transaction_commits_staged_contents(tmp_path: Path) -> None:
     assert destination.read_bytes() == b"new"
 
 
-def test_transaction_clones_without_consuming_cache_source(tmp_path: Path) -> None:
+def test_transaction_clones_without_consuming_cache_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Under KPIP_LINK_MODE=clone the target must not share inodes with the
+    # cache; the hardlink default on Linux and Windows deliberately does.
+    from kpip.platform import clone
+
+    monkeypatch.setattr(clone, "_link_mode", None)
+    monkeypatch.setenv("KPIP_LINK_MODE", "clone")
     source = tmp_path / "cache" / "source.txt"
     source.parent.mkdir()
     source.write_text("immutable")

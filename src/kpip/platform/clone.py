@@ -5,10 +5,12 @@ filesystem utility stack.  Platform-specific fallback modules are loaded only
 when the native clone operation is unavailable.
 
 Per regular file, the order is a reflink (Linux ``FICLONE``), then a hard
-link when ``KPIP_LINK_MODE=hardlink`` opts into one, then a plain copy.  A
-hard link shares its inode with the cache tree it came from, so anything that
-later rewrites an installed file must break the link first:
-:func:`replace_contents` does that for the installer's own rewrites.
+link, then a plain copy.  ``KPIP_LINK_MODE`` picks the policy the way uv's
+``--link-mode`` does: ``hardlink`` is the default on Linux and Windows,
+``clone`` (reflink, else copy) on macOS, and ``copy`` skips both.  A hard link
+shares its inode with the cache tree it came from, so anything that later
+rewrites an installed file must break the link first: :func:`replace_contents`
+does that for the installer's own rewrites.
 """
 
 from __future__ import annotations
@@ -104,28 +106,37 @@ device pair once per call and threads it through the walk, so the per-file
 check is a set lookup.
 """
 
+_LINK_MODES = ("clone", "hardlink", "copy")
+
 _link_mode: str | None = None
 
-"""``KPIP_LINK_MODE`` as read on first use; ``None`` until then."""
+"""``KPIP_LINK_MODE`` as resolved on first use; ``None`` until then."""
 
 
-def _hardlinks_enabled() -> bool:
-    """Whether ``KPIP_LINK_MODE=hardlink`` opted into sharing cache inodes.
+def _configured_link_mode() -> str:
+    """Resolve ``KPIP_LINK_MODE``, defaulting the way uv's ``--link-mode`` does.
 
-    A hard link is the cheapest way to put a cached file into a target on a
-    filesystem without copy-on-write, and it is what uv does on Linux.  It
-    also means an installed file *is* the cache's file: anything that later
-    rewrites it in place, without unlinking first, rewrites the cache too.
-    kpip's default keeps every installed file independent of the cache tree
-    (``tests/install/test_transaction.py`` pins that), so the link is opt-in.
+    ``hardlink`` is the cheapest way to put a cached file into a target on a
+    filesystem without copy-on-write, and it is uv's default on Linux and
+    Windows.  It also means an installed file *is* the cache's file: anything
+    that later rewrites it in place, without unlinking first, rewrites the
+    cache too.  macOS defaults to ``clone``, where ``clonefile`` gives an
+    independent copy for free.  ``clone`` still tries a reflink first on
+    Linux, so btrfs and XFS get independent files at hard link cost; ``copy``
+    skips both, which is what a user who edits installed files wants.
     """
 
     global _link_mode
 
     if _link_mode is None:
-        _link_mode = os.environ.get("KPIP_LINK_MODE", "clone").strip().lower()
+        value = os.environ.get("KPIP_LINK_MODE", "").strip().lower()
 
-    return _link_mode == "hardlink"
+        if value not in _LINK_MODES:
+            value = "clone" if sys.platform == "darwin" else "hardlink"
+
+        _link_mode = value
+
+    return _link_mode
 
 
 _hardlink_unsupported: set[Devices] = set()
@@ -311,7 +322,7 @@ def _hardlink(
 
     One syscall and no data movement.  The link shares mode and timestamps
     with ``source``, so there is no ``copystat`` to pay.  Only reached when
-    :func:`_hardlinks_enabled` says the user accepted the shared inode.
+    :func:`_configured_link_mode` is ``hardlink``.
     """
 
     pair = (source_device, destination_device)
@@ -351,8 +362,9 @@ def clone_path(source: str, destination: str) -> None:
     an existing directory, directory contents are merged while duplicate files
     are rejected.
 
-    Regular files that cannot be cloned are copied, or hard linked first when
-    ``KPIP_LINK_MODE=hardlink`` accepts sharing their inode with ``source``.
+    Regular files that cannot be cloned are hard linked on Linux and Windows,
+    sharing their inode with ``source``, and copied when that fails or when
+    ``KPIP_LINK_MODE`` is ``clone`` or ``copy``.
     """
 
     _clone(os.fspath(source), os.fspath(destination), None)
@@ -483,10 +495,14 @@ def _clone_absent(
 
     source_device, destination_device = devices
 
-    if _linux_reflink(source, destination, source_device, destination_device):
+    mode = _configured_link_mode()
+
+    if mode != "copy" and _linux_reflink(
+        source, destination, source_device, destination_device
+    ):
         return
 
-    if _hardlinks_enabled() and _hardlink(
+    if mode == "hardlink" and _hardlink(
         source, destination, source_device, destination_device
     ):
         return

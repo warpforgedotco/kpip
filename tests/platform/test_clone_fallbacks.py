@@ -1,11 +1,11 @@
 """Per-file fallbacks when copy-on-write cloning is unavailable.
 
 Linux has no directory-level clone: ``clone_path`` walks the tree and, for
-every regular file, tries ``FICLONE``, then a hard link if
-``KPIP_LINK_MODE=hardlink`` opted in, then a copy.  ext4 rejects
-``FICLONE``, so on the most common Linux filesystem those fallbacks decide
-what a warm install costs.  These tests force each path with the platform
-calls stubbed, so they run everywhere.
+every regular file, tries ``FICLONE``, then a hard link (the default there,
+as in uv), then a copy.  ext4 rejects ``FICLONE``, so on the most common
+Linux filesystem those fallbacks decide what a warm install costs.  These
+tests force each path with the platform calls stubbed, so they run
+everywhere.
 """
 
 from __future__ import annotations
@@ -73,10 +73,32 @@ def test_files_are_hard_linked_when_cloning_is_unavailable(
     assert not clone._hardlink_unsupported
 
 
-def test_the_default_link_mode_copies_so_installed_files_stay_independent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_reflink: None
+@pytest.mark.parametrize(
+    "platform, expected",
+    [("darwin", "clone"), ("linux", "hardlink"), ("win32", "hardlink")],
+)
+def test_the_default_link_mode_follows_uv(
+    monkeypatch: pytest.MonkeyPatch, platform: str, expected: str
 ) -> None:
     monkeypatch.delenv("KPIP_LINK_MODE")
+    monkeypatch.setattr(sys, "platform", platform)
+
+    assert clone._configured_link_mode() == expected
+
+
+def test_an_unknown_link_mode_falls_back_to_the_platform_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KPIP_LINK_MODE", "symlink")
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    assert clone._configured_link_mode() == "hardlink"
+
+
+def test_clone_mode_copies_so_installed_files_stay_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_reflink: None
+) -> None:
+    monkeypatch.setenv("KPIP_LINK_MODE", "clone")
     monkeypatch.setattr(
         clone.os, "link", lambda source, destination: pytest.fail("linked")
     )
@@ -90,6 +112,23 @@ def test_the_default_link_mode_copies_so_installed_files_stay_independent(
         assert (destination / relative).read_bytes() == (source / relative).read_bytes()
     (destination / FILES[0]).write_bytes(b"edited\n")
     assert (source / FILES[0]).read_bytes() == b"top\n"
+
+
+def test_copy_mode_skips_the_reflink_and_the_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KPIP_LINK_MODE", "copy")
+    monkeypatch.setattr(clone, "_linux_reflink", lambda *args: pytest.fail("reflinked"))
+    monkeypatch.setattr(
+        clone.os, "link", lambda source, destination: pytest.fail("linked")
+    )
+    source = make_tree(tmp_path)
+    destination = tmp_path / "target"
+
+    clone.clone_path(str(source), str(destination))
+
+    for relative in FILES:
+        assert not same_inode(source, destination, relative)
 
 
 def test_a_filesystem_without_hard_links_is_judged_once(
