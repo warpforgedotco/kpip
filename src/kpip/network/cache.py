@@ -6,14 +6,11 @@ import hashlib
 import os
 import shutil
 import struct
+import threading
 from contextlib import contextmanager
 
 from kpip.core.utils import ensure_dir
-from kpip.platform.filesystem import (
-    adjacent_tmp_file,
-    copy_directory_permissions,
-    replace,
-)
+from kpip.platform.filesystem import replace, set_file_permissions
 
 """Directory under the cache directory holding the HTTP page cache."""
 
@@ -64,6 +61,13 @@ class SafeFileCache:
         assert directory is not None, "Cache directory must not be None."
         super().__init__()
         self.directory = directory
+        # Directories this cache has already created, so an entry pays for
+        # its directory once, not a makedirs walk per write.  Threads race
+        # on the set harmlessly: a lost update costs one extra makedirs.
+        self._known_directories: set[str] = set()
+        # Entry files take the cache directory's permissions, read once.
+        self._entry_mode: int | None = None
+        self._temporary_serial = 0
 
     def get_cache_path(self, name: str) -> str:
         hashed = hashlib.sha224(name.encode()).hexdigest()
@@ -102,16 +106,57 @@ class SafeFileCache:
                 return file.read()
         return None
 
+    def entry_mode(self) -> int:
+        """The mode entry files are created with: the cache directory's."""
+        mode = self._entry_mode
+        if mode is None:
+            mode = self._entry_mode = os.stat(self.directory).st_mode & 0o666 | 0o600
+        return mode
+
     def write_to_file(self, path: str, writer_func: Callable[[BinaryIO], Any]) -> None:
-        """Common file writing logic with proper permissions and atomic replacement."""
+        """Write an entry atomically, with the cache directory's permissions.
+
+        A resolve stores thousands of entries from worker threads, and every
+        syscall a write makes is a release and re-acquire of the interpreter
+        lock behind the resolver.  This is the shortest sequence that keeps
+        the same guarantees: the directory is created once per directory
+        rather than walked per write, the file is opened exclusively under
+        a name no other thread or process uses, its mode is set from one
+        stat of the cache directory rather than one per write, and the
+        finished file is renamed into place.
+        """
         with suppressed_cache_errors():
-            ensure_dir(os.path.dirname(path))
+            directory = os.path.dirname(path)
+            if directory not in self._known_directories:
+                ensure_dir(directory)
+                self._known_directories.add(directory)
 
-            with adjacent_tmp_file(path, durable=False) as f:
-                writer_func(f)
-                copy_directory_permissions(self.directory, f)
-
-            replace(f.name, path)
+            mode = self.entry_mode()
+            self._temporary_serial += 1
+            temporary = (
+                f"{path}.{os.getpid()}-{threading.get_ident()}-"
+                f"{self._temporary_serial}.tmp"
+            )
+            # Created private, then given the directory's mode the way the
+            # temporary file always was: a platform whose chmod cannot apply
+            # leaves the entry private rather than inheriting anything.
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            try:
+                with os.fdopen(descriptor, "wb") as f:
+                    descriptor = -1
+                    set_file_permissions(f, mode)
+                    writer_func(f)
+                replace(temporary, path)
+            except BaseException:
+                if descriptor >= 0:
+                    os.close(descriptor)
+                with suppressed_cache_errors():
+                    os.unlink(temporary)
+                raise
 
     def write_internal(self, path: str, data: bytes) -> None:
         self.write_to_file(path, lambda f: f.write(data))
@@ -207,10 +252,9 @@ class SafeFileCache:
 
     def write_combined(self, path: str, metadata: bytes, body: bytes) -> None:
         header = COMBINED_HEADER.pack(COMBINED_MAGIC, len(metadata))
-        self.write_to_file(
-            path,
-            lambda f: (f.write(header), f.write(metadata), f.write(body)),
-        )
+        # One write: three would be three syscalls through an unbuffered path
+        # and the same three, plus the buffer, through a buffered one.
+        self.write_to_file(path, lambda f: f.write(b"".join((header, metadata, body))))
 
     def set_with_body(self, key: str, metadata: bytes, body: bytes) -> None:
         """Atomically replace an entry's metadata and body together."""
