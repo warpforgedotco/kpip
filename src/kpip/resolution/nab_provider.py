@@ -363,20 +363,7 @@ class NabProvider:
             if not isinstance(self.provider, CandidateProvider):
                 candidate_requirement = parse_requirement(package)
             else:
-                memo = self._unpinned_requirements.get(package)
-                if memo is None or memo[0] is not requirement:
-                    memo = (
-                        requirement,
-                        Requirement(
-                            name=requirement.name,
-                            specifier=SpecifierSet(),
-                            extras=requirement.extras,
-                            marker=requirement.marker,
-                            raw=requirement.raw,
-                        ),
-                    )
-                    self._unpinned_requirements[package] = memo
-                candidate_requirement = memo[1]
+                candidate_requirement = self._unpinned(package, requirement)
         versions = self._versions(package)
         if len(url_constraints) == 1 and requirement.url is None:
             constrained_candidates = tuple(
@@ -445,7 +432,7 @@ class NabProvider:
         if not candidates and requirement.url is None:
             candidates = tuple(
                 self.provider.find_candidates(
-                    parse_requirement(package),
+                    self._unpinned(package, requirement),
                     allowed_versions=frozenset({selected}),
                 ),
             )
@@ -453,6 +440,7 @@ class NabProvider:
             retried = self._retry_including_yanked(
                 package,
                 selected,
+                requirement=self._unpinned(package, requirement),
                 matching=matching,
                 constraints=constraints,
                 version_range=version_range,
@@ -1120,16 +1108,46 @@ class NabProvider:
         self._catalog_by_version_cache[package] = index
         return index
 
+    def _unpinned(self, package: str, requirement: Requirement) -> Requirement:
+        """``requirement`` with its specifier dropped and its extras kept.
+
+        The stored requirement is whichever the resolver registered last and
+        is not undone on backtrack, so its specifier can be stale against the
+        live range; a catalog scan must not be narrowed by it.  Its extras
+        are what the resolver asked for, and a scan that drops them hands
+        back candidates whose dependencies omit the extras entirely.
+        """
+        memo = self._unpinned_requirements.get(package)
+        if memo is None or memo[0] is not requirement:
+            memo = (
+                requirement,
+                Requirement(
+                    name=requirement.name,
+                    specifier=SpecifierSet(),
+                    extras=requirement.extras,
+                    marker=requirement.marker,
+                    raw=requirement.raw,
+                ),
+            )
+            self._unpinned_requirements[package] = memo
+        return memo[1]
+
     def _retry_including_yanked(
         self,
         package: str,
         selected: Version,
         *,
+        requirement: Requirement,
         matching: list[Version],
         constraints: tuple[Requirement, ...],
         version_range: RangeProtocol[Version],
     ) -> tuple[Version, tuple[WheelCandidate, ...]] | None:
         """Look again with yanked releases admitted, or ``None`` to give up.
+
+        ``requirement`` carries the extras the resolver asked for.  Scanning
+        with a bare name handed back candidates whose dependencies omitted
+        every extra, so a release chosen here settled into the solution
+        without the extra's dependencies ever being resolved.
 
         Reached only when the active policy offered no artifact for a version
         the resolver already selected.  A release can be absent because every
@@ -1145,7 +1163,7 @@ class NabProvider:
             return None
 
         fallback_provider = self.provider.with_yanked_policy(True)
-        fallback = tuple(fallback_provider.find_candidates(parse_requirement(package)))
+        fallback = tuple(fallback_provider.find_candidates(requirement))
         usable = [
             item
             for item in fallback
@@ -1166,7 +1184,7 @@ class NabProvider:
 
         return selected, tuple(
             fallback_provider.find_candidates(
-                parse_requirement(package),
+                requirement,
                 allowed_versions=frozenset({selected}),
             ),
         )
