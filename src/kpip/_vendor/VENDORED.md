@@ -31,7 +31,7 @@ the same tracked tree.
 | Distribution | Patch | Purpose |
 | --- | --- | --- |
 | certifi | `certifi.patch` | Resolve `cacert.pem` through the `kpip._vendor.certifi` resource package. |
-| nab-resolver | `nab-resolver.patch` | Preserve kpip's late-extras invalidation contract and provider priority invalidations; accelerate large discrete ranges, membership, dependency-clause construction, exact-parent clause dispatch, and unit propagation; compare infinity bounds safely; re-key every undecided package after a mid-solve decision-queue clear; derive a redundant requirement only for a range type that opts into refining on intersection. The startup-oriented value types, root hashing, snapshot truthiness, backtracking, and reused decision and derivation ranges are supplied by upstream. |
+| nab-resolver | `nab-resolver.patch` | Preserve kpip's late-extras invalidation contract and provider priority invalidations; accelerate large discrete ranges, membership, dependency-clause construction, exact-parent clause dispatch, and unit propagation; compare infinity bounds safely; re-key every undecided package after a mid-solve decision-queue clear; derive a redundant requirement only for a range type that opts into refining on intersection; skip re-adding a replayed decision's dependency clauses; refresh decision keys by walking the stale set. The startup-oriented value types, root hashing, snapshot truthiness, backtracking, and reused decision and derivation ranges are supplied by upstream. |
 
 The resolver is pinned to an exact upstream commit from the `nab-resolver`
 subdirectory. It includes [nab PR #1204](https://github.com/notatallshaw/nab/pull/1204),

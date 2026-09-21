@@ -1323,7 +1323,7 @@ diff --git a/src/kpip/_vendor/nab_resolver/resolver.py b/src/kpip/_vendor/nab_re
 index 5cb1fd8..ebcbd77 100644
 --- a/src/kpip/_vendor/nab_resolver/resolver.py
 +++ b/src/kpip/_vendor/nab_resolver/resolver.py
-@@ -233,6 +233,14 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
+@@ -233,6 +233,14 @@
          """
          ...
  
@@ -1338,7 +1338,7 @@ index 5cb1fd8..ebcbd77 100644
      def receive_partial_solution_hint(
          self,
          positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
-@@ -311,11 +319,12 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
+@@ -311,11 +319,12 @@
  
  
  class BaseProvider(Generic[PackageType, VersionType]):
@@ -1354,7 +1354,7 @@ index 5cb1fd8..ebcbd77 100644
      :class:`ResolverProvider` methods with nothing to do when there is no async
      layer, no queued clauses and no widening.  A subclass still owes
      ``choose_version``, ``has_satisfying_version``, ``get_dependencies``,
-@@ -335,6 +344,10 @@ class BaseProvider(Generic[PackageType, VersionType]):
+@@ -335,6 +344,10 @@
          del package
          return True
  
@@ -1365,7 +1365,7 @@ index 5cb1fd8..ebcbd77 100644
      def receive_partial_solution_hint(
          self,
          positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
-@@ -555,7 +568,7 @@ def _as_root_requirements(
+@@ -555,7 +568,7 @@
      requirements: Mapping[PackageType, RangeProtocol[VersionType]]
      | Sequence[RootRequirement[PackageType, VersionType]],
  ) -> Sequence[RootRequirement[PackageType, VersionType]]:
@@ -1374,7 +1374,7 @@ index 5cb1fd8..ebcbd77 100644
      if _is_root_sequence(requirements):
          return requirements
      # The parameters are spelled out because ``constraint`` is a contravariant
-@@ -615,10 +628,7 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -615,10 +628,7 @@
          """
          self.provider = provider
  
@@ -1386,7 +1386,7 @@ index 5cb1fd8..ebcbd77 100644
  
          self.observer: ResolverObserver[PackageType, VersionType] = (
              observer or ResolverObserver()
-@@ -645,6 +655,16 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -645,6 +655,16 @@
          self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(
              list
          )
@@ -1403,7 +1403,16 @@ index 5cb1fd8..ebcbd77 100644
  
          # Per clause, the contradiction epoch in which one of its terms was
          # last seen contradicted; unit propagation skips a clause whose stamp
-@@ -660,9 +680,16 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -654,16 +674,26 @@
+         # Keyed by (package, dep_package, dep_constraint, dep_positive); used
+         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
+         self.dependency_index: dict[Any, int] = {}
++        # (package, version) -> the dependency mapping whose clauses were
++        # added for that decision; see _decide_next.
++        self._dependency_clauses_recorded: dict[tuple[Any, Any], Any] = {}
+ 
+         self.solution: PartialSolution[Any, Any] = PartialSolution(
+             range_type=range_type
          )
          self.stats: ResolverStats[PackageType] = ResolverStats()
  
@@ -1414,14 +1423,15 @@ index 5cb1fd8..ebcbd77 100644
          self.constraints: Mapping[PackageType, RangeProtocol[VersionType]] = {}
          self.root_package_order: dict[PackageType, tuple[int, int, str]] = {}
 -        self.pending_targeted_backtrack: list[PackageType] = []
-+
+ 
 +        # Dict-as-ordered-set: enqueue order stays deterministic while the
 +        # per-conflict de-dupe is an O(1) key write instead of a list scan.
 +        self.pending_targeted_backtrack: dict[PackageType, None] = {}
- 
++
          # Memoises the tiebreak tuple in choose_package_to_decide.
          self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
-@@ -673,9 +700,11 @@ class Resolver(Generic[PackageType, VersionType]):
+ 
+@@ -673,9 +703,11 @@
          self.decision_queue: DecisionQueue[PackageType] = DecisionQueue()
          self.priority_epoch = 0
  
@@ -1436,7 +1446,7 @@ index 5cb1fd8..ebcbd77 100644
  
          # relation_cache_on goes off while the memo's hit rate does not pay for
          # the key it builds. A window of probes decides that: relation_gate_hits
-@@ -698,6 +727,23 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -698,6 +730,23 @@
          self.range_token_by_id: dict[int, int] = {}
          self.interned_ranges: list[RangeProtocol[Any]] = []
  
@@ -1460,7 +1470,7 @@ index 5cb1fd8..ebcbd77 100644
      def as_term_range(self, range_: RangeProtocol[Any]) -> RangeProtocol[VersionType]:
          """Return the term constraint to record for a supplied range.
  
-@@ -824,10 +870,10 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -824,10 +873,10 @@
          # Provider-driven force back-track. When the provider returns
          # a tentative candidate and queues blockers, jump to the
          # blockers before the candidate is decided.
@@ -1473,13 +1483,34 @@ index 5cb1fd8..ebcbd77 100644
              if triggering is not None:
                  return triggering
  
-@@ -842,43 +888,89 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -842,43 +891,111 @@
          )
  
          dependencies = self.provider.get_dependencies(next_package, chosen_version)
 -        if not dependencies:
--            return next_package
++        # A backjump undoes decisions that are then made again, almost always
++        # with the same version (on a 700-package graph, 52,000 of 53,000
++        # decisions replayed an earlier one).  The dependency clauses those
++        # decisions add are facts about the release, kept across backtracks
++        # and interned on re-add, so re-adding them only pays the interning.
++        # When the provider hands back the same dependency mapping it did
++        # last time -- a fresh mapping means its dependencies moved, say
++        # from an extra merged in since -- the clauses are already in place.
++        recorded: dict[tuple[Any, Any], Any] | None = self._dependency_clauses_recorded
++        try:
++            previous = recorded.get((next_package, chosen_version))  # type: ignore[union-attr]
++        except TypeError:
++            # An unhashable version cannot be a key; the shortcut stands down.
++            recorded = None
++            previous = None
++        if previous is dependencies:
++            invalidated = self._backtrack_dependency_invalidations()
++            if invalidated is not None:
++                return invalidated
+             return next_package
 -        widened = self.provider.widen_decision(next_package, chosen_version)
++        if recorded is not None:
++            recorded[(next_package, chosen_version)] = dependencies
 +        widened = (
 +            self.provider.widen_decision(next_package, chosen_version)
 +            if dependencies
@@ -1508,9 +1539,6 @@ index 5cb1fd8..ebcbd77 100644
 -                    Term(next_package, parent_range, positive=True),
 -                    Term(dependency_package, dependency_range, positive=False),
 -                ]
--
--            # The merged term drops the required range, so the clause carries
--            # it for the report.
 +            if dependency_package != next_package:
 +                incompatibility = incompat_index.add_dependency_incompatibility(
 +                    self,
@@ -1524,7 +1552,9 @@ index 5cb1fd8..ebcbd77 100644
 +                    self, dependency_package, dependency_range, incompatibility
 +                )
 +                continue
-+
+ 
+-            # The merged term drops the required range, so the clause carries
+-            # it for the report.
 +            # An incompatibility holds at most one term per package, so
 +            # self-dependency terms merge to {v} & ~range: empty (a vacuous
 +            # clause) when the range contains the chosen version, else exactly
@@ -1591,9 +1621,11 @@ index 5cb1fd8..ebcbd77 100644
      def _build_result(self) -> Solution[PackageType, VersionType]:
          """Build the final result, including only reachable packages.
  
-@@ -900,10 +992,15 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -899,11 +1016,17 @@
+     ) -> None:
          """Reset solver state for a new resolution."""
          self.incompatibilities.clear()
++        self._dependency_clauses_recorded.clear()
          self.package_to_incompatibilities.clear()
 +        self.dependency_parent_incompatibilities.clear()
 +        self.dependency_parent_fallbacks.clear()
@@ -1607,7 +1639,7 @@ index 5cb1fd8..ebcbd77 100644
  
          self.constraints = constraints or {}
          self.root_package_order.clear()
-@@ -922,7 +1019,7 @@ class Resolver(Generic[PackageType, VersionType]):
+@@ -922,7 +1045,7 @@
          self.term_range_keepalive.clear()
  
          # Re-asked here, so a hook installed since the last resolve is honoured.
@@ -1620,7 +1652,7 @@ diff --git a/src/kpip/_vendor/nab_resolver/decision_queue.py b/src/kpip/_vendor/
 index 2369c55..1c1bba4 100644
 --- a/src/kpip/_vendor/nab_resolver/decision_queue.py
 +++ b/src/kpip/_vendor/nab_resolver/decision_queue.py
-@@ -46,11 +46,21 @@ class DecisionQueue(Generic[PackageType]):
+@@ -46,11 +46,21 @@
          self._rebuild_at = _REBUILD_MINIMUM
  
      def clear(self) -> None:
@@ -1644,3 +1676,37 @@ index 2369c55..1c1bba4 100644
          self._rebuild_at = _REBUILD_MINIMUM
  
      def pick(
+@@ -123,9 +133,14 @@
+     ) -> None:
+         """Re-evaluate the stale keys, pushing an entry for each one that moved.
+ 
+-        Walks ``undecided`` rather than ``stale`` so which packages are stale
+-        cannot change the order ``sort_key`` is called in, since a provider can
+-        fetch while answering one.
++        Walks the smaller of ``stale`` and ``undecided``.  A scan after one
++        decision marks a handful of packages stale while hundreds stay
++        undecided; walking ``undecided`` to find them cost a scan of every
++        open package per decision, 37 million steps over a 700-package
++        resolve.  Walking ``stale`` instead changes only the order
++        ``sort_key`` is called in, which matters to a provider that fetches
++        while answering one; the keys themselves, and so the decision order,
++        do not depend on it.
+ 
+         Given ``key_inputs_arrived``, an unready package the solution left
+         alone reaches ``sort_key`` only once its key's inputs have landed. The
+@@ -137,10 +152,12 @@
+         unready = self._unready
+         pushes = self._pushes
+ 
+-        for package in undecided:
+-            if package not in stale:
+-                continue
++        if len(stale) < len(undecided):
++            walk = [package for package in stale if package in undecided]
++        else:
++            walk = [package for package in undecided if package in stale]
+ 
++        for package in walk:
+             if (
+                 key_inputs_arrived is not None
+                 and package in unready
