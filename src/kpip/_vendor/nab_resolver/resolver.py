@@ -20,7 +20,7 @@ Rust implementation: https://github.com/pubgrub-rs/pubgrub
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
 
@@ -677,6 +677,11 @@ class Resolver(Generic[PackageType, VersionType]):
         # (package, version) -> the dependency mapping whose clauses were
         # added for that decision; see _decide_next.
         self._dependency_clauses_recorded: dict[tuple[Any, Any], Any] = {}
+        # The decisions the last backtrack undid, consumed front to back as
+        # the resolver re-decides; see _replay_version.
+        self._replay: deque[tuple[Any, Any]] = deque()
+        self._replay_source: list[tuple[Any, Any]] | None = None
+        self.replayed_decisions = 0
 
         self.solution: PartialSolution[Any, Any] = PartialSolution(
             range_type=range_type
@@ -865,9 +870,51 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
+    def _replay_version(self, package: Any) -> Any | None:
+        """The version a backtrack undid for ``package``, when it still stands.
+
+        A backjump undoes a run of decisions that the solver then makes
+        again, and it makes them again the same way: the prefix it replays
+        derives the same ranges, and a learned clause can only narrow one
+        further.  So while the queue picks the same package next and that
+        package's undone version is still in its range, choosing the version
+        would only find it again.  The first package the queue picks out of
+        order, or whose undone version a learned clause excluded, ends the
+        replay: from there the search has genuinely moved.
+
+        Propagation is not skipped, so a replayed decision meets every
+        clause the way a chosen one does; only the choice is spared.
+        """
+        source = self.solution.undone_decisions
+        if source is not self._replay_source:
+            self._replay_source = source
+            self._replay = deque(source)
+        replay = self._replay
+        if not replay:
+            return None
+        saved_package, version = replay[0]
+        if saved_package != package:
+            replay.clear()
+            return None
+        replay.popleft()
+        current_range = self.solution.get(package)
+        if current_range is None:
+            replay.clear()
+            return None
+        constraint = self.constraints.get(package)
+        if constraint is not None:
+            current_range = current_range & constraint
+        if version not in current_range:
+            replay.clear()
+            return None
+        self.replayed_decisions += 1
+        return version
+
     def _decide_next(self, next_package: Any) -> Any:
         """Run the decision phase for ``next_package``. Return next changed package."""
-        chosen_version = decide.choose_version(self, next_package)
+        chosen_version = self._replay_version(next_package)
+        if chosen_version is None:
+            chosen_version = decide.choose_version(self, next_package)
         had_pending = decide.absorb_pending_clauses(self)
 
         # Provider-driven force back-track. When the provider returns
@@ -1017,6 +1064,9 @@ class Resolver(Generic[PackageType, VersionType]):
         """Reset solver state for a new resolution."""
         self.incompatibilities.clear()
         self._dependency_clauses_recorded.clear()
+        self._replay.clear()
+        self._replay_source = None
+        self.replayed_decisions = 0
         self.package_to_incompatibilities.clear()
         self.dependency_parent_incompatibilities.clear()
         self.dependency_parent_fallbacks.clear()

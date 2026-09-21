@@ -280,7 +280,7 @@ diff --git a/src/kpip/_vendor/nab_resolver/partial_solution.py b/src/kpip/_vendo
 index e5af1f7..b5efee9 100644
 --- a/src/kpip/_vendor/nab_resolver/partial_solution.py
 +++ b/src/kpip/_vendor/nab_resolver/partial_solution.py
-@@ -204,6 +204,7 @@ class Assignment(Generic[PackageType, VersionType]):
+@@ -204,6 +204,7 @@
      """A single entry in the partial solution trail."""
  
      __slots__ = (
@@ -288,17 +288,17 @@ index e5af1f7..b5efee9 100644
          "accumulated_range",
          "cause",
          "cum_negative",
-@@ -248,6 +249,9 @@ class Assignment(Generic[PackageType, VersionType]):
+@@ -247,6 +248,9 @@
+ 
      cum_negative: RangeProtocol[VersionType] | None
      """Latest negative accumulated range for the package as of this entry."""
- 
++
 +    _effective: RangeProtocol[VersionType] | None
 +    """Lazily cached ``cum_positive - cum_negative`` for conflict probes."""
-+
+ 
      def __init__(  # noqa: PLR0913, PLR0917 - one parameter per field
          self,
-         package: PackageType,
-@@ -273,6 +277,7 @@ class Assignment(Generic[PackageType, VersionType]):
+@@ -273,6 +277,7 @@
          self.positive = positive
          self.cum_positive = cum_positive
          self.cum_negative = cum_negative
@@ -306,7 +306,17 @@ index e5af1f7..b5efee9 100644
  
      @override
      def __eq__(self, other: object) -> bool:
-@@ -418,10 +423,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -316,6 +321,9 @@
+         self._contradiction_epoch = contradiction_epoch
+         self._range_type = range_type
+         self._assignments: list[Assignment[PackageType, VersionType]] = []
++        # The decisions the last backtrack undid, oldest first; the resolver
++        # replays them.
++        self.undone_decisions: list[tuple[PackageType, VersionType]] = []
+         self._decision_level = 0
+         self._positive_ranges: dict[PackageType, RangeProtocol[VersionType]] = {}
+         self._negative_ranges: dict[PackageType, RangeProtocol[VersionType]] = {}
+@@ -418,10 +426,12 @@
  
          Computes ``positive - negative``, cached per package.
          """
@@ -322,7 +332,30 @@ index e5af1f7..b5efee9 100644
  
          positive = self._positive_ranges.get(package)
          negative = self._negative_ranges.get(package)
-@@ -629,6 +636,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -552,6 +562,8 @@
+         _detach_snapshots(self._decision_snapshots)
+ 
+         self._decision_level = target_level
++        undone: list[tuple[PackageType, VersionType]] = []
++        self.undone_decisions = undone
+         if (
+             not self._assignments
+             or self._assignments[-1].decision_level <= target_level
+@@ -562,8 +574,12 @@
+         changed_packages: dict[PackageType, None] = {}
+         assignments = self._assignments
+         while assignments and assignments[-1].decision_level > target_level:
+-            changed_packages[assignments.pop().package] = None
++            assignment = assignments.pop()
++            changed_packages[assignment.package] = None
++            if assignment.is_decision:
++                undone.append((assignment.package, assignment.version))  # type: ignore[arg-type]
+ 
++        undone.reverse()
+         # Untouched packages keep their cached state.
+         self._changed.update(changed_packages)
+         for package in changed_packages:
+@@ -629,6 +645,10 @@
          """
          return _take_snapshot(self._decided_versions, self._decision_snapshots)
  
@@ -333,7 +366,7 @@ index e5af1f7..b5efee9 100644
      def _freeze_decisions(self, package: PackageType) -> None:
          """Preserve the package's decided version in outstanding snapshots."""
          for holder in self._decision_snapshots:
-@@ -694,15 +705,18 @@ class PartialSolution(Generic[PackageType, VersionType]):
+@@ -694,15 +714,18 @@
          if is_positive and cum_positive is None:
              return False
  
@@ -1323,6 +1356,15 @@ diff --git a/src/kpip/_vendor/nab_resolver/resolver.py b/src/kpip/_vendor/nab_re
 index 5cb1fd8..ebcbd77 100644
 --- a/src/kpip/_vendor/nab_resolver/resolver.py
 +++ b/src/kpip/_vendor/nab_resolver/resolver.py
+@@ -20,7 +20,7 @@
+ 
+ from __future__ import annotations
+ 
+-from collections import defaultdict
++from collections import defaultdict, deque
+ from collections.abc import Callable, Mapping, Sequence
+ from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
+ 
 @@ -233,6 +233,14 @@
          """
          ...
@@ -1386,16 +1428,18 @@ index 5cb1fd8..ebcbd77 100644
  
          self.observer: ResolverObserver[PackageType, VersionType] = (
              observer or ResolverObserver()
-@@ -645,6 +655,16 @@
+@@ -643,8 +653,18 @@
+ 
+         self.incompatibilities: list[Incompatibility[Any, Any]] = []
          self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(
-             list
-         )
++            list
++        )
 +        self.dependency_parent_incompatibilities: defaultdict[Any, list[int]] = (
 +            defaultdict(list)
 +        )
 +        self.dependency_parent_fallbacks: defaultdict[Any, list[int]] = defaultdict(
-+            list
-+        )
+             list
+         )
 +        self.dependency_parent_fallback_indices: set[int] = set()
 +        self.dependency_parent_versions: defaultdict[
 +            Any, defaultdict[Any, list[int]]
@@ -1403,13 +1447,18 @@ index 5cb1fd8..ebcbd77 100644
  
          # Per clause, the contradiction epoch in which one of its terms was
          # last seen contradicted; unit propagation skips a clause whose stamp
-@@ -654,16 +674,26 @@
+@@ -654,16 +674,31 @@
          # Keyed by (package, dep_package, dep_constraint, dep_positive); used
          # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
          self.dependency_index: dict[Any, int] = {}
 +        # (package, version) -> the dependency mapping whose clauses were
 +        # added for that decision; see _decide_next.
 +        self._dependency_clauses_recorded: dict[tuple[Any, Any], Any] = {}
++        # The decisions the last backtrack undid, consumed front to back as
++        # the resolver re-decides; see _replay_version.
++        self._replay: deque[tuple[Any, Any]] = deque()
++        self._replay_source: list[tuple[Any, Any]] | None = None
++        self.replayed_decisions = 0
  
          self.solution: PartialSolution[Any, Any] = PartialSolution(
              range_type=range_type
@@ -1431,7 +1480,7 @@ index 5cb1fd8..ebcbd77 100644
          # Memoises the tiebreak tuple in choose_package_to_decide.
          self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
  
-@@ -673,9 +703,11 @@
+@@ -673,9 +708,11 @@
          self.decision_queue: DecisionQueue[PackageType] = DecisionQueue()
          self.priority_epoch = 0
  
@@ -1446,7 +1495,7 @@ index 5cb1fd8..ebcbd77 100644
  
          # relation_cache_on goes off while the memo's hit rate does not pay for
          # the key it builds. A window of probes decides that: relation_gate_hits
-@@ -698,6 +730,23 @@
+@@ -698,6 +735,23 @@
          self.range_token_by_id: dict[int, int] = {}
          self.interned_ranges: list[RangeProtocol[Any]] = []
  
@@ -1470,7 +1519,58 @@ index 5cb1fd8..ebcbd77 100644
      def as_term_range(self, range_: RangeProtocol[Any]) -> RangeProtocol[VersionType]:
          """Return the term constraint to record for a supplied range.
  
-@@ -824,10 +873,10 @@
+@@ -816,18 +870,60 @@
+             changed_package = ROOT
+         return changed_package, restart_threshold, restarts_remaining
+ 
++    def _replay_version(self, package: Any) -> Any | None:
++        """The version a backtrack undid for ``package``, when it still stands.
++
++        A backjump undoes a run of decisions that the solver then makes
++        again, and it makes them again the same way: the prefix it replays
++        derives the same ranges, and a learned clause can only narrow one
++        further.  So while the queue picks the same package next and that
++        package's undone version is still in its range, choosing the version
++        would only find it again.  The first package the queue picks out of
++        order, or whose undone version a learned clause excluded, ends the
++        replay: from there the search has genuinely moved.
++
++        Propagation is not skipped, so a replayed decision meets every
++        clause the way a chosen one does; only the choice is spared.
++        """
++        source = self.solution.undone_decisions
++        if source is not self._replay_source:
++            self._replay_source = source
++            self._replay = deque(source)
++        replay = self._replay
++        if not replay:
++            return None
++        saved_package, version = replay[0]
++        if saved_package != package:
++            replay.clear()
++            return None
++        replay.popleft()
++        current_range = self.solution.get(package)
++        if current_range is None:
++            replay.clear()
++            return None
++        constraint = self.constraints.get(package)
++        if constraint is not None:
++            current_range = current_range & constraint
++        if version not in current_range:
++            replay.clear()
++            return None
++        self.replayed_decisions += 1
++        return version
++
+     def _decide_next(self, next_package: Any) -> Any:
+         """Run the decision phase for ``next_package``. Return next changed package."""
+-        chosen_version = decide.choose_version(self, next_package)
++        chosen_version = self._replay_version(next_package)
++        if chosen_version is None:
++            chosen_version = decide.choose_version(self, next_package)
+         had_pending = decide.absorb_pending_clauses(self)
+ 
          # Provider-driven force back-track. When the provider returns
          # a tentative candidate and queues blockers, jump to the
          # blockers before the candidate is decided.
@@ -1483,11 +1583,13 @@ index 5cb1fd8..ebcbd77 100644
              if triggering is not None:
                  return triggering
  
-@@ -842,43 +891,111 @@
+@@ -842,43 +938,111 @@
          )
  
          dependencies = self.provider.get_dependencies(next_package, chosen_version)
 -        if not dependencies:
+-            return next_package
+-        widened = self.provider.widen_decision(next_package, chosen_version)
 +        # A backjump undoes decisions that are then made again, almost always
 +        # with the same version (on a 700-package graph, 52,000 of 53,000
 +        # decisions replayed an earlier one).  The dependency clauses those
@@ -1507,8 +1609,7 @@ index 5cb1fd8..ebcbd77 100644
 +            invalidated = self._backtrack_dependency_invalidations()
 +            if invalidated is not None:
 +                return invalidated
-             return next_package
--        widened = self.provider.widen_decision(next_package, chosen_version)
++            return next_package
 +        if recorded is not None:
 +            recorded[(next_package, chosen_version)] = dependencies
 +        widened = (
@@ -1621,11 +1722,14 @@ index 5cb1fd8..ebcbd77 100644
      def _build_result(self) -> Solution[PackageType, VersionType]:
          """Build the final result, including only reachable packages.
  
-@@ -899,11 +1016,17 @@
+@@ -899,11 +1063,20 @@
      ) -> None:
          """Reset solver state for a new resolution."""
          self.incompatibilities.clear()
 +        self._dependency_clauses_recorded.clear()
++        self._replay.clear()
++        self._replay_source = None
++        self.replayed_decisions = 0
          self.package_to_incompatibilities.clear()
 +        self.dependency_parent_incompatibilities.clear()
 +        self.dependency_parent_fallbacks.clear()
@@ -1639,7 +1743,7 @@ index 5cb1fd8..ebcbd77 100644
  
          self.constraints = constraints or {}
          self.root_package_order.clear()
-@@ -922,7 +1045,7 @@
+@@ -922,7 +1095,7 @@
          self.term_range_keepalive.clear()
  
          # Re-asked here, so a hook installed since the last resolve is honoured.
