@@ -162,6 +162,14 @@ def absorb_redundant_requirement(
     if positive is None:
         return
 
+    # Only a range type that folds state into ``&`` beyond the version set can
+    # refine a range it already contains; for the plain ``Range`` the
+    # intersection of a subset is the subset, so there is nothing to derive
+    # and no intersection to pay for.  Such a type opts in with a truthy
+    # ``refines_on_intersection`` class attribute.
+    if not getattr(type(positive), "refines_on_intersection", False):
+        return
+
     # Intersect first: an unchanged range short-circuits before the costlier
     # subset test, which then separates a refinement from a narrowing.
     folded = positive & requirement

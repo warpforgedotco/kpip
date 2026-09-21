@@ -941,6 +941,13 @@ class CandidateMaterializer:
             for key, url in pending:
                 self.metadata_prefetcher.submit(key, url)
 
+    def prefetched_metadata_future(self, url: str) -> Any:
+        """The in-flight fetch for ``url``, left in place for its consumer."""
+        with self.metadata_prefetch_lock:
+            prefetcher = self.metadata_prefetcher
+
+        return None if prefetcher is None else prefetcher.peek(url)
+
     def take_prefetched_metadata(self, url: str) -> Any:
         with self.metadata_prefetch_lock:
             prefetcher = self.metadata_prefetcher

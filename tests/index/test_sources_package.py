@@ -1424,3 +1424,95 @@ def test_find_links_scan_defers_the_stat_to_the_first_fingerprint(
     assert stats == 1
     assert candidate_metadata_fingerprint(record) == fingerprint
     assert stats == 1
+
+
+def test_catalog_prefetch_chains_to_the_dependencies_of_the_top_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once a prefetched candidate's metadata arrives, the pages its
+    dependencies will need start without the resolver asking."""
+    import time
+
+    class Response:
+        status = 200
+        reason = "OK"
+        headers: dict[str, str] = {}
+        data = (
+            b"Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n"
+            b"Requires-Dist: child-a\nRequires-Dist: child-b; python_version < '2'\n"
+            b"Requires-Dist: child-c; extra == 'x'\n\n"
+        )
+
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+    calls: list[str] = []
+
+    class Session:
+        def get(self, url: str) -> object:
+            calls.append(url)
+            return Response(url)
+
+    link = Link.from_url(
+        "https://packages.invalid/demo-1.0-py3-none-any.whl",
+        source_url=None,
+        metadata_file=MetadataFile(None),
+    )
+    record = CandidateRecord("demo", Version("1.0"), link)
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=Session(),
+    )
+    loaded: list[str] = []
+    monkeypatch.setattr(
+        provider,
+        "load_available_versions",
+        lambda requirement, cache_key: loaded.append(requirement.name) or (),
+    )
+    monkeypatch.setattr(
+        provider,
+        "evaluate_links",
+        lambda requirement: CandidateSelection((record,), ()),
+    )
+
+    try:
+        provider.prefetch_available_versions(
+            (parse_requirement("demo==1.0"), parse_requirement("other")),
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "child-a" not in loaded:
+            time.sleep(0.01)
+    finally:
+        provider.close()
+
+    # child-b is excluded by its marker and child-c by an unrequested extra.
+    assert "child-a" in loaded
+    assert "child-b" not in loaded
+    assert "child-c" not in loaded
+
+
+def test_lookahead_after_close_does_not_revive_the_catalog_prefetcher() -> None:
+    """A metadata worker's callback can outlive ``close``; catalog work it
+    would start then must be dropped, not run on a prefetcher nobody closes."""
+
+    class Session:
+        @staticmethod
+        def has_fresh_cached_response(url: str) -> bool:
+            del url
+            return False
+
+        def get(self, url: str) -> object:
+            raise AssertionError(f"fetched {url} after close")
+
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=Session(),
+    )
+    provider.close()
+
+    provider.prefetch_available_versions((parse_requirement("late"),), lookahead=True)
+    provider.prefetch_available_versions(
+        (parse_requirement("later"), parse_requirement("latest")),
+    )
+
+    assert provider.prefetcher is None

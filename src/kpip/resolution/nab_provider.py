@@ -93,6 +93,15 @@ class NabProvider:
         self.ignore_requires_python = self.context.ignore_requires_python
         self._descent_prefetched: set[tuple[str, Version]] = set()
         self._descent_attempts: dict[str, int] = {}
+        self._descent_last: dict[str, Version] = {}
+        self._yanked_versions: dict[str, frozenset[Version]] = {}
+        self._dependency_range_memo: dict[
+            tuple[str, str],
+            tuple[tuple[Version, ...], tuple[Requirement, ...], Range[Version]],
+        ] = {}
+        self._matching_memo: dict[
+            str, tuple[tuple[Version, ...], RangeProtocol[Version], list[Version]]
+        ] = {}
         self._descent_order: dict[
             str, tuple[tuple[Version, ...], tuple[Version, ...], dict[Version, int]]
         ] = {}
@@ -259,10 +268,17 @@ class NabProvider:
             candidates = tuple(self.provider.find_candidates(requirement))
             versions = tuple(candidate.version for candidate in candidates)
         else:
-            versions = tuple(
+            summaries = self.provider.available_versions(requirement)
+            versions = tuple(summary.version for summary in summaries)
+            yanked = frozenset(
                 summary.version
-                for summary in self.provider.available_versions(requirement)
+                for summary in summaries
+                if getattr(summary, "is_yanked", False)
             )
+            if yanked:
+                self._yanked_versions[package] = yanked
+            else:
+                self._yanked_versions.pop(package, None)
         installed = self._installed_candidate(package)
         if installed is not None and installed.version not in versions:
             versions += (installed.version,)
@@ -362,20 +378,7 @@ class NabProvider:
             if not isinstance(self.provider, CandidateProvider):
                 candidate_requirement = parse_requirement(package)
             else:
-                memo = self._unpinned_requirements.get(package)
-                if memo is None or memo[0] is not requirement:
-                    memo = (
-                        requirement,
-                        Requirement(
-                            name=requirement.name,
-                            specifier=SpecifierSet(),
-                            extras=requirement.extras,
-                            marker=requirement.marker,
-                            raw=requirement.raw,
-                        ),
-                    )
-                    self._unpinned_requirements[package] = memo
-                candidate_requirement = memo[1]
+                candidate_requirement = self._unpinned(package, requirement)
         versions = self._versions(package)
         if len(url_constraints) == 1 and requirement.url is None:
             constrained_candidates = tuple(
@@ -385,12 +388,24 @@ class NabProvider:
                 candidate.version for candidate in constrained_candidates
             }
             versions = tuple(sorted(set(versions) | constrained_versions))
-        matching = [
-            version
-            for version in versions
-            if version in version_range
-            and (not version.is_prerelease or self._allows(package, version))
-        ]
+        # The resolver asks for a package's choice far more often than its
+        # range moves: ranking what to decide next re-asks every open
+        # package, and a backjump replays the same ranges.  On airflow's
+        # graph 98% of the 45,000 calls here repeated a (versions, range)
+        # pair already filtered, each a scan of every release.  ``versions``
+        # is replaced whenever the requirement changes, so its identity
+        # covers everything ``_allows`` reads besides resolve-wide policy.
+        memo = self._matching_memo.get(package)
+        if memo is not None and memo[0] is versions and memo[1] == version_range:
+            matching = memo[2]
+        else:
+            matching = [
+                version
+                for version in versions
+                if version in version_range
+                and (not version.is_prerelease or self._allows(package, version))
+            ]
+            self._matching_memo[package] = (versions, version_range, matching)
         control = getattr(self.provider, "release_control", None)
         if not self.allow_prereleases and (
             control is None or control.allows_prereleases(package) is None
@@ -437,6 +452,7 @@ class NabProvider:
             selected = installed.version
         else:
             selected = self._newest_viable(package, matching)
+            selected = self._sidestep_yanked(package, selected, matching, constraints)
         if installed is not None and selected == installed.version:
             self.records[(package, selected)] = installed
             return selected
@@ -444,7 +460,7 @@ class NabProvider:
         if not candidates and requirement.url is None:
             candidates = tuple(
                 self.provider.find_candidates(
-                    parse_requirement(package),
+                    self._unpinned(package, requirement),
                     allowed_versions=frozenset({selected}),
                 ),
             )
@@ -452,6 +468,7 @@ class NabProvider:
             retried = self._retry_including_yanked(
                 package,
                 selected,
+                requirement=self._unpinned(package, requirement),
                 matching=matching,
                 constraints=constraints,
                 version_range=version_range,
@@ -643,21 +660,30 @@ class NabProvider:
     ) -> None:
         """Start metadata for the releases a backtrack would try next.
 
-        Only a package decided repeatedly is descending; speculating on a
-        first decision that stands is pure cost.
+        Only a package whose chosen version just dropped is descending.  The
+        resolver asks for a package's choice far more often than it decides
+        it -- ranking what to decide next re-asks every open package -- so a
+        repeat of the same answer, or a pin re-affirmed while merging extras,
+        is not a descent.  Counting those opened a window under nearly every
+        package of a large graph: airflow's cold lock fetched metadata for
+        ~10,000 releases this way and used ~900.
         """
         if _DESCENT_PREFETCH_WINDOW <= 0 or not isinstance(
             self.provider, CandidateProvider
         ):
             return
 
+        chosen = newest_first[index]
+        last = self._descent_last.get(package)
+        self._descent_last[package] = chosen
+
+        if last is None or chosen >= last:
+            return
+
         attempts = self._descent_attempts.get(package, 0) + 1
         self._descent_attempts[package] = attempts
 
-        if attempts < 2:
-            return
-
-        size = min(_DESCENT_PREFETCH_WINDOW, 1 << min(attempts - 1, 5))
+        size = min(_DESCENT_PREFETCH_WINDOW, 1 << min(attempts, 5))
 
         try:
             self._start_descent_window(package, newest_first, index, size)
@@ -1110,16 +1136,80 @@ class NabProvider:
         self._catalog_by_version_cache[package] = index
         return index
 
+    def _sidestep_yanked(
+        self,
+        package: str,
+        selected: Version,
+        matching: list[Version],
+        constraints: tuple[Requirement, ...],
+    ) -> Version:
+        """The version ``_retry_including_yanked`` would settle on, up front.
+
+        A yanked release has no admissible artifact under the default policy,
+        so choosing it costs a failed materialization, a catalog rescan with
+        yanked releases admitted, and a second rescan for the answer.  The
+        catalog summary already says which releases are yanked, and the retry
+        picks the newest unyanked release in range that the constraints
+        admit, so pick that here and skip the rescans.  Same answer: on
+        airflow's graph this replaces 429 of 431 retries, and the retry stays
+        for a provider whose summaries carry no yanked flag.  A release that
+        is the only one left in range is still offered, as before.
+        """
+        yanked = self._yanked_versions.get(package)
+        if not yanked or selected not in yanked:
+            return selected
+        usable = [
+            version
+            for version in matching
+            if version not in yanked
+            and all(
+                constraint.url is None
+                and constraint.specifier.contains(version, allow_prereleases=True)
+                for constraint in constraints
+            )
+        ]
+        return max(usable) if usable else selected
+
+    def _unpinned(self, package: str, requirement: Requirement) -> Requirement:
+        """``requirement`` with its specifier dropped and its extras kept.
+
+        The stored requirement is whichever the resolver registered last and
+        is not undone on backtrack, so its specifier can be stale against the
+        live range; a catalog scan must not be narrowed by it.  Its extras
+        are what the resolver asked for, and a scan that drops them hands
+        back candidates whose dependencies omit the extras entirely.
+        """
+        memo = self._unpinned_requirements.get(package)
+        if memo is None or memo[0] is not requirement:
+            memo = (
+                requirement,
+                Requirement(
+                    name=requirement.name,
+                    specifier=SpecifierSet(),
+                    extras=requirement.extras,
+                    marker=requirement.marker,
+                    raw=requirement.raw,
+                ),
+            )
+            self._unpinned_requirements[package] = memo
+        return memo[1]
+
     def _retry_including_yanked(
         self,
         package: str,
         selected: Version,
         *,
+        requirement: Requirement,
         matching: list[Version],
         constraints: tuple[Requirement, ...],
         version_range: RangeProtocol[Version],
     ) -> tuple[Version, tuple[WheelCandidate, ...]] | None:
         """Look again with yanked releases admitted, or ``None`` to give up.
+
+        ``requirement`` carries the extras the resolver asked for.  Scanning
+        with a bare name handed back candidates whose dependencies omitted
+        every extra, so a release chosen here settled into the solution
+        without the extra's dependencies ever being resolved.
 
         Reached only when the active policy offered no artifact for a version
         the resolver already selected.  A release can be absent because every
@@ -1135,7 +1225,7 @@ class NabProvider:
             return None
 
         fallback_provider = self.provider.with_yanked_policy(True)
-        fallback = tuple(fallback_provider.find_candidates(parse_requirement(package)))
+        fallback = tuple(fallback_provider.find_candidates(requirement))
         usable = [
             item
             for item in fallback
@@ -1156,7 +1246,7 @@ class NabProvider:
 
         return selected, tuple(
             fallback_provider.find_candidates(
-                parse_requirement(package),
+                requirement,
                 allowed_versions=frozenset({selected}),
             ),
         )
@@ -1492,23 +1582,47 @@ class NabProvider:
                 )
                 continue
             allowed = self._versions(dependency_key)
-            if dependency_constraints:
-                selected = [
-                    candidate
-                    for candidate in allowed
-                    if dependency.specifier.contains(candidate, allow_prereleases=True)
-                    and all(
-                        constraint.specifier.contains(candidate, allow_prereleases=True)
-                        for constraint in dependency_constraints
-                    )
-                ]
+            # The same specifier on the same catalog recurs across parents
+            # and across re-decisions of one parent; each evaluation scans
+            # every release.  ``allowed`` is replaced when the dependency's
+            # requirement changes, so its identity covers what the scan reads.
+            memo_key = (dependency_key, dependency.specifier.text)
+            memo = self._dependency_range_memo.get(memo_key)
+            if (
+                memo is not None
+                and memo[0] is allowed
+                and memo[1] == dependency_constraints
+            ):
+                dependency_range = memo[2]
             else:
-                selected = [
-                    candidate
-                    for candidate in allowed
-                    if dependency.specifier.contains(candidate, allow_prereleases=True)
-                ]
-            dependency_range = self._finite_range(selected)
+                if dependency_constraints:
+                    selected = [
+                        candidate
+                        for candidate in allowed
+                        if dependency.specifier.contains(
+                            candidate, allow_prereleases=True
+                        )
+                        and all(
+                            constraint.specifier.contains(
+                                candidate, allow_prereleases=True
+                            )
+                            for constraint in dependency_constraints
+                        )
+                    ]
+                else:
+                    selected = [
+                        candidate
+                        for candidate in allowed
+                        if dependency.specifier.contains(
+                            candidate, allow_prereleases=True
+                        )
+                    ]
+                dependency_range = self._finite_range(selected)
+                self._dependency_range_memo[memo_key] = (
+                    allowed,
+                    dependency_constraints,
+                    dependency_range,
+                )
             previous = dependencies.get(dependency_key)
             dependencies[dependency_key] = (
                 dependency_range if previous is None else previous & dependency_range

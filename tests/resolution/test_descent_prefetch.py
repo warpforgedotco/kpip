@@ -55,6 +55,8 @@ def _adapter(monkeypatch: pytest.MonkeyPatch) -> tuple[NabProvider, list[Any]]:
 
 VERSIONS = [Version(f"1.{index}.0") for index in range(1, 65)]
 
+SEEN_WIDENING = [0, 2, 5, 10, 19, 36, 37]
+
 
 def test_a_package_decided_once_prefetches_nothing(
     monkeypatch: pytest.MonkeyPatch,
@@ -69,18 +71,35 @@ def test_a_package_decided_once_prefetches_nothing(
 def test_the_window_opens_and_widens_as_a_descent_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Repeated decisions are a descent: look ahead, but widen into it."""
+    """Each lower decision is a step of a descent: look ahead, and widen."""
     adapter, submitted = _adapter(monkeypatch)
 
     seen: list[int] = []
-    for _ in range(7):
-        adapter._newest_viable("demo", list(VERSIONS))
+    for step in range(7):
+        adapter._newest_viable("demo", list(VERSIONS[: len(VERSIONS) - step]))
         seen.append(len(submitted))
 
-    # Cumulative: every window starts below the same version, so a later one
-    # re-covers the earlier and adds only what is new.
-    assert seen == [0, 2, 4, 8, 16, 32, 32]
+    # Cumulative: each window starts one release lower than the last and is
+    # twice as wide, so it re-covers most of the earlier one and adds the
+    # rest, until the width caps at 32.
+    assert seen == SEEN_WIDENING
     assert nab_provider._DESCENT_PREFETCH_WINDOW == 32
+
+
+def test_re_asking_the_same_decision_is_not_a_descent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resolver re-asks open packages when ranking what to decide next,
+    and re-affirms pins while merging extras. Neither is backtracking."""
+    adapter, submitted = _adapter(monkeypatch)
+
+    for _ in range(7):
+        adapter._newest_viable("demo", list(VERSIONS))
+    monkeypatch.setattr(adapter, "_versions", lambda package: tuple(VERSIONS))
+    for _ in range(7):
+        adapter._newest_viable("demo", [VERSIONS[-1]])
+
+    assert submitted == []
 
 
 def test_no_release_is_fetched_twice(monkeypatch: pytest.MonkeyPatch) -> None:
