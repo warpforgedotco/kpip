@@ -1,10 +1,11 @@
 """Per-file fallbacks when copy-on-write cloning is unavailable.
 
 Linux has no directory-level clone: ``clone_path`` walks the tree and, for
-every regular file, tries ``FICLONE``, then a hard link, then a copy.  ext4
-rejects ``FICLONE``, so on the most common Linux filesystem the first two
-attempts decide what a warm install costs.  These tests force each path with
-the platform calls stubbed, so they run everywhere.
+every regular file, tries ``FICLONE``, then a hard link if
+``KPIP_LINK_MODE=hardlink`` opted in, then a copy.  ext4 rejects
+``FICLONE``, so on the most common Linux filesystem those fallbacks decide
+what a warm install costs.  These tests force each path with the platform
+calls stubbed, so they run everywhere.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ def fresh_link_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(clone, "_reflink_fast", set())
     monkeypatch.setattr(clone, "_reflink_probe", {})
     monkeypatch.setattr(clone, "_darwin_clone", lambda source, destination: False)
+    monkeypatch.setattr(clone, "_link_mode", None)
+    monkeypatch.setenv("KPIP_LINK_MODE", "hardlink")
 
 
 @pytest.fixture
@@ -68,6 +71,25 @@ def test_files_are_hard_linked_when_cloning_is_unavailable(
         assert (destination / "pkg" / "tool").stat().st_mode & 0o777 == 0o755
         assert os.readlink(destination / "pkg" / "sub" / "alias") == "mod.py"
     assert not clone._hardlink_unsupported
+
+
+def test_the_default_link_mode_copies_so_installed_files_stay_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_reflink: None
+) -> None:
+    monkeypatch.delenv("KPIP_LINK_MODE")
+    monkeypatch.setattr(
+        clone.os, "link", lambda source, destination: pytest.fail("linked")
+    )
+    source = make_tree(tmp_path)
+    destination = tmp_path / "target"
+
+    clone.clone_path(str(source), str(destination))
+
+    for relative in FILES:
+        assert not same_inode(source, destination, relative)
+        assert (destination / relative).read_bytes() == (source / relative).read_bytes()
+    (destination / FILES[0]).write_bytes(b"edited\n")
+    assert (source / FILES[0]).read_bytes() == b"top\n"
 
 
 def test_a_filesystem_without_hard_links_is_judged_once(

@@ -5,10 +5,10 @@ filesystem utility stack.  Platform-specific fallback modules are loaded only
 when the native clone operation is unavailable.
 
 Per regular file, the order is a reflink (Linux ``FICLONE``), then a hard
-link, then a plain copy.  A hard link shares its inode with the cache tree it
-came from, so anything that later rewrites an installed file must break the
-link first: :func:`replace_contents` does that for the installer's own
-rewrites.
+link when ``KPIP_LINK_MODE=hardlink`` opts into one, then a plain copy.  A
+hard link shares its inode with the cache tree it came from, so anything that
+later rewrites an installed file must break the link first:
+:func:`replace_contents` does that for the installer's own rewrites.
 """
 
 from __future__ import annotations
@@ -103,6 +103,30 @@ sequence once per directory in the tree.  :func:`clone_path` now resolves the
 device pair once per call and threads it through the walk, so the per-file
 check is a set lookup.
 """
+
+_link_mode: str | None = None
+
+"""``KPIP_LINK_MODE`` as read on first use; ``None`` until then."""
+
+
+def _hardlinks_enabled() -> bool:
+    """Whether ``KPIP_LINK_MODE=hardlink`` opted into sharing cache inodes.
+
+    A hard link is the cheapest way to put a cached file into a target on a
+    filesystem without copy-on-write, and it is what uv does on Linux.  It
+    also means an installed file *is* the cache's file: anything that later
+    rewrites it in place, without unlinking first, rewrites the cache too.
+    kpip's default keeps every installed file independent of the cache tree
+    (``tests/install/test_transaction.py`` pins that), so the link is opt-in.
+    """
+
+    global _link_mode
+
+    if _link_mode is None:
+        _link_mode = os.environ.get("KPIP_LINK_MODE", "clone").strip().lower()
+
+    return _link_mode == "hardlink"
+
 
 _hardlink_unsupported: set[Devices] = set()
 
@@ -285,9 +309,9 @@ def _hardlink(
 ) -> bool:
     """Hard link one regular file into place when the filesystems allow it.
 
-    One syscall and no data movement, which is what makes a warm install on
-    ext4 cheaper than extracting the wheel again.  The link shares mode and
-    timestamps with ``source``, so there is no ``copystat`` to pay.
+    One syscall and no data movement.  The link shares mode and timestamps
+    with ``source``, so there is no ``copystat`` to pay.  Only reached when
+    :func:`_hardlinks_enabled` says the user accepted the shared inode.
     """
 
     pair = (source_device, destination_device)
@@ -327,8 +351,8 @@ def clone_path(source: str, destination: str) -> None:
     an existing directory, directory contents are merged while duplicate files
     are rejected.
 
-    Regular files that cannot be cloned are hard linked, sharing their inode
-    with ``source``, and copied only when that fails too.
+    Regular files that cannot be cloned are copied, or hard linked first when
+    ``KPIP_LINK_MODE=hardlink`` accepts sharing their inode with ``source``.
     """
 
     _clone(os.fspath(source), os.fspath(destination), None)
@@ -462,7 +486,9 @@ def _clone_absent(
     if _linux_reflink(source, destination, source_device, destination_device):
         return
 
-    if _hardlink(source, destination, source_device, destination_device):
+    if _hardlinks_enabled() and _hardlink(
+        source, destination, source_device, destination_device
+    ):
         return
 
     import shutil
