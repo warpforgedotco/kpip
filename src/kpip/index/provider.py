@@ -61,6 +61,7 @@ from kpip.index.source_models import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from concurrent.futures import Future
     from typing import Any
 
     from kpip.core.format_control import FormatControl
@@ -2720,7 +2721,9 @@ class CandidateProvider:
 
         selection = self.evaluate_links(requirement)
 
-        self.get_materializer_internal().prefetch_metadata(
+        materializer = self.get_materializer_internal()
+
+        materializer.prefetch_metadata(
             selection.accepted[:_CATALOG_METADATA_PREFETCH],
             requirement=requirement,
         )
@@ -2729,16 +2732,90 @@ class CandidateProvider:
 
         self.prefetch_policy.observe(cache_key, elapsed, len(result))
 
+        if selection.accepted:
+            self._chain_dependency_catalogs(
+                requirement,
+                selection.accepted[0],
+                materializer,
+            )
+
         return result
+
+    def _chain_dependency_catalogs(
+        self,
+        requirement: Requirement,
+        record: CandidateRecord,
+        materializer: CandidateMaterializer,
+    ) -> None:
+        """Start the catalog pages a candidate's dependencies will need.
+
+        The resolver asks for a dependency's catalog only after it has read
+        the parent's metadata, and it asks the moment it has: on a cold lock
+        of a large graph every one of those pages was requested a fraction
+        of a millisecond before the resolver blocked on it, one round trip
+        per level of the graph.  Chaining off the metadata fetch this worker
+        just started keeps the fetch frontier a level ahead of the resolver.
+
+        Attached as a completion callback so this worker returns its page
+        without waiting on the metadata; the callback runs on the metadata
+        worker that finishes the fetch.  Everything here is lookahead: a
+        failure changes nothing, and the resolver fetches on demand whatever
+        it did not warm.
+        """
+
+        metadata_link = record.link.metadata_link()
+
+        if metadata_link is None:
+            return
+
+        future = materializer.prefetched_metadata_future(metadata_link.url)
+
+        if future is None:
+            return
+
+        extras = frozenset(requirement.extras)
+
+        def ready(done: Future[Any]) -> None:
+            try:
+                from kpip.core.http import raise_for_status, response_text
+                from kpip.core.wheel_metadata import parse_metadata_headers
+
+                response = done.result()
+
+                raise_for_status(response)
+
+                metadata = materializer.metadata_from_headers(
+                    parse_metadata_headers(response_text(response)),
+                    extras,
+                )
+
+                if metadata is not None and metadata.dependencies:
+                    self.prefetch_available_versions(
+                        metadata.dependencies,
+                        lookahead=True,
+                    )
+
+            except Exception:  # noqa: BLE001 - lookahead must not raise
+                return
+
+        future.add_done_callback(ready)
 
     def prefetch_available_versions(
         self,
         requirements: tuple[Requirement, ...],
+        *,
+        lookahead: bool = False,
     ) -> None:
+        """Start catalog pages for ``requirements`` in the background.
+
+        A single requirement is not worth a worker when the resolver is
+        about to ask for it anyway; ``lookahead`` says it is not, because the
+        caller is a level ahead of the resolver.
+        """
         """Fetch independent project catalogs in bounded background workers."""
 
         if (
-            len(requirements) < 2
+            len(requirements) < (1 if lookahead else 2)
             or self.session is None
             or not self.prefetch_remote_sources
         ):

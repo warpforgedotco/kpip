@@ -64,6 +64,11 @@ class Prefetcher(Generic[T, V]):
         with self.lock:
             return self.futures.pop(key, None)
 
+    def peek(self, key: Hashable) -> Future[T] | None:
+        """The pending future for ``key`` without consuming it."""
+        with self.lock:
+            return self.futures.get(key)
+
     def pending(self, key: Hashable) -> bool:
         with self.lock:
             return key in self.futures
