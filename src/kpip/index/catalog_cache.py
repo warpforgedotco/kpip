@@ -6,7 +6,6 @@ from kpip.core.utils import versioned_bucket
 
 import hashlib
 import marshal
-import posixpath
 import urllib.parse
 
 from kpip.core.versions import InvalidVersion, Version, is_version_wire
@@ -689,10 +688,7 @@ def artifact_identity(
         return WHEEL_RECORD, parsed_wheel.name, str(parsed_wheel.version)
     if link.kind is not ArtifactKind.SDIST:
         return None
-    filename = posixpath.basename(
-        urllib.parse.unquote(link.parsed_url_internal.path).rstrip("/"),
-    )
-    parsed_identity = project_version_from_filename(filename)
+    parsed_identity = project_version_from_filename(str(link.filename))
     if parsed_identity is None:
         return None
     name, version = parsed_identity
@@ -703,10 +699,8 @@ def parsed_wheel_from_link(link: Link) -> WheelFile | None:
     """Parse a wheel link's filename exactly once at catalog build time."""
     if link.kind is not ArtifactKind.WHEEL:
         return None
-    filename = posixpath.basename(
-        urllib.parse.unquote(link.parsed_url_internal.path).rstrip("/"),
-    )
-    return parse_wheel_file(filename)
+    # The link already unquoted its path and caches the basename.
+    return parse_wheel_file(str(link.filename))
 
 
 def wheel_identity(parsed_wheel: WheelFile | None) -> tuple[object, ...] | None:

@@ -64,6 +64,27 @@ class InvalidEggFragment(DiagnosticKpipError):
         super().__init__(message=message, hint_stmt=hint_stmt)
 
 
+_PLAIN_URL = re.compile(r"(https?)://([A-Za-z0-9.\-_:]+)(/[^\s#?\\\[\]]*)?\Z")
+
+
+def _split_plain_url(url: str) -> urllib.parse.SplitResult | None:
+    """``urlsplit`` for the URLs an index page lists, without its generality.
+
+    Every artifact URL on PyPI is ``https://host/path`` with nothing else, and
+    a page lists thousands: ``urlsplit`` was the single largest cost of
+    building a link, at ten microseconds of scheme validation, netloc
+    checks and caching per call.  One regex match admits exactly the plain
+    shape; a query, a fragment, a backslash, whitespace, brackets or an
+    unusual scheme is left to ``urlsplit``, so the result is the one it
+    would have produced.
+    """
+    match = _PLAIN_URL.match(url)
+    if match is None:
+        return None
+    scheme, netloc, path = match.groups()
+    return urllib.parse.SplitResult(scheme, netloc, path or "", "", "")
+
+
 @functools.total_ordering
 class Link:
     __slots__ = [
@@ -196,7 +217,7 @@ class Link:
         fragment handling for both shapes; anything unusual falls back to
         :meth:`from_url`.
         """
-        parsed = urllib.parse.urlsplit(url)
+        parsed = _split_plain_url(url) or urllib.parse.urlsplit(url)
         hashes_from_link: dict[str, str] = {}
         fragment = parsed.fragment
         if fragment:

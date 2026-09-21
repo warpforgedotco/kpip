@@ -595,7 +595,10 @@ def _is_escaped_name(field: str) -> bool:
     return field.isalnum() or field.replace(".", "").replace("_", "").isalnum()
 
 
-@memoized(4096)
+# Sized for the largest index pages: a page's wheels are parsed once to
+# build the catalog record and again to rank them, and grpcio alone lists
+# ten thousand.  A memo the second pass overflows re-parses every one.
+@memoized(32768)
 def _parse_wheel_filename(name: str) -> WheelFile | None:
     if not name.endswith(".whl"):
         return None
