@@ -165,11 +165,12 @@ class DeferredNetworkSession:
             if self.session is not None:
                 return self.session
 
-            from kpip.network.http import NetworkSession
+            from kpip.network.http import DEFAULT_RETRIES, NetworkSession
 
             session = NetworkSession(
                 index_urls=self.index_urls,
                 cache=(http_cache_path(self.cache_dir) if self.cache_dir else None),
+                retries=DEFAULT_RETRIES,
             )
 
             assert session.auth is not None

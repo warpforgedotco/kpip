@@ -49,6 +49,13 @@ logger = logging.getLogger(__name__)
 
 RETRY_STATUS_CODES = frozenset((500, 502, 503, 520, 527))
 DEFAULT_TIMEOUT = 15.0
+DEFAULT_RETRIES = 3
+"""Connect, read and retryable-status retries for a command's session.
+
+A resolve makes hundreds of index requests, and one dropped connection or
+a single 503 failed the whole run when the session had none. Three
+matches uv's default.
+"""
 
 _NOT_UPDATED_BY_304 = frozenset(
     (
