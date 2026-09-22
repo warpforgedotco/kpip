@@ -65,13 +65,19 @@ from kpip.index.source_models import (
     CandidateRecord,
     LazyCandidateMetadata,
 )
-from kpip.index.vcs import git_revision, is_immutable_vcs_link, release_checkout
+from kpip.index.vcs import (
+    git_revision,
+    is_immutable_vcs_link,
+    release_checkout,
+    resolve_git_commit,
+)
 from kpip.index.vcs import vcs_scheme
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from kpip.index.links import Link
     from collections.abc import (
         Callable,
         Generator,
@@ -90,6 +96,9 @@ logger = logging.getLogger(__name__)
 _EXTRA_MARKER_RE = re.compile(r"extra\s*(?:==|in)\s*['\"]([^'\"]+)['\"]")
 
 _METADATA_WORKERS = 32
+
+# The extras slot of the key a VCS candidate's name and version persist under.
+_VCS_CANDIDATE_EXTRAS = ("*vcs-candidate*",)
 _PREPARED_SDIST_LIMIT = 8
 
 # Below this artifact size (PEP 700 ``size``), metadata-over-ranges is not
@@ -274,6 +283,12 @@ def candidate_metadata_fingerprint(candidate: CandidateRecord) -> str:
 
     if local_identity is not None:
         return local_identity
+
+    if candidate.link.is_vcs and vcs_scheme(candidate.link.url) == "git":
+        commit = resolve_git_commit(candidate.link.url)
+
+        if commit is not None:
+            return f"git:{commit}"
 
     if candidate.link.is_file:
         try:
@@ -629,7 +644,7 @@ class CandidateMaterializer:
         )
 
         if candidate.link.is_vcs:
-            self.vcs_revisions.setdefault(candidate.link.url, git_revision(path))
+            self.vcs_revisions[candidate.link.url] = git_revision(path)
 
         path_text = path
 
@@ -652,6 +667,11 @@ class CandidateMaterializer:
             fingerprint = candidate_metadata_fingerprint(candidate)
 
             self.artifact_fingerprint_cache[key] = fingerprint
+
+            if fingerprint.startswith("git:"):
+                # The lock records this commit; a clone, if one happens,
+                # overrides it with what it actually checked out.
+                self.vcs_revisions.setdefault(key, fingerprint[4:])
 
         return fingerprint
 
@@ -710,6 +730,34 @@ class CandidateMaterializer:
             tuple(sorted(requested_extras)),
             f"sha256:{digest}",
         )
+
+    def persisted_vcs_candidate(self, link: Link) -> tuple[str, Version] | None:
+        """The name and version persisted for a VCS link's current commit.
+
+        Learning them otherwise means a clone and a metadata build.  The
+        commit comes from one ``git ls-remote``; a persisted entry from an
+        earlier run under that commit answers, and its absence means the
+        clone happens as before.
+        """
+
+        if not link.is_vcs or self.persistent_candidate_metadata_cache is None:
+            return None
+
+        probe = CandidateRecord("", Version("0"), link)
+
+        fingerprint = self.artifact_fingerprint(probe)
+
+        if not fingerprint.startswith("git:"):
+            return None
+
+        metadata = self.persistent_candidate_metadata_cache.get(
+            (link.url, "", _VCS_CANDIDATE_EXTRAS, fingerprint),
+        )
+
+        if metadata is None:
+            return None
+
+        return metadata.name, metadata.version
 
     def persistent_metadata_cache_for(
         self,
@@ -927,16 +975,21 @@ class CandidateMaterializer:
     ]:
         fingerprint = self.artifact_fingerprint(candidate)
 
+        # A VCS commit determines the version, and leaving the version out
+        # lets the key be built before the version is known -- which is how
+        # a persisted entry spares the clone that would learn it.
+        version = "" if candidate.link.is_vcs else candidate.version.public
+
         return (
             (
                 candidate.link.url,
                 fingerprint,
-                candidate.version.public,
+                version,
                 requested_extras,
             ),
             (
                 candidate.link.url,
-                candidate.version.public,
+                version,
                 tuple(sorted(requested_extras)),
                 fingerprint,
             ),
@@ -1135,6 +1188,16 @@ class CandidateMaterializer:
 
             vcs_path = path_text if candidate.link.is_vcs else None
 
+            if (
+                vcs_path is not None
+                and persistent_cache is not None
+                and persistent_key[3]
+                != f"git:{self.vcs_revisions.get(candidate.link.url)}"
+            ):
+                # The remote moved between resolving the reference and the
+                # clone: what was built is not what the key names.
+                persistent_cache = None
+
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
                 from kpip.build.build_backend import prepare_project_metadata
 
@@ -1267,6 +1330,19 @@ class CandidateMaterializer:
 
             if persistent_cache is not None:
                 persistent_cache.put(persistent_key, metadata)
+
+                if candidate.link.is_vcs:
+                    # Under an extras-independent key too, so the next run
+                    # learns the name and version without a clone.
+                    persistent_cache.put(
+                        (
+                            candidate.link.url,
+                            "",
+                            _VCS_CANDIDATE_EXTRAS,
+                            persistent_key[3],
+                        ),
+                        metadata,
+                    )
 
             return metadata
 

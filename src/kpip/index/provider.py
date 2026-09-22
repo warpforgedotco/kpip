@@ -422,6 +422,11 @@ class CandidateProvider:
                         parsed = InstallationCandidate.from_link(
                             link,
                             target=self.target,
+                            vcs_lookup=(
+                                self.get_materializer_internal().persisted_vcs_candidate
+                                if link.is_vcs
+                                else None
+                            ),
                         )
 
                     except ValueError:
@@ -1305,6 +1310,11 @@ class CandidateProvider:
                         parsed = InstallationCandidate.from_link(
                             link,
                             target=self.target,
+                            vcs_lookup=(
+                                self.get_materializer_internal().persisted_vcs_candidate
+                                if link.is_vcs
+                                else None
+                            ),
                         )
 
                     except ValueError:
@@ -1458,7 +1468,15 @@ class CandidateProvider:
 
             if parsed is None:
                 try:
-                    parsed = InstallationCandidate.from_link(link, target=self.target)
+                    parsed = InstallationCandidate.from_link(
+                        link,
+                        target=self.target,
+                        vcs_lookup=(
+                            self.get_materializer_internal().persisted_vcs_candidate
+                            if link.is_vcs
+                            else None
+                        ),
+                    )
 
                 except ValueError:
                     rejected.append(
@@ -2634,7 +2652,15 @@ class CandidateProvider:
 
             if parsed is None:
                 try:
-                    parsed = InstallationCandidate.from_link(link, target=self.target)
+                    parsed = InstallationCandidate.from_link(
+                        link,
+                        target=self.target,
+                        vcs_lookup=(
+                            self.get_materializer_internal().persisted_vcs_candidate
+                            if link.is_vcs
+                            else None
+                        ),
+                    )
 
                 except ValueError:
                     continue

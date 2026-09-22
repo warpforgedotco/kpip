@@ -207,6 +207,72 @@ def git_revision(source_dir: str) -> str:
     return result.stdout.strip()
 
 
+_resolved_commits: dict[str, str | None] = {}
+"""git URL -> the commit its reference resolves to, once per process."""
+
+
+def resolve_git_commit(url: str, *, prompting: bool = True) -> str | None:
+    """The commit a git URL's reference names right now, without a clone.
+
+    A URL pinned to a full commit hash names it outright.  Otherwise one
+    ``git ls-remote`` asks the remote what the branch, tag or HEAD points
+    at, a round trip instead of a clone.  ``None`` when the remote cannot
+    be asked or the reference is not one it lists (a short hash, say), in
+    which case callers clone as before.
+    """
+    if url in _resolved_commits:
+        return _resolved_commits[url]
+    commit = _resolve_git_commit(url, prompting=prompting)
+    _resolved_commits[url] = commit
+    return commit
+
+
+def _resolve_git_commit(url: str, *, prompting: bool) -> str | None:
+    import subprocess
+
+    try:
+        reference = vcs_reference(url)
+    except OSError:
+        return None
+    if reference.vcs != "git":
+        return None
+    requested = reference.requested_revision
+    if (
+        requested
+        and len(requested) == 40
+        and all(c in "0123456789abcdefABCDEF" for c in requested)
+    ):
+        return requested.lower()
+    environment = os.environ.copy()
+    if not prompting:
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+    process = subprocess.run(
+        ["git", "ls-remote", reference.repo_url, requested or "HEAD"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=environment,
+    )
+    if process.returncode != 0:
+        return None
+    found: dict[str, str] = {}
+    for line in process.stdout.splitlines():
+        sha, _, ref = line.partition("\t")
+        if sha and ref:
+            found[ref] = sha
+    if not requested:
+        return found.get("HEAD")
+    for candidate in (
+        f"refs/tags/{requested}^{{}}",
+        f"refs/tags/{requested}",
+        f"refs/heads/{requested}",
+        requested,
+    ):
+        if candidate in found:
+            return found[candidate]
+    return None
+
+
 def is_immutable_vcs_link(url: str) -> bool:
     if vcs_scheme(url) != "git":
         return False
