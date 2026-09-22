@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import logging
 import os
 import re
 import sys
 
+from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.subprocess import CommandArgs
 from kpip.core.urls import split_auth_from_netloc
@@ -22,7 +22,7 @@ from .versioncontrol import (
     vcs,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 svn_xml_url_re = re.compile('url="([^"]+)"')
 svn_rev_re = re.compile(r'committed-rev="(\d+)"')

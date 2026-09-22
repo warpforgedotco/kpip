@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os.path
 import stat
 import tempfile
@@ -9,9 +8,10 @@ from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from typing import Any, TypeVar
 
+from kpip.core.logger import get_logger
 from kpip.core.utils import enum
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 T_internal = TypeVar("T_internal", bound="TempDirectory")
 
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import logging
 import os.path
 import re
 import urllib.parse
 
+from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.urls import path_to_url
 from kpip.core.utils import AuthInfo, display_path
@@ -31,7 +31,7 @@ urlsplit = urllib.parse.urlsplit
 urlunsplit = urllib.parse.urlunsplit
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 GIT_VERSION_REGEX = re.compile(
