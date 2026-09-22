@@ -10,7 +10,10 @@ import threading
 from contextlib import contextmanager
 
 from kpip.core.utils import ensure_dir
-from kpip.platform.filesystem import replace, set_file_permissions
+from kpip.platform.filesystem import replace, set_descriptor_permissions
+
+PRIVATE_MODE = 0o600
+"""The mode a temporary entry is created with, before any widening."""
 
 """Directory under the cache directory holding the HTTP page cache."""
 
@@ -126,42 +129,56 @@ class SafeFileCache:
             mode = self._entry_mode = os.stat(self.directory).st_mode & 0o666 | 0o600
         return mode
 
+    def create_temporary(self, path: str) -> tuple[int, str]:
+        """Open a private temporary beside ``path``, returning it and its name."""
+        directory = os.path.dirname(path)
+        if directory not in self._known_directories:
+            ensure_dir(directory)
+            self._known_directories.add(directory)
+
+        self._temporary_serial += 1
+        temporary = (
+            f"{path}.{os.getpid()}-{threading.get_ident()}-{self._temporary_serial}.tmp"
+        )
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            PRIVATE_MODE,
+        )
+        return descriptor, temporary
+
+    def widen_to_entry_mode(self, descriptor: int, path: str) -> None:
+        """Give a temporary the cache directory's mode, if that widens it.
+
+        The temporary is created private already, so a private cache
+        directory -- the usual one -- needs no chmod at all, and a resolve
+        stores thousands of entries.
+        """
+        mode = self.entry_mode()
+        if mode != PRIVATE_MODE:
+            set_descriptor_permissions(descriptor, path, mode)
+
     def write_to_file(self, path: str, writer_func: Callable[[BinaryIO], Any]) -> None:
         """Write an entry atomically, with the cache directory's permissions.
+
+        For a caller that streams rather than handing over one blob; a blob
+        goes through :meth:`write_internal`, which needs no file object.
 
         A resolve stores thousands of entries from worker threads, and every
         syscall a write makes is a release and re-acquire of the interpreter
         lock behind the resolver.  This is the shortest sequence that keeps
         the same guarantees: the directory is created once per directory
         rather than walked per write, the file is opened exclusively under
-        a name no other thread or process uses, its mode is set from one
-        stat of the cache directory rather than one per write, and the
+        a name no other thread or process uses, its mode is widened from one
+        stat of the cache directory rather than chmod-ed per write, and the
         finished file is renamed into place.
         """
         with suppressed_cache_errors():
-            directory = os.path.dirname(path)
-            if directory not in self._known_directories:
-                ensure_dir(directory)
-                self._known_directories.add(directory)
-
-            mode = self.entry_mode()
-            self._temporary_serial += 1
-            temporary = (
-                f"{path}.{os.getpid()}-{threading.get_ident()}-"
-                f"{self._temporary_serial}.tmp"
-            )
-            # Created private, then given the directory's mode the way the
-            # temporary file always was: a platform whose chmod cannot apply
-            # leaves the entry private rather than inheriting anything.
-            descriptor = os.open(
-                temporary,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
+            descriptor, temporary = self.create_temporary(path)
             try:
+                self.widen_to_entry_mode(descriptor, temporary)
                 with os.fdopen(descriptor, "wb") as f:
                     descriptor = -1
-                    set_file_permissions(f, mode)
                     writer_func(f)
                 replace(temporary, path)
             except BaseException:
@@ -172,7 +189,31 @@ class SafeFileCache:
                 raise
 
     def write_internal(self, path: str, data: bytes) -> None:
-        self.write_to_file(path, lambda f: f.write(data))
+        """Write one blob atomically, straight to the descriptor.
+
+        Almost every entry is a single payload of bytes, and wrapping the
+        descriptor in a ``BufferedWriter`` for one write costs the wrapper,
+        a copy into its buffer and a flush, per entry.
+        """
+        with suppressed_cache_errors():
+            descriptor, temporary = self.create_temporary(path)
+            try:
+                self.widen_to_entry_mode(descriptor, temporary)
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(descriptor, view) :]
+                os.close(descriptor)
+            except BaseException:
+                os.close(descriptor)
+                with suppressed_cache_errors():
+                    os.unlink(temporary)
+                raise
+            try:
+                replace(temporary, path)
+            except BaseException:
+                with suppressed_cache_errors():
+                    os.unlink(temporary)
+                raise
 
     def write_from_io(self, path: str, source_file: BinaryIO) -> None:
         self.write_to_file(path, lambda f: shutil.copyfileobj(source_file, f))
