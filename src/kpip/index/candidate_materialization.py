@@ -653,6 +653,27 @@ class CandidateMaterializer:
 
         return path_text
 
+    def vcs_build_commit(self, candidate: CandidateRecord) -> str | None:
+        """The commit a git candidate's build is identified by, if resolvable.
+
+        Resolving it (one ls-remote, memoized) also records it as the URL's
+        revision, so the lock's own hashing and the wheel cache key agree
+        without a checkout.  A checkout that follows overrides the revision
+        with what it actually checked out.
+        """
+
+        link = candidate.link
+
+        if not link.is_vcs or vcs_scheme(link.url) != "git":
+            return None
+
+        commit = resolve_git_commit(link.url)
+
+        if commit is not None:
+            self.vcs_revisions.setdefault(link.url, commit)
+
+        return commit
+
     def vcs_revision(self, url: str) -> str | None:
         """Return the revision observed while materializing a VCS candidate."""
 
@@ -1206,6 +1227,8 @@ class CandidateMaterializer:
                     if self.wheel_cache_dir is not None
                     else None
                 )
+                metadata_vcs_commit = self.vcs_build_commit(candidate)
+
                 metadata_wheel_cache_key = built_wheel_cache_key(
                     candidate,
                     source_hashes=cache_source_hashes,
@@ -1213,6 +1236,7 @@ class CandidateMaterializer:
                     build_constraints=self.build_constraints,
                     build_isolation=self.build_isolation,
                     target_key=self.target_key,
+                    vcs_commit=metadata_vcs_commit,
                 )
 
                 path = path_text
@@ -1239,7 +1263,14 @@ class CandidateMaterializer:
                         def remember_wheel_if_reusable(wheel_path: str) -> None:
                             if candidate.link.kind is ArtifactKind.SDIST or (
                                 candidate.link.kind is ArtifactKind.SOURCE_TREE
-                                and is_immutable_vcs_link(candidate.link.url)
+                                and (
+                                    is_immutable_vcs_link(candidate.link.url)
+                                    or (
+                                        metadata_vcs_commit is not None
+                                        and self.vcs_revisions.get(candidate.link.url)
+                                        == metadata_vcs_commit
+                                    )
+                                )
                             ):
                                 store_cached_wheel(
                                     self.wheel_cache_dir,
@@ -1626,7 +1657,43 @@ class CandidateMaterializer:
 
             local_path = self.local_path_for(candidate)
 
-            path = self.ensure_local_text(candidate, local_path=local_path)
+            vcs_commit = self.vcs_build_commit(candidate)
+
+            path = None
+
+            if (
+                vcs_commit is not None
+                and self.wheel_cache_dir is not None
+                and not candidates
+                and candidate.link.kind is ArtifactKind.SOURCE_TREE
+            ):
+                # A wheel built from this commit needs no checkout to reuse;
+                # look before cloning.  The block below finds it again.
+                early_key = built_wheel_cache_key(
+                    candidate,
+                    source_hashes=None,
+                    config_settings=(self.build_options or {}).get(requirement.raw),
+                    build_constraints=self.build_constraints,
+                    build_isolation=self.build_isolation,
+                    target_key=self.target_key,
+                    vcs_commit=vcs_commit,
+                )
+
+                early = cached_wheel_for_link(
+                    self.wheel_cache_dir,
+                    candidate,
+                    early_key,
+                    requested_extras=requested_extras,
+                    candidate_name_is_authoritative=(not requirement.is_unnamed_direct),
+                )
+
+                if early is not None:
+                    path = early[0]
+
+                    from_cache = True
+
+            if path is None:
+                path = self.ensure_local_text(candidate, local_path=local_path)
 
             source_hashes = dict(candidate.link.hashes)
 
@@ -1650,11 +1717,14 @@ class CandidateMaterializer:
                 except OSError:
                     pass
 
-            materialized_vcs_path = path if candidate.link.is_vcs else None
+            materialized_vcs_path = (
+                path if candidate.link.is_vcs and not from_cache else None
+            )
 
             if (
                 candidate.link.kind is ArtifactKind.SOURCE_TREE
                 and candidate.link.subdirectory_fragment
+                and not from_cache
             ):
                 path = os.path.join(path, candidate.link.subdirectory_fragment)
 
@@ -1662,7 +1732,13 @@ class CandidateMaterializer:
                 candidate.link.kind is ArtifactKind.SDIST and not candidates
             ) or (
                 candidate.link.kind is ArtifactKind.SOURCE_TREE
-                and is_immutable_vcs_link(candidate.link.url)
+                and (
+                    is_immutable_vcs_link(candidate.link.url)
+                    or (
+                        vcs_commit is not None
+                        and self.vcs_revisions.get(candidate.link.url) == vcs_commit
+                    )
+                )
                 and not candidates
             )
 
@@ -1691,6 +1767,7 @@ class CandidateMaterializer:
                     build_constraints=self.build_constraints,
                     build_isolation=self.build_isolation,
                     target_key=self.target_key,
+                    vcs_commit=vcs_commit,
                 )
 
                 cached = cached_wheel_for_link(

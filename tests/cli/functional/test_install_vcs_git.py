@@ -523,14 +523,25 @@ def test_check_submodule_addition(script: KpipTestEnvironment) -> None:
     update_result.did_create(script.venv / "src/version-pkg/testpkg/static/testfile2")
 
 
-def test_install_git_branch_not_cached(script: KpipTestEnvironment) -> None:
-    """Installing git urls with a branch revision does not cause wheel caching."""
-    PKG = "gitbranchnotcached"
-    repo_dir = create_test_package(script.scratch_path, name=PKG)
-    url = make_version_pkg_url(repo_dir, rev="master", name=PKG)
-    result = script.kpip("install", "--no-build-isolation", url, "--only-binary=:all:")
+def test_install_git_branch_cached_under_its_commit(
+    script: KpipTestEnvironment,
+) -> None:
+    """A branch revision caches the wheel under the commit the branch resolves to.
+
+    A second install of the unchanged branch reuses the wheel; once the branch
+    moves, the wheel is built again for the new commit.
+    """
+    PKG = "version_pkg"
+    repo_dir = create_test_package(script.scratch_path)
+    url = make_version_pkg_url(repo_dir, rev="master")
+    result = script.kpip("install", "--no-build-isolation", url)
     assert f"Successfully built {PKG}" in result.stdout, result.stdout
     script.kpip("uninstall", "-y", PKG)
+    result = script.kpip("install", "--no-build-isolation", url)
+    assert f"Successfully built {PKG}" not in result.stdout, result.stdout
+    script.kpip("uninstall", "-y", PKG)
+
+    change_test_package_version(script, repo_dir)
     result = script.kpip("install", "--no-build-isolation", url)
     assert f"Successfully built {PKG}" in result.stdout, result.stdout
 
