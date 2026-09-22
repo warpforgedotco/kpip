@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import sys
-from functools import lru_cache
 from collections.abc import Sequence
 from typing import TypeVar
 
 from kpip.core.versions import ZERO_VERSION, Version
 from kpip.core.errors import InvalidWheelFilename
 from kpip.core.hashes import Hashes
-from kpip.core.packaging import Requirement, SpecifierSet
+from kpip.core.caches import memoized
+from kpip.core.packaging import Requirement, SpecifierSet, target_python_version
 from kpip.core.release_control import ReleaseControl
 from kpip.core.target_python import get_supported
 from kpip.core.wheel import TargetContext, Wheel, WheelTag, legacy_build_tag
@@ -298,9 +298,23 @@ class CandidateEvaluator:
         return parsed
 
     @staticmethod
-    @lru_cache(maxsize=4096)
-    def requires_python_matches(requires_python: str) -> bool:
-        return SpecifierSet(requires_python).contains(_RUNNING_PYTHON)
+    @memoized(4096)
+    def requires_python_matches(
+        requires_python: str,
+        python: str | None = None,
+    ) -> bool:
+        """Whether the targeted interpreter satisfies ``requires_python``.
+
+        ``python`` names the target explicitly, for the callers that hold
+        one; the rest fall back to the process-wide target a cross-version
+        resolve installs, and to the running interpreter when there is none.
+        """
+        if python is None:
+            python = target_python_version()
+
+        return SpecifierSet(requires_python).contains(
+            _RUNNING_PYTHON if python is None else Version(python),
+        )
 
     @staticmethod
     def reject(link: Link, reason: RejectionReason, detail: str) -> RejectedCandidate:

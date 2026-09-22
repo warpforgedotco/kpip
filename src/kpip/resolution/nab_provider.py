@@ -1393,25 +1393,27 @@ class NabProvider:
         return None
 
     def _requires_python_rejects(self, candidate: WheelCandidate) -> bool:
-        """Whether this interpreter falls outside the candidate's Requires-Python.
+        """Whether the targeted interpreter falls outside Requires-Python.
 
-        Skipped when the caller targets another interpreter, since the
-        declaration then says nothing about the target.
+        When the caller targets another interpreter the declaration is read
+        against *that* version rather than ignored: a release that excludes
+        the target is no more installable there than one that excludes this
+        interpreter, and skipping the check is how a cross-version resolve
+        ends up pinning a release the target cannot run.
         """
         try:
             requires_python = getattr(candidate, "requires_python", None)
         except (OSError, ValueError):
             return True
 
-        if (
-            self.ignore_requires_python
-            or self.python_version is not None
-            or not requires_python
-        ):
+        if self.ignore_requires_python or not requires_python:
             return False
 
         try:
-            return not CandidateEvaluator.requires_python_matches(requires_python)
+            return not CandidateEvaluator.requires_python_matches(
+                requires_python,
+                self.python_version,
+            )
         except ValueError:
             return True
 

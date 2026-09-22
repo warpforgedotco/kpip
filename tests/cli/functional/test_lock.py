@@ -6,7 +6,12 @@ from typing import Any
 import pytest
 import tomllib
 from kpip.core.urls import path_to_url
-from kpip_test_support import KpipTestEnvironment, TestData
+from kpip_test_support import (
+    KpipTestEnvironment,
+    TestData,
+    create_basic_wheel_for_package,
+)
+from kpip_test_support.wheel import make_wheel
 
 
 def expected_simplewheel_lock(
@@ -293,3 +298,113 @@ def test_lock_roundtrip(script: KpipTestEnvironment, data: TestData) -> None:
     pylock_result = tomllib.loads(pylock_result_path.read_text(encoding="utf-8"))
     simplify_paths_and_urls(pylock_result)
     assert pylock_result == pylock
+
+
+def locked_versions(script: KpipTestEnvironment, name: str = "pylock.toml") -> dict:
+    pylock = tomllib.loads(script.scratch_path.joinpath(name).read_text())
+    return {package["name"]: package["version"] for package in pylock["packages"]}
+
+
+def test_lock_python_version_reads_requires_python_for_the_target(
+    script: KpipTestEnvironment,
+) -> None:
+    """The target's Requires-Python decides, not the running interpreter's.
+
+    ``dep`` 0.2.0 excludes every interpreter that can run kpip, so a lock
+    for this interpreter has to fall back to 0.1.0; a lock for 3.8 must
+    take 0.2.0, which is the whole point of asking for another version.
+    """
+    create_basic_wheel_for_package(script, "base", "0.1.0", depends=["dep"])
+    create_basic_wheel_for_package(script, "dep", "0.1.0")
+    create_basic_wheel_for_package(script, "dep", "0.2.0", requires_python="<3.9")
+
+    common = [
+        "lock",
+        "base",
+        "--no-index",
+        "--find-links",
+        str(script.scratch_path),
+        "--output",
+    ]
+
+    script.kpip(*common, "here.toml", expect_stderr=True)
+    assert locked_versions(script, "here.toml")["dep"] == "0.1.0"
+
+    script.kpip(*common, "there.toml", "--python-version", "3.8", expect_stderr=True)
+    assert locked_versions(script, "there.toml")["dep"] == "0.2.0"
+
+
+def test_lock_python_version_evaluates_markers_for_the_target(
+    script: KpipTestEnvironment,
+) -> None:
+    """A dependency gated on the Python version follows the target."""
+    create_basic_wheel_for_package(
+        script,
+        "base",
+        "0.1.0",
+        depends=['old; python_version < "3.9"'],
+    )
+    create_basic_wheel_for_package(script, "old", "0.1.0")
+
+    common = [
+        "lock",
+        "base",
+        "--no-index",
+        "--find-links",
+        str(script.scratch_path),
+        "--output",
+    ]
+
+    script.kpip(*common, "here.toml", expect_stderr=True)
+    assert "old" not in locked_versions(script, "here.toml")
+
+    script.kpip(*common, "there.toml", "--python-version", "3.8", expect_stderr=True)
+    assert locked_versions(script, "there.toml")["old"] == "0.1.0"
+
+
+def test_lock_python_version_selects_wheels_by_the_target_tags(
+    script: KpipTestEnvironment,
+) -> None:
+    """Wheel tags are read for the target too, not only markers and metadata.
+
+    The only wheel on offer is tagged for CPython 3.8, so nothing can lock
+    it for the running interpreter; a lock for 3.8 has to find it.
+    """
+    wheel = script.scratch_path / "base-0.1.0-cp38-cp38-any.whl"
+    make_wheel(
+        name="base",
+        version="0.1.0",
+        wheel_metadata_updates={"Tag": ["cp38-cp38-any"]},
+    ).save_to(wheel)
+
+    common = [
+        "lock",
+        "base==0.1.0",
+        "--no-index",
+        "--find-links",
+        str(script.scratch_path),
+        "--output",
+    ]
+
+    here = script.kpip(*common, "here.toml", expect_error=True)
+    assert here.returncode != 0, str(here)
+
+    script.kpip(*common, "there.toml", "--python-version", "3.8", expect_stderr=True)
+
+    pylock = tomllib.loads(script.scratch_path.joinpath("there.toml").read_text())
+    assert [w["name"] for w in pylock["packages"][0]["wheels"]] == [wheel.name]
+
+
+def test_lock_rejects_a_python_version_that_is_not_a_version(
+    script: KpipTestEnvironment,
+) -> None:
+    result = script.kpip(
+        "lock",
+        "base",
+        "--no-index",
+        "--python-version",
+        "nonsense",
+        expect_error=True,
+    )
+
+    assert "--python-version expects a version like 3.8" in result.stderr, str(result)

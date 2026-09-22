@@ -87,6 +87,15 @@ network latency, current PyPI state, VCS availability, target Python, platform
 wheels, and cache behavior outside this repository. `--list-workloads` reports
 cases with an upstream recommended Python version.
 
+A workload with a recommended Python is locked for that version rather than
+for whichever interpreter runs the suite, since that is the version its
+constraints were curated against: `airflow2` pins releases that no interpreter
+past 3.10 can install, and resolving it for the suite's own Python fails
+outright. kpip is given `--python-version`, because its own floor is 3.10 and
+it cannot run on the 3.8 that workload wants; uv is pointed at a real
+interpreter with `--python`, because it builds source distributions with the
+interpreter it runs on.
+
 Two benchmark modes from uv's own harness
 (`astral-sh/uv/scripts/benchmark/src/benchmark/resolver.py`'s `Benchmark`
 enum) are deliberately not in `BENCHMARKS` above: `resolve-incremental` (add
