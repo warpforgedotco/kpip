@@ -92,6 +92,17 @@ class BuildBackendHookCaller:
                 json.dump(kwargs, stream)
             environment = os.environ.copy()
             environment["KPIP_BUILD_BACKEND"] = self.backend
+            # The backend runs with the project on its path, as it would if
+            # it had been started from inside the directory. Passing it to
+            # the hook's own environment rather than setting it on this
+            # process is what lets two projects have their metadata prepared
+            # at once: a chdir and an os.environ write are process-wide, and
+            # concurrent builds would hand each other the wrong project.
+            search_path = [self.source_dir]
+            inherited = environment.get("PYTHONPATH")
+            if inherited:
+                search_path.append(inherited)
+            environment["PYTHONPATH"] = os.pathsep.join(search_path)
             if self.backend_path:
                 environment["KPIP_BUILD_BACKEND_PATH"] = os.pathsep.join(
                     self.backend_path,

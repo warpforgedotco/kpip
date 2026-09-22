@@ -12,6 +12,7 @@ import sys
 import tempfile
 import urllib.parse
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from itertools import chain, islice
 from threading import RLock
 from typing import NamedTuple
@@ -116,6 +117,12 @@ _ReleaseMetadata = tuple[
     frozenset[str],
     str | None,
 ]
+
+# How many source distributions may have their metadata prepared at once.
+# Each one is a build environment and a backend subprocess, so this trades
+# a bounded amount of memory and CPU for the serial wait; past a handful the
+# subprocesses contend for the same cores and stop paying for themselves.
+_SOURCE_BUILD_WORKERS = 4
 
 # Below this artifact size (PEP 700 ``size``), metadata-over-ranges is not
 # worth it: the 2-3 range round-trips cost more than downloading the wheel
@@ -540,6 +547,12 @@ class CandidateMaterializer:
             tuple[str, str],
             _ReleaseMetadata | None,
         ] = {}
+
+        self.source_build_lock = RLock()
+
+        self.source_build_pool: ThreadPoolExecutor | None = None
+
+        self.source_builds: dict[tuple[str, str, str, frozenset[str]], Any] = {}
 
         self.build_options = build_options
 
@@ -1127,6 +1140,8 @@ class CandidateMaterializer:
         if prefetcher is not None:
             prefetcher.close()
 
+        self.close_source_builds()
+
         prepared_sources = tuple(self.prepared_sdist_sources.values())
 
         self.prepared_sdist_sources.clear()
@@ -1134,11 +1149,88 @@ class CandidateMaterializer:
         for temporary, _ in prepared_sources:
             temporary.cleanup()
 
+    def started_metadata(self, key: tuple[str, str, str, frozenset[str]]) -> Any:
+        """The computation already under way for ``key``, if there is one."""
+        with self.source_build_lock:
+            return self.source_builds.get(key)
+
+    def start_source_metadata(
+        self,
+        candidate: CandidateRecord,
+        requirement: Requirement,
+    ) -> None:
+        """Begin a source candidate's metadata before the resolver blocks on it.
+
+        Reading a source distribution's metadata means standing up a build
+        environment and running the backend -- seconds each, and the resolver
+        asks for them one at a time, so a graph with eight of them spends
+        most of a cold lock waiting with an idle machine. Each is
+        independent, so the ones the resolver has just learned it needs are
+        started now and are usually finished, or at least under way, by the
+        time it asks.
+
+        Only source candidates are started: a wheel's metadata is a read, and
+        :meth:`prefetch_metadata` already overlaps those.
+        """
+        if candidate.link.kind not in SOURCE_ARTIFACT_KINDS:
+            return
+
+        requested_extras = frozenset(requirement.extras)
+
+        if self.has_cached_metadata(candidate, requested_extras):
+            return
+
+        key, _ = self.metadata_cache_keys(candidate, requested_extras)
+
+        with self.source_build_lock:
+            if key in self.source_builds:
+                return
+
+            pool = self.source_build_pool
+
+            if pool is None:
+                pool = ThreadPoolExecutor(
+                    max_workers=_SOURCE_BUILD_WORKERS,
+                    thread_name_prefix="kpip-metadata",
+                )
+
+                self.source_build_pool = pool
+
+            worker = self.metadata_loader(candidate, requirement, background=True)
+
+            self.source_builds[key] = pool.submit(worker.load)
+
+    def close_source_builds(self) -> None:
+        """Drop the metadata pool, abandoning work nothing is waiting for.
+
+        Speculative builds still queued when the solve ends are for versions
+        it did not take, so they are cancelled rather than waited on: the
+        interpreter joins pool threads at exit, and a command must not sit
+        there preparing metadata for a release it already decided against.
+        """
+        with self.source_build_lock:
+            pool = self.source_build_pool
+
+            self.source_build_pool = None
+
+            self.source_builds = {}
+
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
+
     def metadata_loader(
         self,
         candidate: CandidateRecord,
         requirement: Requirement,
+        *,
+        background: bool = False,
     ) -> LazyCandidateMetadata:
+        """A candidate's metadata, computed at most once, when first asked.
+
+        ``background`` returns the computation itself, for a caller that is
+        starting it ahead of demand; the loader handed to a consumer waits
+        for such a computation rather than racing it.
+        """
         requested_extras = frozenset(requirement.extras)
 
         key, persistent_key = self.metadata_cache_keys(
@@ -1414,7 +1506,20 @@ class CandidateMaterializer:
 
             return metadata
 
-        return LazyCandidateMetadata(load)
+        if background:
+            return LazyCandidateMetadata(load)
+
+        def join() -> CandidateMetadata:
+            cached = self.metadata_cache.get(key)
+
+            if cached is not None:
+                return cached
+
+            started = self.started_metadata(key)
+
+            return load() if started is None else started.result()
+
+        return LazyCandidateMetadata(join)
 
     def remote_wheel_metadata(
         self,

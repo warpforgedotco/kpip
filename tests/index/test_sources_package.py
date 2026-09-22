@@ -27,6 +27,7 @@ from kpip.index.source_models import (
     CandidateMetadata,
     CandidateRecord,
     CandidateSelection,
+    LazyCandidateMetadata,
     MetadataFile,
     RejectionReason,
 )
@@ -1754,3 +1755,88 @@ def test_a_sibling_wheel_spares_the_source_build(
     ).load()
 
     assert [item.name for item in metadata.dependencies] == ["base"]
+
+
+def test_a_started_build_is_joined_not_repeated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resolver waits for a build already under way instead of racing it.
+
+    Without the join, starting metadata ahead of demand would double the
+    work it was meant to overlap.
+    """
+    from concurrent.futures import Future
+
+    materializer = CandidateMaterializer(dry_run=True)
+    candidate = sdist_candidate()
+    requirement = parse_requirement("legacy")
+    key, _ = materializer.metadata_cache_keys(candidate, frozenset())
+
+    expected = CandidateMetadata(
+        name="legacy",
+        version=Version("1.0"),
+        dependencies=(),
+        provided_extras=frozenset(),
+        requires_python=None,
+    )
+    started: Future = Future()
+    started.set_result(expected)
+    materializer.source_builds[key] = started
+
+    def fail_build(*args: object, **kwargs: object) -> None:
+        pytest.fail("a build already under way must be joined, not repeated")
+
+    monkeypatch.setattr("kpip.build.build_backend.prepare_project_metadata", fail_build)
+
+    assert materializer.metadata_loader(candidate, requirement).load() is expected
+
+
+def test_a_source_candidate_is_started_on_the_pool() -> None:
+    """Starting one hands the work to a worker and remembers it."""
+    materializer = CandidateMaterializer(dry_run=True)
+    candidate = sdist_candidate()
+    requirement = parse_requirement("legacy")
+    expected = CandidateMetadata(
+        name="legacy",
+        version=Version("1.0"),
+        dependencies=(),
+        provided_extras=frozenset(),
+        requires_python=None,
+    )
+
+    materializer.metadata_loader = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: LazyCandidateMetadata(lambda: expected)
+    )
+
+    try:
+        materializer.start_source_metadata(candidate, requirement)
+
+        key, _ = materializer.metadata_cache_keys(candidate, frozenset())
+        started = materializer.started_metadata(key)
+
+        assert started is not None
+        assert started.result(timeout=5) is expected
+
+        # Asking twice does not start a second build.
+        materializer.start_source_metadata(candidate, requirement)
+
+        assert materializer.started_metadata(key) is started
+
+    finally:
+        materializer.close_source_builds()
+
+    assert materializer.started_metadata(key) is None
+
+
+def test_only_source_candidates_are_started() -> None:
+    """A wheel's metadata is a read; the build pool is not for it."""
+    materializer = CandidateMaterializer(dry_run=True)
+    wheel = CandidateRecord(
+        name="legacy",
+        version=Version("1.0"),
+        link=wheel_link("legacy-1.0-py3-none-any.whl"),
+    )
+
+    materializer.start_source_metadata(wheel, parse_requirement("legacy"))
+
+    assert materializer.source_build_pool is None

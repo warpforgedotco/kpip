@@ -101,6 +101,11 @@ class NabProvider:
         self.constraints = self.context.constraints
         self.ignore_requires_python = self.context.ignore_requires_python
         self._descent_prefetched: set[tuple[str, Version]] = set()
+        self._source_metadata_started: set[str] = set()
+        self._release_records: dict[
+            tuple[str, Version, frozenset[str]],
+            tuple[CandidateRecord, ...] | None,
+        ] = {}
         self._child_lookahead_floor: dict[str, Version] = {}
         self._pending_clauses: list[Incompatibility[str, Version]] = []
         self._rejection_clauses_queued: set[tuple[str, Version, str]] = set()
@@ -549,6 +554,28 @@ class NabProvider:
         self.records[(package, selected)] = candidate
         return selected
 
+    def _release_records_for(
+        self,
+        requirement: Requirement,
+        version: Version,
+    ) -> tuple[CandidateRecord, ...] | None:
+        """One release's records, read from the index at most once.
+
+        Both the forward check and the speculative metadata start want the
+        artifacts of a single release, and the second to ask must not cost
+        another read of the index.
+        """
+        key = (requirement.canonical_name, version, requirement.extras)
+
+        if key in self._release_records:
+            return self._release_records[key]
+
+        records = self.provider.release_candidates(requirement, version)
+
+        self._release_records[key] = records
+
+        return records
+
     def _candidates_for_version(
         self,
         requirement: Requirement,
@@ -562,7 +589,7 @@ class NabProvider:
             )
             if not requirement.extras and isinstance(cached, WheelCandidate):
                 return (cached,)
-            records = self.provider.release_candidates(requirement, version)
+            records = self._release_records_for(requirement, version)
             if records is not None:
                 materializer = self.provider.get_materializer_internal()
                 materialize_one = getattr(materializer, "materialize_one", None)
@@ -1902,6 +1929,62 @@ class NabProvider:
         self._active_decisions = decisions
         self._partial_preflight_cache.clear()
         self._active_candidate_conflict_cache.clear()
+        self._start_undecided_source_metadata(positive_ranges, decisions)
+
+    def _start_undecided_source_metadata(
+        self,
+        positive_ranges: Mapping[str, RangeProtocol[Version]],
+        decisions: Mapping[str, Version],
+    ) -> None:
+        """Begin metadata for source distributions the solve already needs.
+
+        A package with a positive range is one the solve has committed to
+        including, so reading its metadata is work that will be needed
+        whatever version wins. For a source distribution that reading is a
+        build, and the resolver asks for builds strictly one at a time:
+        starting them from here is what lets more than one run at once.
+
+        Only a range that has come down to a single release is started, so
+        nothing is built for a version the solve is still choosing between.
+        """
+        if not isinstance(self.provider, CandidateProvider):
+            return
+
+        materializer = None
+
+        for package, positive_range in positive_ranges.items():
+            if package in decisions or package in self._source_metadata_started:
+                continue
+
+            requirement = self.requirements.get(package)
+
+            if requirement is None:
+                continue
+
+            matching = [
+                version
+                for version in self._versions(package)
+                if version in positive_range
+            ]
+
+            if len(matching) != 1:
+                continue
+
+            self._source_metadata_started.add(package)
+
+            try:
+                records = self._release_records_for(requirement, matching[0])
+
+            except (KpipError, OSError, ValueError):
+                continue
+
+            if not records:
+                continue
+
+            if materializer is None:
+                materializer = self.provider.get_materializer_internal()
+
+            materializer.start_source_metadata(records[0], requirement)
 
     def consume_dependency_invalidations(self) -> list[str]:
         """Return selected packages whose extras changed after expansion."""

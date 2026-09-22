@@ -270,8 +270,7 @@ class BackendRunner:
                     python_executable=sys.executable,
                 )
 
-                with backend_environment(self.source_dir):
-                    yield caller, metadata_dir
+                yield caller, metadata_dir
 
             return
 
@@ -366,8 +365,7 @@ class BackendRunner:
                                 python_executable=sys.executable,
                             )
 
-                            with backend_environment(self.source_dir):
-                                yield caller, metadata_dir
+                            yield caller, metadata_dir
 
                         return
 
@@ -380,8 +378,7 @@ class BackendRunner:
                 python_executable=python,
             )
 
-            with backend_environment(self.source_dir):
-                yield caller, env_path
+            yield caller, env_path
 
 
 def build_wheel(
@@ -1034,36 +1031,6 @@ def prepare_project_metadata(
             ).prepare_metadata(editable=editable, on_wheel_built=on_wheel_built)
 
         raise
-
-
-@contextlib.contextmanager
-def backend_environment(source_dir: str | os.PathLike[str]) -> Iterator[None]:
-    cwd = os.getcwd()
-
-    source = os.fspath(source_dir)
-
-    old_pythonpath = os.environ.get("PYTHONPATH")
-
-    pythonpath = [source]
-
-    if old_pythonpath:
-        pythonpath.append(old_pythonpath)
-
-    os.chdir(source)
-
-    os.environ["PYTHONPATH"] = os.pathsep.join(pythonpath)
-
-    try:
-        yield
-
-    finally:
-        os.chdir(cwd)
-
-        if old_pythonpath is None:
-            os.environ.pop("PYTHONPATH", None)
-
-        else:
-            os.environ["PYTHONPATH"] = old_pythonpath
 
 
 _PROJECT_METADATA_FIELDS = (
