@@ -6,6 +6,7 @@ from kpip.core.utils import versioned_bucket
 
 import hashlib
 import marshal
+import threading
 import urllib.parse
 
 from kpip.core.versions import InvalidVersion, Version, is_version_wire
@@ -55,6 +56,16 @@ CatalogSummary = tuple[
 _PENDING_CATALOGS_ATTRIBUTE = "_kpip_pending_catalogs"
 _PENDING_CATALOGS_LIMIT = 64
 _VALIDATED_CATALOGS_ATTRIBUTE = "_kpip_validated_catalogs"
+
+_VALIDATED_CATALOGS_LOCK = threading.Lock()
+"""Guards the memo's ordering, which several worker threads maintain.
+
+Reading a dict is atomic, but moving a key to the end and evicting the
+oldest are each several operations, and a thread switch between picking
+the oldest key and removing it raised ``KeyError`` when another thread had
+already removed it.  The lock is held only for those dict operations, never
+across a decode or a read.
+"""
 _VALIDATED_CATALOGS_LIMIT = 8
 
 
@@ -159,10 +170,14 @@ def _remember_validated_catalog(
     validated = _validated_catalogs(cache)
     if validated is None:
         return
-    validated.pop(url, None)
-    validated[url] = raw, catalog
-    while len(validated) > _VALIDATED_CATALOGS_LIMIT:
-        validated.pop(next(iter(validated)))
+    with _VALIDATED_CATALOGS_LOCK:
+        validated.pop(url, None)
+        validated[url] = raw, catalog
+        while len(validated) > _VALIDATED_CATALOGS_LIMIT:
+            oldest = next(iter(validated), None)
+            if oldest is None:
+                break
+            validated.pop(oldest, None)
 
 
 def _load_catalog_uncached(
@@ -179,8 +194,11 @@ def _load_catalog_uncached(
     if validated is not None:
         known = validated.get(url)
         if known is not None and known[0] == raw:
-            validated.pop(url)
-            validated[url] = known
+            with _VALIDATED_CATALOGS_LOCK:
+                # Another thread may have evicted it since the read above;
+                # the entry is still valid, it just returns to the end.
+                validated.pop(url, None)
+                validated[url] = known
             return known[1], raw
     try:
         payload = marshal.loads(raw)
