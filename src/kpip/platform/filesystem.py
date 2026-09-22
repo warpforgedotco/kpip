@@ -81,7 +81,20 @@ def adjacent_tmp_file(
                 os.fsync(result.fileno())
 
 
-replace = retry(stop_after_delay=1, wait=0.25)(os.replace)
+# Windows fails a rename while another handle is open, which a scanner or an
+# indexer takes transiently; POSIX rename is atomic and has no such failure,
+# so there the retry is a Python frame and a clock read per cache entry.
+replace = (
+    retry(stop_after_delay=1, wait=0.25)(os.replace) if os.name == "nt" else os.replace
+)
+
+
+def set_descriptor_permissions(descriptor: int, path: str, mode: int) -> None:
+    """``set_file_permissions`` for a descriptor that has no file object."""
+    if os.chmod in os.supports_fd:
+        os.chmod(descriptor, mode)
+    elif os.chmod in os.supports_follow_symlinks:
+        os.chmod(path, mode, follow_symlinks=False)
 
 
 def set_file_permissions(target_file: BinaryIO, mode: int) -> None:
