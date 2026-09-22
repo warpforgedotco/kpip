@@ -17,7 +17,12 @@ from threading import RLock
 from typing import NamedTuple
 
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
-from kpip.core.errors import BuildError, InstallationError, UnsupportedWheel
+from kpip.core.errors import (
+    BuildError,
+    InstallationError,
+    KpipError,
+    UnsupportedWheel,
+)
 from kpip.core.hashes import file_hashes
 from kpip.core.http import raise_for_status, response_text
 from kpip.core.packaging import (
@@ -650,6 +655,62 @@ class CandidateMaterializer:
 
         return fingerprint
 
+    def content_persistent_key(
+        self,
+        candidate: CandidateRecord,
+        requested_extras: frozenset[str],
+    ) -> tuple[str, str, tuple[str, ...], str] | None:
+        """A persistent metadata key from the artifact's own content.
+
+        Only for an artifact fetched by URL whose link publishes no hash and
+        which is not a VCS checkout or a local file; ``None`` otherwise, or
+        when it cannot be fetched.  Fetching it here is what the metadata
+        read is about to do anyway.
+        """
+
+        link = candidate.link
+
+        if (
+            self.persistent_candidate_metadata_cache is None
+            or link.is_vcs
+            or link.is_file
+            or link.hashes
+            or link.kind not in (ArtifactKind.SDIST, ArtifactKind.WHEEL)
+            or not link.url.startswith(("http://", "https://"))
+        ):
+            return None
+
+        # Not source_hashes_for: it declines to fetch in a dry run, while the
+        # metadata read this serves fetches regardless.  The digest is kept
+        # under the URL so the lock's own hashing finds it too.
+        cached = self.source_hash_cache.get(link.url)
+
+        if cached is None:
+            try:
+                local = self.ensure_local_text(
+                    candidate,
+                    local_path=self.local_path_for(candidate),
+                )
+
+                cached = file_hashes(local)
+
+            except (KpipError, OSError, ValueError):
+                return None
+
+            self.source_hash_cache[link.url] = cached
+
+        digest = cached.get("sha256")
+
+        if digest is None:
+            return None
+
+        return (
+            link.url,
+            candidate.version.public,
+            tuple(sorted(requested_extras)),
+            f"sha256:{digest}",
+        )
+
     def persistent_metadata_cache_for(
         self,
         candidate: CandidateRecord,
@@ -986,10 +1047,24 @@ class CandidateMaterializer:
         persistent_cache = self.persistent_metadata_cache_for(candidate)
 
         def load() -> CandidateMetadata:
+            nonlocal persistent_cache, persistent_key
+
             cached = self.metadata_cache.get(key)
 
             if cached is not None:
                 return cached
+
+            if persistent_cache is None:
+                # An artifact fetched by URL with no published hash has no
+                # identity a cache could trust -- until it is fetched, when
+                # its content has one.  The fetch is a cache hit on a warm
+                # run, so the hash costs a read of the file and saves the
+                # build: a URL sdist was rebuilt on every lock before this.
+                content_key = self.content_persistent_key(candidate, requested_extras)
+
+                if content_key is not None:
+                    persistent_cache = self.persistent_candidate_metadata_cache
+                    persistent_key = content_key
 
             if persistent_cache is not None:
                 cached = persistent_cache.get(persistent_key)
