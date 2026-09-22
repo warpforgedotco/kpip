@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import logging
 import os
 import re
 import sys
@@ -17,6 +16,7 @@ from threading import RLock
 from typing import NamedTuple
 
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
+from kpip.core.logger import get_logger
 from kpip.core.errors import (
     BuildError,
     InstallationError,
@@ -94,7 +94,7 @@ if TYPE_CHECKING:
 
     from kpip.core.http import HttpSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 _EXTRA_MARKER_RE = re.compile(r"extra\s*(?:==|in)\s*['\"]([^'\"]+)['\"]")

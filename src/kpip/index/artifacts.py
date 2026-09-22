@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import atexit
 import hashlib
-import logging
 import os
 import posixpath
 import shutil
 import tempfile
 import urllib.parse
 
+from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.urls import url_to_path
 from kpip.index.artifact_cache import ArtifactCache, materialize_cached_artifact
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from kpip.core.http import HttpSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 DOWNLOAD_DIR: str | None = None
