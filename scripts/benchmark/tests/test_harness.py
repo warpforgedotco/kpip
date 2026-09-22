@@ -516,3 +516,47 @@ def test_the_setup_log_records_the_free_space(tmp_path: Path) -> None:
 
     assert run_chain(json.dumps(steps)) == 1
     assert "free space on" in log.read_text(encoding="utf-8")
+
+
+def test_a_failed_benchmark_reruns_its_commands_and_shows_the_first_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    marker = tmp_path / "prepared"
+    run = Hyperfine(
+        name="x",
+        commands=[
+            Command(name="ok", prepare=None, command=[sys.executable, "-c", "pass"]),
+            Command(
+                name="bad",
+                prepare=f"{sys.executable} -c \"open({str(marker)!r}, 'w').write('1')\"",
+                command=[
+                    sys.executable,
+                    "-c",
+                    "import sys; print('why', file=sys.stderr); sys.exit(4)",
+                ],
+            ),
+        ],
+        setup=None,
+        warmup=None,
+        min_runs=None,
+        runs=None,
+        verbose=False,
+        json=False,
+    )
+    real_check_call = subprocess.check_call
+
+    def fail(args: list[str], **kwargs: object) -> None:
+        if args and args[0] == "hyperfine":
+            raise subprocess.CalledProcessError(1, "hyperfine")
+        real_check_call(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "check_call", fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        run.run()
+
+    err = capsys.readouterr().err
+    assert "bad exited 4 on a rerun" in err
+    assert "why" in err
+    assert marker.exists(), "the failing command's preparation ran first"

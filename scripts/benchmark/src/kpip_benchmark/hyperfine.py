@@ -125,4 +125,42 @@ class Hyperfine:
                     f"\n== {self.name}: setup failed; {self.setup_log} ==\n"
                     f"{self.setup_log.read_text()}\n"
                 )
+            elif not self.ignore_failure:
+                self.explain_failure(environment)
             raise
+
+    def explain_failure(self, environment: dict[str, str]) -> None:
+        """Rerun each command once, with output, until one fails.
+
+        hyperfine suppresses a timed command's output and stops at its first
+        non-zero exit, naming neither the command nor the reason. Each
+        command's preparation and the command itself are run again in
+        order, and the first failure's output goes to stderr. This costs one
+        untimed run per command and happens only after a failure.
+        """
+        for command in self.commands:
+            if command.prepare:
+                subprocess.run(
+                    shlex.split(command.prepare), env=environment, check=False
+                )
+            completed = subprocess.run(
+                command.command,
+                env=environment,
+                check=False,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if completed.returncode != 0:
+                sys.stderr.write(
+                    f"\n== {self.name}: {command.name} exited "
+                    f"{completed.returncode} on a rerun ==\n"
+                    f"$ {command_line(command.command)}\n"
+                    f"--- stdout ---\n{completed.stdout}"
+                    f"--- stderr ---\n{completed.stderr}\n"
+                )
+                return
+        sys.stderr.write(
+            f"\n== {self.name}: every command succeeded on a rerun; "
+            "the failure was not reproducible ==\n"
+        )
