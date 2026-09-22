@@ -329,17 +329,7 @@ def load_choices(
         or not valid_choices(payload[1])
     ):
         return {}
-    choices = payload[1]
-    embed_summary_choices(
-        cache,
-        url,
-        generation,
-        target_key,
-        allow_binary,
-        allow_source,
-        choices,  # ty:ignore[invalid-argument-type]
-    )
-    return choices  # ty:ignore[invalid-return-type]
+    return payload[1]  # ty:ignore[invalid-return-type]
 
 
 def save_choices(
@@ -363,40 +353,6 @@ def save_choices(
     cache.set_atomic(
         choice_key(url, target_key, allow_binary, allow_source),
         payload,
-    )
-    embed_summary_choices(
-        cache,
-        url,
-        generation,
-        target_key,
-        allow_binary,
-        allow_source,
-        choices,
-    )
-
-
-def embed_summary_choices(
-    cache: Any,
-    url: str,
-    generation: str,
-    target_key: str,
-    allow_binary: bool,
-    allow_source: bool,
-    choices: CatalogChoices,
-) -> None:
-    """Co-locate the hot target profile with its generation-scoped summary."""
-    summary = load_summary(cache, url)
-    if summary is None or summary[0] != generation:
-        return
-    profile_key = target_key, allow_binary, allow_source
-    if summary[3].get(profile_key) == choices:
-        return
-    profiles = dict(summary[3])
-    profiles[profile_key] = choices
-    save_summary_value(
-        cache,
-        url,
-        (summary[0], summary[1], summary[2], profiles),
     )
 
 

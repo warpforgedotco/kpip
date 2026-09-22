@@ -109,20 +109,15 @@ def test_catalog_choices_are_scoped_to_generation(tmp_path: Path) -> None:
     choices: CatalogChoices = {"1.0": (record, WHEEL_RECORD, 0)}
     save_choices(cache, page_url, summary[0], "target", True, True, choices)
 
-    embedded = load_summary(cache, page_url)
-    assert embedded is not None
-    assert embedded[3][("target", True, True)] == choices
-    assert (
-        load_choices(
-            cache,
-            page_url,
-            summary[0],
-            "target",
-            True,
-            True,
-        )
-        == choices
-    )
+    # Choices live in their own entry.  They used to be copied into the
+    # summary as well, which meant rewriting it on every choice saved *and*
+    # on every choice read: 4,452 summary writes for 694 packages on a cold
+    # airflow lock, against the 694 the catalog itself needs.
+    assert load_choices(cache, page_url, summary[0], "target", True, True) == choices
+
+    unchanged = load_summary(cache, page_url)
+    assert unchanged is not None
+    assert unchanged[3] == {}, "saving choices does not rewrite the summary"
     assert (
         load_choices(
             cache,
@@ -249,3 +244,42 @@ def test_catalog_with_an_unparseable_upload_time_is_a_miss(tmp_path: Path) -> No
 
     assert load_catalog(cache, page_url) is None
     assert load_links(cache, page_url) is None
+
+
+def test_a_choice_read_never_writes(tmp_path: Path) -> None:
+    """Reading choices used to rewrite the summary to co-locate them.
+
+    ``load_choices`` embedded what it had just read, so a warm run wrote
+    once per package per profile for a saving that a single small read
+    already provides.
+    """
+    cache = SafeFileCache(str(tmp_path))
+    page_url = "https://example.test/simple/demo/"
+    link = Link.from_url(
+        "https://files.example.test/demo-1.0-py3-none-any.whl",
+        source_url=page_url,
+    )
+    save_links(cache, page_url, [link])
+    summary = load_summary(cache, page_url)
+    assert summary is not None
+    catalog = load_catalog(cache, page_url)
+    assert catalog is not None
+    record = catalog[0][0][2][0][1]
+    choices: CatalogChoices = {"1.0": (record, WHEEL_RECORD, 0)}
+    save_choices(cache, page_url, summary[0], "target", True, True, choices)
+
+    writes: list[str] = []
+    original = SafeFileCache.set_atomic
+    SafeFileCache.set_atomic = (  # type: ignore[method-assign]
+        lambda self, key, value: writes.append(key) or original(self, key, value)
+    )
+    try:
+        for _ in range(5):
+            assert (
+                load_choices(cache, page_url, summary[0], "target", True, True)
+                == choices
+            )
+    finally:
+        SafeFileCache.set_atomic = original  # type: ignore[method-assign]
+
+    assert writes == []
