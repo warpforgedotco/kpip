@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from kpip.core.packaging import parse_requirement
 from kpip.core.versions import Version
-from kpip.index import candidates, vcs
+from kpip.index import candidate_materialization, candidates, vcs
 from kpip.index.candidate_materialization import CandidateMaterializer
 from kpip.index.links import Link
 from kpip.index.source_models import CandidateRecord
@@ -135,7 +135,12 @@ def test_metadata_is_not_persisted_under_a_commit_the_clone_did_not_check_out(
     url, root = repo
     link = Link.from_url(url, source_url=None)
     stale = "0" * 40
-    monkeypatch.setattr(vcs, "resolve_git_commit", lambda u, **k: stale)
+    # The materializer imports the resolver by name, so patch it there;
+    # patching ``vcs`` would leave the real resolver in place and this test
+    # would pass without exercising the guard.
+    monkeypatch.setattr(
+        candidate_materialization, "resolve_git_commit", lambda u, **k: stale
+    )
     materializer = _materializer(tmp_path)
     cache = materializer.persistent_candidate_metadata_cache
     assert cache is not None
