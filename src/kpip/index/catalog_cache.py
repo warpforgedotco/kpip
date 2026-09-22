@@ -19,6 +19,8 @@ from kpip.index.source_models import ArtifactKind, MetadataFile
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    import datetime
+    from collections.abc import Mapping
     from typing import Any
 
 PREFIX = f"{versioned_bucket('kpip-index-catalog', 1)}:"
@@ -56,7 +58,6 @@ CatalogSummary = tuple[
 _PENDING_CATALOGS_ATTRIBUTE = "_kpip_pending_catalogs"
 _PENDING_CATALOGS_LIMIT = 64
 _VALIDATED_CATALOGS_ATTRIBUTE = "_kpip_validated_catalogs"
-
 _VALIDATED_CATALOGS_LOCK = threading.Lock()
 """Guards the memo's ordering, which several worker threads maintain.
 
@@ -66,7 +67,13 @@ the oldest key and removing it raised ``KeyError`` when another thread had
 already removed it.  The lock is held only for those dict operations, never
 across a decode or a read.
 """
-_VALIDATED_CATALOGS_LIMIT = 8
+
+_VALIDATED_CATALOGS_LIMIT = 4096
+"""Catalogs kept decoded per cache, so a page compiled in this run is not
+immediately written, read back and decoded again to answer for its own
+releases.  A cold airflow lock compiles ~700; at the previous limit of 8 they
+evicted each other and the provider re-decoded 594 MB of payloads it had just
+produced."""
 
 
 def cache_key(url: str) -> str:
@@ -557,9 +564,9 @@ def valid_choice_profiles(value: object) -> bool:
     )
 
 
-def save_links(cache: Any, url: str, links: list[Link]) -> None:
+def save_links(cache: Any, url: str, links: list[Link]) -> CatalogSummary | None:
     if cache is None:
-        return
+        return None
     grouped: dict[tuple[str, str], list[CatalogArtifact]] = {}
     unparsed: list[CatalogRecord] = []
     for link in links:
@@ -571,7 +578,7 @@ def save_links(cache: Any, url: str, links: list[Link]) -> None:
             continue
         kind, name, version = identity
         grouped.setdefault((name, version), []).append((kind, record))
-    save_catalog(
+    return save_catalog(
         cache,
         url,
         (
@@ -614,17 +621,24 @@ def release_facts(artifacts: list[CatalogArtifact]) -> list[CatalogFact]:
     ]
 
 
-def save_catalog(cache: Any, url: str, catalog: CatalogData) -> None:
+def save_catalog(cache: Any, url: str, catalog: CatalogData) -> CatalogSummary | None:
+    """Persist a catalog and return the summary derived from it.
+
+    A cold fetch has just compiled the catalog and would otherwise re-read
+    and re-decode the summary it wrote a moment earlier.
+    """
     try:
         payload = marshal.dumps(
             ("kpip-index-catalog", catalog[0], catalog[1]),
         )
     except (TypeError, ValueError):
-        return
+        return None
     generation = catalog_generation(payload)
     cache.set_atomic(cache_key(url), payload)
     _remember_validated_catalog(cache, url, payload, catalog)
-    save_summary(cache, url, catalog, generation)
+    summary = summary_from_catalog(catalog, generation)
+    save_summary_value(cache, url, summary)
+    return summary
 
 
 def catalog_generation(payload: bytes) -> str:
@@ -703,22 +717,41 @@ def artifact_identity(
     if parsed_wheel is None:
         parsed_wheel = parsed_wheel_from_link(link)
     if parsed_wheel is not None:
-        return WHEEL_RECORD, parsed_wheel.name, str(parsed_wheel.version)
-    if link.kind is not ArtifactKind.SDIST:
-        return None
-    parsed_identity = project_version_from_filename(str(link.filename))
-    if parsed_identity is None:
-        return None
-    name, version = parsed_identity
-    return SDIST_RECORD, name, str(version)
+        return WHEEL_RECORD, parsed_wheel.name, parsed_wheel.version.public
+    return identity_for(link.kind, str(link.filename), parsed_wheel=None)
 
 
 def parsed_wheel_from_link(link: Link) -> WheelFile | None:
     """Parse a wheel link's filename exactly once at catalog build time."""
-    if link.kind is not ArtifactKind.WHEEL:
-        return None
     # The link already unquoted its path and caches the basename.
-    return parse_wheel_file(str(link.filename))
+    return parsed_wheel_for(link.kind, str(link.filename))
+
+
+def parsed_wheel_for(kind: ArtifactKind, filename: str) -> WheelFile | None:
+    """``parsed_wheel_from_link`` for a caller that has no link to hand."""
+    if kind is not ArtifactKind.WHEEL:
+        return None
+    return parse_wheel_file(filename)
+
+
+def identity_for(
+    kind: ArtifactKind,
+    filename: str,
+    *,
+    parsed_wheel: WheelFile | None = None,
+) -> tuple[int, str, str] | None:
+    """``artifact_identity`` for a caller that has no link to hand."""
+    if parsed_wheel is None:
+        parsed_wheel = parsed_wheel_for(kind, filename)
+    if parsed_wheel is not None:
+        return WHEEL_RECORD, parsed_wheel.name, parsed_wheel.version.public
+    if kind is not ArtifactKind.SDIST:
+        return None
+    parsed_identity = project_version_from_filename(filename)
+    if parsed_identity is None:
+        return None
+    name, version = parsed_identity
+    return SDIST_RECORD, name, str(version)
 
 
 def wheel_identity(parsed_wheel: WheelFile | None) -> tuple[object, ...] | None:
@@ -796,19 +829,49 @@ def link_record(
     *,
     parsed_wheel: WheelFile | None = None,
 ) -> tuple[object, ...]:
-    metadata = link.metadata_file
-    upload_time = link.upload_time
+    return record_fields(
+        url=link.url,
+        text=link.text,
+        hashes=link.hashes,
+        requires_python=link.requires_python,
+        yanked_reason=link.yanked_reason,
+        metadata_file=link.metadata_file,
+        upload_time=link.upload_time,
+        parsed_wheel=parsed_wheel,
+        parts=tuple(link.parsed_url_internal),
+        size=link.size,
+    )
+
+
+def record_fields(
+    *,
+    url: str,
+    text: str,
+    hashes: Mapping[str, str],
+    requires_python: str | None,
+    yanked_reason: str | None,
+    metadata_file: MetadataFile | None,
+    upload_time: datetime.datetime | None,
+    parsed_wheel: WheelFile | None,
+    parts: tuple[str, ...],
+    size: int | None,
+) -> tuple[object, ...]:
+    """The stored shape of one artifact, from its fields rather than a link.
+
+    ``link_record`` reads these off a ``Link``; the Simple API JSON path has
+    them already and never builds one.
+    """
     return (
-        link.url,
-        link.text,
-        dict(link.hashes),
-        link.requires_python,
-        link.yanked_reason,
-        None if metadata is None else dict(metadata.hashes or {}),
+        url,
+        text,
+        dict(hashes),
+        requires_python,
+        yanked_reason,
+        None if metadata_file is None else dict(metadata_file.hashes or {}),
         None if upload_time is None else upload_time.isoformat(),
         wheel_identity(parsed_wheel),
-        tuple(link.parsed_url_internal),
-        link.size,
+        parts,
+        size,
     )
 
 

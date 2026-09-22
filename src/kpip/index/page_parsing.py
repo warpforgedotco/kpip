@@ -4,16 +4,30 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import urllib.parse
 from collections.abc import Callable
 
 from kpip.core.errors import InstallationError
 from kpip.core.http import raise_for_status, response_text
 from kpip.index.artifacts import ArtifactLocator
-from kpip.index.catalog_cache import load_links, save_links
+from kpip.index.catalog_cache import (
+    artifact_identity,
+    compile_groups,
+    identity_for,
+    link_record,
+    load_links,
+    parsed_wheel_for,
+    parsed_wheel_from_link,
+    record_fields,
+    save_catalog,
+    save_links,
+)
 from kpip.index.datetime import parse_iso_datetime
 from kpip.index.hashes import SUPPORTED_RECORD_HASHES
-from kpip.index.links import Link
+from kpip.index.links import Link, split_plain_url
+from kpip.core.urls import split_auth_from_netloc
+from kpip.index.paths import PathComponent
 from kpip.index.source_models import MetadataFile
 
 LinkFactory = Callable[..., Link]
@@ -23,6 +37,8 @@ _FROM_URL_FUNCTION = Link.from_url.__func__
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from kpip.core.http import HttpSession
 
 
@@ -117,6 +133,137 @@ class IndexPageParser:
         parser = link_parser_class()(url, link_factory)
         parser.feed(body)
         return parser.links
+
+    def summary_from_content(self, content: IndexContent, url: str) -> Any:
+        """Compile a freshly fetched JSON page into its persisted summary.
+
+        The cold path used to parse a page into links, hand them to the
+        catalog, and report nothing, so the provider fell back to reasoning
+        over those links.  The catalog and its summary are built here
+        instead and handed straight back, which is the same view a warm run
+        loads from disk.  ``None`` means this page is not the JSON shape, so
+        the caller keeps the link route.
+        """
+        content_type = content.content_type
+        if not (content_type.endswith("+json") or "json" in content_type):
+            return None
+        cache = getattr(self.session, "cache", None)
+        if cache is None:
+            return None
+        groups, unparsed = self.catalog_from_json(content.body, url)
+        return save_catalog(cache, url, (groups, unparsed))
+
+    def catalog_from_json(
+        self,
+        body: str,
+        url: str,
+    ) -> tuple[list[Any], list[Any]]:
+        """Compile a Simple API JSON page straight into catalog records.
+
+        The cold path used to build a ``Link`` for every file a page lists --
+        313,925 of them on an airflow lock -- only to read their fields back
+        out into the record tuples the catalog stores, and then discard them.
+        Every record field comes from the JSON entry, so the links were
+        scaffolding.
+
+        A file whose URL is not the plain ``https://host/path`` shape still
+        goes through ``Link``, which owns the fragment, escaping and fallback
+        rules, so anything unusual stays identical by construction rather
+        than by re-derivation here.
+        """
+        data = json.loads(body)
+        base_url = ensure_trailing_slash(url)
+        grouped: dict[tuple[str, str], list[Any]] = {}
+        unparsed: list[Any] = []
+        for file_data in data.get("files", []):
+            if not isinstance(file_data, dict):
+                continue
+            file_url = file_data.get("url")
+            if not isinstance(file_url, str):
+                continue
+            record, identity = self.record_from_json(base_url, url, file_data, file_url)
+            if identity is None:
+                unparsed.append(record)
+                continue
+            kind, name, version = identity
+            grouped.setdefault((name, version), []).append((kind, record))
+        return compile_groups(grouped), unparsed
+
+    def record_from_json(
+        self,
+        base_url: str,
+        source_url: str,
+        file_data: Any,
+        file_url: str,
+    ) -> tuple[Any, tuple[int, str, str] | None]:
+        """One catalog record and its release identity, from one JSON entry."""
+        url = join_index_url(base_url, file_url)
+        filename = file_data.get("filename")
+        hashes = file_data.get("hashes")
+        yanked = file_data.get("yanked")
+        requires_python = file_data.get("requires-python")
+        upload_time = file_data.get("upload-time")
+        size = file_data.get("size")
+        text = str(filename or "")
+        yanked_reason = (
+            None
+            if yanked is False or yanked is None
+            else ""
+            if yanked is True
+            else str(yanked)
+        )
+        metadata_file = metadata_file_from_json(file_data)
+        parsed = split_plain_url(url)
+
+        if parsed is None or "&" in url:
+            link = Link.from_index_page(
+                url,
+                source_url=source_url,
+                text=text,
+                hashes=hashes if isinstance(hashes, dict) else None,
+                requires_python=(
+                    requires_python if isinstance(requires_python, str) else None
+                ),
+                yanked_reason=yanked_reason,
+                metadata_file=metadata_file,
+                upload_time=parse_iso_datetime(upload_time) if upload_time else None,
+            )
+            if type(size) is int and size >= 0:
+                link.size = size
+            parsed_wheel = parsed_wheel_from_link(link)
+            return (
+                link_record(link, parsed_wheel=parsed_wheel),
+                artifact_identity(link, parsed_wheel=parsed_wheel),
+            )
+
+        path = urllib.parse.unquote(parsed.path)
+        stripped = path.rstrip("/")
+        kind = Link.artifact_kind_from_filename(posixpath.basename(stripped))
+        name = PathComponent.from_name(stripped[stripped.rfind("/") + 1 :])
+        if not name:
+            name = PathComponent.from_name(split_auth_from_netloc(parsed.netloc)[0])
+        parsed_wheel = parsed_wheel_for(kind, str(name))
+        return (
+            record_fields(
+                url=url,
+                text=text,
+                hashes=(
+                    {str(key): str(value) for key, value in hashes.items()}
+                    if isinstance(hashes, dict)
+                    else {}
+                ),
+                requires_python=(
+                    requires_python if isinstance(requires_python, str) else None
+                ),
+                yanked_reason=yanked_reason,
+                metadata_file=metadata_file,
+                upload_time=parse_iso_datetime(upload_time) if upload_time else None,
+                parsed_wheel=parsed_wheel,
+                parts=tuple(parsed),
+                size=size if type(size) is int and size >= 0 else None,
+            ),
+            identity_for(kind, str(name), parsed_wheel=parsed_wheel),
+        )
 
     def links_from_json(self, body: str, url: str) -> list[Link]:
         data = json.loads(body)

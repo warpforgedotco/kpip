@@ -241,6 +241,11 @@ class SimpleIndexSource:
         if outcome is not None:
             return outcome[0]
 
+        # A page compiled straight into the catalog left its body in the HTTP
+        # cache a moment earlier, so a caller that still wants links re-reads
+        # it from there.  Holding every body in memory instead cost more in
+        # page faults than the parse it saved: a cold airflow lock would
+        # retain some 700 of them for the whole run.
         return IndexPageParser(
             trusted_hosts=self.trusted_hosts,
             session=self.session,
@@ -296,6 +301,14 @@ class SimpleIndexSource:
 
             if summary is not None:
                 return summary
+
+        # A JSON page compiles straight into the catalog and its summary, so
+        # the provider reasons over records rather than over a link per file:
+        # an airflow lock listed 313,925 of them only to discard them here.
+        summary = parser.summary_from_content(content, project_url)
+
+        if summary is not None:
+            return summary
 
         links = parser.links_from_content(content, project_url)
 

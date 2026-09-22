@@ -67,7 +67,7 @@ class InvalidEggFragment(DiagnosticKpipError):
 _PLAIN_URL = re.compile(r"(https?)://([A-Za-z0-9.\-_:]+)(/[^\s#?\\\[\]]*)?\Z")
 
 
-def _split_plain_url(url: str) -> urllib.parse.SplitResult | None:
+def split_plain_url(url: str) -> urllib.parse.SplitResult | None:
     """``urlsplit`` for the URLs an index page lists, without its generality.
 
     Every artifact URL on PyPI is ``https://host/path`` with nothing else, and
@@ -83,6 +83,10 @@ def _split_plain_url(url: str) -> urllib.parse.SplitResult | None:
         return None
     scheme, netloc, path = match.groups()
     return urllib.parse.SplitResult(scheme, netloc, path or "", "", "")
+
+
+_split_plain_url = split_plain_url
+"""Kept for callers that predate the public name."""
 
 
 @functools.total_ordering
@@ -217,7 +221,7 @@ class Link:
         fragment handling for both shapes; anything unusual falls back to
         :meth:`from_url`.
         """
-        parsed = _split_plain_url(url) or urllib.parse.urlsplit(url)
+        parsed = split_plain_url(url) or urllib.parse.urlsplit(url)
         hashes_from_link: dict[str, str] = {}
         fragment = parsed.fragment
         if fragment:
