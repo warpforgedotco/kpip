@@ -1034,10 +1034,16 @@ class NabProvider:
         return False
 
     def _catalog_candidate(self, package: str, version: Version) -> object | None:
-        """The single catalog entry for one release, or None if not unique.
+        """The catalog entry the resolver would materialize for one release.
 
-        Ambiguity is not a rejection: more than one artifact for a release
-        means the choice belongs to the resolver's own evaluation.
+        The per-release read returns a release's artifacts preferred first,
+        the order ``_candidates_for_version`` materializes them in; a decision
+        on the release records ``candidates[0]``, so the forward check reads
+        the same artifact.  Declining on more than one artifact instead made
+        the check blind on a cold run: a freshly parsed catalog offers every
+        release's wheel *and* sdist, while a persisted one carries a single
+        choice.  boto3 with ``urllib3<1.25.4`` walked 1,438 conflicts cold
+        and none warm for exactly that reason.
 
         One release at a time: the provider reads the release's artifacts
         out of the package catalog, and only the one release inspected is
@@ -1058,7 +1064,7 @@ class NabProvider:
                 records = ()
             if records is not None:
                 candidate = None
-                if len(records) == 1:
+                if records:
                     try:
                         candidate = (
                             self.provider.get_materializer_internal().materialize_one(
@@ -1097,7 +1103,7 @@ class NabProvider:
                 continue
             if records is None:
                 continue
-            if len(records) != 1:
+            if not records:
                 self._catalog_candidate_cache[key] = None
                 continue
             pending.append((version, records[0]))
