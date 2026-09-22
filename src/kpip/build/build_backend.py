@@ -127,7 +127,13 @@ class BackendSpec:
 
         build_system = data.get("build-system")
 
-        if not isinstance(build_system, dict):
+        if build_system is not None and not isinstance(build_system, dict):
+            raise BuildError(
+                f"Invalid PEP 518 [build-system] table in {pyproject}: "
+                "build-system is not a table",
+            )
+
+        if build_system is None:
             # A pyproject.toml carrying only tool configuration -- [tool.black]
             # and nothing else -- is the common shape for a project that still
             # builds through setup.py, and PEP 518 says the absent table means

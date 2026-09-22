@@ -17,6 +17,7 @@ from kpip.core.packaging import (
     normalize_python_version,
     parse_requirement,
     set_target_python_version,
+    target_python_version,
 )
 from kpip.core.urls import path_to_url, url_to_path
 from kpip.core.versions import InvalidVersion, Version
@@ -238,8 +239,14 @@ def _resolved_metadata_name(candidate: object) -> str | None:
 def run_lock(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
+    resolvers: list[ResolutionEngine] = []
+
     if not options.python_version:
-        return perform_lock(options)
+        try:
+            return perform_lock(options, resolvers)
+
+        finally:
+            close_resolvers(resolvers)
 
     target = normalize_python_version(str(options.python_version))
 
@@ -257,17 +264,32 @@ def run_lock(args: list[str]) -> int:
     # The target is process-global while the resolve runs -- markers,
     # Requires-Python and wheel tags all have to agree on which interpreter
     # the lock is for -- so it is restored even when the resolve raises,
-    # which matters to every caller that runs a command in-process.
+    # which matters to every caller that runs a command in-process. A caller
+    # that had a target of its own gets it back, rather than the running
+    # interpreter.
+    previous = target_python_version()
+
     set_target_python_version(target)
 
     try:
-        return perform_lock(options)
+        return perform_lock(options, resolvers)
 
     finally:
-        set_target_python_version(None)
+        # Before the target is restored, not after: a metadata worker still
+        # running would evaluate markers against this interpreter and
+        # persist the answer under the lock's own key.
+        close_resolvers(resolvers)
+
+        set_target_python_version(previous)
 
 
-def perform_lock(options: Namespace) -> int:
+def close_resolvers(resolvers: list[ResolutionEngine]) -> None:
+    """Release each resolver, waiting for the work still in its hands."""
+    while resolvers:
+        resolvers.pop().close()
+
+
+def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     cache_dir = configured_cache_dir()
 
     resolution_session = NetworkSession(
@@ -493,7 +515,7 @@ def perform_lock(options: Namespace) -> int:
             for item in requirements
         ]
 
-        plan = ResolutionEngine(
+        resolver = ResolutionEngine(
             provider=provider,
             no_deps=False,
             ignore_installed=True,
@@ -503,7 +525,13 @@ def perform_lock(options: Namespace) -> int:
                 if options.python_version
                 else None
             ),
-        ).resolve(install_requirements)
+        )
+
+        # Closed by the caller rather than here: the candidates it produced
+        # are read below, and closing takes the prepared sources with it.
+        resolvers.append(resolver)
+
+        plan = resolver.resolve(install_requirements)
 
     packages: list[dict] = [
         *editable_packages,

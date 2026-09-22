@@ -592,3 +592,24 @@ def test_pyproject_with_only_tool_tables_and_no_setup_py_has_no_backend(
     )
 
     assert BackendSpec.from_project(project) is None
+
+
+def test_a_build_system_that_is_not_a_table_is_rejected(tmp_path: Path) -> None:
+    """Present but malformed is a mistake to report, not an absent table.
+
+    Reading it as absent would quietly run setup.py through the legacy
+    backend and hide what the project got wrong.
+    """
+    project = tmp_path / "malformed-pkg"
+    project.mkdir()
+    project.joinpath("pyproject.toml").write_text(
+        'build-system = "setuptools"\n',
+        encoding="utf-8",
+    )
+    project.joinpath("setup.py").write_text(
+        "from setuptools import setup\nsetup(name='malformed-pkg', version='1.0')\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BuildError, match="build-system is not a table"):
+        BackendSpec.from_project(project)

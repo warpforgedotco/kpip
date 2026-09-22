@@ -18,7 +18,11 @@ from kpip.index.sqlite_cache import SqliteBackedCache
 NAME = f"{versioned_bucket('candidate-metadata', 1)}.sqlite"
 MAX_ENTRIES = 16_384
 INSTANCES: dict[str, CandidateMetadataCache] = {}
-CacheKey = tuple[str, str, tuple[str, ...], str]
+# The trailing element is the interpreter the metadata was filtered for:
+# entries are marker-filtered, so a lock for 3.8 must not answer for the
+# interpreter running kpip. Rows written before it was part of the key no
+# longer match, which is the point -- they cannot say who they were for.
+CacheKey = tuple[str, str, tuple[str, ...], str, str]
 CacheValue = tuple[str, str, tuple[str, ...], tuple[str, ...], str | None]
 
 

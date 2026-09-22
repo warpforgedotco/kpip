@@ -31,6 +31,7 @@ from kpip.core.packaging import (
     canonicalize_name,
     marker_applies,
     parse_requirement,
+    target_python_version,
 )
 from kpip.core.versions import Version, ZERO_VERSION
 from kpip.core.wheel import (
@@ -52,6 +53,7 @@ from kpip.index.candidate_cache import (
     emit_build_message,
 )
 from kpip.index.candidate_metadata_cache import (
+    CacheKey,
     CandidateMetadataCache,
     get_candidate_metadata_cache,
 )
@@ -130,6 +132,11 @@ _SOURCE_BUILD_WORKERS = 4
 # eventual install reuses it.  pip's fast-deps was a net loss on small
 # wheels for exactly this reason (pypa/pip#8670).
 _RANGED_METADATA_MIN_WHEEL_BYTES = 1 * 1024 * 1024
+
+
+# The in-memory metadata key: artifact, its identity, version, the extras
+# asked for, and the interpreter the markers were evaluated against.
+_MetadataKey = tuple[str, str, str, frozenset[str], str]
 
 
 class _ArchiveMemberInfo(NamedTuple):
@@ -552,7 +559,7 @@ class CandidateMaterializer:
 
         self.source_build_pool: ThreadPoolExecutor | None = None
 
-        self.source_builds: dict[tuple[str, str, str, frozenset[str]], Any] = {}
+        self.source_builds: dict[_MetadataKey, Any] = {}
 
         self.build_options = build_options
 
@@ -598,7 +605,7 @@ class CandidateMaterializer:
         ] = {}
 
         self.metadata_cache: dict[
-            tuple[str, str, str, frozenset[str]],
+            _MetadataKey,
             CandidateMetadata,
         ] = {}
 
@@ -741,7 +748,7 @@ class CandidateMaterializer:
         self,
         candidate: CandidateRecord,
         requested_extras: frozenset[str],
-    ) -> tuple[str, str, tuple[str, ...], str] | None:
+    ) -> CacheKey | None:
         """A persistent metadata key from the artifact's own content.
 
         Only for an artifact fetched by URL whose link publishes no hash and
@@ -791,6 +798,7 @@ class CandidateMaterializer:
             candidate.version.public,
             tuple(sorted(requested_extras)),
             f"sha256:{digest}",
+            target_python_version() or "",
         )
 
     def persisted_vcs_candidate(self, link: Link) -> tuple[str, Version] | None:
@@ -813,7 +821,13 @@ class CandidateMaterializer:
             return None
 
         metadata = self.persistent_candidate_metadata_cache.get(
-            (link.url, "", _VCS_CANDIDATE_EXTRAS, fingerprint),
+            (
+                link.url,
+                "",
+                _VCS_CANDIDATE_EXTRAS,
+                fingerprint,
+                target_python_version() or "",
+            ),
         )
 
         if metadata is None:
@@ -1031,10 +1045,7 @@ class CandidateMaterializer:
         self,
         candidate: CandidateRecord,
         requested_extras: frozenset[str],
-    ) -> tuple[
-        tuple[str, str, str, frozenset[str]],
-        tuple[str, str, tuple[str, ...], str],
-    ]:
+    ) -> tuple[_MetadataKey, CacheKey]:
         fingerprint = self.artifact_fingerprint(candidate)
 
         # A VCS commit determines the version, and leaving the version out
@@ -1042,18 +1053,27 @@ class CandidateMaterializer:
         # a persisted entry spares the clone that would learn it.
         version = "" if candidate.link.is_vcs else candidate.version.public
 
+        # What is cached is the metadata as this resolve reads it, markers
+        # already applied, so the interpreter those markers were evaluated
+        # against is part of what the entry is. Without it a lock for 3.8
+        # persists dependencies that the next lock for this interpreter
+        # would read back as its own.
+        target = target_python_version() or ""
+
         return (
             (
                 candidate.link.url,
                 fingerprint,
                 version,
                 requested_extras,
+                target,
             ),
             (
                 candidate.link.url,
                 version,
                 tuple(sorted(requested_extras)),
                 fingerprint,
+                target,
             ),
         )
 
@@ -1149,7 +1169,7 @@ class CandidateMaterializer:
         for temporary, _ in prepared_sources:
             temporary.cleanup()
 
-    def started_metadata(self, key: tuple[str, str, str, frozenset[str]]) -> Any:
+    def started_metadata(self, key: _MetadataKey) -> Any:
         """The computation already under way for ``key``, if there is one."""
         with self.source_build_lock:
             return self.source_builds.get(key)
@@ -1204,9 +1224,15 @@ class CandidateMaterializer:
         """Drop the metadata pool, abandoning work nothing is waiting for.
 
         Speculative builds still queued when the solve ends are for versions
-        it did not take, so they are cancelled rather than waited on: the
-        interpreter joins pool threads at exit, and a command must not sit
-        there preparing metadata for a release it already decided against.
+        it did not take, so they are cancelled rather than started: a command
+        must not sit at exit preparing metadata for a release it already
+        decided against.
+
+        The few already running are waited for. They write what they read
+        into the metadata caches, under a key naming the interpreter the
+        resolve was for, and that target is restored the moment the command
+        returns -- a worker still running past it would file its answer
+        under whichever interpreter happened to be current by then.
         """
         with self.source_build_lock:
             pool = self.source_build_pool
@@ -1216,7 +1242,7 @@ class CandidateMaterializer:
             self.source_builds = {}
 
         if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)
+            pool.shutdown(wait=True, cancel_futures=True)
 
     def metadata_loader(
         self,
@@ -1500,6 +1526,7 @@ class CandidateMaterializer:
                             "",
                             _VCS_CANDIDATE_EXTRAS,
                             persistent_key[3],
+                            persistent_key[4],
                         ),
                         metadata,
                     )
@@ -1661,6 +1688,7 @@ class CandidateMaterializer:
         else:
             release = self.read_sibling_wheel_metadata(
                 links(requirement, candidate.version),
+                candidate,
             )
 
             self.sibling_metadata_cache[release_key] = release
@@ -1685,8 +1713,15 @@ class CandidateMaterializer:
     def read_sibling_wheel_metadata(
         self,
         links: Sequence[Link],
+        candidate: CandidateRecord,
     ) -> _ReleaseMetadata | None:
-        """The first of ``links`` whose sidecar reads as usable metadata."""
+        """The first of ``links`` whose sidecar describes ``candidate``.
+
+        A sidecar naming another project or release is not this candidate's
+        metadata whatever the index served it for, so it is passed over
+        rather than adopted: what is read here becomes the dependency graph
+        of a distribution nothing else has verified.
+        """
         session = self.session
 
         if session is None:
@@ -1722,6 +1757,12 @@ class CandidateMaterializer:
                 parsed_version = Version(version)
 
             except ValueError:
+                continue
+
+            if (
+                canonicalize_name(name) != candidate.canonical_name
+                or parsed_version != candidate.version
+            ):
                 continue
 
             return (

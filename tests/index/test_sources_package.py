@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 from kpip.cli.main import main
 from kpip.core.http import HttpResponse
-from kpip.core.packaging import Requirement, parse_requirement
+from kpip.core.packaging import (
+    Requirement,
+    parse_requirement,
+    set_target_python_version,
+)
 from kpip.core.versions import Version
 from kpip.core.wheel import TargetContext
 from kpip.index.cache import origin_hashes
@@ -1840,3 +1844,77 @@ def test_only_source_candidates_are_started() -> None:
     materializer.start_source_metadata(wheel, parse_requirement("legacy"))
 
     assert materializer.source_build_pool is None
+
+
+def test_a_sidecar_for_another_release_is_not_believed() -> None:
+    """What a sidecar says it describes has to be what was asked for.
+
+    The metadata read here becomes the dependency graph of a distribution
+    nothing else verifies, so an index serving the wrong file -- or serving
+    one for a neighbouring release -- must not decide it.
+    """
+
+    def session_for(body: bytes) -> object:
+        class Session:
+            def __init__(self) -> None:
+                self.requested: list[str] = []
+
+            def get(self, url: str) -> HttpResponse:
+                self.requested.append(url)
+                return make_response(
+                    status=200,
+                    reason="OK",
+                    url=url,
+                    headers={},
+                    body=body,
+                )
+
+        return Session()
+
+    wrong_name = session_for(
+        b"Metadata-Version: 2.1\nName: other\nVersion: 1.0\nRequires-Dist: base\n",
+    )
+    wrong_version = session_for(
+        b"Metadata-Version: 2.1\nName: legacy\nVersion: 9.9\nRequires-Dist: base\n",
+    )
+
+    for session in (wrong_name, wrong_version):
+        materializer = sibling_materializer(
+            session,
+            (wheel_link("legacy-1.0-cp38-cp38-win32.whl"),),
+        )
+
+        assert (
+            materializer.sibling_wheel_metadata(
+                sdist_candidate(),
+                parse_requirement("legacy"),
+                frozenset(),
+            )
+            is None
+        )
+
+
+def test_metadata_is_cached_apart_per_target_interpreter() -> None:
+    """Cached metadata is marker-filtered, so it belongs to one interpreter.
+
+    Sharing a key across targets is how a lock for 3.8 hands its
+    dependencies to the next lock for the interpreter running kpip.
+    """
+    materializer = CandidateMaterializer(dry_run=True)
+    candidate = sdist_candidate()
+
+    here, here_persistent = materializer.metadata_cache_keys(candidate, frozenset())
+
+    set_target_python_version("3.8.0")
+
+    try:
+        there, there_persistent = materializer.metadata_cache_keys(
+            candidate,
+            frozenset(),
+        )
+
+    finally:
+        set_target_python_version(None)
+
+    assert here != there
+    assert here_persistent != there_persistent

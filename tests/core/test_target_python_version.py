@@ -34,7 +34,11 @@ def restore_target() -> Iterator[None]:
         ("38", "3.8.0"),
         ("3.8.2", "3.8.2"),
         ("2", "2.0.0"),
-        ("310", "310"),
+        # Compact, and read the way a wheel tag is: 3.10, not version 310.
+        ("310", "3.10.0"),
+        ("3.10", "3.10.0"),
+        # Not a version at all; the caller reports it rather than guessing.
+        ("nonsense", "nonsense"),
     ],
 )
 def test_normalize_python_version(value: str, expected: str) -> None:

@@ -82,17 +82,21 @@ def normalize_python_version(value: str) -> str:
     and comparing a two-part version against a ``>=3.8.1`` bound would
     otherwise depend on how the operand happened to be spelled. A caller
     that means a specific patch release spells all three parts.
+
+    A compact operand is read the way wheel tags are written, all of the
+    digits after the first being the minor number: ``"310"`` is 3.10, not
+    version 310, which is what comparing it as written would have meant.
     """
     if "." in value:
         parts = value.split(".")
 
         return f"{parts[0]}.{parts[1]}.0" if len(parts) == 2 else value
 
-    if len(value) == 1:
-        return f"{value}.0.0"
+    if value.isdigit():
+        if len(value) == 1:
+            return f"{value}.0.0"
 
-    if len(value) == 2:
-        return f"{value[0]}.{value[1]}.0"
+        return f"{value[0]}.{value[1:]}.0"
 
     return value
 
