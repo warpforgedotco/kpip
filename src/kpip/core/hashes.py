@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Iterable, Mapping
-from typing import Any, BinaryIO, NoReturn
 
 from kpip.core.errors import HashMismatch, HashMissing, InstallationError
 
-Hash = Any
+TYPE_CHECKING = False
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+    from typing import Any, BinaryIO, NoReturn
+
+    # Every name here is only ever written in an annotation, and
+    # annotations are strings in this module, so none of them needs to
+    # exist at run time. ``typing`` in particular was being imported by
+    # every command that hashes a file, for a type alias.
+    Hash = Any
 
 
 def file_hashes(path: str) -> dict[str, str]:
