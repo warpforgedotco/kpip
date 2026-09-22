@@ -555,6 +555,12 @@ class CandidateMaterializer:
             _ReleaseMetadata | None,
         ] = {}
 
+        # Whether this resolve has had to read a source distribution the
+        # hard way. Nothing speculates until it has: a graph served
+        # entirely by wheels never blocks on a build, so looking for
+        # builds to start is pure overhead on it.
+        self.prepares_source_metadata = False
+
         self.source_build_lock = RLock()
 
         self.source_build_pool: ThreadPoolExecutor | None = None
@@ -1376,6 +1382,12 @@ class CandidateMaterializer:
 
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
                 from kpip.build.build_backend import prepare_project_metadata
+
+                # Neither the index nor a sibling wheel could answer, so this
+                # release is about to be built. From here the resolve is one
+                # that pays for builds, and starting the next ones early is
+                # worth what looking for them costs.
+                self.prepares_source_metadata = True
 
                 cache_source_hashes = (
                     self.source_hashes_for(candidate)

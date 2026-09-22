@@ -308,6 +308,12 @@ class CandidateEvaluator:
         ``python`` names the target explicitly, for the callers that hold
         one; the rest fall back to the process-wide target a cross-version
         resolve installs, and to the running interpreter when there is none.
+
+        Registered with the cache registry rather than memoized on its own,
+        because a verdict is only true of the interpreter it was asked
+        about: changing the target has to drop it. It was unregistered
+        before, which also meant a benchmark that resets the caches went on
+        measuring this one warm.
         """
         if python is None:
             python = target_python_version()

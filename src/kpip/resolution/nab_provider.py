@@ -1946,11 +1946,21 @@ class NabProvider:
 
         Only a range that has come down to a single release is started, so
         nothing is built for a version the solve is still choosing between.
+
+        The hint arrives on every propagation round, so reading it is only
+        worth doing for a resolve that pays for builds at all.
         """
         if not isinstance(self.provider, CandidateProvider):
             return
 
-        materializer = None
+        materializer = self.provider.get_materializer_internal()
+
+        # Nothing is looked for until the resolve has actually had to read a
+        # source distribution the hard way. A graph served entirely by wheels
+        # never blocks on a build, and scanning its frontier for builds to
+        # start cost half the resolve.
+        if not materializer.prepares_source_metadata:
+            return
 
         for package, positive_range in positive_ranges.items():
             if package in decisions or package in self._source_metadata_started:
@@ -1980,9 +1990,6 @@ class NabProvider:
 
             if not records:
                 continue
-
-            if materializer is None:
-                materializer = self.provider.get_materializer_internal()
 
             materializer.start_source_metadata(records[0], requirement)
 
