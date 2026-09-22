@@ -449,8 +449,8 @@ def test_selected_dependency_check_defers_when_every_release_is_blocked(
     assert adapter._newest_viable("demo", versions) == Version("16.0.0")
 
 
-@pytest.mark.parametrize("version_count, expected_calls", [(15, 0), (16, 1)])
-def test_selected_dependency_lookahead_is_reserved_for_wide_domains(
+@pytest.mark.parametrize("version_count, expected_calls", [(1, 0), (2, 1), (16, 1)])
+def test_selected_dependency_lookahead_runs_for_any_domain_with_a_choice(
     version_count: int,
     expected_calls: int,
     monkeypatch: pytest.MonkeyPatch,

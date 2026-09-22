@@ -30,12 +30,36 @@ def _adapter() -> NabProvider:
 
 def test_sidestep_returns_the_newest_unyanked_release_the_constraints_admit() -> None:
     adapter = _adapter()
+    adapter.requirements["demo"] = parse_requirement("demo")
     adapter._yanked_versions["demo"] = frozenset({V[3], V[2]})
     constraints = (parse_requirement("demo<2.1"),)
 
     chosen = adapter._sidestep_yanked("demo", V[3], list(V), constraints)
 
     assert chosen == V[1]
+
+
+def test_sidestep_runs_the_forward_check_over_the_unyanked_releases(
+    monkeypatch: Any,
+) -> None:
+    """Taking the newest unyanked release threw the check's verdict away.
+
+    The check had landed on a yanked release; the newest unyanked one may
+    be exactly what the check just rejected, and deciding it costs the
+    conflict the check exists to avoid.
+    """
+    adapter = _adapter()
+    adapter.requirements["demo"] = parse_requirement("demo")
+    adapter._yanked_versions["demo"] = frozenset({V[1]})
+    adapter._active_decisions["other"] = V[0]
+    monkeypatch.setattr(
+        adapter,
+        "_selected_dependency_rejects",
+        lambda package, version: version in (V[3], V[2]),
+    )
+    monkeypatch.setattr(adapter, "_pins_are_impossible", lambda package, version: False)
+
+    assert adapter._sidestep_yanked("demo", V[1], list(V), ()) == V[0]
 
 
 def test_sidestep_keeps_a_yanked_release_that_is_all_that_is_left() -> None:

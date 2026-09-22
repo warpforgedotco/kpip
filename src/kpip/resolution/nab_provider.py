@@ -38,7 +38,11 @@ _FORWARD_CHECK_BATCH = 32
 # batch above cannot fire on a descent: _newest_viable accepts the newest
 # survivor at index 0 and returns first, leaving the walk serial.
 _DESCENT_PREFETCH_WINDOW = 32
-_SELECTED_FORWARD_CHECK_MIN_VERSIONS = 16
+# The one-hop check reads a release's own metadata, which deciding the
+# release would read anyway, so it is not gated on catalog size: a package
+# with 13 releases whose newest 10 all excluded a decided release cost ten
+# backjumps of a hundred decisions each on airflow's graph.
+_SELECTED_FORWARD_CHECK_MIN_VERSIONS = 2
 # Two-hop metadata scans only repay their cost on genuinely large root domains.
 _TRANSITIVE_FORWARD_CHECK_MIN_VERSIONS = 256
 
@@ -600,7 +604,9 @@ class NabProvider:
         newest_first = sorted(matching, reverse=True)
         check_selected_dependencies = len(
             newest_first
-        ) >= _SELECTED_FORWARD_CHECK_MIN_VERSIONS and bool(self._active_decisions)
+        ) >= _SELECTED_FORWARD_CHECK_MIN_VERSIONS and bool(
+            self._active_decisions or self._active_positive_ranges
+        )
         check_partial_solution = (
             len(newest_first) >= _TRANSITIVE_FORWARD_CHECK_MIN_VERSIONS
         )
@@ -793,31 +799,47 @@ class NabProvider:
         package: str,
         version: Version,
     ) -> bool:
-        """Whether this wheel excludes an exact version already selected.
+        """Whether this wheel excludes a version already selected, or every
+        version the partial solution still allows for one of its dependencies.
 
         This is a one-hop proof only. Unknown metadata and URL dependencies
         remain possible, and rejecting every release makes ``_newest_viable``
         defer to PubGrub so an earlier decision can still be backtracked.
-        """
-        if not self._active_decisions:
-            return False
 
+        A decided dependency is tested exactly.  An undecided one whose
+        positive range the solution already holds is tested against the
+        interval that contains everything the specifier admits (see
+        ``_implied_range``): an empty intersection with a wider set is empty
+        for the specifier too.  Half of airflow's conflicts were a release
+        contradicting a range derived from an earlier decision, which the
+        two-hop check only asks about for constrained roots.
+        """
+        decisions = self._active_decisions
+        positive_ranges = self._active_positive_ranges
+        if not decisions and not positive_ranges:
+            return False
         candidate = self._catalog_candidate(package, version)
         dependencies = None if candidate is None else _dependencies_or_none(candidate)
         if dependencies is None or getattr(candidate, "source_kind", None) != "wheel":
             return False
-
         extras = self.requirements[package].extras
         for dependency in dependencies:
             if not marker_applies(dependency.marker, extras=extras):
                 continue
             if dependency.url is not None:
                 continue
-
-            selected = self._active_decisions.get(_key(dependency))
-            if selected is not None and not dependency.specifier.contains(
-                selected,
-                allow_prereleases=True,
+            dependency_name = _key(dependency)
+            selected = decisions.get(dependency_name)
+            if selected is not None:
+                if not dependency.specifier.contains(
+                    selected,
+                    allow_prereleases=True,
+                ):
+                    return True
+                continue
+            active = positive_ranges.get(dependency_name)
+            if active is not None and active.is_disjoint(
+                _implied_range(dependency.specifier)
             ):
                 return True
         return False
@@ -1216,6 +1238,13 @@ class NabProvider:
         airflow's graph this replaces 429 of 431 retries, and the retry stays
         for a provider whose summaries carry no yanked flag.  A release that
         is the only one left in range is still offered, as before.
+
+        The unyanked release is chosen the way ``selected`` was, through the
+        forward check, not as the newest in range: taking the newest threw
+        the check's verdict away whenever it had landed on a yanked release,
+        and on airflow's graph snowflake-snowpark-python's 1.46.0 is yanked,
+        so its 47 newer releases were each decided, conflicted with the
+        cloudpickle already chosen, and backjumped 425 decisions.
         """
         yanked = self._yanked_versions.get(package)
         if not yanked or selected not in yanked:
@@ -1230,7 +1259,11 @@ class NabProvider:
                 for constraint in constraints
             )
         ]
-        return max(usable) if usable else selected
+        if not usable:
+            return selected
+        if len(usable) == 1:
+            return usable[0]
+        return self._newest_viable(package, usable)
 
     def _unpinned(self, package: str, requirement: Requirement) -> Requirement:
         """``requirement`` with its specifier dropped and its extras kept.
