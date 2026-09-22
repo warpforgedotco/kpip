@@ -16,11 +16,11 @@ from kpip.core.packaging import (
     canonicalize_name,
     canonicalize_requirement,
 )
-from kpip.core.temp_dir import remove_temp_directory
 from kpip.core.urls import path_to_url, url_to_path
 from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.links import Link
+from kpip.index.vcs import release_checkout
 from kpip.resolution.input_requirements import install_req_from_editable
 
 TYPE_CHECKING = False
@@ -204,7 +204,7 @@ def prepare_editable_source(
         os.makedirs(os.path.dirname(checkout_dir), exist_ok=True)
         materialized_source = source_path
         shutil.copytree(materialized_source, checkout_dir, symlinks=True)
-        remove_temp_directory(materialized_source)
+        release_checkout(materialized_source)
         source_path = checkout_dir
         direct_url = DirectUrl(
             url=path_to_url(checkout_dir),

@@ -27,7 +27,6 @@ from kpip.core.packaging import (
     parse_requirement,
 )
 from kpip.core.versions import Version, ZERO_VERSION
-from kpip.core.temp_dir import remove_temp_directory
 from kpip.core.wheel import (
     LazyWheelLayout,
     WheelCandidate,
@@ -61,7 +60,7 @@ from kpip.index.source_models import (
     CandidateRecord,
     LazyCandidateMetadata,
 )
-from kpip.index.vcs import git_revision, is_immutable_vcs_link
+from kpip.index.vcs import git_revision, is_immutable_vcs_link, release_checkout
 from kpip.index.vcs import vcs_scheme
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
 
@@ -690,7 +689,7 @@ class CandidateMaterializer:
 
             if self.vcs_revision(url) is None:
                 local = self.ensure_local_text(candidate)
-                remove_temp_directory(local)
+                release_checkout(local)
 
             return None
 
@@ -1155,7 +1154,7 @@ class CandidateMaterializer:
                             prepared_temporary.cleanup()
                 finally:
                     if vcs_path is not None:
-                        remove_temp_directory(vcs_path)
+                        release_checkout(vcs_path)
 
             else:
                 with _open_resolver_wheel_archive(
@@ -1743,7 +1742,7 @@ class CandidateMaterializer:
                 )
 
                 if materialized_vcs_path is not None:
-                    remove_temp_directory(materialized_vcs_path)
+                    release_checkout(materialized_vcs_path)
 
                 continue
 
@@ -1752,7 +1751,7 @@ class CandidateMaterializer:
             candidates.append(wheel)
 
             if materialized_vcs_path is not None:
-                remove_temp_directory(materialized_vcs_path)
+                release_checkout(materialized_vcs_path)
 
             logger.debug(
                 "candidate ready %s==%s kind=%s",
