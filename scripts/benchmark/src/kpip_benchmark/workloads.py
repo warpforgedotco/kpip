@@ -4,22 +4,71 @@ import base64
 import hashlib
 import shutil
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 
-@dataclass(frozen=True, slots=True)
 class OfficialWorkload:
-    """One workload mirrored from uv's official benchmark corpus."""
+    """One workload mirrored from uv's official benchmark corpus.
+
+    Frozen and slotted, compared by value.
+    """
+
+    __slots__ = (
+        "compiled",
+        "constraint",
+        "description",
+        "name",
+        "python",
+        "source",
+        "source_kind",
+    )
 
     name: str
     source: str
     description: str
-    compiled: str | None = None
-    constraint: str | None = None
-    source_kind: Literal["requirements", "project"] = "requirements"
-    python: str | None = None
+    compiled: str | None
+    constraint: str | None
+    source_kind: Literal["requirements", "project"]
+    python: str | None
+
+    def __init__(
+        self,
+        name: str,
+        source: str,
+        description: str,
+        compiled: str | None = None,
+        constraint: str | None = None,
+        source_kind: Literal["requirements", "project"] = "requirements",
+        python: str | None = None,
+    ) -> None:
+        store = object.__setattr__
+        store(self, "name", name)
+        store(self, "source", source)
+        store(self, "description", description)
+        store(self, "compiled", compiled)
+        store(self, "constraint", constraint)
+        store(self, "source_kind", source_kind)
+        store(self, "python", python)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("OfficialWorkload is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("OfficialWorkload is immutable")
+
+    def _values(self) -> tuple[object, ...]:
+        return tuple(getattr(self, name) for name in self.__slots__)
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is OfficialWorkload and self._values() == other._values()
+
+    def __hash__(self) -> int:
+        return hash(self._values())
+
+    def __repr__(self) -> str:
+        fields = ", ".join(f"{name}={getattr(self, name)!r}" for name in self.__slots__)
+        return f"OfficialWorkload({fields})"
 
 
 OFFICIAL_WORKLOADS = (

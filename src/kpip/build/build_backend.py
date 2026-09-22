@@ -26,7 +26,6 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 
 import zipfile
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass
 from typing import Any
 
 from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
@@ -46,17 +45,53 @@ class BuildHookMissing(BuildError):
     """A required build backend hook is unavailable."""
 
 
-@dataclass(frozen=True)
 class BackendSpec:
-    """The build backend and requirements declared by a project."""
+    """The build backend and requirements declared by a project.
+
+    Frozen and slotted, compared by value.
+    """
+
+    __slots__ = ("backend_path", "name", "requirements", "setup_py_present")
 
     name: str
-
     requirements: tuple[str, ...]
-
     backend_path: tuple[str, ...]
+    setup_py_present: bool
 
-    setup_py_present: bool = False
+    def __init__(
+        self,
+        name: str,
+        requirements: tuple[str, ...],
+        backend_path: tuple[str, ...],
+        setup_py_present: bool = False,
+    ) -> None:
+        store = object.__setattr__
+        store(self, "name", name)
+        store(self, "requirements", requirements)
+        store(self, "backend_path", backend_path)
+        store(self, "setup_py_present", setup_py_present)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(f"{type(self).__name__} is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"{type(self).__name__} is immutable")
+
+    def _values(self) -> tuple[object, ...]:
+        return (self.name, self.requirements, self.backend_path, self.setup_py_present)
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is BackendSpec and self._values() == other._values()
+
+    def __hash__(self) -> int:
+        return hash(self._values())
+
+    def __repr__(self) -> str:
+        return (
+            f"BackendSpec(name={self.name!r}, requirements={self.requirements!r}, "
+            f"backend_path={self.backend_path!r}, "
+            f"setup_py_present={self.setup_py_present!r})"
+        )
 
     @classmethod
     def from_project(cls, source_dir: str | os.PathLike[str]) -> BackendSpec | None:
@@ -1014,40 +1049,105 @@ def backend_environment(source_dir: str | os.PathLike[str]) -> Iterator[None]:
             os.environ["PYTHONPATH"] = old_pythonpath
 
 
-@dataclass(frozen=True)
+_PROJECT_METADATA_FIELDS = (
+    "name",
+    "version",
+    "summary",
+    "requires_python",
+    "dependencies",
+    "optional_dependencies",
+    "scripts",
+    "provided_extras",
+    "license_expression",
+    "license_files",
+    "long_description",
+    "description_content_type",
+    "authors",
+    "classifiers",
+    "project_urls",
+)
+
+
 class ProjectMetadata:
+    """A project's core metadata as read from its source or built artifact.
+
+    Frozen and slotted, compared by value; ``version`` is stored in its
+    canonical spelling.
+    """
+
+    __slots__ = _PROJECT_METADATA_FIELDS
+
     name: str
-
     version: str
-
     summary: str | None
-
     requires_python: str | None
-
     dependencies: tuple[str, ...]
-
     optional_dependencies: dict[str, tuple[str, ...]]
-
     scripts: dict[str, str]
+    provided_extras: frozenset[str]
+    license_expression: str | None
+    license_files: tuple[str, ...]
+    long_description: str | None
+    description_content_type: str | None
+    authors: tuple[tuple[str | None, str | None], ...]
+    classifiers: tuple[str, ...]
+    project_urls: tuple[tuple[str, str], ...]
 
-    provided_extras: frozenset[str] = frozenset()
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        summary: str | None,
+        requires_python: str | None,
+        dependencies: tuple[str, ...],
+        optional_dependencies: dict[str, tuple[str, ...]],
+        scripts: dict[str, str],
+        provided_extras: frozenset[str] = frozenset(),
+        license_expression: str | None = None,
+        license_files: tuple[str, ...] = (),
+        long_description: str | None = None,
+        description_content_type: str | None = None,
+        authors: tuple[tuple[str | None, str | None], ...] = (),
+        classifiers: tuple[str, ...] = (),
+        project_urls: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        store = object.__setattr__
+        store(self, "name", name)
+        store(self, "version", str(Version(version)))
+        store(self, "summary", summary)
+        store(self, "requires_python", requires_python)
+        store(self, "dependencies", dependencies)
+        store(self, "optional_dependencies", optional_dependencies)
+        store(self, "scripts", scripts)
+        store(self, "provided_extras", provided_extras)
+        store(self, "license_expression", license_expression)
+        store(self, "license_files", license_files)
+        store(self, "long_description", long_description)
+        store(self, "description_content_type", description_content_type)
+        store(self, "authors", authors)
+        store(self, "classifiers", classifiers)
+        store(self, "project_urls", project_urls)
 
-    license_expression: str | None = None
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(f"{type(self).__name__} is immutable")
 
-    license_files: tuple[str, ...] = ()
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"{type(self).__name__} is immutable")
 
-    long_description: str | None = None
+    def _values(self) -> tuple[object, ...]:
+        return tuple(getattr(self, name) for name in _PROJECT_METADATA_FIELDS)
 
-    description_content_type: str | None = None
+    def __eq__(self, other: object) -> bool:
+        return type(other) is ProjectMetadata and self._values() == other._values()
 
-    authors: tuple[tuple[str | None, str | None], ...] = ()
+    def __hash__(self) -> int:
+        return hash(self._values())
 
-    classifiers: tuple[str, ...] = ()
-
-    project_urls: tuple[tuple[str, str], ...] = ()
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "version", str(Version(self.version)))
+    def __repr__(self) -> str:
+        fields = ", ".join(
+            f"{name}={getattr(self, name)!r}" for name in _PROJECT_METADATA_FIELDS
+        )
+        return f"ProjectMetadata({fields})"
 
 
 def read_project_readme(

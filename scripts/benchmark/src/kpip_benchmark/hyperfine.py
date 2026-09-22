@@ -4,7 +4,6 @@ import os
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
 NO_SHELL = "-N"
@@ -43,16 +42,67 @@ def noop_prepare() -> str:
     return command_line([sys.executable, "-m", "kpip_benchmark.runner", "cleanup"])
 
 
-@dataclass(frozen=True)
-class Command:
+class _Frozen:
+    """Slot-stored, immutable after construction, compared by value."""
+
+    __slots__ = ()
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(f"{type(self).__name__} is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"{type(self).__name__} is immutable")
+
+    def _values(self) -> tuple[object, ...]:
+        return tuple(getattr(self, name) for name in self.__slots__)
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is type(self) and self._values() == other._values()  # type: ignore[attr-defined]
+
+    def __hash__(self) -> int:
+        return hash(self._values())
+
+    def __repr__(self) -> str:
+        fields = ", ".join(f"{name}={getattr(self, name)!r}" for name in self.__slots__)
+        return f"{type(self).__name__}({fields})"
+
+
+class Command(_Frozen):
+    __slots__ = ("command", "env", "name", "prepare")
+
     name: str
     prepare: str | None
     command: list[str]
-    env: dict[str, str] = field(default_factory=dict)
+    env: dict[str, str]
+
+    def __init__(
+        self,
+        name: str,
+        prepare: str | None,
+        command: list[str],
+        env: dict[str, str] | None = None,
+    ) -> None:
+        store = object.__setattr__
+        store(self, "name", name)
+        store(self, "prepare", prepare)
+        store(self, "command", command)
+        store(self, "env", {} if env is None else env)
 
 
-@dataclass(frozen=True)
-class Hyperfine:
+class Hyperfine(_Frozen):
+    __slots__ = (
+        "commands",
+        "ignore_failure",
+        "json",
+        "min_runs",
+        "name",
+        "runs",
+        "setup",
+        "setup_log",
+        "verbose",
+        "warmup",
+    )
+
     name: str
     commands: list[Command]
     setup: str | None
@@ -61,9 +111,34 @@ class Hyperfine:
     runs: int | None
     verbose: bool
     json: bool
-    ignore_failure: bool = False
-    setup_log: Path | None = None
+    ignore_failure: bool
+    setup_log: Path | None
     """Where a failed ``setup`` chain wrote its output; shown when hyperfine fails."""
+
+    def __init__(
+        self,
+        name: str,
+        commands: list[Command],
+        setup: str | None,
+        warmup: int | None,
+        min_runs: int | None,
+        runs: int | None,
+        verbose: bool,
+        json: bool,
+        ignore_failure: bool = False,
+        setup_log: Path | None = None,
+    ) -> None:
+        store = object.__setattr__
+        store(self, "name", name)
+        store(self, "commands", commands)
+        store(self, "setup", setup)
+        store(self, "warmup", warmup)
+        store(self, "min_runs", min_runs)
+        store(self, "runs", runs)
+        store(self, "verbose", verbose)
+        store(self, "json", json)
+        store(self, "ignore_failure", ignore_failure)
+        store(self, "setup_log", setup_log)
 
     def args(self) -> list[str]:
         args = ["hyperfine", NO_SHELL]

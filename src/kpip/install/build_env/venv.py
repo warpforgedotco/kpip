@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sys
 import sysconfig
-from dataclasses import dataclass
 
 from kpip.core.errors import DiagnosticKpipError
 
@@ -58,11 +57,32 @@ def get_venv_path_from_sysconfig(name: str, env_dir: str) -> str:
     return sysconfig.get_path(name, scheme="venv", vars=vars)
 
 
-@dataclass
 class CreatedVenv:
-    lib_dirs: list[str]
-    bin_path: str
-    python_executable: str
+    """Where a freshly created environment keeps its libraries and interpreter."""
+
+    __slots__ = ("bin_path", "lib_dirs", "python_executable")
+
+    def __init__(
+        self, lib_dirs: list[str], bin_path: str, python_executable: str
+    ) -> None:
+        self.lib_dirs = lib_dirs
+        self.bin_path = bin_path
+        self.python_executable = python_executable
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is CreatedVenv and (
+            self.lib_dirs,
+            self.bin_path,
+            self.python_executable,
+        ) == (other.lib_dirs, other.bin_path, other.python_executable)
+
+    __hash__ = None  # type: ignore[assignment]  # mutable, so unhashable
+
+    def __repr__(self) -> str:
+        return (
+            f"CreatedVenv(lib_dirs={self.lib_dirs!r}, bin_path={self.bin_path!r}, "
+            f"python_executable={self.python_executable!r})"
+        )
 
 
 def create_isolated_venv(env_path: str, *, with_pip: bool = True) -> CreatedVenv:
