@@ -192,6 +192,26 @@ class CandidateRecord:
     def __hash__(self) -> int:
         return hash((self.name, self.version, self.link, self.wheel, self.tag_rank))
 
+    def with_metadata_loader(
+        self,
+        metadata_loader: LazyCandidateMetadata,
+    ) -> CandidateRecord:
+        """This record, carrying a loader, without going through kwargs.
+
+        ``copy_with`` is the general form and builds a dict of every field
+        to unpack it again. Attaching a loader is the one copy the resolver
+        makes in bulk -- once per candidate it looks at -- and it knows
+        every field already.
+        """
+        return CandidateRecord(
+            self.name,
+            self.version,
+            self.link,
+            self.wheel,
+            self.tag_rank,
+            metadata_loader,
+        )
+
     def copy_with(self, **changes: object) -> CandidateRecord:
         values = {
             "name": self.name,

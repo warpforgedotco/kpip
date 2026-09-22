@@ -99,6 +99,7 @@ class Link:
         "file_path_internal",
         "filename_internal",
         "hashes_internal",
+        "is_vcs_internal",
         "kind",
         "local_identity_internal",
         "local_is_dir_internal",
@@ -132,6 +133,7 @@ class Link:
         if url.startswith("\\\\"):
             url = path_to_url(url)
         self.parsed_url_internal = urllib.parse.urlsplit(url)
+        self.is_vcs_internal: bool | None = None
         self.url = url
         self._hash = hash(url)
         self.path_internal = urllib.parse.unquote(self.parsed_url_internal.path)
@@ -273,6 +275,7 @@ class Link:
         link.text = text
         link.local_identity_internal = None
         link.local_is_dir_internal = None
+        link.is_vcs_internal = None
         link.size = None
         link.kind = cls.artifact_kind_from_filename(
             posixpath.basename(path.rstrip("/")),
@@ -312,6 +315,7 @@ class Link:
         link.text = text
         link.local_identity_internal = None
         link.local_is_dir_internal = None
+        link.is_vcs_internal = None
         link.size = None
         link.kind = cls.artifact_kind_from_filename(
             posixpath.basename(link.path_internal.rstrip("/")),
@@ -373,6 +377,7 @@ class Link:
         link.text = name
         link.local_identity_internal = local_identity
         link.local_is_dir_internal = False
+        link.is_vcs_internal = None
         link.size = None
         link.kind = cls.artifact_kind_from_filename(name)
         return link
@@ -525,7 +530,22 @@ class Link:
 
     @property
     def is_vcs(self) -> bool:
-        return self.scheme in VCS_SCHEMES or self.url.startswith(VCS_SCHEMES_internal)
+        """Whether the URL names a version control checkout, answered once.
+
+        A link's URL never changes, so this never changes either, and the
+        resolver asks several times per link -- a scheme lookup, a set
+        membership and sometimes a prefix scan each time. Cached the way
+        ``is_existing_dir`` caches its own answer.
+        """
+        cached = self.is_vcs_internal
+
+        if cached is None:
+            cached = self.scheme in VCS_SCHEMES or self.url.startswith(
+                VCS_SCHEMES_internal,
+            )
+            self.is_vcs_internal = cached
+
+        return cached
 
     @property
     def is_file(self) -> bool:
