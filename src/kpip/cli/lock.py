@@ -24,7 +24,7 @@ from kpip.index.vcs import (
     vcs_reference,
 )
 from kpip.core.appdirs import http_cache_path
-from kpip.network.http import NetworkSession
+from kpip.network.http import DEFAULT_RETRIES, NetworkSession
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.files import parse_requirements
 from kpip.resolution.input_requirements import install_req_from_line
@@ -222,6 +222,7 @@ def run_lock(args: list[str]) -> int:
 
     resolution_session = NetworkSession(
         cache=(http_cache_path(cache_dir) if cache_dir else None),
+        retries=DEFAULT_RETRIES,
     )
 
     artifact_locator = ArtifactLocator(resolution_session, cache_dir=cache_dir)
