@@ -709,9 +709,9 @@ def wheel_identity(parsed_wheel: WheelFile | None) -> tuple[object, ...] | None:
         return None
     return (
         parsed_wheel.name,
-        str(parsed_wheel.version),
+        parsed_wheel.version.public,
         parsed_wheel.build_tag,
-        tuple((tag.interpreter, tag.abi, tag.platform) for tag in parsed_wheel.tags),
+        tuple([tag.triple for tag in parsed_wheel.tags]),
     )
 
 

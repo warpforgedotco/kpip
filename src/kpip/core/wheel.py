@@ -310,6 +310,7 @@ class WheelTag:
         "abi",
         "interpreter",
         "platform",
+        "triple",
     )
 
     def __init__(self, interpreter: str, abi: str, platform: str) -> None:
@@ -329,7 +330,13 @@ class WheelTag:
 
         setter(self, "_platform_lower", platform_lower)
 
-        setter(self, "_hash", hash((interpreter, abi, platform)))
+        # The tag as a plain tuple, which the hash needs anyway and every
+        # serializer wants: a catalog build asks for it once per artifact.
+        triple = (interpreter, abi, platform)
+
+        setter(self, "triple", triple)
+
+        setter(self, "_hash", hash(triple))
 
         if platform_lower.startswith(("macosx_", "android_")):
             parts = tuple(platform_lower.split("_", 3))
@@ -372,6 +379,8 @@ class WheelTag:
     _platform_parts: tuple[Any, ...] | None
 
     _hash: int
+
+    triple: tuple[str, str, str]
 
     def __str__(self) -> str:
         return f"{self.interpreter}-{self.abi}-{self.platform}"
