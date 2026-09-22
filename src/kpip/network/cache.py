@@ -13,7 +13,37 @@ from kpip.core.utils import ensure_dir
 from kpip.platform.filesystem import replace, set_descriptor_permissions
 
 PRIVATE_MODE = 0o600
-"""The mode a temporary entry is created with, before any widening."""
+"""The mode a temporary entry falls back to when its own cannot be created."""
+
+
+def process_umask() -> int:
+    """The umask this process was started with, read once.
+
+    ``os.umask`` is the only portable way to read it and it is also the way
+    to set it, so calling it repeatedly from the worker threads that write
+    cache entries would race with them.  Linux publishes the value, and the
+    set-and-restore fallback runs once, before any entry is written.
+    """
+    global _PROCESS_UMASK
+    if _PROCESS_UMASK is None:
+        _PROCESS_UMASK = _read_process_umask()
+    return _PROCESS_UMASK
+
+
+def _read_process_umask() -> int:
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            for line in status:
+                if line.startswith("Umask:"):
+                    return int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        pass
+    previous = os.umask(0o022)
+    os.umask(previous)
+    return previous
+
+
+_PROCESS_UMASK: int | None = None
 
 """Directory under the cache directory holding the HTTP page cache."""
 
@@ -70,6 +100,8 @@ class SafeFileCache:
         self._known_directories: set[str] = set()
         # Entry files take the cache directory's permissions, read once.
         self._entry_mode: int | None = None
+
+        self._creation_mode: int | None = None
         self._temporary_serial = 0
 
     def get_cache_path(self, name: str) -> str:
@@ -143,19 +175,37 @@ class SafeFileCache:
         descriptor = os.open(
             temporary,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            PRIVATE_MODE,
+            self.creation_mode(),
         )
         return descriptor, temporary
+
+    def creation_mode(self) -> int:
+        """The mode to create a temporary with, avoiding a chmod if it can.
+
+        ``open`` masks the mode it is given, so a mode with a bit the umask
+        clears has to be created narrow and widened afterwards.  When the
+        umask clears nothing the entry wants -- the usual case, a 0755 cache
+        directory under a 0022 umask asking for 0644 -- the file is created
+        at its final mode and the chmod disappears, which is one syscall per
+        entry across thousands of them.
+        """
+        mode = self._creation_mode
+        if mode is None:
+            wanted = self.entry_mode()
+            mode = self._creation_mode = (
+                wanted if wanted & ~process_umask() == wanted else PRIVATE_MODE
+            )
+        return mode
 
     def widen_to_entry_mode(self, descriptor: int, path: str) -> None:
         """Give a temporary the cache directory's mode, if that widens it.
 
-        The temporary is created private already, so a private cache
-        directory -- the usual one -- needs no chmod at all, and a resolve
-        stores thousands of entries.
+        ``creation_mode`` already gave it the mode it wants unless the umask
+        would have masked a bit off, so this is the narrow fallback rather
+        than the usual path, and a resolve stores thousands of entries.
         """
         mode = self.entry_mode()
-        if mode != PRIVATE_MODE:
+        if mode != self.creation_mode():
             set_descriptor_permissions(descriptor, path, mode)
 
     def write_to_file(self, path: str, writer_func: Callable[[BinaryIO], Any]) -> None:
