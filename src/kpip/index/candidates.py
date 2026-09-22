@@ -22,6 +22,7 @@ from kpip.index.vcs import materialize_vcs, release_checkout
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from kpip.core.wheel import TargetContext, WheelFile
     from kpip.index.links import Link
 
@@ -67,6 +68,7 @@ class InstallationCandidate(CandidateRecord):
         link: Link,
         *,
         target: TargetContext | None = None,
+        vcs_lookup: Callable[[Link], tuple[str, Version] | None] | None = None,
     ) -> InstallationCandidate | RejectedCandidate:
         if link.kind is ArtifactKind.WHEEL:
             wheel = parse_wheel_file(link.filename)
@@ -87,7 +89,11 @@ class InstallationCandidate(CandidateRecord):
             )
 
         if link.kind is ArtifactKind.SOURCE_TREE:
-            return cls.from_vcs(link) if link.is_vcs else cls.from_source_tree(link)
+            return (
+                cls.from_vcs(link, lookup=vcs_lookup)
+                if link.is_vcs
+                else cls.from_source_tree(link)
+            )
 
         if link.kind is not ArtifactKind.SDIST:
             return RejectedCandidate(
@@ -192,7 +198,12 @@ class InstallationCandidate(CandidateRecord):
         return cls(name=metadata.name, version=version, link=link)
 
     @classmethod
-    def from_vcs(cls, link: Link) -> InstallationCandidate | RejectedCandidate:
+    def from_vcs(
+        cls,
+        link: Link,
+        *,
+        lookup: Callable[[Link], tuple[str, Version] | None] | None = None,
+    ) -> InstallationCandidate | RejectedCandidate:
         """The candidate for a VCS link, built once per URL per process.
 
         Learning a VCS requirement's name and version means a checkout and a
@@ -203,6 +214,12 @@ class InstallationCandidate(CandidateRecord):
         cached = _vcs_candidates.get(link.url)
         if cached is not None:
             return cached
+        if lookup is not None:
+            persisted = lookup(link)
+            if persisted is not None:
+                candidate = cls(name=persisted[0], version=persisted[1], link=link)
+                _vcs_candidates[link.url] = candidate
+                return candidate
 
         from kpip.build.build_backend import prepare_project_metadata
 
