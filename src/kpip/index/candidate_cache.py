@@ -115,12 +115,15 @@ def built_wheel_cache_key(
     build_constraints: list[str] | None,
     build_isolation: bool,
     target_key: str | None,
+    vcs_commit: str | None = None,
 ) -> str | None:
     """Return the complete identity of a reusable source build.
 
     An sdist without a content hash cannot be distinguished from a different
     body later served at the same URL, so it is deliberately ineligible for
-    persistent reuse.
+    persistent reuse.  A VCS checkout is reusable when its URL pins a full
+    commit, or when the caller resolved its reference to one
+    (``vcs_commit``), which then becomes part of the identity.
     """
 
     if candidate.link.kind is ArtifactKind.SDIST:
@@ -129,7 +132,7 @@ def built_wheel_cache_key(
 
     elif not (
         candidate.link.kind is ArtifactKind.SOURCE_TREE
-        and is_immutable_vcs_link(candidate.link.url)
+        and (is_immutable_vcs_link(candidate.link.url) or vcs_commit is not None)
     ):
         return None
 
@@ -144,6 +147,7 @@ def built_wheel_cache_key(
         "source": cache_identity(candidate.link.url),
         "subdirectory": candidate.link.subdirectory_fragment,
         "source_hashes": dict(sorted((source_hashes or {}).items())),
+        "vcs_commit": vcs_commit,
         "build": {
             "config_settings": settings,
             "constraints": [
