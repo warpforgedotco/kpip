@@ -256,58 +256,22 @@ class Version(tuple):
         release = ".".join(map(str, self.release))
         return f"{self[0]}!{release}" if self[0] else release
 
-    def to_wire(self) -> tuple[str, tuple[int, ...], tuple[Any, ...]]:
-        """The record cached catalog summaries store: ``(public, release, key)``.
+    def to_wire(self) -> tuple[str, tuple[Any, ...]]:
+        """The record cached catalog summaries store: ``(public, key)``.
 
         Plain tuples only (``marshal`` rejects the subclass). The key is kept
         on disk so a sorted summary can be bisected without rebuilding its
-        Versions; the text is the source of truth when one is rebuilt.
+        Versions; the text is the source of truth when one is rebuilt, and
+        is all :meth:`from_wire` reads. The release used to be stored beside
+        them and was never read by anything: rebuilding goes through the
+        text, and bisecting goes through the key.
         """
-        return (self.public, self.release, tuple(self))
+        return (self.public, tuple(self))
 
     @classmethod
     def from_wire(cls, state: Any) -> Version:
         """The Version for a :meth:`to_wire` record, through the intern table."""
         return cls(state[0])
-
-
-def is_version_wire(value: object) -> bool:
-    """Whether ``value`` has the exact shape of a :meth:`Version.to_wire` record."""
-    if not isinstance(value, tuple) or len(value) != 3:
-        return False
-    public, release, key = value
-    if not isinstance(public, str) or not isinstance(release, tuple) or not release:
-        return False
-    # Checked by walking rather than by comparing a set of types: every
-    # cached catalog summary is validated group by group on load, tens of
-    # thousands of them for a graph the size of Airflow's, and building a
-    # set per version costs more than the walk it replaces. The walk also
-    # stops at the first element that is wrong.
-    for part in release:
-        if type(part) is not int:
-            return False
-    if not isinstance(key, tuple) or len(key) != 4:
-        return False
-    epoch, normalized, suffix, local = key
-    if type(epoch) is not int or not isinstance(normalized, tuple) or not normalized:
-        return False
-    # The same comparison as stripping trailing zeros off a copy of the
-    # release, without copying: a version like 1.2.0.0 would otherwise
-    # allocate a tuple per zero before it could be compared.
-    end = len(release)
-    while end > 1 and release[end - 1] == 0:
-        end -= 1
-    if len(normalized) != end:
-        return False
-    for index in range(end):
-        if normalized[index] != release[index]:
-            return False
-    if not isinstance(suffix, tuple) or len(suffix) != 6:
-        return False
-    for part in suffix:
-        if type(part) is not int:
-            return False
-    return isinstance(local, tuple)
 
 
 def version_of(value: Version | str) -> Version | None:

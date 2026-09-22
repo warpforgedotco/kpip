@@ -1800,7 +1800,7 @@ class CandidateProvider:
             while low < high:
                 middle = (low + high) // 2
 
-                candidate_key: Any = groups[middle][2][2]
+                candidate_key: Any = groups[middle][2][1]
 
                 if candidate_key < key or (right and candidate_key == key):
                     low = middle + 1

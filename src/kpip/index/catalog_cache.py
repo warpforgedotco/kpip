@@ -9,7 +9,7 @@ import marshal
 import threading
 import urllib.parse
 
-from kpip.core.versions import InvalidVersion, Version, is_version_wire
+from kpip.core.versions import Version
 from kpip.core.wheel import WheelFile, WheelTag, parse_wheel_file, wheel_tag
 from kpip.index.datetime import parse_iso_datetime
 from kpip.index.directory_index import project_version_from_filename
@@ -22,11 +22,15 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Any
 
-PREFIX = f"{versioned_bucket('kpip-index-catalog', 2)}:"
-SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 2)}:"
-CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 2)}:"
-SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 2).encode() + b"\0"
-CHOICE_HEADER = versioned_bucket("kpip-index-choice", 2).encode() + b"\0"
+# Version 3 drops the release tuple from a summary's stored version and
+# puts every catalog blob behind a digest, so a store written by an earlier
+# kpip is a different bucket rather than a payload this one would misread.
+PREFIX = f"{versioned_bucket('kpip-index-catalog', 3)}:"
+SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 3)}:"
+CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 3)}:"
+CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 3).encode() + b"\0"
+SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 3).encode() + b"\0"
+CHOICE_HEADER = versioned_bucket("kpip-index-choice", 3).encode() + b"\0"
 
 WHEEL_RECORD = 1
 SDIST_RECORD = 2
@@ -208,7 +212,12 @@ def _load_catalog_uncached(
                 validated[url] = known
             return known[1], raw
     try:
-        payload = marshal.loads(raw)
+        payload = decode_checked_payload(raw, CATALOG_HEADER)
+        # The digest says these bytes are the ones this kpip wrote, and the
+        # bucket version says this kpip wrote them in this shape, so what is
+        # left to check is that the blob is a catalog at all. Walking every
+        # group and record to re-prove their types was the single largest
+        # cost of reading a catalog.
         if (
             not isinstance(payload, tuple)
             or len(payload) != 3
@@ -217,13 +226,10 @@ def _load_catalog_uncached(
             or not isinstance(payload[2], list)
         ):
             return None
-        groups = payload[1]
-        unparsed = payload[2]
-        if not all(valid_group(group) for group in groups) or not all(
-            valid_record(record) for record in unparsed
-        ):
-            return None
-        catalog = groups, unparsed
+        # Declared rather than proven: the digest and the bucket version are
+        # what establish this, and walking the lists to convince a checker
+        # is the cost this read is trying not to pay.
+        catalog: CatalogData = (payload[1], payload[2])  # ty:ignore[invalid-assignment]
         _remember_validated_catalog(cache, url, raw, catalog)
         return catalog, raw
     except (EOFError, TypeError, ValueError, KeyError, IndexError):
@@ -301,8 +307,6 @@ def decode_summary(raw: bytes) -> CatalogSummary | None:
         or not isinstance(payload[0], str)
         or not isinstance(payload[1], list)
         or not isinstance(payload[2], bool)
-        or not valid_choice_profiles(payload[3])
-        or not all(valid_summary_group(group) for group in payload[1])
     ):
         return None
     return payload[0], payload[1], payload[2], payload[3]  # ty:ignore[invalid-return-type]
@@ -322,12 +326,7 @@ def load_choices(
     if raw is None or not raw.startswith(CHOICE_HEADER):
         return {}
     payload = decode_checked_payload(raw, CHOICE_HEADER)
-    if (
-        not isinstance(payload, tuple)
-        or len(payload) != 2
-        or payload[0] != generation
-        or not valid_choices(payload[1])
-    ):
+    if not isinstance(payload, tuple) or len(payload) != 2 or payload[0] != generation:
         return {}
     choices = payload[1]
     embed_summary_choices(
@@ -400,172 +399,6 @@ def embed_summary_choices(
     )
 
 
-def valid_version_text(value: object) -> bool:
-    """A version string the summary can compile: a corrupt one is a miss,
-    not an exception out of load_summary. Version interns by text, so the
-    parse here is the one the summary needs anyway."""
-    if not isinstance(value, str):
-        return False
-    try:
-        Version(value)
-    except InvalidVersion:
-        return False
-    return True
-
-
-def valid_group(value: object) -> bool:
-    if type(value) is not tuple or len(value) != 4:
-        return False
-    name, version, artifacts, facts = value
-    if (
-        type(name) is not str
-        or type(artifacts) is not list
-        or type(facts) is not list
-        or not valid_version_text(version)
-    ):
-        return False
-    for artifact in artifacts:
-        if (
-            type(artifact) is not tuple
-            or len(artifact) != 2
-            or type(artifact[0]) is not int
-            or not valid_record(artifact[1])
-        ):
-            return False
-    for fact in facts:
-        if not valid_fact(fact):
-            return False
-    return True
-
-
-def valid_summary_group(value: object) -> bool:
-    if (
-        not isinstance(value, tuple)
-        or len(value) != 4
-        or not isinstance(value[0], str)
-        or not isinstance(value[1], str)
-        or not is_version_wire(value[2])
-        or not valid_version_text(value[2][0])  # ty:ignore[not-subscriptable]
-        or not isinstance(value[3], list)
-    ):
-        return False
-    # A loop rather than ``all()`` over a generator: this runs once per
-    # cached version, and the generator is the most expensive thing left
-    # in it once the facts themselves are cheap to check.
-    for fact in value[3]:
-        if not valid_fact(fact):
-            return False
-    return True
-
-
-def valid_str_dict(value: object) -> bool:
-    if type(value) is not dict:
-        return False
-    for key, item in value.items():
-        if type(key) is not str or type(item) is not str:
-            return False
-    return True
-
-
-def valid_stored_hashes(value: object) -> bool:
-    """A lone digest as a string, or a name -> digest map."""
-    return type(value) is str or valid_str_dict(value)
-
-
-def valid_record(value: object) -> bool:
-    """One full validation at load time: link_from_record trusts its input.
-
-    Marshal only rebuilds exact built-in types, so ``type(...) is`` checks
-    are equivalent to ``isinstance`` here and keep this loop cheap.
-    """
-    # Records written before the PEP 700 size field are 9-tuples; accepting
-    # both widths keeps every warm catalog cache valid across the upgrade.
-    if type(value) is not tuple or len(value) != 9:
-        return False
-    (url, text, hashes, requires_python, yanked, metadata, upload_time, _, size) = value
-    if type(url) is not str or type(text) is not str:
-        return False
-    if size is not None and (type(size) is not int or size < 0):
-        return False
-    if not valid_stored_hashes(hashes):
-        return False
-    if requires_python is not None and type(requires_python) is not str:
-        return False
-    if yanked is not None and type(yanked) is not str:
-        return False
-    if (
-        metadata is not None
-        and metadata is not True
-        and not valid_stored_hashes(metadata)
-    ):
-        return False
-    if upload_time is not None and type(upload_time) is not str:
-        return False
-    identity = value[RECORD_WHEEL_IDENTITY]
-    if identity is None:
-        return True
-    if type(identity) is not tuple or len(identity) != 4:
-        return False
-    tags = identity[WHEEL_IDENTITY_TAGS]
-    if (
-        type(tags) is not tuple
-        or type(identity[WHEEL_IDENTITY_NAME]) is not str
-        or type(identity[WHEEL_IDENTITY_VERSION]) is not str
-    ):
-        return False
-    build_tag = identity[WHEEL_IDENTITY_BUILD_TAG]
-    if build_tag is not None and type(build_tag) is not str:
-        return False
-    for tag in tags:
-        if type(tag) is not tuple or len(tag) != 3:
-            return False
-        for part in tag:
-            if type(part) is not str:
-                return False
-    return True
-
-
-def valid_fact(value: object) -> bool:
-    return (
-        type(value) is tuple
-        and len(value) == 3
-        and type(value[0]) is int
-        and (value[1] is None or type(value[1]) is str)
-        and (value[2] is None or type(value[2]) is str)
-    )
-
-
-def valid_choice(value: object) -> bool:
-    return value is None or (
-        isinstance(value, tuple)
-        and len(value) == 3
-        and valid_record(value[0])
-        and isinstance(value[1], int)
-        and (value[2] is None or isinstance(value[2], int))
-    )
-
-
-def valid_choices(value: object) -> bool:
-    """A version-text -> choice map of the exact shape the provider unpacks;
-    anything else is a miss rather than a ValueError deep in resolution."""
-    return isinstance(value, dict) and all(
-        isinstance(version, str) and valid_choice(choice)
-        for version, choice in value.items()
-    )
-
-
-def valid_choice_profiles(value: object) -> bool:
-    return isinstance(value, dict) and all(
-        isinstance(profile, tuple)
-        and len(profile) == 3
-        and isinstance(profile[0], str)
-        and isinstance(profile[1], bool)
-        and isinstance(profile[2], bool)
-        and valid_choices(choices)
-        for profile, choices in value.items()
-    )
-
-
 def save_links(cache: Any, url: str, links: list[Link]) -> CatalogSummary | None:
     if cache is None:
         return None
@@ -630,7 +463,8 @@ def save_catalog(cache: Any, url: str, catalog: CatalogData) -> CatalogSummary |
     and re-decode the summary it wrote a moment earlier.
     """
     try:
-        payload = marshal.dumps(
+        payload = encode_checked_payload(
+            CATALOG_HEADER,
             ("kpip-index-catalog", catalog[0], catalog[1]),
         )
     except (TypeError, ValueError):
@@ -666,7 +500,8 @@ def summary_from_catalog(
 
 
 def summary_group_sort_key(group: CatalogSummaryGroup) -> Any:
-    return group[2][2]
+    # The key is the second half of the wire now that the release is gone.
+    return group[2][1]
 
 
 def save_summary(

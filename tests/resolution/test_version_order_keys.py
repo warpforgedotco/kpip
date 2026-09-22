@@ -42,7 +42,7 @@ def test_version_sorts_like_the_reference_implementation() -> None:
 
 
 def _wire_key(version: Version) -> tuple:
-    return version.to_wire()[2]
+    return version.to_wire()[1]
 
 
 def test_summary_key_orders_like_the_version() -> None:
