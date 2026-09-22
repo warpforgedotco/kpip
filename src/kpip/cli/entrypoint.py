@@ -8,6 +8,9 @@ import sys
 from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
 from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
 
+_OLD_GENERATION_RATIO = 100
+"""Generation-0 collections per generation-1 one, and the same again for 2."""
+
 VISIBLE_COMMAND_NAMES = tuple(spec.name for spec in COMMAND_SPECS if spec.visible)
 COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECS)
 
@@ -265,6 +268,41 @@ def flush_streams() -> None:
     sys.stderr.flush()
 
 
+def collect_less_often() -> tuple[int, int, int] | None:
+    """Make full garbage collections rare for the length of one command.
+
+    CPython's thresholds assume a small live heap.  A resolve keeps the whole
+    index catalog and the resolver's clause set alive -- 196 MB on airflow --
+    and allocates millions of short-lived tuples through it, so the stock
+    ``(700, 10, 10)`` runs a handful of generation-2 traversals of that entire
+    heap.  They reclaim almost nothing, because what is alive is alive for the
+    rest of the run, and they cost about 15% of a warm airflow lock.
+
+    Only the generation-1 and generation-2 multipliers move.  Generation 0
+    keeps collecting at its usual rate, so a short-lived cycle is still
+    reclaimed promptly, and a full traversal becomes proportionally rarer
+    rather than disabled -- a resolve large enough to need one still gets it.
+    Peak memory is unchanged either way.  ``KPIP_GC=default`` restores
+    CPython's own settings.
+
+    Returns the thresholds it replaced, or None if it changed nothing.  A
+    command normally runs in a process that is about to exit, but ``main``
+    is importable and is called in-process by tests and by anything
+    embedding kpip, and collection thresholds are interpreter-wide: they
+    are restored when the command finishes.
+    """
+    if os.environ.get("KPIP_GC") == "default":
+        return None
+
+    import gc
+
+    previous = gc.get_threshold()
+
+    gc.set_threshold(previous[0], _OLD_GENERATION_RATIO, _OLD_GENERATION_RATIO)
+
+    return previous
+
+
 def main(
     args: list[str] | None = None,
     *,
@@ -272,6 +310,8 @@ def main(
     location: str | None = None,
 ) -> int:
     verbosity = 0
+
+    restore_thresholds: tuple[int, int, int] | None = None
 
     managed_environment = {
         name: os.environ.get(name)
@@ -353,6 +393,8 @@ def main(
 
                 return status
 
+        restore_thresholds = collect_less_often()
+
         if spec.needs_tempdir:
             from kpip.core.temp_dir import global_tempdir_manager
 
@@ -427,3 +469,8 @@ def main(
 
             else:
                 os.environ[name] = previous
+
+        if restore_thresholds is not None:
+            import gc
+
+            gc.set_threshold(*restore_thresholds)
