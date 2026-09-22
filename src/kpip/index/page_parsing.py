@@ -257,9 +257,10 @@ class IndexPageParser:
                 ),
                 yanked_reason=yanked_reason,
                 metadata_file=metadata_file,
-                upload_time=parse_iso_datetime(upload_time) if upload_time else None,
+                # Kept as the index's own text; nothing parses it unless an
+                # upload cutoff asks, and a page lists thousands of files.
+                upload_time=upload_time if isinstance(upload_time, str) else None,
                 parsed_wheel=parsed_wheel,
-                parts=tuple(parsed),
                 size=size if type(size) is int and size >= 0 else None,
             ),
             identity_for(kind, str(name), parsed_wheel=parsed_wheel),
