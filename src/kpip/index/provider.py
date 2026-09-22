@@ -10,7 +10,6 @@ import time
 import urllib.parse
 from bisect import bisect_left, bisect_right
 from collections.abc import Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
 from threading import RLock
 from types import MappingProxyType
@@ -62,7 +61,7 @@ from kpip.index.source_models import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from concurrent.futures import Future
+    from concurrent.futures import Future, ThreadPoolExecutor
     from typing import Any
 
     from kpip.core.format_control import FormatControl
@@ -1136,6 +1135,11 @@ class CandidateProvider:
             )
 
         if self.index_executor is None:
+            # Imported here rather than at module scope: `concurrent.futures`
+            # is the single most expensive import on the startup path, and
+            # only a resolve with more than one index ever builds this pool.
+            from concurrent.futures import ThreadPoolExecutor
+
             self.index_executor = ThreadPoolExecutor(
                 max_workers=min(8, len(self.index_sources)),
             )

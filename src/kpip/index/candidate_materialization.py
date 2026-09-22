@@ -12,7 +12,6 @@ import sys
 import tempfile
 import urllib.parse
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from itertools import chain, islice
 from threading import RLock
 from typing import NamedTuple
@@ -80,6 +79,8 @@ from kpip.core.archive import WheelArchive, WheelhouseUnavailable
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from concurrent.futures import ThreadPoolExecutor
+
     from kpip.index.links import Link
     from collections.abc import (
         Callable,
@@ -1215,6 +1216,11 @@ class CandidateMaterializer:
             pool = self.source_build_pool
 
             if pool is None:
+                # Imported here rather than at module scope, as everywhere
+                # else that builds a pool: only a resolve that has to read a
+                # source distribution ever reaches this.
+                from concurrent.futures import ThreadPoolExecutor
+
                 pool = ThreadPoolExecutor(
                     max_workers=_SOURCE_BUILD_WORKERS,
                     thread_name_prefix="kpip-metadata",
