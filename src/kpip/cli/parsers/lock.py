@@ -39,6 +39,8 @@ def create_parser() -> ArgumentParser:
 
     parser.add_argument("--quiet", action="store_true")
 
+    parser.add_argument("--python-version", metavar="PYTHON_VERSION")
+
     parser.add_argument("--output", default="pylock.toml")
 
     return parser

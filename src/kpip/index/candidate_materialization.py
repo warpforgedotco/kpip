@@ -12,6 +12,7 @@ import sys
 import tempfile
 import urllib.parse
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from itertools import chain, islice
 from threading import RLock
 from typing import NamedTuple
@@ -24,12 +25,13 @@ from kpip.core.errors import (
     UnsupportedWheel,
 )
 from kpip.core.hashes import file_hashes
-from kpip.core.http import raise_for_status, response_text
+from kpip.core.http import HttpStatusError, raise_for_status, response_text
 from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
     marker_applies,
     parse_requirement,
+    target_python_version,
 )
 from kpip.core.versions import Version, ZERO_VERSION
 from kpip.core.wheel import (
@@ -51,6 +53,7 @@ from kpip.index.candidate_cache import (
     emit_build_message,
 )
 from kpip.index.candidate_metadata_cache import (
+    CacheKey,
     CandidateMetadataCache,
     get_candidate_metadata_cache,
 )
@@ -101,12 +104,39 @@ _METADATA_WORKERS = 32
 _VCS_CANDIDATE_EXTRAS = ("*vcs-candidate*",)
 _PREPARED_SDIST_LIMIT = 8
 
+# How many of a release's wheels to ask for a PEP 658 metadata sidecar before
+# giving up and reading the source distribution itself. They carry the same
+# metadata, so the first that answers settles it; the rest are only for an
+# index that advertises a sidecar it will not serve.
+_SIBLING_METADATA_ATTEMPTS = 3
+
+# What a release says about itself: name, version, dependencies, the extras
+# it offers and the interpreters it supports.
+_ReleaseMetadata = tuple[
+    str,
+    Version,
+    tuple[Requirement, ...],
+    frozenset[str],
+    str | None,
+]
+
+# How many source distributions may have their metadata prepared at once.
+# Each one is a build environment and a backend subprocess, so this trades
+# a bounded amount of memory and CPU for the serial wait; past a handful the
+# subprocesses contend for the same cores and stop paying for themselves.
+_SOURCE_BUILD_WORKERS = 4
+
 # Below this artifact size (PEP 700 ``size``), metadata-over-ranges is not
 # worth it: the 2-3 range round-trips cost more than downloading the wheel
 # outright, and the full download lands in the artifact cache where an
 # eventual install reuses it.  pip's fast-deps was a net loss on small
 # wheels for exactly this reason (pypa/pip#8670).
 _RANGED_METADATA_MIN_WHEEL_BYTES = 1 * 1024 * 1024
+
+
+# The in-memory metadata key: artifact, its identity, version, the extras
+# asked for, and the interpreter the markers were evaluated against.
+_MetadataKey = tuple[str, str, str, frozenset[str], str]
 
 
 class _ArchiveMemberInfo(NamedTuple):
@@ -512,7 +542,31 @@ class CandidateMaterializer:
         dry_run: bool = False,
         compute_source_hashes: bool = False,
         session: HttpSession | None = None,
+        release_metadata_links: Callable[
+            [Requirement, Version],
+            Sequence[Link],
+        ]
+        | None = None,
     ) -> None:
+        self.release_metadata_links = release_metadata_links
+
+        self.sibling_metadata_cache: dict[
+            tuple[str, str],
+            _ReleaseMetadata | None,
+        ] = {}
+
+        # Whether this resolve has had to read a source distribution the
+        # hard way. Nothing speculates until it has: a graph served
+        # entirely by wheels never blocks on a build, so looking for
+        # builds to start is pure overhead on it.
+        self.prepares_source_metadata = False
+
+        self.source_build_lock = RLock()
+
+        self.source_build_pool: ThreadPoolExecutor | None = None
+
+        self.source_builds: dict[_MetadataKey, Any] = {}
+
         self.build_options = build_options
 
         self.build_constraints = build_constraints
@@ -557,7 +611,7 @@ class CandidateMaterializer:
         ] = {}
 
         self.metadata_cache: dict[
-            tuple[str, str, str, frozenset[str]],
+            _MetadataKey,
             CandidateMetadata,
         ] = {}
 
@@ -700,7 +754,7 @@ class CandidateMaterializer:
         self,
         candidate: CandidateRecord,
         requested_extras: frozenset[str],
-    ) -> tuple[str, str, tuple[str, ...], str] | None:
+    ) -> CacheKey | None:
         """A persistent metadata key from the artifact's own content.
 
         Only for an artifact fetched by URL whose link publishes no hash and
@@ -750,6 +804,7 @@ class CandidateMaterializer:
             candidate.version.public,
             tuple(sorted(requested_extras)),
             f"sha256:{digest}",
+            target_python_version() or "",
         )
 
     def persisted_vcs_candidate(self, link: Link) -> tuple[str, Version] | None:
@@ -772,7 +827,13 @@ class CandidateMaterializer:
             return None
 
         metadata = self.persistent_candidate_metadata_cache.get(
-            (link.url, "", _VCS_CANDIDATE_EXTRAS, fingerprint),
+            (
+                link.url,
+                "",
+                _VCS_CANDIDATE_EXTRAS,
+                fingerprint,
+                target_python_version() or "",
+            ),
         )
 
         if metadata is None:
@@ -990,10 +1051,7 @@ class CandidateMaterializer:
         self,
         candidate: CandidateRecord,
         requested_extras: frozenset[str],
-    ) -> tuple[
-        tuple[str, str, str, frozenset[str]],
-        tuple[str, str, tuple[str, ...], str],
-    ]:
+    ) -> tuple[_MetadataKey, CacheKey]:
         fingerprint = self.artifact_fingerprint(candidate)
 
         # A VCS commit determines the version, and leaving the version out
@@ -1001,18 +1059,27 @@ class CandidateMaterializer:
         # a persisted entry spares the clone that would learn it.
         version = "" if candidate.link.is_vcs else candidate.version.public
 
+        # What is cached is the metadata as this resolve reads it, markers
+        # already applied, so the interpreter those markers were evaluated
+        # against is part of what the entry is. Without it a lock for 3.8
+        # persists dependencies that the next lock for this interpreter
+        # would read back as its own.
+        target = target_python_version() or ""
+
         return (
             (
                 candidate.link.url,
                 fingerprint,
                 version,
                 requested_extras,
+                target,
             ),
             (
                 candidate.link.url,
                 version,
                 tuple(sorted(requested_extras)),
                 fingerprint,
+                target,
             ),
         )
 
@@ -1099,6 +1166,8 @@ class CandidateMaterializer:
         if prefetcher is not None:
             prefetcher.close()
 
+        self.close_source_builds()
+
         prepared_sources = tuple(self.prepared_sdist_sources.values())
 
         self.prepared_sdist_sources.clear()
@@ -1106,11 +1175,94 @@ class CandidateMaterializer:
         for temporary, _ in prepared_sources:
             temporary.cleanup()
 
+    def started_metadata(self, key: _MetadataKey) -> Any:
+        """The computation already under way for ``key``, if there is one."""
+        with self.source_build_lock:
+            return self.source_builds.get(key)
+
+    def start_source_metadata(
+        self,
+        candidate: CandidateRecord,
+        requirement: Requirement,
+    ) -> None:
+        """Begin a source candidate's metadata before the resolver blocks on it.
+
+        Reading a source distribution's metadata means standing up a build
+        environment and running the backend -- seconds each, and the resolver
+        asks for them one at a time, so a graph with eight of them spends
+        most of a cold lock waiting with an idle machine. Each is
+        independent, so the ones the resolver has just learned it needs are
+        started now and are usually finished, or at least under way, by the
+        time it asks.
+
+        Only source candidates are started: a wheel's metadata is a read, and
+        :meth:`prefetch_metadata` already overlaps those.
+        """
+        if candidate.link.kind not in SOURCE_ARTIFACT_KINDS:
+            return
+
+        requested_extras = frozenset(requirement.extras)
+
+        if self.has_cached_metadata(candidate, requested_extras):
+            return
+
+        key, _ = self.metadata_cache_keys(candidate, requested_extras)
+
+        with self.source_build_lock:
+            if key in self.source_builds:
+                return
+
+            pool = self.source_build_pool
+
+            if pool is None:
+                pool = ThreadPoolExecutor(
+                    max_workers=_SOURCE_BUILD_WORKERS,
+                    thread_name_prefix="kpip-metadata",
+                )
+
+                self.source_build_pool = pool
+
+            worker = self.metadata_loader(candidate, requirement, background=True)
+
+            self.source_builds[key] = pool.submit(worker.load)
+
+    def close_source_builds(self) -> None:
+        """Drop the metadata pool, abandoning work nothing is waiting for.
+
+        Speculative builds still queued when the solve ends are for versions
+        it did not take, so they are cancelled rather than started: a command
+        must not sit at exit preparing metadata for a release it already
+        decided against.
+
+        The few already running are waited for. They write what they read
+        into the metadata caches, under a key naming the interpreter the
+        resolve was for, and that target is restored the moment the command
+        returns -- a worker still running past it would file its answer
+        under whichever interpreter happened to be current by then.
+        """
+        with self.source_build_lock:
+            pool = self.source_build_pool
+
+            self.source_build_pool = None
+
+            self.source_builds = {}
+
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
+
     def metadata_loader(
         self,
         candidate: CandidateRecord,
         requirement: Requirement,
+        *,
+        background: bool = False,
     ) -> LazyCandidateMetadata:
+        """A candidate's metadata, computed at most once, when first asked.
+
+        ``background`` returns the computation itself, for a caller that is
+        starting it ahead of demand; the loader handed to a consumer waits
+        for such a computation rather than racing it.
+        """
         requested_extras = frozenset(requirement.extras)
 
         key, persistent_key = self.metadata_cache_keys(
@@ -1150,6 +1302,15 @@ class CandidateMaterializer:
 
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
                 metadata = self.pypi_metadata(candidate, requested_extras)
+
+                if metadata is None or not (
+                    requested_extras <= metadata.provided_extras
+                ):
+                    metadata = self.sibling_wheel_metadata(
+                        candidate,
+                        requirement,
+                        requested_extras,
+                    )
 
                 if (
                     metadata is not None
@@ -1221,6 +1382,12 @@ class CandidateMaterializer:
 
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
                 from kpip.build.build_backend import prepare_project_metadata
+
+                # Neither the index nor a sibling wheel could answer, so this
+                # release is about to be built. From here the resolve is one
+                # that pays for builds, and starting the next ones early is
+                # worth what looking for them costs.
+                self.prepares_source_metadata = True
 
                 cache_source_hashes = (
                     self.source_hashes_for(candidate)
@@ -1371,13 +1538,27 @@ class CandidateMaterializer:
                             "",
                             _VCS_CANDIDATE_EXTRAS,
                             persistent_key[3],
+                            persistent_key[4],
                         ),
                         metadata,
                     )
 
             return metadata
 
-        return LazyCandidateMetadata(load)
+        if background:
+            return LazyCandidateMetadata(load)
+
+        def join() -> CandidateMetadata:
+            cached = self.metadata_cache.get(key)
+
+            if cached is not None:
+                return cached
+
+            started = self.started_metadata(key)
+
+            return load() if started is None else started.result()
+
+        return LazyCandidateMetadata(join)
 
     def remote_wheel_metadata(
         self,
@@ -1481,12 +1662,145 @@ class CandidateMaterializer:
             requires_python=(headers.get("requires-python") or [None])[0],
         )
 
+    def sibling_wheel_metadata(
+        self,
+        candidate: CandidateRecord,
+        requirement: Requirement,
+        requested_extras: frozenset[str],
+    ) -> CandidateMetadata | None:
+        """A source distribution's dependencies, read from a sibling wheel.
+
+        A source distribution states its dependencies only through its build
+        backend, and running that backend needs a build environment the
+        target may not be able to have: a lock for 3.8 is prepared by
+        whichever interpreter kpip runs on, and a C extension pinned for 3.8
+        will not compile there. A wheel of the same release carries the very
+        metadata that backend would produce, and PEP 658 serves it beside the
+        wheel, so the release answers for its own source distribution without
+        anything being built or even downloaded.
+
+        Any wheel of the release will do. Tags decide where a wheel can be
+        installed, not what it depends on, and a difference between platforms
+        belongs in an environment marker, which is carried through here
+        unevaluated. Only wheels whose index page advertises the sidecar are
+        asked, so an index that publishes none costs nothing.
+        """
+        session = self.session
+
+        links = self.release_metadata_links
+
+        if session is None or links is None:
+            return None
+
+        release_key = (candidate.canonical_name, candidate.version.public)
+
+        if release_key in self.sibling_metadata_cache:
+            release = self.sibling_metadata_cache[release_key]
+
+        else:
+            release = self.read_sibling_wheel_metadata(
+                links(requirement, candidate.version),
+                candidate,
+            )
+
+            self.sibling_metadata_cache[release_key] = release
+
+        if release is None:
+            return None
+
+        name, version, dependencies, extras, requires_python = release
+
+        return CandidateMetadata(
+            name=name,
+            version=version,
+            dependencies=tuple(
+                item
+                for item in dependencies
+                if marker_applies(item.marker, extras=requested_extras)
+            ),
+            provided_extras=extras,
+            requires_python=requires_python,
+        )
+
+    def read_sibling_wheel_metadata(
+        self,
+        links: Sequence[Link],
+        candidate: CandidateRecord,
+    ) -> _ReleaseMetadata | None:
+        """The first of ``links`` whose sidecar describes ``candidate``.
+
+        A sidecar naming another project or release is not this candidate's
+        metadata whatever the index served it for, so it is passed over
+        rather than adopted: what is read here becomes the dependency graph
+        of a distribution nothing else has verified.
+        """
+        session = self.session
+
+        if session is None:
+            return None
+
+        for link in islice(links, _SIBLING_METADATA_ATTEMPTS):
+            metadata_link = link.metadata_link()
+
+            if metadata_link is None:
+                continue
+
+            try:
+                response = session.get(metadata_link.url)
+
+                raise_for_status(response)
+
+                headers = parse_metadata_headers(response_text(response))
+
+            except (HttpStatusError, KeyError, OSError, TypeError, ValueError):
+                # An advertised sidecar that does not answer is the index's
+                # problem, not a reason to fail: the next wheel, or the
+                # build, still has the answer.
+                continue
+
+            name = headers.get("name", (None,))[0]
+
+            version = headers.get("version", (None,))[0]
+
+            if name is None or version is None:
+                continue
+
+            try:
+                parsed_version = Version(version)
+
+            except ValueError:
+                continue
+
+            if (
+                canonicalize_name(name) != candidate.canonical_name
+                or parsed_version != candidate.version
+            ):
+                continue
+
+            return (
+                name,
+                parsed_version,
+                tuple(
+                    requirement
+                    for value in headers.get("requires-dist", ())
+                    if (requirement := parse_requirement(value)) is not None
+                ),
+                frozenset(headers.get("provides-extra", ())),
+                (headers.get("requires-python") or [None])[0],
+            )
+
+        return None
+
     def pypi_metadata(
         self,
         candidate: CandidateRecord,
         requested_extras: frozenset[str],
     ) -> CandidateMetadata | None:
-        """Read release metadata when a PyPI sdist backend cannot run."""
+        """Read release metadata when a PyPI sdist backend cannot run.
+
+        ``None`` means PyPI could not answer, not that the release has no
+        dependencies; the caller reads the source distribution itself.
+        """
 
         source_url = candidate.link.source_url or candidate.link.url
 
@@ -1540,21 +1854,36 @@ class CandidateMaterializer:
 
             info = data["info"]
 
-            dependencies = tuple(
-                requirement
-                for value in tuple(info.get("requires_dist") or ())
-                if (requirement := parse_requirement(value)) is not None
-            )
+            declared = info.get("requires_dist")
 
-            extras = frozenset(info.get("provides_extra") or ())
+            if declared is None:
+                # PyPI reports null both for a release that has no
+                # dependencies and for one whose dependencies it never
+                # learned -- a source distribution whose PKG-INFO predates
+                # Requires-Dist, where only the build backend knows. The two
+                # are indistinguishable from here, so neither is claimed:
+                # reporting "no dependencies" writes a lock that silently
+                # omits a real subtree, which is the worse of the two errors.
+                self.release_metadata_cache[release_key] = None
 
-            release = (
-                str(info["name"]),
-                Version(str(info["version"])),
-                dependencies,
-                extras,
-                info.get("requires_python"),
-            )
+                return None
+
+            else:
+                dependencies = tuple(
+                    requirement
+                    for value in tuple(declared)
+                    if (requirement := parse_requirement(value)) is not None
+                )
+
+                extras = frozenset(info.get("provides_extra") or ())
+
+                release = (
+                    str(info["name"]),
+                    Version(str(info["version"])),
+                    dependencies,
+                    extras,
+                    info.get("requires_python"),
+                )
 
             self.release_metadata_cache[release_key] = release
 

@@ -88,6 +88,23 @@ kpip lock -r requirements.in
 kpip --python .venv install -r pylock.toml
 ```
 
+To lock for a Python version other than the one running kpip, including
+versions below kpip's own 3.10 floor:
+
+```console
+kpip lock -r requirements.in --python-version 3.8
+```
+
+Markers, `Requires-Python` and wheel tags are all read for that version. The
+platform is not: this resolves for another Python, not another machine.
+
+A release whose dependencies the index does not publish is read from one of
+its own wheels, and built only when no wheel of it offers usable metadata --
+which a release that ships wheels can still come to. Building happens on the
+interpreter running kpip, not the one being locked for, so a release that
+cannot report its metadata here will fail the lock rather than be recorded
+without its dependencies.
+
 If kpip is installed inside the environment it should manage, omit
 `--python .venv` and invoke `kpip` directly.
 

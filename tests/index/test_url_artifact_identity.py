@@ -54,11 +54,15 @@ def test_the_key_is_the_content_hash_of_a_hashless_url_sdist(
     import hashlib
 
     digest = hashlib.sha256(b"not really a tarball").hexdigest()
+    # The empty trailing element is the interpreter the metadata was
+    # filtered for: nothing targets another one here, so it is the
+    # running interpreter.
     assert key == (
         "https://files.invalid/demo-1.0.tar.gz",
         "1.0",
         ("x",),
         f"sha256:{digest}",
+        "",
     )
 
 

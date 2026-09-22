@@ -11,6 +11,7 @@ import urllib.parse
 from bisect import bisect_left, bisect_right
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from itertools import chain
 from threading import RLock
 from types import MappingProxyType
 
@@ -1644,6 +1645,36 @@ class CandidateProvider:
 
         return self.prefer_unique_candidates(accepted)
 
+    def release_metadata_links(
+        self,
+        requirement: Requirement,
+        version: Version,
+    ) -> tuple[Link, ...]:
+        """Wheels of ``version`` whose index page advertises PEP 658 metadata.
+
+        Tag-incompatible wheels are included on purpose: this answers "what
+        does this release depend on", which its wheels agree on, not "what
+        can be installed here", which their tags decide. The index pages are
+        the ones already fetched to find the candidate, so this costs no
+        request of its own.
+        """
+        selection = self.evaluate_links(
+            requirement,
+            allowed_versions=frozenset({version}),
+        )
+
+        links = chain(
+            (record.link for record in selection.accepted),
+            (rejected.link for rejected in selection.rejected),
+        )
+
+        return tuple(
+            link
+            for link in links
+            if link.kind is ArtifactKind.WHEEL
+            if link.metadata_file_data is not None
+        )
+
     def applicable_candidate_records(
         self,
         requirement: Requirement,
@@ -2421,6 +2452,7 @@ class CandidateProvider:
 
             if materializer is None:
                 materializer = CandidateMaterializer(
+                    release_metadata_links=self.release_metadata_links,
                     build_options=self.build_options,
                     build_constraints=self.build_constraints,
                     wheel_cache_dir=self.wheel_cache_dir,

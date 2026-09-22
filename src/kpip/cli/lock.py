@@ -13,8 +13,15 @@ from kpip.core.appdirs import configured_cache_dir
 from kpip.core.errors import CommandError, KpipError
 from kpip.core.format_control import FormatControl
 from kpip.core.hashes import file_hashes
-from kpip.core.packaging import parse_requirement
+from kpip.core.packaging import (
+    normalize_python_version,
+    parse_requirement,
+    set_target_python_version,
+    target_python_version,
+)
 from kpip.core.urls import path_to_url, url_to_path
+from kpip.core.versions import InvalidVersion, Version
+from kpip.core.wheel import TargetContext
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.provider import CandidateProvider
 from kpip.index.vcs import (
@@ -32,7 +39,21 @@ from kpip.resolution.input_requirements import install_req_from_line
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from argparse import Namespace
+
     from kpip.resolution.req_install import InstallRequirement
+
+
+def tag_python_version(value: str) -> str:
+    """``--python-version`` in the spelling wheel tags use: ``3.8.2`` -> ``3.8``.
+
+    Tags name a minor series and nothing finer, so a three-part operand has
+    to lose its patch component; passing it through whole would build the
+    tag ``cp382``, which no wheel carries.
+    """
+    parts = value.split(".")
+
+    return ".".join(parts[:2]) if len(parts) > 1 else value
 
 
 def read_requirement_lines(filename: str) -> list[str]:
@@ -218,6 +239,57 @@ def _resolved_metadata_name(candidate: object) -> str | None:
 def run_lock(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
+    resolvers: list[ResolutionEngine] = []
+
+    if not options.python_version:
+        try:
+            return perform_lock(options, resolvers)
+
+        finally:
+            close_resolvers(resolvers)
+
+    target = normalize_python_version(str(options.python_version))
+
+    try:
+        Version(target)
+
+    except InvalidVersion:
+        # Caught here rather than deep in the resolve, where it would
+        # surface as a traceback from whichever candidate was examined first.
+        raise CommandError(
+            "--python-version expects a version like 3.8, "
+            f"not {options.python_version!r}",
+        ) from None
+
+    # The target is process-global while the resolve runs -- markers,
+    # Requires-Python and wheel tags all have to agree on which interpreter
+    # the lock is for -- so it is restored even when the resolve raises,
+    # which matters to every caller that runs a command in-process. A caller
+    # that had a target of its own gets it back, rather than the running
+    # interpreter.
+    previous = target_python_version()
+
+    set_target_python_version(target)
+
+    try:
+        return perform_lock(options, resolvers)
+
+    finally:
+        # Before the target is restored, not after: a metadata worker still
+        # running would evaluate markers against this interpreter and
+        # persist the answer under the lock's own key.
+        close_resolvers(resolvers)
+
+        set_target_python_version(previous)
+
+
+def close_resolvers(resolvers: list[ResolutionEngine]) -> None:
+    """Release each resolver, waiting for the work still in its hands."""
+    while resolvers:
+        resolvers.pop().close()
+
+
+def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     cache_dir = configured_cache_dir()
 
     resolution_session = NetworkSession(
@@ -409,6 +481,9 @@ def run_lock(args: list[str]) -> int:
         and string_requirements
         and options.no_index
         and not options.no_binary
+        # The wheelhouse path builds its own provider with no target, so it
+        # would rank wheels for this interpreter rather than the one asked for.
+        and not options.python_version
     ):
         plan = ResolutionEngine.resolve_wheelhouse(
             options.find_links,
@@ -426,6 +501,13 @@ def run_lock(args: list[str]) -> int:
             wheel_cache_dir=cache_dir,
             session=resolution_session,
             dry_run=True,
+            target=(
+                TargetContext(
+                    python_version=tag_python_version(str(options.python_version)),
+                )
+                if options.python_version
+                else None
+            ),
         )
 
         install_requirements = [
@@ -433,12 +515,23 @@ def run_lock(args: list[str]) -> int:
             for item in requirements
         ]
 
-        plan = ResolutionEngine(
+        resolver = ResolutionEngine(
             provider=provider,
             no_deps=False,
             ignore_installed=True,
             constraints=constraints,
-        ).resolve(install_requirements)
+            python_version=(
+                normalize_python_version(str(options.python_version))
+                if options.python_version
+                else None
+            ),
+        )
+
+        # Closed by the caller rather than here: the candidates it produced
+        # are read below, and closing takes the prepared sources with it.
+        resolvers.append(resolver)
+
+        plan = resolver.resolve(install_requirements)
 
     packages: list[dict] = [
         *editable_packages,

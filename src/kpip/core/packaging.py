@@ -5,7 +5,7 @@ import re
 import sys
 import urllib.parse
 
-from kpip.core.caches import bounded_put, memoized, register_table
+from kpip.core.caches import bounded_put, clear_all, memoized, register_table
 from kpip.core.names import canonicalize_name
 from kpip.core.versions import FINAL_SUFFIX, InvalidVersion, Version, version_of
 
@@ -42,6 +42,65 @@ def implementation_version_text() -> str:
     return version
 
 
+_TARGET_PYTHON: str | None = None
+
+
+def target_python_version() -> str | None:
+    """The interpreter a resolve is *for*, when it is not the one running it.
+
+    ``None`` -- the usual case -- means the running interpreter.
+    """
+    return _TARGET_PYTHON
+
+
+def set_target_python_version(version: str | None) -> None:
+    """Resolve for ``version``: markers, Requires-Python and wheel tags.
+
+    Process-global on purpose. The marker environment already is, and the
+    alternative is threading one string through the thirty-odd
+    ``marker_applies`` call sites that have no context object to carry it.
+    A command sets this once, before any resolution work, and restores it
+    afterwards. Every cached answer that may have been computed against the
+    previous target is dropped here, since a memoized marker result or
+    Requires-Python verdict is only valid for the interpreter it was asked
+    about.
+    """
+    global _TARGET_PYTHON
+
+    if version == _TARGET_PYTHON:
+        return
+
+    _TARGET_PYTHON = version
+
+    clear_all()
+
+
+def normalize_python_version(value: str) -> str:
+    """A ``--python-version`` operand as a full PEP 440 release.
+
+    ``"3.8"`` and ``"38"`` both mean 3.8.0: the flag names a minor series,
+    and comparing a two-part version against a ``>=3.8.1`` bound would
+    otherwise depend on how the operand happened to be spelled. A caller
+    that means a specific patch release spells all three parts.
+
+    A compact operand is read the way wheel tags are written, all of the
+    digits after the first being the minor number: ``"310"`` is 3.10, not
+    version 310, which is what comparing it as written would have meant.
+    """
+    if "." in value:
+        parts = value.split(".")
+
+        return f"{parts[0]}.{parts[1]}.0" if len(parts) == 2 else value
+
+    if value.isdigit():
+        if len(value) == 1:
+            return f"{value}.0.0"
+
+        return f"{value[0]}.{value[1:]}.0"
+
+    return value
+
+
 @memoized(8)
 def default_environment(extra: str | None = None) -> dict[str, str]:
     import platform
@@ -55,9 +114,22 @@ def default_environment(extra: str | None = None) -> dict[str, str]:
         # PEP 440 version; the reference environment repairs it the same way.
         version += "local"
 
+    implementation_version = implementation_version_text()
+
+    if _TARGET_PYTHON is not None:
+        # Only the language version moves. A cross-version resolve still runs
+        # on this machine, so the platform fields stay as they are;
+        # `--python-version` is not `--platform`. On CPython the two version
+        # fields are the same number, so retargeting one and not the other
+        # would describe an interpreter that does not exist.
+        version = _TARGET_PYTHON
+
+        if sys.implementation.name == "cpython":
+            implementation_version = _TARGET_PYTHON
+
     return {
         "implementation_name": sys.implementation.name,
-        "implementation_version": implementation_version_text(),
+        "implementation_version": implementation_version,
         "os_name": os.name,
         "platform_machine": platform.machine(),
         "platform_python_implementation": impl,

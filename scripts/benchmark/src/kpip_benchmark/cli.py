@@ -242,6 +242,7 @@ def build_commands(
     kpip_source = manifest.get("kpip_source", source_requirements)
     source_kind = manifest.get("source_kind", "requirements")
     constraint_requirements = manifest.get("constraint_requirements")
+    recommended_python = manifest.get("recommended_python")
     install_requirements = manifest.get("install_requirements")
     incremental_wheelhouse = manifest["incremental_wheelhouse"]
     incremental_base = manifest["incremental_base_requirements"]
@@ -427,6 +428,24 @@ def build_commands(
         if constraint_requirements is not None:
             kpip_args.extend(["--constraint", constraint_requirements])
             uv_args.extend(["--constraint", constraint_requirements])
+        if recommended_python is not None:
+            # A workload curated for one interpreter is only a benchmark on
+            # that interpreter: resolved against the one running the suite it
+            # either fails outright -- airflow2's constraints pin releases
+            # that nothing past 3.10 can install -- or measures a different
+            # graph than the numbers are meant to compare.
+            #
+            # The two tools reach that target differently. kpip resolves for
+            # another version from the interpreter it is already on, which is
+            # the only option open to it below its own 3.10 floor. uv is
+            # pointed at a real interpreter instead of being told a version,
+            # because a source distribution it has to build is built by the
+            # interpreter it runs on, and `--python-version` alone leaves
+            # that at the suite's own: on 3.14 the airflow2 graph then dies
+            # building `future` 0.18.2, whose `src/reprlib` shadows the
+            # standard library.
+            kpip_args.extend(["--python-version", recommended_python])
+            uv_args[uv_args.index("--python") + 1] = recommended_python
         return [
             kpip_step(
                 kpip_prepare,

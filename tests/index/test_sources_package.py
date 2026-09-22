@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 from kpip.cli.main import main
 from kpip.core.http import HttpResponse
-from kpip.core.packaging import Requirement, parse_requirement
+from kpip.core.packaging import (
+    Requirement,
+    parse_requirement,
+    set_target_python_version,
+)
 from kpip.core.versions import Version
 from kpip.core.wheel import TargetContext
 from kpip.index.cache import origin_hashes
@@ -27,6 +31,7 @@ from kpip.index.source_models import (
     CandidateMetadata,
     CandidateRecord,
     CandidateSelection,
+    LazyCandidateMetadata,
     MetadataFile,
     RejectionReason,
 )
@@ -1516,3 +1521,400 @@ def test_lookahead_after_close_does_not_revive_the_catalog_prefetcher() -> None:
     )
 
     assert provider.prefetcher is None
+
+
+def sdist_candidate(name: str = "legacy", version: str = "1.0") -> CandidateRecord:
+    return CandidateRecord(
+        name=name,
+        version=Version(version),
+        link=Link.from_url(
+            f"https://files.pythonhosted.org/packages/{name}-{version}.tar.gz",
+            source_url=f"https://pypi.org/simple/{name}/",
+        ),
+    )
+
+
+def release_json_session(body: bytes) -> object:
+    class Session:
+        def __init__(self) -> None:
+            self.requested: list[str] = []
+
+        def get(self, url: str) -> HttpResponse:
+            self.requested.append(url)
+
+            if url.endswith("/json"):
+                return make_response(
+                    status=200,
+                    reason="OK",
+                    url=url,
+                    headers={"Content-Type": "application/json"},
+                    body=body,
+                )
+
+            return make_response(
+                status=404,
+                reason="Not Found",
+                url=url,
+                headers={},
+                body=b"",
+            )
+
+    return Session()
+
+
+def test_null_requires_dist_is_unknown_not_no_dependencies() -> None:
+    """PyPI spells "I never learned the dependencies" as null.
+
+    Reading it as "there are none" writes a lock that silently drops a real
+    subtree, so the answer has to be "ask the release itself".
+    """
+    session = release_json_session(
+        b'{"info": {"name": "legacy", "version": "1.0", "requires_dist": null}}',
+    )
+    materializer = CandidateMaterializer(dry_run=True, session=session)
+
+    assert materializer.pypi_metadata(sdist_candidate(), frozenset()) is None
+
+
+def test_empty_requires_dist_is_no_dependencies() -> None:
+    """A list, even an empty one, is an answer and is taken as one."""
+    session = release_json_session(
+        b'{"info": {"name": "legacy", "version": "1.0", "requires_dist": []}}',
+    )
+    materializer = CandidateMaterializer(dry_run=True, session=session)
+
+    metadata = materializer.pypi_metadata(sdist_candidate(), frozenset())
+
+    assert metadata is not None
+    assert metadata.dependencies == ()
+
+
+def wheel_link(filename: str, *, advertised: bool = True) -> Link:
+    return Link.from_url(
+        f"https://files.pythonhosted.org/packages/{filename}",
+        source_url="https://pypi.org/simple/legacy/",
+        metadata_file=MetadataFile(None) if advertised else None,
+    )
+
+
+SIBLING_METADATA = (
+    b"Metadata-Version: 2.1\nName: legacy\nVersion: 1.0\n"
+    b"Requires-Python: >=3.7\n"
+    b"Provides-Extra: feature\n"
+    b"Requires-Dist: base\n"
+    b'Requires-Dist: extra; extra == "feature"\n'
+)
+
+
+def sidecar_session(*, serve: bool = True) -> object:
+    class Session:
+        def __init__(self) -> None:
+            self.requested: list[str] = []
+
+        def get(self, url: str) -> HttpResponse:
+            self.requested.append(url)
+
+            if serve:
+                return make_response(
+                    status=200,
+                    reason="OK",
+                    url=url,
+                    headers={"Content-Type": "text/plain"},
+                    body=SIBLING_METADATA,
+                )
+
+            return make_response(
+                status=404,
+                reason="Not Found",
+                url=url,
+                headers={},
+                body=b"",
+            )
+
+    return Session()
+
+
+def sibling_materializer(
+    session: object,
+    links: tuple[Link, ...],
+) -> CandidateMaterializer:
+    return CandidateMaterializer(
+        dry_run=True,
+        session=session,
+        release_metadata_links=lambda requirement, version: links,
+    )
+
+
+def test_a_sibling_wheel_answers_for_the_source_distribution() -> None:
+    """The release's own wheel carries what its build backend would say.
+
+    The wheel is tagged for an interpreter that is not this one on purpose:
+    tags decide where a wheel installs, not what the release depends on.
+    """
+    session = sidecar_session()
+    materializer = sibling_materializer(
+        session,
+        (wheel_link("legacy-1.0-cp38-cp38-win32.whl"),),
+    )
+    requirement = parse_requirement("legacy")
+
+    metadata = materializer.sibling_wheel_metadata(
+        sdist_candidate(),
+        requirement,
+        frozenset(),
+    )
+
+    assert metadata is not None
+    assert [item.name for item in metadata.dependencies] == ["base"]
+    assert metadata.requires_python == ">=3.7"
+
+    with_extra = materializer.sibling_wheel_metadata(
+        sdist_candidate(),
+        requirement,
+        frozenset({"feature"}),
+    )
+
+    assert [item.name for item in with_extra.dependencies] == ["base", "extra"]
+    # The release is read once however many artifacts ask it for what.
+    assert len(session.requested) == 1
+
+
+def test_a_wheel_that_advertises_no_sidecar_is_not_asked() -> None:
+    """An index that publishes no metadata costs no request."""
+    session = sidecar_session()
+    materializer = sibling_materializer(
+        session,
+        (wheel_link("legacy-1.0-py3-none-any.whl", advertised=False),),
+    )
+
+    metadata = materializer.sibling_wheel_metadata(
+        sdist_candidate(),
+        parse_requirement("legacy"),
+        frozenset(),
+    )
+
+    assert metadata is None
+    assert session.requested == []
+
+
+def test_an_advertised_sidecar_that_404s_falls_through() -> None:
+    session = sidecar_session(serve=False)
+    materializer = sibling_materializer(
+        session,
+        tuple(
+            wheel_link(f"legacy-1.0-cp3{minor}-cp3{minor}-win32.whl")
+            for minor in range(9)
+        ),
+    )
+
+    metadata = materializer.sibling_wheel_metadata(
+        sdist_candidate(),
+        parse_requirement("legacy"),
+        frozenset(),
+    )
+
+    assert metadata is None
+    # A broken index is not worth one request per wheel of the release.
+    assert len(session.requested) == 3
+
+
+def test_no_release_links_means_no_sibling_metadata() -> None:
+    session = sidecar_session()
+    materializer = CandidateMaterializer(dry_run=True, session=session)
+
+    assert (
+        materializer.sibling_wheel_metadata(
+            sdist_candidate(),
+            parse_requirement("legacy"),
+            frozenset(),
+        )
+        is None
+    )
+    assert session.requested == []
+
+
+def test_a_sibling_wheel_spares_the_source_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The release the index can answer for is never built to be asked.
+
+    This is the whole point of reading a sibling: before it, a release PyPI
+    reports no dependencies for was either built -- which a cross-version
+    lock often cannot do -- or, worse, taken to have none.
+    """
+    session = sidecar_session()
+    materializer = sibling_materializer(
+        session,
+        (wheel_link("legacy-1.0-cp38-cp38-win32.whl"),),
+    )
+
+    def fail_build(*args: object, **kwargs: object) -> None:
+        pytest.fail("a release with published metadata should not be built")
+
+    monkeypatch.setattr("kpip.build.build_backend.prepare_project_metadata", fail_build)
+
+    metadata = materializer.metadata_loader(
+        sdist_candidate(),
+        parse_requirement("legacy"),
+    ).load()
+
+    assert [item.name for item in metadata.dependencies] == ["base"]
+
+
+def test_a_started_build_is_joined_not_repeated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resolver waits for a build already under way instead of racing it.
+
+    Without the join, starting metadata ahead of demand would double the
+    work it was meant to overlap.
+    """
+    from concurrent.futures import Future
+
+    materializer = CandidateMaterializer(dry_run=True)
+    candidate = sdist_candidate()
+    requirement = parse_requirement("legacy")
+    key, _ = materializer.metadata_cache_keys(candidate, frozenset())
+
+    expected = CandidateMetadata(
+        name="legacy",
+        version=Version("1.0"),
+        dependencies=(),
+        provided_extras=frozenset(),
+        requires_python=None,
+    )
+    started: Future = Future()
+    started.set_result(expected)
+    materializer.source_builds[key] = started
+
+    def fail_build(*args: object, **kwargs: object) -> None:
+        pytest.fail("a build already under way must be joined, not repeated")
+
+    monkeypatch.setattr("kpip.build.build_backend.prepare_project_metadata", fail_build)
+
+    assert materializer.metadata_loader(candidate, requirement).load() is expected
+
+
+def test_a_source_candidate_is_started_on_the_pool() -> None:
+    """Starting one hands the work to a worker and remembers it."""
+    materializer = CandidateMaterializer(dry_run=True)
+    candidate = sdist_candidate()
+    requirement = parse_requirement("legacy")
+    expected = CandidateMetadata(
+        name="legacy",
+        version=Version("1.0"),
+        dependencies=(),
+        provided_extras=frozenset(),
+        requires_python=None,
+    )
+
+    materializer.metadata_loader = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: LazyCandidateMetadata(lambda: expected)
+    )
+
+    try:
+        materializer.start_source_metadata(candidate, requirement)
+
+        key, _ = materializer.metadata_cache_keys(candidate, frozenset())
+        started = materializer.started_metadata(key)
+
+        assert started is not None
+        assert started.result(timeout=5) is expected
+
+        # Asking twice does not start a second build.
+        materializer.start_source_metadata(candidate, requirement)
+
+        assert materializer.started_metadata(key) is started
+
+    finally:
+        materializer.close_source_builds()
+
+    assert materializer.started_metadata(key) is None
+
+
+def test_only_source_candidates_are_started() -> None:
+    """A wheel's metadata is a read; the build pool is not for it."""
+    materializer = CandidateMaterializer(dry_run=True)
+    wheel = CandidateRecord(
+        name="legacy",
+        version=Version("1.0"),
+        link=wheel_link("legacy-1.0-py3-none-any.whl"),
+    )
+
+    materializer.start_source_metadata(wheel, parse_requirement("legacy"))
+
+    assert materializer.source_build_pool is None
+
+
+def test_a_sidecar_for_another_release_is_not_believed() -> None:
+    """What a sidecar says it describes has to be what was asked for.
+
+    The metadata read here becomes the dependency graph of a distribution
+    nothing else verifies, so an index serving the wrong file -- or serving
+    one for a neighbouring release -- must not decide it.
+    """
+
+    def session_for(body: bytes) -> object:
+        class Session:
+            def __init__(self) -> None:
+                self.requested: list[str] = []
+
+            def get(self, url: str) -> HttpResponse:
+                self.requested.append(url)
+                return make_response(
+                    status=200,
+                    reason="OK",
+                    url=url,
+                    headers={},
+                    body=body,
+                )
+
+        return Session()
+
+    wrong_name = session_for(
+        b"Metadata-Version: 2.1\nName: other\nVersion: 1.0\nRequires-Dist: base\n",
+    )
+    wrong_version = session_for(
+        b"Metadata-Version: 2.1\nName: legacy\nVersion: 9.9\nRequires-Dist: base\n",
+    )
+
+    for session in (wrong_name, wrong_version):
+        materializer = sibling_materializer(
+            session,
+            (wheel_link("legacy-1.0-cp38-cp38-win32.whl"),),
+        )
+
+        assert (
+            materializer.sibling_wheel_metadata(
+                sdist_candidate(),
+                parse_requirement("legacy"),
+                frozenset(),
+            )
+            is None
+        )
+
+
+def test_metadata_is_cached_apart_per_target_interpreter() -> None:
+    """Cached metadata is marker-filtered, so it belongs to one interpreter.
+
+    Sharing a key across targets is how a lock for 3.8 hands its
+    dependencies to the next lock for the interpreter running kpip.
+    """
+    materializer = CandidateMaterializer(dry_run=True)
+    candidate = sdist_candidate()
+
+    here, here_persistent = materializer.metadata_cache_keys(candidate, frozenset())
+
+    set_target_python_version("3.8.0")
+
+    try:
+        there, there_persistent = materializer.metadata_cache_keys(
+            candidate,
+            frozenset(),
+        )
+
+    finally:
+        set_target_python_version(None)
+
+    assert here != there
+    assert here_persistent != there_persistent

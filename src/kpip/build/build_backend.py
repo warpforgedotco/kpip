@@ -127,8 +127,31 @@ class BackendSpec:
 
         build_system = data.get("build-system")
 
-        if not isinstance(build_system, dict):
-            return None
+        if build_system is not None and not isinstance(build_system, dict):
+            raise BuildError(
+                f"Invalid PEP 518 [build-system] table in {pyproject}: "
+                "build-system is not a table",
+            )
+
+        if build_system is None:
+            # A pyproject.toml carrying only tool configuration -- [tool.black]
+            # and nothing else -- is the common shape for a project that still
+            # builds through setup.py, and PEP 518 says the absent table means
+            # the legacy setuptools backend, not "no backend". Returning None
+            # here left such a project with no way to be built at all.
+            try:
+                with open(setup_py, encoding="utf-8"):
+                    pass
+
+            except OSError:
+                return None
+
+            return cls(
+                "setuptools.build_meta:__legacy__",
+                (LEGACY_SETUPTOOLS_REQUIREMENT,),
+                (),
+                setup_py_present=True,
+            )
 
         if "requires" not in build_system:
             raise BuildError(
@@ -253,8 +276,7 @@ class BackendRunner:
                     python_executable=sys.executable,
                 )
 
-                with backend_environment(self.source_dir):
-                    yield caller, metadata_dir
+                yield caller, metadata_dir
 
             return
 
@@ -349,8 +371,7 @@ class BackendRunner:
                                 python_executable=sys.executable,
                             )
 
-                            with backend_environment(self.source_dir):
-                                yield caller, metadata_dir
+                            yield caller, metadata_dir
 
                         return
 
@@ -363,8 +384,7 @@ class BackendRunner:
                 python_executable=python,
             )
 
-            with backend_environment(self.source_dir):
-                yield caller, env_path
+            yield caller, env_path
 
 
 def build_wheel(
@@ -1017,36 +1037,6 @@ def prepare_project_metadata(
             ).prepare_metadata(editable=editable, on_wheel_built=on_wheel_built)
 
         raise
-
-
-@contextlib.contextmanager
-def backend_environment(source_dir: str | os.PathLike[str]) -> Iterator[None]:
-    cwd = os.getcwd()
-
-    source = os.fspath(source_dir)
-
-    old_pythonpath = os.environ.get("PYTHONPATH")
-
-    pythonpath = [source]
-
-    if old_pythonpath:
-        pythonpath.append(old_pythonpath)
-
-    os.chdir(source)
-
-    os.environ["PYTHONPATH"] = os.pathsep.join(pythonpath)
-
-    try:
-        yield
-
-    finally:
-        os.chdir(cwd)
-
-        if old_pythonpath is None:
-            os.environ.pop("PYTHONPATH", None)
-
-        else:
-            os.environ["PYTHONPATH"] = old_pythonpath
 
 
 _PROJECT_METADATA_FIELDS = (

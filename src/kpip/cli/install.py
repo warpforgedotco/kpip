@@ -34,6 +34,7 @@ from kpip.core.metadata import find_installed, installed_index, user_lib_path
 from kpip.core.packaging import (
     canonicalize_name,
     marker_applies,
+    normalize_python_version,
     parse_requirement,
 )
 from kpip.core.urls import url_to_path
@@ -438,15 +439,7 @@ def validate_option_combinations(options: argparse.Namespace) -> None:
 def python_version(options: argparse.Namespace) -> str:
     if not options.python_version:
         return CURRENT_PYTHON_VERSION_FULL
-    value = str(options.python_version)
-    if "." in value:
-        parts = value.split(".")
-        return f"{parts[0]}.{parts[1]}.0" if len(parts) == 2 else value
-    if len(value) == 1:
-        return f"{value}.0.0"
-    if len(value) == 2:
-        return f"{value[0]}.{value[1]}.0"
-    return value
+    return normalize_python_version(str(options.python_version))
 
 
 def target_context(options: argparse.Namespace) -> TargetContext:
