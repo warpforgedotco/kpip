@@ -45,7 +45,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from kpip._vendor.typing_extensions import TypeIs
+    from typing_extensions import TypeIs
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",

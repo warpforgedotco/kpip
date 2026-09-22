@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 from ._compat import override
 
 if TYPE_CHECKING:
-    from kpip._vendor.typing_extensions import Self
+    from typing_extensions import Self
 
 __all__ = [
     "Incompatibility",

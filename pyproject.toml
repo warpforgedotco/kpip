@@ -94,7 +94,6 @@ nab-resolver = "nab_resolver"
 [tool.vendoring.transformations]
 substitute = [
     { match = "(?m)^import urllib3\\.connection$", replace = "from urllib3 import connection" },
-    { match = "import urllib3\\.contrib\\.pyopenssl", replace = "from urllib3.contrib import pyopenssl" },
     { match = "Defaults for the six provider methods", replace = "Defaults for the seven provider methods" },
     { match = "``receive_partial_solution_hint``, ``consume_pending_clauses``", replace = "``consume_priority_invalidations``, ``receive_partial_solution_hint``,\\n    ``consume_pending_clauses``" },
     { match = "``narrow_for_display``, the six", replace = "``narrow_for_display``, the" },
@@ -105,6 +104,18 @@ drop = [
     "certifi/tests/",
     "**/__pycache__/",
     "**/*.pyc",
+    # urllib3 subsystems kpip never enables: the Pyodide/emscripten transport
+    # (guarded by ``sys.platform`` in urllib3's package init), SOCKS proxies
+    # (needs PySocks), pyOpenSSL injection, and HTTP/2 over h2 (``http2/probe``
+    # stays: ``connection`` imports it unconditionally).
+    "urllib3/contrib/",
+    "urllib3/http2/connection.py",
+    # idna's command line, codec registration and Python 2 shim; the package
+    # init imports none of them and urllib3 calls ``idna.encode`` only.
+    "idna/__main__.py",
+    "idna/cli.py",
+    "idna/codec.py",
+    "idna/compat.py",
 ]
 
 [tool.ruff]
