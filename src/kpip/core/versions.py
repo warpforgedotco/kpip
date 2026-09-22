@@ -271,9 +271,6 @@ class Version(tuple):
         return cls(state[0])
 
 
-_INT_ONLY = {int}
-
-
 def is_version_wire(value: object) -> bool:
     """Whether ``value`` has the exact shape of a :meth:`Version.to_wire` record."""
     if not isinstance(value, tuple) or len(value) != 3:
@@ -281,24 +278,35 @@ def is_version_wire(value: object) -> bool:
     public, release, key = value
     if not isinstance(public, str) or not isinstance(release, tuple) or not release:
         return False
-    if set(map(type, release)) != _INT_ONLY:
-        return False
+    # Checked by walking rather than by comparing a set of types: every
+    # cached catalog summary is validated group by group on load, tens of
+    # thousands of them for a graph the size of Airflow's, and building a
+    # set per version costs more than the walk it replaces. The walk also
+    # stops at the first element that is wrong.
+    for part in release:
+        if type(part) is not int:
+            return False
     if not isinstance(key, tuple) or len(key) != 4:
         return False
     epoch, normalized, suffix, local = key
     if type(epoch) is not int or not isinstance(normalized, tuple) or not normalized:
         return False
-    stripped = release
-    while len(stripped) > 1 and stripped[-1] == 0:
-        stripped = stripped[:-1]
-    if normalized != stripped:
+    # The same comparison as stripping trailing zeros off a copy of the
+    # release, without copying: a version like 1.2.0.0 would otherwise
+    # allocate a tuple per zero before it could be compared.
+    end = len(release)
+    while end > 1 and release[end - 1] == 0:
+        end -= 1
+    if len(normalized) != end:
         return False
-    if (
-        not isinstance(suffix, tuple)
-        or len(suffix) != 6
-        or set(map(type, suffix)) != _INT_ONLY
-    ):
+    for index in range(end):
+        if normalized[index] != release[index]:
+            return False
+    if not isinstance(suffix, tuple) or len(suffix) != 6:
         return False
+    for part in suffix:
+        if type(part) is not int:
+            return False
     return isinstance(local, tuple)
 
 

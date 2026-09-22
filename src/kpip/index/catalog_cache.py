@@ -439,16 +439,23 @@ def valid_group(value: object) -> bool:
 
 
 def valid_summary_group(value: object) -> bool:
-    return (
-        isinstance(value, tuple)
-        and len(value) == 4
-        and isinstance(value[0], str)
-        and isinstance(value[1], str)
-        and is_version_wire(value[2])
-        and valid_version_text(value[2][0])  # ty:ignore[not-subscriptable]
-        and isinstance(value[3], list)
-        and all(valid_fact(fact) for fact in value[3])
-    )
+    if (
+        not isinstance(value, tuple)
+        or len(value) != 4
+        or not isinstance(value[0], str)
+        or not isinstance(value[1], str)
+        or not is_version_wire(value[2])
+        or not valid_version_text(value[2][0])  # ty:ignore[not-subscriptable]
+        or not isinstance(value[3], list)
+    ):
+        return False
+    # A loop rather than ``all()`` over a generator: this runs once per
+    # cached version, and the generator is the most expensive thing left
+    # in it once the facts themselves are cheap to check.
+    for fact in value[3]:
+        if not valid_fact(fact):
+            return False
+    return True
 
 
 def valid_str_dict(value: object) -> bool:
