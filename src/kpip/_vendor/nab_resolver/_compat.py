@@ -17,6 +17,6 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from kpip._vendor.typing_extensions import override
+    from typing_extensions import override
 else:
     override = getattr(typing, "override", lambda method: method)

@@ -15,7 +15,6 @@ LICENSE_PATHS = (
     "nab_resolver/LICENSE",
     "urllib3/LICENSE.txt",
     "tomli/LICENSE",
-    "typing_extensions.LICENSE",
 )
 
 LAUNCHER_HASHES = {

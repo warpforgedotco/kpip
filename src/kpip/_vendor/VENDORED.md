@@ -15,12 +15,27 @@ uv run --group vendoring vendoring sync -v
 | certifi | 2026.7.22 | MPL-2.0 |
 | idna | 3.18 | BSD-3-Clause |
 | nab-resolver | [`bd5a5bdf72c8`](https://github.com/notatallshaw/nab/commit/bd5a5bdf72c876a9532a1e7a6215a42a36dcc630) | MIT |
-| typing_extensions | 4.16.0 | PSF-2.0 |
 | tomli | 2.4.1 | MIT |
 
 The tool extracts license texts beside their packages, with single-module
 licenses at this directory's root. Tests verify that every expected license
 is shipped.
+
+## Dropped files
+
+`[tool.vendoring.transformations].drop` in `pyproject.toml` leaves out the
+parts of a distribution kpip never imports, beside the usual metadata and
+bytecode:
+
+| Distribution | Dropped | Why |
+| --- | --- | --- |
+| urllib3 | `contrib/` (emscripten, SOCKS, pyOpenSSL) | The Pyodide transport is imported only when `sys.platform == "emscripten"`; SOCKS needs PySocks and pyOpenSSL needs pyOpenSSL, neither of which kpip ships or injects. |
+| urllib3 | `http2/connection.py` | HTTP/2 needs `h2`; `http2/probe.py` stays because `connection.py` imports it unconditionally. |
+| idna | `__main__.py`, `cli.py`, `codec.py`, `compat.py` | The command line, codec registration and Python 2 shim; the package init imports none of them and urllib3 calls `idna.encode` only. |
+
+`typing_extensions` is not vendored: every vendored import of it sits under
+`TYPE_CHECKING`, so it is never loaded at runtime, and the `typing` dependency
+group pins it for the type checker.
 
 ## Local patches
 
