@@ -128,7 +128,24 @@ class BackendSpec:
         build_system = data.get("build-system")
 
         if not isinstance(build_system, dict):
-            return None
+            # A pyproject.toml carrying only tool configuration -- [tool.black]
+            # and nothing else -- is the common shape for a project that still
+            # builds through setup.py, and PEP 518 says the absent table means
+            # the legacy setuptools backend, not "no backend". Returning None
+            # here left such a project with no way to be built at all.
+            try:
+                with open(setup_py, encoding="utf-8"):
+                    pass
+
+            except OSError:
+                return None
+
+            return cls(
+                "setuptools.build_meta:__legacy__",
+                (LEGACY_SETUPTOOLS_REQUIREMENT,),
+                (),
+                setup_py_present=True,
+            )
 
         if "requires" not in build_system:
             raise BuildError(

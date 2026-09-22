@@ -551,3 +551,44 @@ def test_an_unparsable_static_version_falls_through_to_the_backend(
 
     with pytest.raises(BuildError):
         prepare_project_metadata(project)
+
+
+def test_pyproject_with_only_tool_tables_still_has_the_legacy_backend(
+    tmp_path: Path,
+) -> None:
+    """PEP 518: an absent [build-system] means setuptools, not "no backend".
+
+    A pyproject.toml carrying nothing but tool configuration is the common
+    shape for a project that still builds through setup.py -- python-ldap
+    ships exactly this -- and treating it as backendless left the project
+    with no way to report its own metadata.
+    """
+    project = tmp_path / "tool-only-pkg"
+    project.mkdir()
+    project.joinpath("pyproject.toml").write_text(
+        "[tool.black]\nline-length = 88\n",
+        encoding="utf-8",
+    )
+    project.joinpath("setup.py").write_text(
+        "from setuptools import setup\nsetup(name='tool-only-pkg', version='1.0')\n",
+        encoding="utf-8",
+    )
+
+    spec = BackendSpec.from_project(project)
+
+    assert spec is not None
+    assert spec.name == "setuptools.build_meta:__legacy__"
+    assert spec.setup_py_present is True
+
+
+def test_pyproject_with_only_tool_tables_and_no_setup_py_has_no_backend(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "nothing-pkg"
+    project.mkdir()
+    project.joinpath("pyproject.toml").write_text(
+        "[tool.black]\nline-length = 88\n",
+        encoding="utf-8",
+    )
+
+    assert BackendSpec.from_project(project) is None

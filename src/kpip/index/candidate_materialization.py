@@ -24,7 +24,7 @@ from kpip.core.errors import (
     UnsupportedWheel,
 )
 from kpip.core.hashes import file_hashes
-from kpip.core.http import raise_for_status, response_text
+from kpip.core.http import HttpStatusError, raise_for_status, response_text
 from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
@@ -100,6 +100,22 @@ _METADATA_WORKERS = 32
 # The extras slot of the key a VCS candidate's name and version persist under.
 _VCS_CANDIDATE_EXTRAS = ("*vcs-candidate*",)
 _PREPARED_SDIST_LIMIT = 8
+
+# How many of a release's wheels to ask for a PEP 658 metadata sidecar before
+# giving up and reading the source distribution itself. They carry the same
+# metadata, so the first that answers settles it; the rest are only for an
+# index that advertises a sidecar it will not serve.
+_SIBLING_METADATA_ATTEMPTS = 3
+
+# What a release says about itself: name, version, dependencies, the extras
+# it offers and the interpreters it supports.
+_ReleaseMetadata = tuple[
+    str,
+    Version,
+    tuple[Requirement, ...],
+    frozenset[str],
+    str | None,
+]
 
 # Below this artifact size (PEP 700 ``size``), metadata-over-ranges is not
 # worth it: the 2-3 range round-trips cost more than downloading the wheel
@@ -512,7 +528,19 @@ class CandidateMaterializer:
         dry_run: bool = False,
         compute_source_hashes: bool = False,
         session: HttpSession | None = None,
+        release_metadata_links: Callable[
+            [Requirement, Version],
+            Sequence[Link],
+        ]
+        | None = None,
     ) -> None:
+        self.release_metadata_links = release_metadata_links
+
+        self.sibling_metadata_cache: dict[
+            tuple[str, str],
+            _ReleaseMetadata | None,
+        ] = {}
+
         self.build_options = build_options
 
         self.build_constraints = build_constraints
@@ -1151,6 +1179,15 @@ class CandidateMaterializer:
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
                 metadata = self.pypi_metadata(candidate, requested_extras)
 
+                if metadata is None or not (
+                    requested_extras <= metadata.provided_extras
+                ):
+                    metadata = self.sibling_wheel_metadata(
+                        candidate,
+                        requirement,
+                        requested_extras,
+                    )
+
                 if (
                     metadata is not None
                     and requested_extras <= metadata.provided_extras
@@ -1481,12 +1518,131 @@ class CandidateMaterializer:
             requires_python=(headers.get("requires-python") or [None])[0],
         )
 
+    def sibling_wheel_metadata(
+        self,
+        candidate: CandidateRecord,
+        requirement: Requirement,
+        requested_extras: frozenset[str],
+    ) -> CandidateMetadata | None:
+        """A source distribution's dependencies, read from a sibling wheel.
+
+        A source distribution states its dependencies only through its build
+        backend, and running that backend needs a build environment the
+        target may not be able to have: a lock for 3.8 is prepared by
+        whichever interpreter kpip runs on, and a C extension pinned for 3.8
+        will not compile there. A wheel of the same release carries the very
+        metadata that backend would produce, and PEP 658 serves it beside the
+        wheel, so the release answers for its own source distribution without
+        anything being built or even downloaded.
+
+        Any wheel of the release will do. Tags decide where a wheel can be
+        installed, not what it depends on, and a difference between platforms
+        belongs in an environment marker, which is carried through here
+        unevaluated. Only wheels whose index page advertises the sidecar are
+        asked, so an index that publishes none costs nothing.
+        """
+        session = self.session
+
+        links = self.release_metadata_links
+
+        if session is None or links is None:
+            return None
+
+        release_key = (candidate.canonical_name, candidate.version.public)
+
+        if release_key in self.sibling_metadata_cache:
+            release = self.sibling_metadata_cache[release_key]
+
+        else:
+            release = self.read_sibling_wheel_metadata(
+                links(requirement, candidate.version),
+            )
+
+            self.sibling_metadata_cache[release_key] = release
+
+        if release is None:
+            return None
+
+        name, version, dependencies, extras, requires_python = release
+
+        return CandidateMetadata(
+            name=name,
+            version=version,
+            dependencies=tuple(
+                item
+                for item in dependencies
+                if marker_applies(item.marker, extras=requested_extras)
+            ),
+            provided_extras=extras,
+            requires_python=requires_python,
+        )
+
+    def read_sibling_wheel_metadata(
+        self,
+        links: Sequence[Link],
+    ) -> _ReleaseMetadata | None:
+        """The first of ``links`` whose sidecar reads as usable metadata."""
+        session = self.session
+
+        if session is None:
+            return None
+
+        for link in islice(links, _SIBLING_METADATA_ATTEMPTS):
+            metadata_link = link.metadata_link()
+
+            if metadata_link is None:
+                continue
+
+            try:
+                response = session.get(metadata_link.url)
+
+                raise_for_status(response)
+
+                headers = parse_metadata_headers(response_text(response))
+
+            except (HttpStatusError, KeyError, OSError, TypeError, ValueError):
+                # An advertised sidecar that does not answer is the index's
+                # problem, not a reason to fail: the next wheel, or the
+                # build, still has the answer.
+                continue
+
+            name = headers.get("name", (None,))[0]
+
+            version = headers.get("version", (None,))[0]
+
+            if name is None or version is None:
+                continue
+
+            try:
+                parsed_version = Version(version)
+
+            except ValueError:
+                continue
+
+            return (
+                name,
+                parsed_version,
+                tuple(
+                    requirement
+                    for value in headers.get("requires-dist", ())
+                    if (requirement := parse_requirement(value)) is not None
+                ),
+                frozenset(headers.get("provides-extra", ())),
+                (headers.get("requires-python") or [None])[0],
+            )
+
+        return None
+
     def pypi_metadata(
         self,
         candidate: CandidateRecord,
         requested_extras: frozenset[str],
     ) -> CandidateMetadata | None:
-        """Read release metadata when a PyPI sdist backend cannot run."""
+        """Read release metadata when a PyPI sdist backend cannot run.
+
+        ``None`` means PyPI could not answer, not that the release has no
+        dependencies; the caller reads the source distribution itself.
+        """
 
         source_url = candidate.link.source_url or candidate.link.url
 
@@ -1540,21 +1696,36 @@ class CandidateMaterializer:
 
             info = data["info"]
 
-            dependencies = tuple(
-                requirement
-                for value in tuple(info.get("requires_dist") or ())
-                if (requirement := parse_requirement(value)) is not None
-            )
+            declared = info.get("requires_dist")
 
-            extras = frozenset(info.get("provides_extra") or ())
+            if declared is None:
+                # PyPI reports null both for a release that has no
+                # dependencies and for one whose dependencies it never
+                # learned -- a source distribution whose PKG-INFO predates
+                # Requires-Dist, where only the build backend knows. The two
+                # are indistinguishable from here, so neither is claimed:
+                # reporting "no dependencies" writes a lock that silently
+                # omits a real subtree, which is the worse of the two errors.
+                self.release_metadata_cache[release_key] = None
 
-            release = (
-                str(info["name"]),
-                Version(str(info["version"])),
-                dependencies,
-                extras,
-                info.get("requires_python"),
-            )
+                return None
+
+            else:
+                dependencies = tuple(
+                    requirement
+                    for value in tuple(declared)
+                    if (requirement := parse_requirement(value)) is not None
+                )
+
+                extras = frozenset(info.get("provides_extra") or ())
+
+                release = (
+                    str(info["name"]),
+                    Version(str(info["version"])),
+                    dependencies,
+                    extras,
+                    info.get("requires_python"),
+                )
 
             self.release_metadata_cache[release_key] = release
 
