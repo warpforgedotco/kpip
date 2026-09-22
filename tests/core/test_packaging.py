@@ -704,3 +704,20 @@ class TestSpecifierClauseGrammar:
             if "[" in text or "]" in text:
                 continue
             assert self._candidate(text) == self._reference(text), repr(text)
+
+
+def test_a_wheel_tag_triple_is_interned() -> None:
+    """The same triple is the same object, however it is reached.
+
+    A catalog holds the same handful of tags over and over, and a cold
+    resolve of Airflow's graph rebuilt 159,112 of them before this.
+    """
+    from kpip.core.wheel import parsed_wheel_tags, wheel_tag
+
+    first = wheel_tag("py3", "none", "any")
+
+    assert wheel_tag("py3", "none", "any") is first
+    # The filename path shares the same pool.
+    assert parsed_wheel_tags("py3", "none", "any")[0] is first
+    # A different triple is a different tag.
+    assert wheel_tag("cp312", "cp312", "any") is not first

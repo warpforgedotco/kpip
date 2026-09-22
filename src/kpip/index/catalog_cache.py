@@ -10,7 +10,7 @@ import threading
 import urllib.parse
 
 from kpip.core.versions import InvalidVersion, Version, is_version_wire
-from kpip.core.wheel import WheelFile, WheelTag, parse_wheel_file
+from kpip.core.wheel import WheelFile, WheelTag, parse_wheel_file, wheel_tag
 from kpip.index.datetime import parse_iso_datetime
 from kpip.index.directory_index import project_version_from_filename
 from kpip.index.links import Link, split_plain_url
@@ -801,7 +801,7 @@ def wheel_file_from_identity(
             or not isinstance(platform, str)
         ):
             continue
-        tags.append(WheelTag(interpreter, abi, platform))
+        tags.append(wheel_tag(interpreter, abi, platform))
     if not tags:
         return None
     return WheelFile(
