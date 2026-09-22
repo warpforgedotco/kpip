@@ -88,16 +88,25 @@ def _as_written(text: str) -> str:
 def colour_is_possible() -> bool:
     """Whether anything downstream could render colour.
 
-    Deliberately generous: the question is only whether ``_colorize`` is
-    worth asking, and it is asked whenever the answer is not plainly no.
+    Deliberately generous, and only in one direction: saying yes costs an
+    import that ``can_colorize`` then settles properly, while saying no is
+    final. So every case this is unsure about -- a ``PYTHON_COLORS`` value
+    that is neither "0" nor "1", ``FORCE_COLOR`` losing to ``NO_COLOR``,
+    ``-E`` changing which variables count, a stdout whose ``isatty`` lies
+    about a missing ``fileno`` -- answers yes and defers.
+
+    The one case that has to be exact is the no: ``NO_COLOR`` suppresses
+    colour only when it is *non-empty*, which is how ``can_colorize`` reads
+    it, and an empty one has to fall through to the terminal like any other
+    unset variable.
     """
     if os.environ.get("PYTHON_COLORS") is not None:
         return True
 
-    if os.environ.get("FORCE_COLOR") is not None:
+    if os.environ.get("FORCE_COLOR"):
         return True
 
-    if os.environ.get("NO_COLOR") is not None:
+    if os.environ.get("NO_COLOR"):
         return False
 
     if os.environ.get("TERM") == "dumb":

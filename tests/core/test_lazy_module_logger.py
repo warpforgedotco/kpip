@@ -75,11 +75,20 @@ def test_the_named_logger_is_the_one_that_is_used(
     assert caplog.records[0].name == "kpip.test.named"
 
 
-def test_a_level_nothing_can_hear_is_not_enabled() -> None:
+def test_asking_about_a_level_agrees_with_logging_at_it() -> None:
+    """The answer matches what the emit methods actually do.
+
+    Nothing configured means debug goes nowhere and a warning still
+    reaches ``lastResort``, so reporting every level as disabled would let
+    ``if isEnabledFor(WARNING)`` drop a warning that ``warning()`` prints.
+    """
     source = (
         "import sys\n"
         "from kpip.core.logger import get_logger\n"
-        "print(get_logger('demo').isEnabledFor(10), 'logging' in sys.modules)\n"
+        "log = get_logger('demo')\n"
+        "print(log.isEnabledFor(10), log.isEnabledFor(20),"
+        " log.isEnabledFor(30), log.isEnabledFor(40),"
+        " 'logging' in sys.modules)\n"
     )
 
     result = subprocess.run(
@@ -89,4 +98,23 @@ def test_a_level_nothing_can_hear_is_not_enabled() -> None:
         check=True,
     )
 
-    assert result.stdout.strip() == "False False"
+    assert result.stdout.strip() == "False False True True False"
+
+
+def test_a_guarded_warning_is_not_dropped() -> None:
+    """The shape the guard exists for, end to end."""
+    source = (
+        "from kpip.core.logger import get_logger\n"
+        "log = get_logger('demo')\n"
+        "if log.isEnabledFor(30):\n"
+        "    log.warning('guarded and heard')\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "guarded and heard" in result.stderr

@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import sys
 
+# ``logging.WARNING``, spelled here so that asking about a level does not
+# import the module this exists to avoid importing.
+_WARNING = 30
+
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
@@ -80,7 +84,12 @@ class ModuleLogger:
 
     def isEnabledFor(self, level: int) -> bool:  # noqa: N802 - logging's spelling
         if self._unheard():
-            return False
+            # The same answer the emit methods above act on: with nothing
+            # configured, a warning still reaches ``lastResort`` on stderr
+            # and anything below it goes nowhere. Reporting every level as
+            # disabled would have let ``if isEnabledFor(WARNING)`` drop a
+            # warning that calling ``warning()`` outright would print.
+            return level >= _WARNING
 
         return self._resolve().isEnabledFor(level)
 

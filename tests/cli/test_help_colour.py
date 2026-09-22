@@ -49,7 +49,11 @@ def test_a_terminal_can(monkeypatch: pytest.MonkeyPatch) -> None:
         ("NO_COLOR", "1", False),
         ("TERM", "dumb", False),
         ("FORCE_COLOR", "1", True),
+        # Neither "0" nor "1" is settled here: ``can_colorize`` reads only
+        # those two, and anything else falls through to what it decides.
         ("PYTHON_COLORS", "0", True),
+        ("PYTHON_COLORS", "1", True),
+        ("PYTHON_COLORS", "maybe", True),
     ],
 )
 def test_the_environment_is_read_the_way_cpython_reads_it(
@@ -115,3 +119,35 @@ def test_a_terminal_reaches_the_real_implementation(
     HelpFormatter("kpip")
 
     assert reached == [True]
+
+
+@pytest.mark.parametrize("name", ["NO_COLOR", "FORCE_COLOR"])
+def test_an_empty_switch_is_not_a_switch(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    """``can_colorize`` reads these for truth, not for presence.
+
+    An empty ``NO_COLOR`` is the case that matters: treating it as set
+    would suppress colour in a terminal that CPython would colour.
+    """
+    monkeypatch.setattr(sys, "stdout", _Stdout(tty=True))
+    monkeypatch.setenv(name, "")
+
+    assert colour_is_possible() is True
+
+
+def test_no_color_wins_over_force_color_eventually(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both set is deferred, not decided here.
+
+    ``can_colorize`` checks ``NO_COLOR`` first and would say no; this says
+    yes only in the sense of "ask it", which costs the import and gets the
+    right answer.
+    """
+    monkeypatch.setattr(sys, "stdout", _Stdout(tty=True))
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("FORCE_COLOR", "1")
+
+    assert colour_is_possible() is True
