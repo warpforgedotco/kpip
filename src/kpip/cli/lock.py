@@ -198,6 +198,23 @@ def render_lock(packages: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
+def _resolved_metadata_name(candidate: object) -> str | None:
+    """The project name from the metadata the resolver already read.
+
+    The lock used to unpack and build every URL archive again at the end,
+    only to learn the name its metadata declares; the resolver had read
+    that metadata to resolve the archive, and holds it.  ``None`` when the
+    candidate carries no loaded metadata, and the caller builds as before.
+    """
+    record = getattr(candidate, "record_internal", None)
+    if record is None or getattr(record, "metadata_loader", None) is None:
+        return None
+    try:
+        return record.metadata().name
+    except (KpipError, OSError, ValueError, RuntimeError):
+        return None
+
+
 def run_lock(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
@@ -503,19 +520,24 @@ def run_lock(args: list[str]) -> int:
                 if archive_digest is None:
                     archive_digest = file_hashes(archive_path)["sha256"]
 
-                package_name = candidate.name
-                with tempfile.TemporaryDirectory(prefix="kpip-lock-") as temp_dir:
-                    from kpip.build.build_backend import prepare_project_metadata
+                package_name = _resolved_metadata_name(candidate)
 
-                    try:
-                        project = prepare_project_metadata(
-                            unpack_source(archive_path, temp_dir),
-                            build_isolation=False,
-                        )
-                    except (KpipError, OSError, ValueError):
-                        pass
-                    else:
-                        package_name = project.name
+                if package_name is None:
+                    # The resolver did not read this artifact's metadata, so
+                    # learn the project name the way it would have.
+                    package_name = candidate.name
+                    with tempfile.TemporaryDirectory(prefix="kpip-lock-") as temp_dir:
+                        from kpip.build.build_backend import prepare_project_metadata
+
+                        try:
+                            project = prepare_project_metadata(
+                                unpack_source(archive_path, temp_dir),
+                                build_isolation=False,
+                            )
+                        except (KpipError, OSError, ValueError):
+                            pass
+                        else:
+                            package_name = project.name
 
                 packages.append(
                     {
