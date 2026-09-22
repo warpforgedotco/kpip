@@ -25,7 +25,6 @@ from __future__ import annotations
 import random
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from kpip.core.packaging import SpecifierSet
@@ -39,13 +38,30 @@ SPECIFIER_SAMPLES = 3000
 CONTAINS_PER_SPECIFIER = 6
 
 
-@dataclass(frozen=True)
 class Divergence:
-    observable: str
-    specifier: str | None
-    version: str
-    ours: object
-    theirs: object
+    """One observable on which kpip's packaging and the oracle disagree."""
+
+    __slots__ = ("observable", "ours", "specifier", "theirs", "version")
+
+    def __init__(
+        self,
+        observable: str,
+        specifier: str | None,
+        version: str,
+        ours: object,
+        theirs: object,
+    ) -> None:
+        self.observable = observable
+        self.specifier = specifier
+        self.version = version
+        self.ours = ours
+        self.theirs = theirs
+
+    def __repr__(self) -> str:
+        return (
+            f"Divergence(observable={self.observable!r}, specifier={self.specifier!r}, "
+            f"version={self.version!r}, ours={self.ours!r}, theirs={self.theirs!r})"
+        )
 
 
 PRE_LABELS = ("a", "b", "rc", "c", "alpha", "beta", "pre", "preview")

@@ -25,7 +25,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -93,9 +92,10 @@ _BASELINE_SCRIPTS = {
 }
 
 
-@dataclass(frozen=True)
 class ImportSnapshot:
     """Every module a single ``kpip`` invocation left in ``sys.modules``."""
+
+    __slots__ = ("argv", "direct", "modules", "returncode", "stderr", "stdout")
 
     argv: tuple[str, ...]
     direct: bool
@@ -103,6 +103,32 @@ class ImportSnapshot:
     returncode: int
     stdout: str
     stderr: str
+
+    def __init__(
+        self,
+        argv: tuple[str, ...],
+        direct: bool,
+        modules: frozenset[str],
+        returncode: int,
+        stdout: str,
+        stderr: str,
+    ) -> None:
+        store = object.__setattr__
+        store(self, "argv", argv)
+        store(self, "direct", direct)
+        store(self, "modules", modules)
+        store(self, "returncode", returncode)
+        store(self, "stdout", stdout)
+        store(self, "stderr", stderr)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("ImportSnapshot is immutable")
+
+    def __repr__(self) -> str:
+        return (
+            f"ImportSnapshot(argv={self.argv!r}, direct={self.direct!r}, "
+            f"returncode={self.returncode!r}, modules={len(self.modules)} modules)"
+        )
 
     @property
     def launcher(self) -> str:
