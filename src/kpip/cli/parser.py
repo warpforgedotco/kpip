@@ -64,6 +64,53 @@ def terminal_columns() -> int:
     return _terminal_columns
 
 
+class _Uncoloured:
+    """The colours argparse asks a theme for when nothing will render them.
+
+    Every field of the real no-colour theme is the empty string, so one
+    object that answers to any of them stands in for all of them and keeps
+    this module from having to track which fields argparse reads.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> str:
+        return ""
+
+
+_UNCOLOURED = _Uncoloured()
+
+
+def _as_written(text: str) -> str:
+    return text
+
+
+def colour_is_possible() -> bool:
+    """Whether anything downstream could render colour.
+
+    Deliberately generous: the question is only whether ``_colorize`` is
+    worth asking, and it is asked whenever the answer is not plainly no.
+    """
+    if os.environ.get("PYTHON_COLORS") is not None:
+        return True
+
+    if os.environ.get("FORCE_COLOR") is not None:
+        return True
+
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+
+    if os.environ.get("TERM") == "dumb":
+        return False
+
+    try:
+        return sys.stdout.isatty()
+
+    except (AttributeError, ValueError):
+        # A replaced or closed stdout cannot be shown colour either.
+        return False
+
+
 class HelpFormatter(argparse.HelpFormatter):
     """Keep option metavar placement stable across supported Python versions."""
 
@@ -84,6 +131,33 @@ class HelpFormatter(argparse.HelpFormatter):
             *args,
             **kwargs,
         )
+
+    def _set_color(self, color: bool) -> None:
+        """Settle colour without importing the machinery that renders it.
+
+        ``argparse.HelpFormatter`` imports ``_colorize`` here whatever the
+        answer turns out to be, and that brings ``dataclasses``, ``inspect``,
+        ``dis`` and ``tokenize`` with it -- milliseconds, on the one path
+        whose whole job is to print a help page, and spent even when the
+        output is a pipe that cannot show a colour. Nothing is given up by
+        asking the cheap question first: a terminal that would show colour
+        still reaches the real implementation, which decides as it always
+        did.
+
+        Only Python 3.14 and later colour help at all; on anything earlier
+        this override is never called.
+        """
+        # Looked up rather than called directly: the base method only exists
+        # from 3.14, which is also the only place this one is ever reached.
+        inherited = getattr(super(), "_set_color", None)
+
+        if color and inherited is not None and colour_is_possible():
+            inherited(color)
+
+            return
+
+        self._theme = _UNCOLOURED
+        self._decolor = _as_written
 
     def _format_action_invocation(self, action: argparse.Action) -> str:
         if not action.option_strings:
