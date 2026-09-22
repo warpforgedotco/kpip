@@ -222,3 +222,51 @@ def test_a_failing_lookahead_does_not_fail_the_resolve(
     monkeypatch.setattr(CandidateProvider, target, failing)
 
     assert resolve() == expected
+
+
+def test_the_two_hop_check_looks_ahead_down_the_child_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each root release's dependency window sits just below the last one's.
+
+    Checking a window fetched only its one or two new child releases and
+    blocked on them, so a long descent was as many serial round trips.  The
+    check starts metadata for a window of the child's catalog below the
+    lowest release it just checked, widening as the descent continues, and
+    starts every release once.
+    """
+    adapter, submitted = _adapter(monkeypatch)
+    ascending = tuple(sorted(VERSIONS))
+    adapter._forward_catalog_versions["child"] = ascending
+
+    seen: list[int] = []
+    for step in range(6):
+        # A window of eight releases, moving down one release per parent.
+        top = len(ascending) - step
+        adapter._prefetch_child_lookahead("child", list(ascending[top - 8 : top]))
+        seen.append(len(submitted))
+
+    # Below 1.57.0 the first window starts two releases, then four below
+    # those, then eight, sixteen, and the 26 left: cumulative counts, no
+    # release twice, the buffer ahead of the descent growing every step.
+    assert seen == [2, 6, 14, 30, 56, 56]
+    assert len(submitted) == len({tuple(record) for record in submitted})
+    assert all(record[1] < Version("1.57.0") for record in submitted)
+
+
+def test_a_window_above_the_lookahead_floor_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, submitted = _adapter(monkeypatch)
+    ascending = tuple(sorted(VERSIONS))
+    adapter._forward_catalog_versions["child"] = ascending
+
+    adapter._prefetch_child_lookahead("child", list(ascending[40:48]))
+    started = len(submitted)
+    assert started > 0
+
+    # Re-asking about the same window, or a higher one, is not a descent.
+    adapter._prefetch_child_lookahead("child", list(ascending[40:48]))
+    adapter._prefetch_child_lookahead("child", list(ascending[50:58]))
+
+    assert len(submitted) == started
