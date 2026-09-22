@@ -14,11 +14,15 @@ from kpip.core.errors import CommandError, KpipError
 from kpip.core.format_control import FormatControl
 from kpip.core.hashes import file_hashes
 from kpip.core.packaging import parse_requirement
-from kpip.core.temp_dir import remove_temp_directory
 from kpip.core.urls import path_to_url, url_to_path
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.provider import CandidateProvider
-from kpip.index.vcs import git_revision, materialize_vcs, vcs_reference
+from kpip.index.vcs import (
+    git_revision,
+    materialize_vcs,
+    release_checkout,
+    vcs_reference,
+)
 from kpip.core.appdirs import http_cache_path
 from kpip.network.http import NetworkSession
 from kpip.resolution.api import ResolutionEngine
@@ -467,7 +471,7 @@ def run_lock(args: list[str]) -> int:
 
                 commit_id = git_revision(checkout)
 
-                remove_temp_directory(checkout)
+                release_checkout(checkout)
 
             packages.append(
                 {

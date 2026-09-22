@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import atexit
+import threading
 import os
 import shutil
 import tempfile
@@ -50,11 +52,66 @@ def vcs_reference(url: str) -> VcsReference:
     )
 
 
+_shared_checkouts: dict[str, str] = {}
+"""VCS URL -> the checkout every caller in this process shares; see below."""
+
+_shared_checkouts_lock = threading.Lock()
+
+
+def _remove_shared_checkouts() -> None:
+    with _shared_checkouts_lock:
+        paths = list(_shared_checkouts.values())
+        _shared_checkouts.clear()
+    for path in paths:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def release_checkout(path: str) -> None:
+    """Give back a checkout from ``materialize_vcs``.
+
+    A shared checkout stays for the next caller and is removed at exit; any
+    other path is a private temporary and is removed now.
+    """
+    with _shared_checkouts_lock:
+        shared = path in _shared_checkouts.values()
+    if not shared:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def materialize_vcs(
     url: str,
     *,
     emit_resolution: bool = True,
     prompting: bool = True,
+) -> str:
+    """A checkout of ``url``, one per URL for the life of the process.
+
+    A VCS requirement was cloned and built three times in one resolve: once
+    to learn its name and version, once more for the same when its release
+    was chosen, and once for its metadata, each caller removing its checkout
+    when done.  Callers now share one checkout and hand it back with
+    ``release_checkout``; the process removes it at exit.
+    """
+    with _shared_checkouts_lock:
+        shared = _shared_checkouts.get(url)
+    if shared is not None and os.path.isdir(shared):
+        return shared
+    path = _clone_vcs(url, emit_resolution=emit_resolution, prompting=prompting)
+    with _shared_checkouts_lock:
+        first = _shared_checkouts.setdefault(url, path)
+        if len(_shared_checkouts) == 1 and first is path:
+            atexit.register(_remove_shared_checkouts)
+    if first is not path:
+        shutil.rmtree(path, ignore_errors=True)
+        return first
+    return path
+
+
+def _clone_vcs(
+    url: str,
+    *,
+    emit_resolution: bool,
+    prompting: bool,
 ) -> str:
     import subprocess
 

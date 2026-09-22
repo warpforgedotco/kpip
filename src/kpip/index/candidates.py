@@ -5,7 +5,6 @@ import os
 from kpip.core.versions import ZERO_VERSION
 from kpip.core.errors import BuildError
 from kpip.core.versions import Version
-from kpip.core.temp_dir import remove_temp_directory
 from kpip.core.wheel import (
     parse_wheel_file,
     supported_wheel_tags,
@@ -18,13 +17,17 @@ from kpip.index.source_models import (
     RejectedCandidate,
     RejectionReason,
 )
-from kpip.index.vcs import materialize_vcs
+from kpip.index.vcs import materialize_vcs, release_checkout
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from kpip.core.wheel import TargetContext, WheelFile
     from kpip.index.links import Link
+
+
+_vcs_candidates: dict[str, InstallationCandidate] = {}
+"""VCS URL -> its candidate, for the life of the process; see from_vcs."""
 
 
 class InstallationCandidate(CandidateRecord):
@@ -190,15 +193,24 @@ class InstallationCandidate(CandidateRecord):
 
     @classmethod
     def from_vcs(cls, link: Link) -> InstallationCandidate | RejectedCandidate:
+        """The candidate for a VCS link, built once per URL per process.
+
+        Learning a VCS requirement's name and version means a checkout and a
+        metadata build.  The resolver asks more than once per resolve, from
+        listing the requirement and from choosing its release, so the answer
+        is kept.
+        """
+        cached = _vcs_candidates.get(link.url)
+        if cached is not None:
+            return cached
+
         from kpip.build.build_backend import prepare_project_metadata
 
         local = None
 
         try:
             local = materialize_vcs(link.url, emit_resolution=False)
-
             metadata = prepare_project_metadata(local)
-
             version = Version(metadata.version)
 
         except (BuildError, ValueError):
@@ -213,9 +225,11 @@ class InstallationCandidate(CandidateRecord):
 
         finally:
             if local is not None:
-                remove_temp_directory(local)
+                release_checkout(local)
 
-        return cls(name=metadata.name, version=version, link=link)
+        candidate = cls(name=metadata.name, version=version, link=link)
+        _vcs_candidates[link.url] = candidate
+        return candidate
 
     def __str__(self) -> str:
         return f"{self.name!r} candidate (version {self.version} at {self.link})"
