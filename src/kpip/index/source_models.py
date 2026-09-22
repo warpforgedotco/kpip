@@ -26,6 +26,14 @@ class ArtifactKind(Enum):
 
     UNKNOWN = "unknown"
 
+    # ``Enum.__hash__`` is a Python-level ``hash(self._name_)``, and these are
+    # hashed on every link the index evaluates -- a frozenset membership test
+    # per artifact, tens of thousands of them in one resolve. Members are
+    # singletons and compare by identity, which is exactly what the inherited
+    # hash is, so taking it back gives the same answer from a C slot with no
+    # frame to push.
+    __hash__ = object.__hash__
+
 
 SOURCE_ARTIFACT_KINDS = frozenset((ArtifactKind.SDIST, ArtifactKind.SOURCE_TREE))
 

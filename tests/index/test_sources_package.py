@@ -27,6 +27,7 @@ from kpip.index.links import Link
 from kpip.index.provider import CandidateProvider
 from kpip.index.source_locations import FindLinksSource, SimpleIndexSource
 from kpip.index.source_models import (
+    SOURCE_ARTIFACT_KINDS,
     ArtifactKind,
     CandidateMetadata,
     CandidateRecord,
@@ -1918,3 +1919,25 @@ def test_metadata_is_cached_apart_per_target_interpreter() -> None:
 
     assert here != there
     assert here_persistent != there_persistent
+
+
+def test_an_artifact_kind_hashes_by_identity() -> None:
+    """Members are singletons, so the inherited hash is the right answer.
+
+    ``Enum.__hash__`` is a Python-level ``hash(self._name_)``, and these are
+    hashed once per artifact the index evaluates. Taking the inherited hash
+    back is only sound because nothing here compares two distinct objects
+    equal -- which is what these assertions pin down.
+    """
+    import pickle
+
+    sdist = ArtifactKind.SDIST
+
+    assert ArtifactKind("sdist") is sdist
+    assert pickle.loads(pickle.dumps(sdist)) is sdist
+    assert hash(sdist) == hash(ArtifactKind("sdist"))
+    assert sdist in SOURCE_ARTIFACT_KINDS
+    assert ArtifactKind.WHEEL not in SOURCE_ARTIFACT_KINDS
+    assert {sdist: 1}[ArtifactKind("sdist")] == 1
+    # And the hash really is the inherited one, not Enum's.
+    assert type(sdist).__hash__ is object.__hash__
