@@ -92,6 +92,9 @@ class NabProvider:
         self.constraints = self.context.constraints
         self.ignore_requires_python = self.context.ignore_requires_python
         self._descent_prefetched: set[tuple[str, Version]] = set()
+        self._child_lookahead_floor: dict[str, Version] = {}
+        self._child_lookahead_last: dict[str, Version] = {}
+        self._child_lookahead_attempts: dict[str, int] = {}
         self._descent_attempts: dict[str, int] = {}
         self._descent_last: dict[str, Version] = {}
         self._yanked_versions: dict[str, frozenset[Version]] = {}
@@ -711,11 +714,14 @@ class NabProvider:
         if not window:
             return
 
+        self._start_metadata_for(package, window)
+
+    def _start_metadata_for(self, package: str, window: Sequence[Version]) -> None:
+        """Start metadata for ``window``'s releases, each at most once."""
         requirement = parse_requirement(package)
 
-        # Not _prefetch_catalog_candidates: it drops releases with ambiguous
-        # artifacts, which for a project shipping a wheel and an sdist is all
-        # of them. Starting metadata needs no such choice.
+        # Not _prefetch_catalog_candidates: it materializes a candidate per
+        # release and keeps it. Starting metadata needs neither.
         records: list[CandidateRecord] = []
 
         for version in window:
@@ -736,6 +742,51 @@ class NabProvider:
                 tuple(records),
                 requirement=requirement,
             )
+
+    def _prefetch_child_lookahead(
+        self, child: str, matching: Sequence[Version]
+    ) -> None:
+        """Start metadata for the child releases the next parents will ask about.
+
+        The two-hop check walks a root's releases newest first, and each
+        release's dependency window sits just below the previous one's: the
+        botocore window of boto3 1.43.98 is the window of 1.43.99 shifted
+        down a release.  Checking a window fetched only its one or two new
+        releases and blocked on them, so a 1,400-release descent was 1,400
+        serial round trips.  Starting metadata for a window of the child's
+        catalog below the lowest release just checked keeps the next checks
+        fed; the window doubles while the descent keeps going, as the
+        parent's own descent window does, and every release starts once.
+        """
+        if _DESCENT_PREFETCH_WINDOW <= 0 or not matching:
+            return
+        lowest = min(matching)
+        last = self._child_lookahead_last.get(child)
+        self._child_lookahead_last[child] = lowest
+        if last is not None and lowest >= last:
+            return  # the same window again, or a higher one: not a descent
+        attempts = self._child_lookahead_attempts.get(child, 0) + 1
+        self._child_lookahead_attempts[child] = attempts
+        size = min(_DESCENT_PREFETCH_WINDOW, 1 << min(attempts, 5))
+        # The child's sorted catalog from the check itself, not ``_versions``:
+        # the child may not carry a requirement yet, the check reads it
+        # straight from the provider.
+        versions = self._forward_catalog_versions.get(child)
+        if not versions:
+            return
+        # Extend below what is already started, so the buffer ahead of the
+        # descent keeps growing rather than refilling only once it is overrun.
+        floor = self._child_lookahead_floor.get(child)
+        below = lowest if floor is None or floor > lowest else floor
+        stop = bisect_left(versions, below)
+        window = versions[max(0, stop - size) : stop]
+        if not window:
+            return
+        self._child_lookahead_floor[child] = window[0]
+        try:
+            self._start_metadata_for(child, window[::-1])
+        except Exception:  # noqa: BLE001 - lookahead must not fail a resolve
+            pass
 
     def _selected_dependency_rejects(
         self,
@@ -867,6 +918,8 @@ class NabProvider:
             ]
         if not matching:
             return False
+
+        self._prefetch_child_lookahead(child_name, matching)
 
         child_extras = dependency.extras
         for start in range(0, len(matching), _FORWARD_CHECK_BATCH):
