@@ -75,18 +75,28 @@ def test_a_negative_cached_size_is_rejected_at_load_time() -> None:
     assert not valid_record(negative)
 
 
-def test_legacy_nine_tuple_records_still_load() -> None:
-    """Records written before the size field stay valid: no cache cold-start."""
-    from kpip.index.catalog_cache import valid_record
+def test_a_record_of_the_wrong_width_is_rejected() -> None:
+    """The stored shape changed, and the cache bucket version changed with it.
+
+    An entry written by an older kpip is not read and mis-parsed; it is not
+    found at all, because the catalog, summary and choice buckets are
+    versioned and were bumped alongside the record layout.
+    """
+    from kpip.index.catalog_cache import PREFIX, valid_record
 
     [link] = parse_links(
         [{"url": "demo-1.0-py3-none-any.whl", "filename": "x", "size": 4096}],
     )
-    legacy = link_record(link)[:9]
+    record = link_record(link)
 
-    assert valid_record(legacy)
-    restored = link_from_record(legacy)
-    assert restored.size is None
+    assert len(record) == 9
+    assert valid_record(record)
+    assert not valid_record(record[:8])
+    assert not valid_record((*record, "extra"))
+    assert "2" in PREFIX, "the bucket version carries the layout change"
+
+    restored = link_from_record(record)
+    assert restored.size == 4096
     assert restored.url == link.url
 
 
