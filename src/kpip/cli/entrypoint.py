@@ -268,7 +268,7 @@ def flush_streams() -> None:
     sys.stderr.flush()
 
 
-def collect_less_often() -> None:
+def collect_less_often() -> tuple[int, int, int] | None:
     """Make full garbage collections rare for the length of one command.
 
     CPython's thresholds assume a small live heap.  A resolve keeps the whole
@@ -284,15 +284,23 @@ def collect_less_often() -> None:
     rather than disabled -- a resolve large enough to need one still gets it.
     Peak memory is unchanged either way.  ``KPIP_GC=default`` restores
     CPython's own settings.
+
+    Returns the thresholds it replaced, or None if it changed nothing.  A
+    command normally runs in a process that is about to exit, but ``main``
+    is importable and is called in-process by tests and by anything
+    embedding kpip, and collection thresholds are interpreter-wide: they
+    are restored when the command finishes.
     """
     if os.environ.get("KPIP_GC") == "default":
-        return
+        return None
 
     import gc
 
-    young = gc.get_threshold()[0]
+    previous = gc.get_threshold()
 
-    gc.set_threshold(young, _OLD_GENERATION_RATIO, _OLD_GENERATION_RATIO)
+    gc.set_threshold(previous[0], _OLD_GENERATION_RATIO, _OLD_GENERATION_RATIO)
+
+    return previous
 
 
 def main(
@@ -302,6 +310,8 @@ def main(
     location: str | None = None,
 ) -> int:
     verbosity = 0
+
+    restore_thresholds: tuple[int, int, int] | None = None
 
     managed_environment = {
         name: os.environ.get(name)
@@ -383,7 +393,7 @@ def main(
 
                 return status
 
-        collect_less_often()
+        restore_thresholds = collect_less_often()
 
         if spec.needs_tempdir:
             from kpip.core.temp_dir import global_tempdir_manager
@@ -459,3 +469,8 @@ def main(
 
             else:
                 os.environ[name] = previous
+
+        if restore_thresholds is not None:
+            import gc
+
+            gc.set_threshold(*restore_thresholds)

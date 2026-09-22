@@ -31,8 +31,9 @@ def test_only_the_old_generation_multipliers_move(
     monkeypatch.delenv("KPIP_GC", raising=False)
     gc.set_threshold(700, 10, 10)
 
-    entrypoint.collect_less_often()
+    previous = entrypoint.collect_less_often()
 
+    assert previous == (700, 10, 10), "the caller is handed what to restore"
     young, first, second = gc.get_threshold()
     assert young == 700, "generation 0 keeps collecting at its usual rate"
     assert (first, second) == (
@@ -60,7 +61,7 @@ def test_the_escape_hatch_leaves_cpython_alone(
     monkeypatch.setenv("KPIP_GC", "default")
     gc.set_threshold(700, 10, 10)
 
-    entrypoint.collect_less_often()
+    assert entrypoint.collect_less_often() is None
 
     assert gc.get_threshold() == (700, 10, 10)
 
@@ -86,3 +87,41 @@ def test_a_command_is_tuned_before_it_runs(monkeypatch: pytest.MonkeyPatch) -> N
     assert entrypoint.main(["check"]) == 0
 
     assert events == ["tuned", "ran"]
+
+
+def test_a_finished_command_leaves_the_thresholds_as_it_found_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``main`` is importable, and thresholds are interpreter-wide."""
+    monkeypatch.delenv("KPIP_GC", raising=False)
+    gc.set_threshold(700, 10, 10)
+    seen: list[tuple[int, ...]] = []
+    monkeypatch.setattr(
+        entrypoint,
+        "run_command",
+        lambda argv, spec: seen.append(gc.get_threshold()) or 0,
+    )
+
+    assert entrypoint.main(["check"]) == 0
+
+    assert seen == [
+        (700, entrypoint._OLD_GENERATION_RATIO, entrypoint._OLD_GENERATION_RATIO)
+    ]
+    assert gc.get_threshold() == (700, 10, 10)
+
+
+def test_the_thresholds_are_restored_even_when_a_command_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KPIP_GC", raising=False)
+    gc.set_threshold(700, 10, 10)
+
+    def boom(argv: list[str], spec: object) -> int:
+        raise RuntimeError("command failed")
+
+    monkeypatch.setattr(entrypoint, "run_command", boom)
+
+    with pytest.raises(RuntimeError):
+        entrypoint.main(["check"])
+
+    assert gc.get_threshold() == (700, 10, 10)
