@@ -13,7 +13,6 @@ import urllib.parse
 import zipfile
 from itertools import chain, islice
 from threading import RLock
-from typing import NamedTuple
 
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
 from kpip.core.logger import get_logger
@@ -140,18 +139,40 @@ _RANGED_METADATA_MIN_WHEEL_BYTES = 1 * 1024 * 1024
 _MetadataKey = tuple[str, str, str, frozenset[str], str]
 
 
-class _ArchiveMemberInfo(NamedTuple):
-    compress_type: int
+class _ArchiveMemberInfo:
+    """The fields of a zip member that reading a wheel's metadata looks at.
 
-    CRC: int
+    Slotted rather than a ``NamedTuple``: creating a NamedTuple class reads
+    its annotations, which on Python 3.14 imports ``annotationlib`` and
+    ``ast`` behind it. ``ZipEntryInfo`` is declared as read-only properties,
+    which plain attributes satisfy just as a named tuple's fields did, and
+    nothing reads these by position.
+    """
 
-    compress_size: int
+    __slots__ = (
+        "CRC",
+        "compress_size",
+        "compress_type",
+        "external_attr",
+        "file_size",
+        "header_offset",
+    )
 
-    file_size: int
-
-    header_offset: int
-
-    external_attr: int
+    def __init__(
+        self,
+        compress_type: int,
+        CRC: int,  # noqa: N803 - zipfile's spelling, matched deliberately
+        compress_size: int,
+        file_size: int,
+        header_offset: int,
+        external_attr: int,
+    ) -> None:
+        self.compress_type = compress_type
+        self.CRC = CRC
+        self.compress_size = compress_size
+        self.file_size = file_size
+        self.header_offset = header_offset
+        self.external_attr = external_attr
 
 
 class _ResolverWheelArchive:
