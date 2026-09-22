@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from urllib.parse import urlsplit
 
 from kpip._vendor.nab_resolver.ranges import Range
@@ -95,6 +95,9 @@ class NabProvider:
         self._descent_attempts: dict[str, int] = {}
         self._descent_last: dict[str, Version] = {}
         self._yanked_versions: dict[str, frozenset[Version]] = {}
+        self._sorted_versions_memo: dict[
+            str, tuple[tuple[Version, ...], list[Version]]
+        ] = {}
         self._dependency_range_memo: dict[
             tuple[str, str],
             tuple[tuple[Version, ...], tuple[Requirement, ...], Range[Version]],
@@ -1595,10 +1598,13 @@ class NabProvider:
             ):
                 dependency_range = memo[2]
             else:
+                window = self._bounded_versions(
+                    dependency_key, allowed, dependency.specifier
+                )
                 if dependency_constraints:
                     selected = [
                         candidate
-                        for candidate in allowed
+                        for candidate in window
                         if dependency.specifier.contains(
                             candidate, allow_prereleases=True
                         )
@@ -1612,7 +1618,7 @@ class NabProvider:
                 else:
                     selected = [
                         candidate
-                        for candidate in allowed
+                        for candidate in window
                         if dependency.specifier.contains(
                             candidate, allow_prereleases=True
                         )
@@ -1630,6 +1636,56 @@ class NabProvider:
         result = dict(dependencies)
         self._dependency_cache[cache_key] = result
         return result
+
+    def _bounded_versions(
+        self,
+        package: str,
+        allowed: tuple[Version, ...],
+        specifier: SpecifierSet,
+    ) -> Sequence[Version]:
+        """The releases of ``allowed`` a specifier can admit, by bisection.
+
+        A dependency edge scanned every release of its target with
+        ``contains``: on boto3's graph each of 1,400 boto3 releases names
+        a different botocore window, so the memo above never hit and each
+        edge cost 1,900 containment checks for the 20 it admits.  The
+        specifier's conservative bounds cut a sorted copy of the catalog
+        down to the window that can satisfy it; ``contains`` still decides
+        within the window, so ``!=``, wildcards and pre-release rules are
+        untouched.  ``allowed`` is replaced, never mutated, when the
+        requirement changes, so its identity keys the sorted copy.
+        """
+        lower, upper = specifier.bounds
+        if lower is None and upper is None:
+            return allowed
+        memo = self._sorted_versions_memo.get(package)
+        if memo is None or memo[0] is not allowed:
+            memo = (allowed, sorted(allowed))
+            self._sorted_versions_memo[package] = memo
+        ordered = memo[1]
+        start = 0
+        stop = len(ordered)
+        if lower is not None:
+            version, inclusive = lower
+            start = (
+                bisect_left(ordered, version)
+                if inclusive
+                else bisect_right(ordered, version)
+            )
+        if upper is not None:
+            version, inclusive = upper
+            stop = (
+                bisect_right(ordered, version)
+                if inclusive
+                else bisect_left(ordered, version)
+            )
+            # ``==V`` and ``<=V`` admit V's local versions, which sort just
+            # past V; ``bounds`` reads V itself as the edge, so take them in.
+            public = version[:3]  # epoch, release, suffix: everything but local
+            count = len(ordered)
+            while stop < count and ordered[stop][:3] == public:
+                stop += 1
+        return ordered[start:stop]
 
     @staticmethod
     def _finite_range(versions: tuple[Version, ...] | list[Version]) -> Range[Version]:
