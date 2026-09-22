@@ -62,6 +62,7 @@ def _remove_shared_checkouts() -> None:
     with _shared_checkouts_lock:
         paths = list(_shared_checkouts.values())
         _shared_checkouts.clear()
+        _announced_resolutions.clear()
     for path in paths:
         shutil.rmtree(path, ignore_errors=True)
 
@@ -95,16 +96,42 @@ def materialize_vcs(
     with _shared_checkouts_lock:
         shared = _shared_checkouts.get(url)
     if shared is not None and os.path.isdir(shared):
+        if emit_resolution:
+            _announce_resolution(url, shared)
         return shared
-    path = _clone_vcs(url, emit_resolution=emit_resolution, prompting=prompting)
+    path = _clone_vcs(url, emit_resolution=False, prompting=prompting)
     with _shared_checkouts_lock:
-        first = _shared_checkouts.setdefault(url, path)
-        if len(_shared_checkouts) == 1 and first is path:
-            atexit.register(_remove_shared_checkouts)
+        first = _shared_checkouts.get(url)
+        if first is None or not os.path.isdir(first):
+            # A caller that copied the checkout away and removed it (an
+            # editable install) leaves a stale entry; the fresh clone
+            # replaces it rather than being discarded for a path that is gone.
+            _shared_checkouts[url] = path
+            first = path
+            if len(_shared_checkouts) == 1:
+                atexit.register(_remove_shared_checkouts)
     if first is not path:
         shutil.rmtree(path, ignore_errors=True)
-        return first
-    return path
+    if emit_resolution:
+        _announce_resolution(url, first)
+    return first
+
+
+_announced_resolutions: set[str] = set()
+
+
+def _announce_resolution(url: str, checkout: str) -> None:
+    """Print ``Resolved <repo> to commit <sha>`` once per URL per process.
+
+    The first clone of a URL is often the silent one that learns its
+    candidate, so the message is printed for the first caller that asks
+    for it, whichever clone it is served from.
+    """
+    if url in _announced_resolutions or os.environ.get("KPIP_QUIET"):
+        return
+    _announced_resolutions.add(url)
+    reference = vcs_reference(url)
+    print(f"Resolved {reference.repo_url} to commit {git_revision(checkout)}")
 
 
 def _clone_vcs(

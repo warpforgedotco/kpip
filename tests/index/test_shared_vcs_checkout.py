@@ -10,6 +10,7 @@ removes it at exit; the candidate itself is memoized per URL.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -105,3 +106,41 @@ def test_the_vcs_candidate_is_learned_once(
     assert (first.name, str(first.version)) == ("shared-demo", "1.2.3")
     assert second is first
     assert len(builds) == 1
+
+
+def test_a_removed_shared_checkout_is_replaced_not_resurrected(
+    repo: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An editable install copies the checkout away and gives it back removed.
+
+    The memo then held a path that no longer existed, and the next caller's
+    fresh clone was discarded in favour of it.
+    """
+    monkeypatch.setattr(vcs, "_shared_checkouts", {})
+    first = vcs.materialize_vcs(repo, emit_resolution=False)
+    shutil.rmtree(first)
+
+    second = vcs.materialize_vcs(repo, emit_resolution=False)
+
+    assert second != first
+    assert os.path.isdir(second)
+    assert vcs.materialize_vcs(repo, emit_resolution=False) == second
+    vcs._remove_shared_checkouts()
+
+
+def test_the_resolution_is_announced_once_for_the_first_caller_that_asks(
+    repo: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(vcs, "_shared_checkouts", {})
+    monkeypatch.setattr(vcs, "_announced_resolutions", set())
+    monkeypatch.delenv("KPIP_QUIET", raising=False)
+    silent = vcs.materialize_vcs(repo, emit_resolution=False)
+    assert capsys.readouterr().out == ""
+
+    vcs.materialize_vcs(repo)
+    vcs.materialize_vcs(repo)
+
+    out = capsys.readouterr().out
+    assert out.count("Resolved ") == 1
+    assert out.strip().endswith(vcs.git_revision(silent))
+    vcs._remove_shared_checkouts()
