@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 NO_SHELL = "-N"
 
@@ -61,6 +62,8 @@ class Hyperfine:
     verbose: bool
     json: bool
     ignore_failure: bool = False
+    setup_log: Path | None = None
+    """Where a failed ``setup`` chain wrote its output; shown when hyperfine fails."""
 
     def args(self) -> list[str]:
         args = ["hyperfine", NO_SHELL]
@@ -114,4 +117,12 @@ class Hyperfine:
     def run(self) -> None:
         environment = os.environ.copy()
         environment.update(self.environment())
-        subprocess.check_call(self.args(), env=environment)
+        try:
+            subprocess.check_call(self.args(), env=environment)
+        except subprocess.CalledProcessError:
+            if self.setup_log is not None and self.setup_log.exists():
+                sys.stderr.write(
+                    f"\n== {self.name}: setup failed; {self.setup_log} ==\n"
+                    f"{self.setup_log.read_text()}\n"
+                )
+            raise

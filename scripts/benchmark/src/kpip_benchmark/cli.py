@@ -174,10 +174,14 @@ def cleanup_step(paths: list[Path], *, mkdir: list[Path] | None = None) -> dict:
     }
 
 
-def run_step(command: list[str], env: dict[str, str] | None = None) -> dict:
+def run_step(
+    command: list[str], env: dict[str, str] | None = None, *, log: Path | None = None
+) -> dict:
     step: dict = {"kind": "run", "command": command}
     if env:
         step["env"] = env
+    if log is not None:
+        step["log"] = str(log)
     return step
 
 
@@ -201,9 +205,16 @@ def prepare_with_cache(
     return cleanup_command(paths, mkdir=[cwd])
 
 
-def warm_setup(commands: list[Command], stale: list[Path]) -> str:
+def setup_log(workspace: Path) -> Path:
+    """Where a failed warm setup leaves the output hyperfine discarded."""
+    return workspace / "setup-failure.log"
+
+
+def warm_setup(commands: list[Command], stale: list[Path], *, log: Path) -> str:
     steps = [cleanup_step(stale)]
-    steps.extend(run_step(command.command, command.env) for command in commands)
+    steps.extend(
+        run_step(command.command, command.env, log=log) for command in commands
+    )
     return chain_command(steps)
 
 
@@ -637,6 +648,7 @@ def main() -> None:
                         workspace / "kpip.out",
                         workspace / "uv.out",
                     ],
+                    log=setup_log(workspace),
                 )
             run = Hyperfine(
                 name=(
@@ -644,6 +656,7 @@ def main() -> None:
                 ),
                 commands=commands,
                 setup=setup,
+                setup_log=setup_log(workspace) if setup is not None else None,
                 warmup=args.warmup,
                 min_runs=min_runs,
                 runs=args.runs,

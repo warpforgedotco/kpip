@@ -5,6 +5,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from kpip_benchmark.cli import (
     BENCHMARKS,
     build_commands,
@@ -414,3 +416,67 @@ def test_registry_covers_every_official_fixture() -> None:
     assert {
         workload.constraint for workload in OFFICIAL_WORKLOADS if workload.constraint
     } == {"airflow2-constraints.txt"}
+
+
+def test_a_failing_logged_step_leaves_its_output_where_hyperfine_discarded_it(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "setup-failure.log"
+    log.write_text("stale")
+    steps = [
+        {
+            "kind": "run",
+            "command": [
+                sys.executable,
+                "-c",
+                "import sys; print('out'); print('boom', file=sys.stderr); sys.exit(2)",
+            ],
+            "log": str(log),
+        },
+    ]
+
+    assert run_chain(json.dumps(steps)) == 2
+    text = log.read_text(encoding="utf-8")
+    assert "exit 2" in text
+    assert "out\n" in text
+    assert "boom\n" in text
+
+
+def test_a_passing_logged_step_removes_a_stale_log(tmp_path: Path) -> None:
+    log = tmp_path / "setup-failure.log"
+    log.write_text("stale")
+    steps = [
+        {"kind": "run", "command": [sys.executable, "-c", "pass"], "log": str(log)}
+    ]
+
+    assert run_chain(json.dumps(steps)) == 0
+    assert not log.exists()
+
+
+def test_hyperfine_prints_the_setup_log_when_it_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    log = tmp_path / "setup-failure.log"
+    log.write_text("kpip lock: HTTPError 503")
+    run = Hyperfine(
+        name="x",
+        commands=[Command(name="a", prepare=None, command=["true"])],
+        setup="setup",
+        setup_log=log,
+        warmup=None,
+        min_runs=None,
+        runs=None,
+        verbose=False,
+        json=False,
+    )
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(1, "hyperfine")
+
+    monkeypatch.setattr(subprocess, "check_call", fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        run.run()
+
+    assert "HTTPError 503" in capsys.readouterr().err
