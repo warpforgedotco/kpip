@@ -119,7 +119,16 @@ def test_stale_page_revalidates_into_summary(tmp_path: Path) -> None:
     assert not source.page_fetch_outcomes
 
 
-def test_changed_page_reparses_once(tmp_path: Path) -> None:
+def test_changed_page_compiles_its_summary_without_building_links(
+    tmp_path: Path,
+) -> None:
+    """A changed JSON page is compiled straight into the catalog.
+
+    It used to be parsed into one link per file and reported as a miss, so
+    the provider reasoned over those links; an airflow lock built 313,925 of
+    them and discarded them. The summary now comes back directly, and the
+    body is kept so a caller that still wants links pays no second fetch.
+    """
     source, session = primed_source(tmp_path)
     old_generation = stored_generation(session)
     session.etag = '"v2"'
@@ -128,14 +137,19 @@ def test_changed_page_reparses_once(tmp_path: Path) -> None:
     requirement = parse_requirement("demo")
     summary = source.collect_cached_catalog_summary(requirement, allow_fetch=True)
 
-    assert summary is None
-    assert session.transport_calls == 2
-    assert stored_generation(session) != old_generation
-
-    links = source.collect_links(requirement)
-    assert len(links) == 3
+    assert summary is not None
+    assert summary[0] == stored_generation(session)
+    assert summary[0] != old_generation
+    assert [group[1] for group in summary[1]] == ["1.0", "2.0", "3.0"]
     assert session.transport_calls == 2
     assert not source.page_fetch_outcomes
+
+    # Nothing on the cold path asks for links any more -- a cold airflow lock
+    # makes zero such calls -- but a caller that does still gets them, by
+    # re-reading the page rather than from a body held in memory for the whole
+    # run.
+    links = source.collect_links(requirement)
+    assert len(links) == 3
 
 
 def test_missing_page_memoizes_empty(tmp_path: Path) -> None:
