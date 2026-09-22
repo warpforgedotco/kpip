@@ -20,15 +20,7 @@ Meet **Kip**, the courier snake.
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
 
-**Pip reimagined for performance. Built to bring the useful parts upstream.**
-
-kpip is an experimental Python package installer exploring how much faster
-pip's familiar workflow can be. It puts performance work across startup,
-dependency resolution, caching, and installation into one working system,
-where the results can be tested and measured together.
-
-The aim is to turn what works into improvements for
-[pip](https://pip.pypa.io/). Welcome to the experiment.
+**Pip reimagined for performance.**
 
 > [!WARNING]
 > kpip is an early-alpha experimental implementation, published on PyPI for
@@ -99,12 +91,6 @@ kpip --python .venv install -r pylock.toml
 If kpip is installed inside the environment it should manage, omit
 `--python .venv` and invoke `kpip` directly.
 
-## Questions I'm still exploring
-
-- How can kpip improve on uv's user experience?
-- What would a better developer experience look like, both for people using
-  kpip in their workflows and for contributors working on its internals?
-
 ## Commands
 
 | Task | Commands |
@@ -153,23 +139,6 @@ comparing two commits.
 kpip is meant to be upstreamed into pip. The intention is
 for the useful implementation work, tests, and evidence to flow upstream.
 
-## Design
-
-The main path is intentionally layered:
-
-```text
-CLI -> resolution -> candidate discovery -> artifact preparation -> transaction
-```
-
-Each layer owns one part of the package-installation process. Fast paths are
-narrow recognizers that decline to the general implementation whenever they
-cannot preserve the same semantics. Persistent caches are optional: a missing,
-stale, or corrupt entry must become a cache miss rather than a correctness
-failure.
-
-The [architecture guide](docs/architecture.md) maps these boundaries, the
-runtime dependency rules between packages, the resolver flow, and every
-persistent cache.
 
 ## Development
 
@@ -213,8 +182,7 @@ belongs, quickly and intact.
 Package installation makes the same promise. Resolving dependencies,
 checking artifacts, and placing files correctly are all part of the delivery.
 Kip is a reminder that a faster route still has to deliver the right package
-to the right place. Every shortcut needs evidence that it preserves that
-promise.
+to the right place.
 
 ## Why the name kpip?
 
