@@ -33,23 +33,38 @@ def run_command(
 
     hyperfine sends a ``--setup`` command's output to /dev/null, so a warm
     benchmark whose setup failed reported only "non-zero exit code". The
-    output is captured and, on failure, written to ``log`` and echoed to
-    stderr for the caller that does see it (``--show-output``).
+    output is captured and, on failure, echoed to stderr (for
+    ``--show-output``) and written to ``log`` with the free space left on
+    its filesystem, since a full /tmp is one way a setup dies. The step's
+    exit code is returned even when the log cannot be written.
     """
     environment = os.environ.copy()
     environment.update(env)
     if log is None:
         return subprocess.run(command, env=environment, check=False).returncode
     completed = subprocess.run(
-        command, env=environment, check=False, capture_output=True, text=True
+        command,
+        env=environment,
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if completed.returncode != 0:
-        log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text(
-            f"$ {' '.join(command)}\nexit {completed.returncode}\n"
-            f"--- stdout ---\n{completed.stdout}--- stderr ---\n{completed.stderr}"
-        )
         sys.stderr.write(completed.stderr)
+        sys.stderr.flush()
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            free = shutil.disk_usage(log.parent).free
+            log.write_text(
+                f"$ {' '.join(command)}\nexit {completed.returncode}\n"
+                f"free space on {log.parent}: {free / 1e6:.0f} MB\n"
+                f"--- stdout ---\n{completed.stdout}"
+                f"--- stderr ---\n{completed.stderr}",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            sys.stderr.write(f"could not write {log}: {exc}\n")
     return completed.returncode
 
 

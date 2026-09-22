@@ -668,6 +668,12 @@ def main() -> None:
                 print(env_prefix(run.environment()) + command_line(run.args()))
             else:
                 run.run()
+                if not args.keep_workspace:
+                    # A finished benchmark's caches (hundreds of MB for a
+                    # live workload, for kpip and uv each) would otherwise
+                    # sit in the temporary directory until the whole sweep
+                    # ends, and a small or tmpfs /tmp fills up mid-sweep.
+                    shutil.rmtree(workspace, ignore_errors=True)
         if args.keep_workspace:
             kept = Path(os.getcwd()) / "kpip-benchmark-workspace"
             if kept.exists():
