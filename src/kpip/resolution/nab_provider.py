@@ -6,7 +6,12 @@ from collections.abc import Mapping, Sequence
 from urllib.parse import urlsplit
 
 from kpip._vendor.nab_resolver.ranges import Range
-from kpip._vendor.nab_resolver.types import Incompatibility, RangeProtocol
+from kpip._vendor.nab_resolver.types import (
+    Incompatibility,
+    IncompatibilityCause,
+    RangeProtocol,
+    Term,
+)
 from kpip.core.metadata import InstalledDistribution, find_installed
 from kpip.core.packaging import (
     Requirement,
@@ -97,6 +102,8 @@ class NabProvider:
         self.ignore_requires_python = self.context.ignore_requires_python
         self._descent_prefetched: set[tuple[str, Version]] = set()
         self._child_lookahead_floor: dict[str, Version] = {}
+        self._pending_clauses: list[Incompatibility[str, Version]] = []
+        self._rejection_clauses_queued: set[tuple[str, Version, str]] = set()
         self._child_lookahead_last: dict[str, Version] = {}
         self._child_lookahead_attempts: dict[str, int] = {}
         self._descent_attempts: dict[str, int] = {}
@@ -835,12 +842,14 @@ class NabProvider:
                     selected,
                     allow_prereleases=True,
                 ):
+                    self._queue_rejection_clause(package, version, dependency)
                     return True
                 continue
             active = positive_ranges.get(dependency_name)
             if active is not None and active.is_disjoint(
                 _implied_range(dependency.specifier)
             ):
+                self._queue_rejection_clause(package, version, dependency)
                 return True
         return False
 
@@ -1676,51 +1685,9 @@ class NabProvider:
                     else previous & dependency_range
                 )
                 continue
-            allowed = self._versions(dependency_key)
-            # The same specifier on the same catalog recurs across parents
-            # and across re-decisions of one parent; each evaluation scans
-            # every release.  ``allowed`` is replaced when the dependency's
-            # requirement changes, so its identity covers what the scan reads.
-            memo_key = (dependency_key, dependency.specifier.text)
-            memo = self._dependency_range_memo.get(memo_key)
-            if (
-                memo is not None
-                and memo[0] is allowed
-                and memo[1] == dependency_constraints
-            ):
-                dependency_range = memo[2]
-            else:
-                window = self._bounded_versions(
-                    dependency_key, allowed, dependency.specifier
-                )
-                if dependency_constraints:
-                    selected = [
-                        candidate
-                        for candidate in window
-                        if dependency.specifier.contains(
-                            candidate, allow_prereleases=True
-                        )
-                        and all(
-                            constraint.specifier.contains(
-                                candidate, allow_prereleases=True
-                            )
-                            for constraint in dependency_constraints
-                        )
-                    ]
-                else:
-                    selected = [
-                        candidate
-                        for candidate in window
-                        if dependency.specifier.contains(
-                            candidate, allow_prereleases=True
-                        )
-                    ]
-                dependency_range = self._finite_range(selected)
-                self._dependency_range_memo[memo_key] = (
-                    allowed,
-                    dependency_constraints,
-                    dependency_range,
-                )
+            dependency_range = self._edge_range(
+                dependency_key, dependency, dependency_constraints
+            )
             previous = dependencies.get(dependency_key)
             dependencies[dependency_key] = (
                 dependency_range if previous is None else previous & dependency_range
@@ -1728,6 +1695,97 @@ class NabProvider:
         result = dict(dependencies)
         self._dependency_cache[cache_key] = result
         return result
+
+    def _edge_range(
+        self,
+        dependency_key: str,
+        dependency: Requirement,
+        dependency_constraints: tuple[Requirement, ...],
+    ) -> Range[Version]:
+        """The releases of ``dependency_key`` one edge admits, as a range.
+
+        Free of side effects: ``get_dependencies`` registers and merges the
+        requirement before calling this, and a rejection clause for a release
+        the resolver never decides must not.
+        """
+        allowed = self._versions(dependency_key)
+        # The same specifier on the same catalog recurs across parents
+        # and across re-decisions of one parent; each evaluation scans
+        # every release.  ``allowed`` is replaced when the dependency's
+        # requirement changes, so its identity covers what the scan reads.
+        memo_key = (dependency_key, dependency.specifier.text)
+        memo = self._dependency_range_memo.get(memo_key)
+        if (
+            memo is not None
+            and memo[0] is allowed
+            and memo[1] == dependency_constraints
+        ):
+            return memo[2]
+        window = self._bounded_versions(dependency_key, allowed, dependency.specifier)
+        if dependency_constraints:
+            selected = [
+                candidate
+                for candidate in window
+                if dependency.specifier.contains(candidate, allow_prereleases=True)
+                and all(
+                    constraint.specifier.contains(candidate, allow_prereleases=True)
+                    for constraint in dependency_constraints
+                )
+            ]
+        else:
+            selected = [
+                candidate
+                for candidate in window
+                if dependency.specifier.contains(candidate, allow_prereleases=True)
+            ]
+        dependency_range = self._finite_range(selected)
+        self._dependency_range_memo[memo_key] = (
+            allowed,
+            dependency_constraints,
+            dependency_range,
+        )
+        return dependency_range
+
+    def _queue_rejection_clause(
+        self, package: str, version: Version, dependency: Requirement
+    ) -> None:
+        """Hand the resolver the dependency fact a rejection rests on.
+
+        The forward check rejects a release, and the resolver, told only
+        which release to decide instead, learns the same fact one conflict
+        at a time when a backjump brings it back to that package: snowflake
+        snowpark-python's 47 newest releases each require cloudpickle<=3.1.1,
+        and airflow's warm lock decided each of them, conflicted with the
+        cloudpickle already chosen, and backjumped 425 decisions -- 47 times
+        -- before the accumulated clauses moved cloudpickle.  The clause a
+        decision on the release would add, ``{release, not dependency in
+        range}``, is queued instead and absorbed before the next decision;
+        the clause index merges it with its neighbours' into one clause over
+        the whole run of releases, which then propagates in one step.
+        """
+        key = (package, version, _key(dependency))
+        if key in self._rejection_clauses_queued:
+            return
+        self._rejection_clauses_queued.add(key)
+        dependency_key = _key(dependency)
+        if dependency_key not in self.requirements or dependency.url is not None:
+            return
+        pinned = dependency.specifier.exact_version
+        if pinned is not None:
+            dependency_range: Range[Version] = Range.singleton(pinned)
+        else:
+            dependency_range = self._edge_range(
+                dependency_key, dependency, self._constraint_for(dependency_key)
+            )
+        self._pending_clauses.append(
+            Incompatibility(
+                [
+                    Term(package, Range.singleton(version), positive=True),
+                    Term(dependency_key, dependency_range, positive=False),
+                ],
+                cause=IncompatibilityCause.DEPENDENCY,
+            )
+        )
 
     def _bounded_versions(
         self,
@@ -1850,7 +1908,11 @@ class NabProvider:
         return invalidated
 
     def consume_pending_clauses(self) -> list[Incompatibility[str, Version]]:
-        return []
+        if not self._pending_clauses:
+            return []
+        clauses = self._pending_clauses
+        self._pending_clauses = []
+        return clauses
 
     def consume_force_backtrack_targets(self) -> list[str]:
         return []
