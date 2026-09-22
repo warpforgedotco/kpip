@@ -480,3 +480,39 @@ def test_hyperfine_prints_the_setup_log_when_it_fails(
         run.run()
 
     assert "HTTPError 503" in capsys.readouterr().err
+
+
+def test_a_failing_step_still_reports_its_exit_code_when_the_log_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A full /tmp must not turn a step's failure into the runner's own crash."""
+    log = tmp_path / "setup-failure.log"
+
+    def no_space(self: Path, *args: object, **kwargs: object) -> int:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_text", no_space)
+    steps = [
+        {
+            "kind": "run",
+            "command": [sys.executable, "-c", "import sys; sys.exit(7)"],
+            "log": str(log),
+        },
+    ]
+
+    assert run_chain(json.dumps(steps)) == 7
+    assert "could not write" in capsys.readouterr().err
+
+
+def test_the_setup_log_records_the_free_space(tmp_path: Path) -> None:
+    log = tmp_path / "setup-failure.log"
+    steps = [
+        {
+            "kind": "run",
+            "command": [sys.executable, "-c", "raise SystemExit(1)"],
+            "log": str(log),
+        },
+    ]
+
+    assert run_chain(json.dumps(steps)) == 1
+    assert "free space on" in log.read_text(encoding="utf-8")
