@@ -656,6 +656,13 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
             requirements.append(token)
         index += 1
 
+    if any(";" in requirement for requirement in requirements):
+        # A marker means the answer depends on which interpreter the lock is
+        # for, which is a question this path has no machinery to ask. Handing
+        # it back costs one scan of the lines already in memory and gets the
+        # full command, which evaluates markers against the lock's target.
+        return None
+
     return LockOptions(requirements, find_links, no_index, output)
 
 

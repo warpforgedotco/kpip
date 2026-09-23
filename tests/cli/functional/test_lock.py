@@ -362,6 +362,78 @@ def test_lock_python_version_evaluates_markers_for_the_target(
     assert locked_versions(script, "there.toml")["old"] == "0.1.0"
 
 
+def test_lock_reads_a_requirement_line_marker_for_the_target(
+    script: KpipTestEnvironment,
+    tmp_path: Path,
+) -> None:
+    """A marker on a requirement *line* decides, the way one on a dependency does.
+
+    Requirement files routinely carry a line per interpreter:
+
+        base==0.1.0; python_version < "3.9"
+        base==0.2.0; python_version >= "3.9"
+
+    Both lines were being locked. That put a release the target cannot use
+    into the lock and, because the two name one project, collided into
+    "your project's requirements cannot be satisfied" -- a conflict the file
+    does not contain.
+    """
+    create_basic_wheel_for_package(script, "base", "0.1.0")
+    create_basic_wheel_for_package(script, "base", "0.2.0")
+    requirements = tmp_path / "requirements.in"
+    requirements.write_text(
+        'base==0.1.0; python_version < "3.9"\nbase==0.2.0; python_version >= "3.9"\n',
+        encoding="utf-8",
+    )
+
+    common = [
+        "lock",
+        "-r",
+        str(requirements),
+        "--no-index",
+        "--find-links",
+        str(script.scratch_path),
+        "--output",
+    ]
+
+    script.kpip(*common, "here.toml", expect_stderr=True)
+    assert locked_versions(script, "here.toml") == {"base": "0.2.0"}
+
+    script.kpip(*common, "there.toml", "--python-version", "3.8", expect_stderr=True)
+    assert locked_versions(script, "there.toml") == {"base": "0.1.0"}
+
+
+def test_lock_drops_a_requirement_the_target_does_not_ask_for(
+    script: KpipTestEnvironment,
+    tmp_path: Path,
+) -> None:
+    """A file whose every line is for another interpreter locks nothing.
+
+    An empty lock is the honest answer -- the file asks for nothing here --
+    and it is what a resolver is expected to write rather than an error.
+    """
+    create_basic_wheel_for_package(script, "base", "0.1.0")
+    requirements = tmp_path / "requirements.in"
+    requirements.write_text(
+        'base==0.1.0; python_version < "3.0"\n',
+        encoding="utf-8",
+    )
+
+    script.kpip(
+        "lock",
+        "-r",
+        str(requirements),
+        "--no-index",
+        "--find-links",
+        str(script.scratch_path),
+        "--output",
+        "here.toml",
+        expect_stderr=True,
+    )
+
+    assert locked_versions(script, "here.toml") == {}
+
+
 def test_lock_python_version_selects_wheels_by_the_target_tags(
     script: KpipTestEnvironment,
 ) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from kpip.cli.lock import remote_hashed_sdist, remote_hashed_wheel
+from kpip.cli.fast import parse_lock_arguments
+from kpip.cli.lock import applies_to_target, remote_hashed_sdist, remote_hashed_wheel
 from kpip.core.versions import Version
 
 
@@ -75,3 +76,32 @@ def test_direct_artifacts_do_not_use_index_fast_paths() -> None:
     candidate.source_kind = "sdist"
 
     assert remote_hashed_sdist(candidate) is None
+
+
+def test_the_fast_path_declines_a_requirement_carrying_a_marker() -> None:
+    """A marker is a question about the target, which this path cannot ask.
+
+    It reads requirement lines as strings and resolves them against a
+    wheelhouse; nothing there knows which interpreter the lock is for. So it
+    hands the invocation back to the full command, which does.
+    """
+    plain = parse_lock_arguments(["--no-index", "-f", "/wheels", "base==0.1.0"])
+
+    assert plain is not None
+    assert plain.requirements == ["base==0.1.0"]
+
+    assert (
+        parse_lock_arguments(
+            ["--no-index", "-f", "/wheels", 'base==0.1.0; python_version < "3.9"'],
+        )
+        is None
+    )
+
+
+def test_a_requirement_with_no_marker_always_applies() -> None:
+    assert applies_to_target("base==0.1.0") is True
+
+
+def test_a_line_that_is_not_a_requirement_is_kept() -> None:
+    """Dropping what cannot be parsed would be a worse answer than resolving it."""
+    assert applies_to_target("--index-url https://packages.invalid/simple") is True
