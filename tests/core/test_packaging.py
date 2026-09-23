@@ -41,7 +41,11 @@ def test_standard_requirement_skips_url_parsing(
     def fail_url_parse(value: str) -> None:
         raise AssertionError(f"parsed colon-free requirement as a URL: {value}")
 
-    monkeypatch.setattr("kpip.core.packaging.urllib.parse.urlparse", fail_url_parse)
+    # Patched on ``urllib.parse`` itself: the module imports it inside the
+    # helpers that need a URL rather than at module scope, so there is no
+    # name to reach through here -- and a requirement with no colon never
+    # gets that far.
+    monkeypatch.setattr("urllib.parse.urlparse", fail_url_parse)
 
     requirement = parse_requirement("demo-pkg>=1")
 

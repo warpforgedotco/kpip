@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import sys
-import urllib.parse
 
 from kpip.core.caches import bounded_put, clear_all, memoized, register_table
 from kpip.core.names import canonicalize_name
@@ -873,6 +872,8 @@ def parse_requirement(value: str) -> Requirement:
 
         name = raw
         if looks_like_url(raw):
+            import urllib.parse
+
             path = urllib.parse.unquote(urllib.parse.urlsplit(raw).path)
             name = path.rstrip("/").rsplit("/", 1)[-1] or raw
 
@@ -972,6 +973,11 @@ def looks_like_url(value: str) -> bool:
     if ":" not in value:
         return False
 
+    # Reached only by a value that could be a URL. ``urllib.parse`` pulls
+    # ``ipaddress`` behind it, and a requirement that names a project --
+    # which is nearly all of them -- has already returned above.
+    import urllib.parse
+
     parsed = urllib.parse.urlparse(value)
 
     return bool(parsed.scheme and (parsed.netloc or parsed.path))
@@ -984,6 +990,8 @@ def is_windows_path(value: str) -> bool:
 
 
 def project_from_direct_reference(value: str) -> tuple[str, str | None] | None:
+    import urllib.parse
+
     parsed = urllib.parse.urlparse(value)
 
     filename = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
@@ -1019,6 +1027,8 @@ def project_from_direct_reference(value: str) -> tuple[str, str | None] | None:
 
 
 def egg_fragment_internal(value: str) -> tuple[str | None, frozenset[str]]:
+    import urllib.parse
+
     fragment = urllib.parse.urlparse(value).fragment
 
     if not fragment:

@@ -4,12 +4,19 @@ import ntpath
 import os
 import string
 import sys
-import urllib.parse
 
 WINDOWS = sys.platform == "win32"
 
+# ``urllib.parse`` is imported inside each function that needs it rather
+# than here. It reaches ``ipaddress``, and between them they are ~3ms of a
+# command's startup -- while an install from a wheelhouse, which is every
+# install whose artifacts are already local, never turns a URL into
+# anything.
+
 
 def path_to_url(path: str) -> str:
+    import urllib.parse
+
     path = normalize_windows_path(path)
     path = os.path.abspath(path)
     if WINDOWS:
@@ -23,6 +30,8 @@ def path_to_url(path: str) -> str:
 
 
 def url_to_path(url: str) -> str:
+    import urllib.parse
+
     assert url.startswith("file:"), (
         f"You can only turn file: urls into filenames (not {url!r})"
     )
@@ -75,6 +84,9 @@ def split_auth_from_netloc(
 ) -> tuple[str, tuple[str | None, str | None]]:
     if "@" not in netloc:
         return netloc, (None, None)
+
+    import urllib.parse
+
     auth, netloc = netloc.rsplit("@", 1)
     user, separator, password = auth.partition(":")
     return netloc, (
@@ -86,6 +98,8 @@ def split_auth_from_netloc(
 def split_auth_netloc_from_url(
     url: str,
 ) -> tuple[str, str, tuple[str | None, str | None]]:
+    import urllib.parse
+
     parsed = urllib.parse.urlsplit(url)
     netloc, credentials = split_auth_from_netloc(parsed.netloc)
     if netloc == parsed.netloc:
@@ -101,6 +115,8 @@ def remove_auth_from_url(url: str) -> str:
 
 
 def redact_auth_from_url(url: str) -> str:
+    import urllib.parse
+
     parsed = urllib.parse.urlsplit(url)
     if "@" not in parsed.netloc:
         return url

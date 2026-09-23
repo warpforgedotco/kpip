@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import functools
-import hashlib
 import os
 import stat
 
@@ -347,6 +346,9 @@ def zip_mode(info: zipfile.ZipInfo) -> int | None:
 def record_metadata_internal(contents: bytes) -> tuple[str, str]:
     if not contents:
         return EMPTY_RECORD_METADATA
+
+    import hashlib
+
     digest = base64.urlsafe_b64encode(hashlib.sha256(contents).digest())
     return f"sha256={digest.rstrip(b'=').decode('ascii')}", str(len(contents))
 
@@ -358,6 +360,8 @@ def copy_member_with_metadata(
     *,
     metadata: tuple[str, str] | None = None,
 ) -> tuple[str, str]:
+    import hashlib
+
     if member.file_size <= 1024 * 1024:
         contents = archive.read(member)
         with open(destination, "wb") as target:
