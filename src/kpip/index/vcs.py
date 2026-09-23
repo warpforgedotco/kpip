@@ -1,4 +1,4 @@
-"""Version-control URL parsing and source-tree materialization."""
+"""Source-tree materialization for version-control requirements."""
 
 from __future__ import annotations
 
@@ -7,50 +7,24 @@ import threading
 import os
 import shutil
 import tempfile
-import urllib.parse
 
-from kpip.index.source_models import VcsReference
+from kpip.index.vcs_urls import (
+    VCS_SCHEMES,
+    is_immutable_vcs_link,
+    vcs_reference,
+    vcs_scheme,
+)
 
-VCS_SCHEMES = ("git", "hg", "svn", "bzr")
-
-
-def vcs_scheme(url: str) -> str | None:
-    parsed = urllib.parse.urlparse(url)
-    if "+" not in parsed.scheme:
-        if parsed.scheme in VCS_SCHEMES:
-            return parsed.scheme
-        return None
-    vcs, _, _ = parsed.scheme.partition("+")
-    return vcs or None
-
-
-def vcs_reference(url: str) -> VcsReference:
-    vcs = vcs_scheme(url)
-    if vcs is None:
-        raise OSError(f"Unsupported VCS URL: {url}")
-    parsed_url = urllib.parse.urlparse(url)
-    bare_url = parsed_url._replace(
-        scheme=parsed_url.scheme.partition("+")[2] or parsed_url.scheme,
-        fragment="",
-    ).geturl()
-    parsed = urllib.parse.urlsplit(bare_url)
-    requested_revision = None
-    path = parsed.path
-    if "@" in path:
-        path, requested_revision = path.rsplit("@", 1)
-        if requested_revision == "":
-            raise OSError(f"VCS URL has an empty revision: {url}")
-    repo_url = urllib.parse.urlunsplit(
-        (parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment),
-    )
-    if requested_revision is not None:
-        requested_revision = urllib.parse.unquote(requested_revision)
-    return VcsReference(
-        vcs=vcs,
-        repo_url=repo_url,
-        requested_revision=requested_revision,
-    )
-
+__all__ = [
+    "VCS_SCHEMES",
+    "git_revision",
+    "is_immutable_vcs_link",
+    "materialize_vcs",
+    "release_checkout",
+    "resolve_git_commit",
+    "vcs_reference",
+    "vcs_scheme",
+]
 
 _shared_checkouts: dict[str, str] = {}
 """VCS URL -> the checkout every caller in this process shares; see below."""
@@ -271,17 +245,3 @@ def _resolve_git_commit(url: str, *, prompting: bool) -> str | None:
         if candidate in found:
             return found[candidate]
     return None
-
-
-def is_immutable_vcs_link(url: str) -> bool:
-    if vcs_scheme(url) != "git":
-        return False
-    try:
-        revision = vcs_reference(url).requested_revision
-    except OSError:
-        return False
-    return bool(
-        revision
-        and len(revision) == 40
-        and all(character in "0123456789abcdefABCDEF" for character in revision),
-    )

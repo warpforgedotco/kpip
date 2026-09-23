@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from contextlib import contextmanager
 
 TYPE_CHECKING = False
@@ -84,6 +83,8 @@ class BuildBackendHookCaller:
 
     def _call(self, hook: str, **kwargs: Any) -> Any:
         import subprocess
+
+        import tempfile
 
         with tempfile.TemporaryDirectory(prefix="kpip-pep517-") as directory:
             input_path = os.path.join(directory, "input.json")

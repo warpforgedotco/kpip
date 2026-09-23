@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import os
-import tempfile
 
-from kpip.build.build import unpack_source
 from kpip.cli.fast import read_requirements
 from kpip.cli.lock_format import LOCK_HEADER, toml_string, write_lock_output
 from kpip.cli.parsers.lock import create_parser
@@ -24,14 +22,8 @@ from kpip.core.versions import InvalidVersion, Version
 from kpip.core.wheel import TargetContext
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.provider import CandidateProvider
-from kpip.index.vcs import (
-    git_revision,
-    materialize_vcs,
-    release_checkout,
-    vcs_reference,
-)
-from kpip.core.appdirs import http_cache_path
-from kpip.network.http import DEFAULT_RETRIES, NetworkSession
+from kpip.index.vcs_urls import vcs_reference
+from kpip.network.deferred import DeferredNetworkSession
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.files import parse_requirements
 from kpip.resolution.input_requirements import install_req_from_line
@@ -292,10 +284,7 @@ def close_resolvers(resolvers: list[ResolutionEngine]) -> None:
 def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     cache_dir = configured_cache_dir()
 
-    resolution_session = NetworkSession(
-        cache=(http_cache_path(cache_dir) if cache_dir else None),
-        retries=DEFAULT_RETRIES,
-    )
+    resolution_session = DeferredNetworkSession(cache_dir=cache_dir)
 
     artifact_locator = ArtifactLocator(resolution_session, cache_dir=cache_dir)
 
@@ -366,6 +355,9 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
                 continue
 
             import shutil
+            import tempfile
+
+            from kpip.build.build import unpack_source
 
             with tempfile.TemporaryDirectory(prefix="kpip-lock-source-") as directory:
                 archive = os.path.join(directory, "source.tar.gz")
@@ -573,6 +565,12 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             source_path = None
 
         if candidate.source_vcs:
+            from kpip.index.vcs import (
+                git_revision,
+                materialize_vcs,
+                release_checkout,
+            )
+
             reference = vcs_reference(source)
 
             commit_id = getattr(candidate, "source_vcs_revision", None)
@@ -620,6 +618,11 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
                     # The resolver did not read this artifact's metadata, so
                     # learn the project name the way it would have.
                     package_name = candidate.name
+
+                    import tempfile
+
+                    from kpip.build.build import unpack_source
+
                     with tempfile.TemporaryDirectory(prefix="kpip-lock-") as temp_dir:
                         from kpip.build.build_backend import prepare_project_metadata
 

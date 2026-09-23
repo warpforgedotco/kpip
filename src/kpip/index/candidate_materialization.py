@@ -8,9 +8,7 @@ import json
 import os
 import re
 import sys
-import tempfile
 import urllib.parse
-import zipfile
 from itertools import chain, islice
 from threading import RLock
 
@@ -66,18 +64,15 @@ from kpip.index.source_models import (
     CandidateRecord,
     LazyCandidateMetadata,
 )
-from kpip.index.vcs import (
-    git_revision,
-    is_immutable_vcs_link,
-    release_checkout,
-    resolve_git_commit,
-)
-from kpip.index.vcs import vcs_scheme
+from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_scheme
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    import tempfile
+    import zipfile
+
     from concurrent.futures import ThreadPoolExecutor
 
     from kpip.index.links import Link
@@ -92,6 +87,29 @@ if TYPE_CHECKING:
     from typing import Any
 
     from kpip.core.http import HttpSession
+
+
+# Forwarded rather than imported: ``kpip.index.vcs`` reaches ``shutil`` and
+# ``tempfile``, and these three run only for a requirement that names a
+# repository. Reading a VCS *URL* stays free -- that is ``vcs_urls`` above,
+# and it is the question every candidate asks.
+def release_checkout(path: str) -> None:
+    from kpip.index.vcs import release_checkout as release
+
+    release(path)
+
+
+def git_revision(source_dir: str) -> str:
+    from kpip.index.vcs import git_revision as revision
+
+    return revision(source_dir)
+
+
+def resolve_git_commit(url: str, *, prompting: bool = True) -> str | None:
+    from kpip.index.vcs import resolve_git_commit as resolve
+
+    return resolve(url, prompting=prompting)
+
 
 logger = get_logger(__name__)
 
@@ -218,6 +236,8 @@ class _ResolverWheelArchive:
             return self._archive.read(name)
 
         except WheelhouseUnavailable as exc:
+            import zipfile
+
             raise zipfile.BadZipFile(f"Bad archive member {name!r}: {exc}") from exc
 
     def namelist(self) -> list[str]:
@@ -252,6 +272,11 @@ def _open_resolver_wheel_archive(
     opens, which is every member a caller that wants no layout back will
     ask for.  A caller that keeps the layout needs the whole directory.
     """
+
+    # Imported here rather than at module scope: ``zipfile`` reaches
+    # ``zipfile._path`` and through it ``pathlib``, and a resolve whose
+    # metadata is all cached never opens a wheel at all.
+    import zipfile
 
     try:
         file = open(path_text, "rb", buffering=0)  # noqa: SIM115
@@ -1446,6 +1471,8 @@ class CandidateMaterializer:
 
                     try:
                         if candidate.link.kind is ArtifactKind.SDIST:
+                            import tempfile
+
                             prepared_temporary = tempfile.TemporaryDirectory(
                                 prefix="kpip-metadata-",
                             )

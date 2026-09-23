@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import atexit
 import os
-import shutil
-import tempfile
 
 from kpip.core.errors import BuildError
 
@@ -23,6 +21,9 @@ def build_wheel_from_source(
     )
     os.makedirs(output_text, exist_ok=True)
     source_is_dir = os.path.isdir(source_text)
+
+    import tempfile
+
     with tempfile.TemporaryDirectory(prefix="pip-build-") as temp_dir:
         project = (
             source_text
@@ -57,6 +58,9 @@ def build_editable_from_source(
     )
     os.makedirs(output_text, exist_ok=True)
     source_is_dir = os.path.isdir(source_text)
+
+    import tempfile
+
     with tempfile.TemporaryDirectory(prefix="pip-build-editable-") as temp_dir:
         project = (
             source_text
@@ -98,6 +102,9 @@ def default_wheel_dir() -> str:
 
 
 def default_wheel_dir_internal() -> str:
+    import shutil
+    import tempfile
+
     path = tempfile.mkdtemp(prefix="pip-build-wheelhouse-")
     atexit.register(shutil.rmtree, path, ignore_errors=True)
     return path
@@ -128,6 +135,9 @@ def single_project_root_internal(destination: str) -> str:
         return children[0]
     project = os.path.join(destination_text, "project")
     os.mkdir(project)
+
+    import shutil
+
     for child in children:
         shutil.move(child, os.path.join(project, os.path.basename(child)))
     return project

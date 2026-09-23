@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import struct
 import threading
 from contextlib import contextmanager
@@ -266,6 +265,8 @@ class SafeFileCache:
                 raise
 
     def write_from_io(self, path: str, source_file: BinaryIO) -> None:
+        import shutil
+
         self.write_to_file(path, lambda f: shutil.copyfileobj(source_file, f))
 
     def set(self, key: str, value: bytes) -> None:

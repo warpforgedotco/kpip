@@ -6,9 +6,10 @@ connection or a single 503 failed the whole run.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
-from kpip.cli import lock
-from kpip.cli.requirements import DeferredNetworkSession
+from kpip.network.deferred import DeferredNetworkSession
 from kpip.network.http import DEFAULT_RETRIES
 
 
@@ -31,20 +32,40 @@ def test_the_install_session_retries() -> None:
     assert session.retry.status == DEFAULT_RETRIES
 
 
-class _Built(Exception):
-    pass
+def test_the_lock_session_retries() -> None:
+    """The lock session is the same session, reached one step later.
+
+    ``kpip lock`` names only a cache directory; everything else about the
+    session it used to build by hand is now the deferred session's default,
+    so this pins the retries it ends up with rather than the arguments it
+    passed.
+    """
+    session = DeferredNetworkSession(cache_dir=None).materialize()
+
+    assert session.retry.connect == DEFAULT_RETRIES
+    assert session.retry.read == DEFAULT_RETRIES
+    assert session.retry.status == DEFAULT_RETRIES
 
 
-def test_the_lock_session_retries(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: dict[str, object] = {}
+def test_a_lock_that_answers_from_cache_never_builds_a_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The point of deferring it: the transport is not imported to be unused.
 
-    def fake_session(**kwargs: object) -> None:
-        seen.update(kwargs)
-        raise _Built
+    Building a session imports the vendored HTTP stack, which is the single
+    largest import on the lock path. A resolve whose index pages are all
+    fresh asks the cache and sends nothing, so it must not get that far.
+    """
 
-    monkeypatch.setattr(lock, "NetworkSession", fake_session)
+    def fail(*args: object, **kwargs: object) -> None:
+        pytest.fail("a cached answer must not cost a session")
 
-    with pytest.raises(_Built):
-        lock.run_lock(["-r", "requirements.in"])
+    monkeypatch.setattr(DeferredNetworkSession, "materialize", fail)
 
-    assert seen["retries"] == DEFAULT_RETRIES
+    deferred = DeferredNetworkSession(cache_dir=str(tmp_path))
+
+    # A real cache, asked about a URL it has never stored: the answer is no,
+    # and reaching it is filesystem work the session plays no part in.
+    assert deferred.cache is not None
+    assert deferred.has_fresh_cached_response("https://example.invalid/x/") is False

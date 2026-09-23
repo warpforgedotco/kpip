@@ -372,3 +372,56 @@ def test_fast_list_stays_import_light(tmp_path: Path) -> None:
 
     assert "kpip.cli.fast" in modules
     assert not (modules & FAST_LIST_FORBIDDEN), sorted(modules & FAST_LIST_FORBIDDEN)
+
+
+INDEX_LOCK_FORBIDDEN = frozenset(
+    {
+        "http.client",
+        "logging",
+        "ssl",
+        "traceback",
+        "kpip._vendor.urllib3",
+        "kpip.network.http",
+    },
+)
+
+
+def test_a_lock_does_not_build_the_client_it_may_never_use(tmp_path: Path) -> None:
+    """``kpip lock`` reaches the full command without the HTTP stack.
+
+    ``--python-version`` is what puts this past the wheelhouse fast path and
+    into ``kpip.cli.lock``, which is the one that used to build a
+    ``NetworkSession`` before it knew whether anything would be sent. That
+    import is the largest on the lock path -- the vendored urllib3 client,
+    ``ssl``, ``http.client`` and ``logging`` behind it -- and a resolve
+    whose answers are all local, or all still fresh in the cache, never
+    opens a socket at all.
+    """
+    import shutil
+
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    shutil.copy2(SIMPLEWHEEL, wheelhouse / SIMPLEWHEEL.name)
+    requirements = tmp_path / "requirements.in"
+    requirements.write_text("simplewheel==2.0\n", encoding="utf-8")
+    output = tmp_path / "kpip.lock"
+    args = [
+        "lock",
+        "--quiet",
+        "--no-index",
+        "--find-links",
+        str(wheelhouse),
+        "--python-version",
+        "3.12",
+        "--output",
+        str(output),
+        "-r",
+        str(requirements),
+    ]
+    env = {"KPIP_CACHE_DIR": str(tmp_path / "cache")}
+
+    modules = imported_modules(args, cwd=tmp_path, env=env)
+
+    assert "simplewheel" in output.read_text(encoding="utf-8")
+    assert "kpip.cli.lock" in modules
+    assert not (modules & INDEX_LOCK_FORBIDDEN), sorted(modules & INDEX_LOCK_FORBIDDEN)

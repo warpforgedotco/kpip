@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -342,6 +341,8 @@ class InstallRequirement:
         return marker_applies(self.markers, extras=extras_requested)
 
     def ensure_build_location(self, parent_dir: str) -> str:
+        import tempfile
+
         root = os.path.realpath(os.path.dirname(parent_dir))
 
         return tempfile.mkdtemp("-build", "kpip-", dir=root)
@@ -625,6 +626,8 @@ class InstallRequirement:
 
         if self.source_dir is None or self.pep517_backend is None:
             raise InstallationError(f"Cannot prepare metadata for {self}")
+
+        import tempfile
 
         metadata_root = tempfile.mkdtemp(prefix="kpip-modern-metadata-")
 
