@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections
-import logging
 import os
 import re
 import site
@@ -11,6 +10,7 @@ import sys
 from collections.abc import Generator, Iterable
 
 from kpip.cli.parsers.freeze import create_parser
+from kpip.core.logger import get_logger
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import InstallationError
 from kpip.core.packaging import canonicalize_name
@@ -21,7 +21,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from kpip.core.light_metadata import LightDistribution
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 VALID_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 

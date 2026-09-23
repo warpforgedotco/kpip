@@ -8,7 +8,15 @@ if TYPE_CHECKING:
     from kpip.resolution.models import RequirementInput
 
 
-RequirementT = TypeVar("RequirementT", bound="RequirementInput")
+if TYPE_CHECKING:
+    RequirementT = TypeVar("RequirementT", bound="RequirementInput")
+
+else:
+    # Bounded only where the bound is read. A string bound is a lazily
+    # evaluated annotation, and building one imports ``annotationlib`` --
+    # and ``ast`` behind it -- on Python 3.14, for something no run-time
+    # code ever looks at.
+    RequirementT = TypeVar("RequirementT")
 
 
 class RequirementSet(Generic[RequirementT]):

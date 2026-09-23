@@ -256,50 +256,22 @@ class Version(tuple):
         release = ".".join(map(str, self.release))
         return f"{self[0]}!{release}" if self[0] else release
 
-    def to_wire(self) -> tuple[str, tuple[int, ...], tuple[Any, ...]]:
-        """The record cached catalog summaries store: ``(public, release, key)``.
+    def to_wire(self) -> tuple[str, tuple[Any, ...]]:
+        """The record cached catalog summaries store: ``(public, key)``.
 
         Plain tuples only (``marshal`` rejects the subclass). The key is kept
         on disk so a sorted summary can be bisected without rebuilding its
-        Versions; the text is the source of truth when one is rebuilt.
+        Versions; the text is the source of truth when one is rebuilt, and
+        is all :meth:`from_wire` reads. The release used to be stored beside
+        them and was never read by anything: rebuilding goes through the
+        text, and bisecting goes through the key.
         """
-        return (self.public, self.release, tuple(self))
+        return (self.public, tuple(self))
 
     @classmethod
     def from_wire(cls, state: Any) -> Version:
         """The Version for a :meth:`to_wire` record, through the intern table."""
         return cls(state[0])
-
-
-_INT_ONLY = {int}
-
-
-def is_version_wire(value: object) -> bool:
-    """Whether ``value`` has the exact shape of a :meth:`Version.to_wire` record."""
-    if not isinstance(value, tuple) or len(value) != 3:
-        return False
-    public, release, key = value
-    if not isinstance(public, str) or not isinstance(release, tuple) or not release:
-        return False
-    if set(map(type, release)) != _INT_ONLY:
-        return False
-    if not isinstance(key, tuple) or len(key) != 4:
-        return False
-    epoch, normalized, suffix, local = key
-    if type(epoch) is not int or not isinstance(normalized, tuple) or not normalized:
-        return False
-    stripped = release
-    while len(stripped) > 1 and stripped[-1] == 0:
-        stripped = stripped[:-1]
-    if normalized != stripped:
-        return False
-    if (
-        not isinstance(suffix, tuple)
-        or len(suffix) != 6
-        or set(map(type, suffix)) != _INT_ONLY
-    ):
-        return False
-    return isinstance(local, tuple)
 
 
 def version_of(value: Version | str) -> Version | None:

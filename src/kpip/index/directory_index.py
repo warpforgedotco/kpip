@@ -3,17 +3,31 @@
 from __future__ import annotations
 
 import os
-from typing import NamedTuple
-
 from kpip.core.packaging import canonicalize_name
 from kpip.core.versions import Version
 from kpip.index.links import SOURCE_ARCHIVE_SUFFIXES
 
 
-class LocalSourceEntry(NamedTuple):
-    path: str
-    identity: str | None
-    stat_identity: tuple[int, int, int] | None
+class LocalSourceEntry:
+    """One artifact found in a local source directory.
+
+    Slotted rather than a ``NamedTuple``: creating a NamedTuple class reads
+    its annotations, which on Python 3.14 imports ``annotationlib`` and
+    ``ast`` behind it -- about two milliseconds, on a module every lock
+    reaches. Nothing here is ever unpacked or indexed, only read by name.
+    """
+
+    __slots__ = ("identity", "path", "stat_identity")
+
+    def __init__(
+        self,
+        path: str,
+        identity: str | None,
+        stat_identity: tuple[int, int, int] | None,
+    ) -> None:
+        self.path = path
+        self.identity = identity
+        self.stat_identity = stat_identity
 
 
 class LocalSourceSnapshot:

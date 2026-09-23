@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import logging
 
+from kpip.core.logger import get_logger
 from kpip.core.urls import path_to_url
 from kpip.core.utils import AuthInfo, display_path
 
@@ -14,7 +14,7 @@ from .versioncontrol import (
     vcs,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Bazaar(VersionControl):

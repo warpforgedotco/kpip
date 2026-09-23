@@ -5,19 +5,17 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import logging
 import os
 import re
 import sys
 import tempfile
 import urllib.parse
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from itertools import chain, islice
 from threading import RLock
-from typing import NamedTuple
 
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
+from kpip.core.logger import get_logger
 from kpip.core.errors import (
     BuildError,
     InstallationError,
@@ -80,6 +78,8 @@ from kpip.core.archive import WheelArchive, WheelhouseUnavailable
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from concurrent.futures import ThreadPoolExecutor
+
     from kpip.index.links import Link
     from collections.abc import (
         Callable,
@@ -93,7 +93,7 @@ if TYPE_CHECKING:
 
     from kpip.core.http import HttpSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 _EXTRA_MARKER_RE = re.compile(r"extra\s*(?:==|in)\s*['\"]([^'\"]+)['\"]")
@@ -139,18 +139,40 @@ _RANGED_METADATA_MIN_WHEEL_BYTES = 1 * 1024 * 1024
 _MetadataKey = tuple[str, str, str, frozenset[str], str]
 
 
-class _ArchiveMemberInfo(NamedTuple):
-    compress_type: int
+class _ArchiveMemberInfo:
+    """The fields of a zip member that reading a wheel's metadata looks at.
 
-    CRC: int
+    Slotted rather than a ``NamedTuple``: creating a NamedTuple class reads
+    its annotations, which on Python 3.14 imports ``annotationlib`` and
+    ``ast`` behind it. ``ZipEntryInfo`` is declared as read-only properties,
+    which plain attributes satisfy just as a named tuple's fields did, and
+    nothing reads these by position.
+    """
 
-    compress_size: int
+    __slots__ = (
+        "CRC",
+        "compress_size",
+        "compress_type",
+        "external_attr",
+        "file_size",
+        "header_offset",
+    )
 
-    file_size: int
-
-    header_offset: int
-
-    external_attr: int
+    def __init__(
+        self,
+        compress_type: int,
+        CRC: int,  # noqa: N803 - zipfile's spelling, matched deliberately
+        compress_size: int,
+        file_size: int,
+        header_offset: int,
+        external_attr: int,
+    ) -> None:
+        self.compress_type = compress_type
+        self.CRC = CRC
+        self.compress_size = compress_size
+        self.file_size = file_size
+        self.header_offset = header_offset
+        self.external_attr = external_attr
 
 
 class _ResolverWheelArchive:
@@ -1215,6 +1237,11 @@ class CandidateMaterializer:
             pool = self.source_build_pool
 
             if pool is None:
+                # Imported here rather than at module scope, as everywhere
+                # else that builds a pool: only a resolve that has to read a
+                # source distribution ever reaches this.
+                from concurrent.futures import ThreadPoolExecutor
+
                 pool = ThreadPoolExecutor(
                     max_workers=_SOURCE_BUILD_WORKERS,
                     thread_name_prefix="kpip-metadata",

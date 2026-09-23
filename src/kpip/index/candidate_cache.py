@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import shutil
 import sysconfig
 import tempfile
 
+from kpip.core.logger import get_logger
 from kpip.core.hashes import file_hashes
 from kpip.core.utils import CACHE_INTERPRETER_TAG
 from kpip.core.versions import ZERO_VERSION
@@ -20,7 +20,7 @@ from kpip.index.links import Link
 from kpip.index.source_models import ArtifactKind, CandidateRecord
 from kpip.index.vcs import is_immutable_vcs_link, vcs_reference
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def source_hashes_for_link(

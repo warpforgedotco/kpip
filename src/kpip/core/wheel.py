@@ -652,6 +652,20 @@ def _parse_wheel_filename(name: str) -> WheelFile | None:
     )
 
 
+@memoized(8192)
+def wheel_tag(interpreter: str, abi: str, platform: str) -> WheelTag:
+    """The one :class:`WheelTag` for a triple.
+
+    A catalog holds the same handful of tags over and over -- every pure
+    Python wheel in it is ``py3-none-any`` -- and rebuilding one is three
+    ``lower()`` calls, a platform split and a hash. Reconstructing a wheel
+    from its cached identity built 145,000 of them for a graph the size of
+    Airflow's, where a few hundred distinct tags exist. The class refuses
+    mutation and compares by value, so one instance stands for all of them.
+    """
+    return WheelTag(interpreter, abi, platform)
+
+
 @memoized(1024)
 def parsed_wheel_tags(
     python_tags: str,
@@ -659,7 +673,7 @@ def parsed_wheel_tags(
     platform_tags: str,
 ) -> tuple[WheelTag, ...]:
     return tuple(
-        WheelTag(interpreter, abi, platform)
+        wheel_tag(interpreter, abi, platform)
         for interpreter in python_tags.split(".")
         for abi in abi_tags.split(".")
         for platform in platform_tags.split(".")

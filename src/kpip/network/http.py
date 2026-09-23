@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import enum
 import json
-import logging
 import os
 import ssl
 import sys
@@ -23,6 +22,7 @@ from kpip._vendor.urllib3.exceptions import (
     TimeoutError,
 )
 from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
+from kpip.core.logger import get_logger
 from kpip.core.kpip_version import get_kpip_version
 from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.core.utils import current_version
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
     from kpip.core.http import HttpResponse as HttpResponseProtocol
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 RETRY_STATUS_CODES = frozenset((500, 502, 503, 520, 527))
 DEFAULT_TIMEOUT = 15.0

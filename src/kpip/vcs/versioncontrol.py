@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import shutil
 import sys
 import urllib.parse
 from collections.abc import Iterable, Iterator, Mapping
 
+from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.subprocess import CommandArgs, format_command_args
 from kpip.core.utils import AuthInfo, display_path
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .subprocess import SpinnerInterface
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def make_vcs_requirement_url(

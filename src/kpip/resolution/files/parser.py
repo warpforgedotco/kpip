@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import codecs
 import locale
-import logging
 import os
 import re
 import shlex
 import sys
 import urllib.parse
 
+from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.http import raise_for_status, response_text
 from kpip.core.packaging import parse_requirement
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
         RequirementSource,
     )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 CODING_RE = re.compile(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
 COMMENT_RE = re.compile(r"(^|\s+)#.*$")
 REMOTE_SCHEMES = frozenset(("http", "https", "file"))

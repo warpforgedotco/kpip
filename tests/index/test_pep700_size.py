@@ -59,30 +59,17 @@ def test_size_survives_the_catalog_record_round_trip() -> None:
     assert restored.url == link.url
 
 
-def test_a_negative_cached_size_is_rejected_at_load_time() -> None:
-    from kpip.index.catalog_cache import valid_record
-
-    [link] = parse_links(
-        [{"url": "demo-1.0-py3-none-any.whl", "filename": "x", "size": 4096}],
-    )
-    record = link_record(link)
-
-    # A corrupted or hand-crafted record must not smuggle in a negative
-    # size, which would read as "small" and disable range metadata reads.
-    negative = (*record[:-1], -5)
-
-    assert valid_record(record)
-    assert not valid_record(negative)
-
-
-def test_a_record_of_the_wrong_width_is_rejected() -> None:
+def test_the_record_layout_is_pinned_to_the_bucket_version() -> None:
     """The stored shape changed, and the cache bucket version changed with it.
 
     An entry written by an older kpip is not read and mis-parsed; it is not
     found at all, because the catalog, summary and choice buckets are
-    versioned and were bumped alongside the record layout.
+    versioned and were bumped alongside the record layout. That is what a
+    record's shape rests on now: reading a catalog no longer re-proves the
+    type of every field it contains, because the digest over the blob says
+    the bytes are the ones this kpip wrote.
     """
-    from kpip.index.catalog_cache import PREFIX, valid_record
+    from kpip.index.catalog_cache import PREFIX
 
     [link] = parse_links(
         [{"url": "demo-1.0-py3-none-any.whl", "filename": "x", "size": 4096}],
@@ -90,10 +77,7 @@ def test_a_record_of_the_wrong_width_is_rejected() -> None:
     record = link_record(link)
 
     assert len(record) == 9
-    assert valid_record(record)
-    assert not valid_record(record[:8])
-    assert not valid_record((*record, "extra"))
-    assert "2" in PREFIX, "the bucket version carries the layout change"
+    assert "3" in PREFIX, "the bucket version carries the layout change"
 
     restored = link_from_record(record)
     assert restored.size == 4096

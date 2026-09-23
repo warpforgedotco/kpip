@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 
+from kpip.core.logger import get_logger
 from kpip.core.appdirs import WHEEL_CACHE_BUCKET
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 """Directory under the cache directory holding wheels built from source."""

@@ -5,19 +5,15 @@ from pathlib import Path
 
 from kpip.core.versions import Version
 from kpip.index.catalog_cache import (
-    CHOICE_HEADER,
     WHEEL_RECORD,
     CatalogChoices,
     cache_key,
-    choice_key,
-    encode_checked_payload,
     load_catalog,
     load_choices,
     load_links,
     load_summary,
     save_choices,
     save_links,
-    save_summary_value,
     summary_key,
 )
 from kpip.index.links import Link
@@ -136,9 +132,13 @@ def test_catalog_choices_are_scoped_to_generation(tmp_path: Path) -> None:
     )
 
 
-def test_malformed_choices_are_a_miss(tmp_path: Path) -> None:
-    """A choice of the wrong arity never reaches the provider's unpack, and a
-    summary carrying one is recompiled rather than re-served on every run."""
+def test_a_tampered_catalog_is_a_miss(tmp_path: Path) -> None:
+    """The digest is what a cached catalog's contents now rest on.
+
+    Reading one no longer re-proves the type of every group and record it
+    holds. In exchange the blob is sealed: a byte changed in it is not read
+    at all, rather than read and then vetted field by field.
+    """
     cache = SafeFileCache(str(tmp_path))
     page_url = "https://example.test/simple/demo/"
     link = Link.from_url(
@@ -146,28 +146,33 @@ def test_malformed_choices_are_a_miss(tmp_path: Path) -> None:
         source_url=page_url,
     )
     save_links(cache, page_url, [link])
-    catalog = load_catalog(cache, page_url)
-    summary = load_summary(cache, page_url)
-    assert catalog is not None
-    assert summary is not None
-    record = catalog[0][0][2][0][1]
-    generation = summary[0]
-    malformed = {"1.0": (record, WHEEL_RECORD)}
 
-    cache.set_atomic(
-        choice_key(page_url, "target", True, True),
-        encode_checked_payload(CHOICE_HEADER, (generation, malformed)),
-    )
-    assert load_choices(cache, page_url, generation, "target", True, True) == {}
+    assert load_catalog(cache, page_url) is not None
 
-    save_summary_value(
-        cache,
-        page_url,
-        (generation, summary[1], summary[2], {("target", True, True): malformed}),  # ty:ignore[invalid-argument-type]
-    )
-    recompiled = load_summary(cache, page_url)
-    assert recompiled is not None
-    assert recompiled[3] == {}
+    stored = cache.get_atomic(cache_key(page_url))
+    assert stored is not None
+    # Flip a byte of the body, leaving the header and digest in place.
+    tampered = bytearray(stored)
+    tampered[-1] ^= 0xFF
+    cache.set_atomic(cache_key(page_url), bytes(tampered))
+
+    assert load_catalog(cache, page_url) is None
+
+
+def test_a_catalog_from_another_format_is_not_read(tmp_path: Path) -> None:
+    """A blob under a header this kpip does not write is not its own.
+
+    The bucket version is the other half of what replaced per-record
+    validation: an older kpip's catalog lives under a different key, and a
+    body written under a different header fails the digest check for it.
+    """
+    cache = SafeFileCache(str(tmp_path))
+    page_url = "https://example.test/simple/demo/"
+    body = marshal.dumps(("kpip-index-catalog", [], []))
+
+    cache.set_atomic(cache_key(page_url), b"kpip-index-catalog-2\0" + body)
+
+    assert load_catalog(cache, page_url) is None
 
 
 def test_catalog_cache_ignores_corrupt_entries(tmp_path: Path) -> None:

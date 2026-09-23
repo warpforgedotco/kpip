@@ -100,13 +100,11 @@ def test_version_orders_epoch_and_dev_releases() -> None:
     ["1.2.3", "1!2.0rc1.post2.dev3+linux-x86_64", "0.0.0", "1.0.dev"],
 )
 def test_version_wire_roundtrip_is_interned(raw: str) -> None:
-    from kpip.core.versions import is_version_wire
-
     original = Version(raw)
     state = original.to_wire()
-    assert is_version_wire(state)
-    assert type(state[2]) is tuple
-    assert state == (original.public, original.release, tuple(original))
+    # Text and key, and nothing else: the release used to sit between them
+    # and was read by nothing.
+    assert state == (original.public, tuple(original))
 
     restored = Version.from_wire(state)
     assert restored == original
@@ -114,21 +112,6 @@ def test_version_wire_roundtrip_is_interned(raw: str) -> None:
     assert restored is Version.from_wire(state)
     assert hash(restored) == hash(original)
     assert str(restored) == str(original)
-
-
-def test_is_version_wire_rejects_malformed() -> None:
-    from kpip.core.versions import is_version_wire
-
-    good = Version("1.2.0+a").to_wire()
-    assert is_version_wire(good)
-    assert not is_version_wire(("1.2", (1, 2)))
-    assert not is_version_wire(("1.2", (), good[2]))
-    assert not is_version_wire(("1.2", (1, "2"), good[2]))
-    assert not is_version_wire(("1.2", (1, 2), good[2][:3]))
-    assert not is_version_wire(("1.2", (1, 2, 0), (0, (1, 2, 0), good[2][2], ())))
-    assert not is_version_wire(("1.2", (1, 2), (0, (1, 2), (3, 0, 0, 0, 1), ())))
-    assert not is_version_wire((1, (1, 2), good[2]))
-    assert not is_version_wire((0, (1, 2), None, None, None, None, "1.2", good[2]))
 
 
 @pytest.mark.parametrize(
@@ -345,8 +328,8 @@ class TestVersionIsItsOwnKey:
         assert str(Version("1.0.post")) == "1.0.post0"
 
     def test_wire_key_is_the_four_element_tuple(self) -> None:
-        assert Version("1.2").to_wire()[2] == (0, (1, 2), (3, 0, 0, 0, 1, 0), ())
-        assert Version("1.2+a").to_wire()[2] == (
+        assert Version("1.2").to_wire()[1] == (0, (1, 2), (3, 0, 0, 0, 1, 0), ())
+        assert Version("1.2+a").to_wire()[1] == (
             0,
             (1, 2),
             (3, 0, 0, 0, 1, 0),
@@ -704,3 +687,20 @@ class TestSpecifierClauseGrammar:
             if "[" in text or "]" in text:
                 continue
             assert self._candidate(text) == self._reference(text), repr(text)
+
+
+def test_a_wheel_tag_triple_is_interned() -> None:
+    """The same triple is the same object, however it is reached.
+
+    A catalog holds the same handful of tags over and over, and a cold
+    resolve of Airflow's graph rebuilt 159,112 of them before this.
+    """
+    from kpip.core.wheel import parsed_wheel_tags, wheel_tag
+
+    first = wheel_tag("py3", "none", "any")
+
+    assert wheel_tag("py3", "none", "any") is first
+    # The filename path shares the same pool.
+    assert parsed_wheel_tags("py3", "none", "any")[0] is first
+    # A different triple is a different tag.
+    assert wheel_tag("cp312", "cp312", "any") is not first

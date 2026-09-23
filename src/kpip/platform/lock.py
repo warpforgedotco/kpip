@@ -28,14 +28,14 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
-import logging
 import os
 import sys
 from collections.abc import Iterator
 
+from kpip.core.logger import get_logger
 from kpip.core.appdirs import user_cache_dir
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def lock_dir() -> str:

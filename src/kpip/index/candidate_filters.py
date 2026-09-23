@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 from functools import lru_cache
 from typing import TypeVar
 
+from kpip.core.logger import get_logger
 from kpip.core.hashes import Hashes
 from kpip.core.packaging import EMPTY_FROZENSET
 from kpip.core.wheel import WheelTag
 from kpip.index.source_models import CandidateRecord
 
-logger = logging.getLogger("kpip.index.candidate_evaluators")
+logger = get_logger("kpip.index.candidate_evaluators")
 CandidateT = TypeVar("CandidateT", bound=CandidateRecord)
 
 
