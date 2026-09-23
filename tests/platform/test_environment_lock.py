@@ -19,8 +19,8 @@ import threading
 from pathlib import Path
 
 import pytest
-from kpip.platform import lock
-from kpip.platform.lock import environment_write_lock, lock_path_for
+from kpip.host import lock
+from kpip.host.lock import environment_write_lock, lock_path_for
 
 
 def test_the_lock_excludes_a_second_holder(tmp_path: Path) -> None:

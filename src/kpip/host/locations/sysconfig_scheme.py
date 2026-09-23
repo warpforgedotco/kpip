@@ -6,8 +6,8 @@ import sysconfig
 from collections.abc import Callable
 
 from kpip.core.errors import InstallationError
-from kpip.platform.scheme import SCHEME_KEYS, Scheme
-from kpip.platform.virtualenv import running_under_virtualenv
+from kpip.host.scheme import SCHEME_KEYS, Scheme
+from kpip.host.virtualenv import running_under_virtualenv
 
 from .base import change_root, get_major_minor_version, is_osx_framework
 

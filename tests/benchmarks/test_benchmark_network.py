@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from kpip.core.http import HttpResponse
+from kpip.core.http_contracts import HttpResponse
 from kpip.network.download import Downloader
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 from kpip.network.lazy_wheel import dist_from_wheel_url
 from kpip_test_support.transport_mocks import make_response
 from pytest_codspeed import BenchmarkFixture

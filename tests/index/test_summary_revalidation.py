@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 
 import pytest
-from kpip.core.http import HttpResponse
+from kpip.core.http_contracts import HttpResponse
 from kpip.core.packaging import parse_requirement
 from kpip.index.catalog_cache import cache_key, catalog_generation
 from kpip.index.source_locations import SimpleIndexSource
 from kpip.network.exceptions import ConnectionFailedError
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 from kpip_test_support.transport_mocks import make_response
 
 INDEX_URL = "https://index.invalid/simple"

@@ -9,7 +9,7 @@ import threading
 from contextlib import contextmanager
 
 from kpip.core.utils import ensure_dir
-from kpip.platform.filesystem import replace, set_descriptor_permissions
+from kpip.host.filesystem import replace, set_descriptor_permissions
 
 PRIVATE_MODE = 0o600
 """The mode a temporary entry falls back to when its own cannot be created."""

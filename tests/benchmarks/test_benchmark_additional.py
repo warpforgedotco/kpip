@@ -30,7 +30,7 @@ from kpip.index.links import Link
 from kpip.index.provider import CandidateProvider
 from kpip.install.target import InstallTarget
 from kpip.install.uninstall import DistributionUninstaller
-from kpip.platform.unpacking import unzip_file
+from kpip.host.unpacking import unzip_file
 from kpip.install.wheel_transaction import WheelInstaller
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.files import parse_requirements

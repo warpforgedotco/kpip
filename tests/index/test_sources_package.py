@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from kpip.cli.main import main
-from kpip.core.http import HttpResponse
+from kpip.core.http_contracts import HttpResponse
 from kpip.core.packaging import (
     Requirement,
     parse_requirement,

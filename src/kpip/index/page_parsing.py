@@ -9,7 +9,7 @@ import urllib.parse
 from collections.abc import Callable
 
 from kpip.core.errors import InstallationError
-from kpip.core.http import raise_for_status, response_text
+from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.catalog_cache import (
     artifact_identity,
@@ -23,7 +23,7 @@ from kpip.index.catalog_cache import (
     save_catalog,
     save_links,
 )
-from kpip.index.datetime import parse_iso_datetime
+from kpip.index.dates import parse_iso_datetime
 from kpip.index.hashes import SUPPORTED_RECORD_HASHES
 from kpip.index.links import Link, split_plain_url
 from kpip.core.urls import split_auth_from_netloc
@@ -39,7 +39,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from typing import Any
 
-    from kpip.core.http import HttpSession
+    from kpip.core.http_contracts import HttpSession
 
 
 class IndexContent:

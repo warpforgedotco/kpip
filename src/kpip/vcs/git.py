@@ -10,7 +10,7 @@ from kpip.core.urls import path_to_url
 from kpip.core.utils import AuthInfo, display_path
 
 from .errors import BadCommand
-from .subprocess import make_command
+from .subprocesses import make_command
 from .support import HiddenText, hide_url
 from .versioncontrol import (
     RemoteNotFoundError,

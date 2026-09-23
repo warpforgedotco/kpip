@@ -6,11 +6,11 @@ import sys
 
 from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
-from kpip.core.subprocess import CommandArgs
+from kpip.core.subprocesses import CommandArgs
 from kpip.core.urls import split_auth_from_netloc
 from kpip.core.utils import AuthInfo, display_path
 
-from .subprocess import make_command
+from .subprocesses import make_command
 from .support import (
     HiddenText,
     is_installable_dir,

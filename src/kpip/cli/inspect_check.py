@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 def run_check(args: list[str]) -> int:
-    from kpip.cli.parsers.inspect import create_check_parser
+    from kpip.cli.parsers.inspection import create_check_parser
 
     create_check_parser().parse_args(args)
 

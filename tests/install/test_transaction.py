@@ -96,7 +96,7 @@ def test_transaction_clones_without_consuming_cache_source(
 ) -> None:
     # Under KPIP_LINK_MODE=clone the target must not share inodes with the
     # cache; the hardlink default on Linux and Windows deliberately does.
-    from kpip.platform import clone
+    from kpip.host import clone
 
     monkeypatch.setattr(clone, "_link_mode", None)
     monkeypatch.setenv("KPIP_LINK_MODE", "clone")

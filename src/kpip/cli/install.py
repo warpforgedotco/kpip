@@ -61,7 +61,7 @@ from kpip.install.wheel_transaction import (
     WheelInstaller,
     install_wheels_transactionally,
 )
-from kpip.platform.virtualenv import running_under_virtualenv
+from kpip.host.virtualenv import running_under_virtualenv
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
 

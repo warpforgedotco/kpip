@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from kpip.platform import virtualenv
+from kpip.host import virtualenv
 import pytest
 
 

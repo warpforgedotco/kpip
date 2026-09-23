@@ -12,7 +12,7 @@ import urllib.parse
 
 from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
-from kpip.core.http import raise_for_status, response_text
+from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.core.packaging import parse_requirement
 from kpip.index.prefetch import Prefetcher
 from kpip.resolution.files.models import (

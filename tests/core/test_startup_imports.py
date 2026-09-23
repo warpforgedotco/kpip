@@ -255,7 +255,7 @@ NORMAL_INSTALL_FORBIDDEN = frozenset(
         "importlib.metadata",
         "kpip.resolution.files.parser",
         "kpip.vcs.versioncontrol",
-        "kpip.core.subprocess",
+        "kpip.core.subprocesses",
         "html.parser",
         "tomllib",
         "kpip._vendor.tomli",
@@ -386,7 +386,7 @@ INDEX_LOCK_FORBIDDEN = frozenset(
         "ssl",
         "traceback",
         "kpip._vendor.urllib3",
-        "kpip.network.http",
+        "kpip.network.session",
     },
 )
 

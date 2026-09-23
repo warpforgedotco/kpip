@@ -21,7 +21,7 @@ from kpip.core.errors import (
     UnsupportedWheel,
 )
 from kpip.core.hashes import file_hashes
-from kpip.core.http import HttpStatusError, raise_for_status, response_text
+from kpip.core.http_contracts import HttpStatusError, raise_for_status, response_text
 from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
@@ -86,7 +86,7 @@ if TYPE_CHECKING:
     )
     from typing import Any
 
-    from kpip.core.http import HttpSession
+    from kpip.core.http_contracts import HttpSession
 
 
 # Forwarded rather than imported: ``kpip.index.vcs`` reaches ``shutil`` and

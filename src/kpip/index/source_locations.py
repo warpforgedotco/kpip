@@ -21,7 +21,7 @@ from kpip.index.source_models import ArtifactKind
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from kpip.core.http import HttpSession
+    from kpip.core.http_contracts import HttpSession
     from kpip.index.catalog_cache import CatalogSummary
 
 

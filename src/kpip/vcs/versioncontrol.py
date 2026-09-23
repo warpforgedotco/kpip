@@ -10,11 +10,11 @@ from collections.abc import Iterable, Iterator, Mapping
 
 from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
-from kpip.core.subprocess import CommandArgs, format_command_args
+from kpip.core.subprocesses import CommandArgs, format_command_args
 from kpip.core.utils import AuthInfo, display_path
 
 from .errors import BadCommand
-from .subprocess import call_subprocess, make_command
+from .subprocesses import call_subprocess, make_command
 from .support import (
     HiddenText,
     ask_path_exists,
@@ -28,7 +28,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from typing import Any, Literal
 
-    from .subprocess import SpinnerInterface
+    from .subprocesses import SpinnerInterface
 
 
 logger = get_logger(__name__)

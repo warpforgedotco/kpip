@@ -14,7 +14,7 @@ from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.utils import ensure_dir
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
-from kpip.platform.tar_reader import fast_untar
+from kpip.host.tar_reader import fast_untar
 
 TYPE_CHECKING = False
 

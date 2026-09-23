@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 class DeferredNetworkSession:
     """Delay transport policy and cache setup until a session attribute is used.
 
-    Building a ``NetworkSession`` means importing ``kpip.network.http``, and
+    Building a ``NetworkSession`` means importing ``kpip.network.session``, and
     with it the vendored HTTP stack, ``ssl``, ``http.client`` and
     ``logging`` -- the largest single import on a command that resolves.
     A resolve whose answers are all in the cache never opens a socket, so
@@ -84,7 +84,7 @@ class DeferredNetworkSession:
             if self.session is not None:
                 return self.session
 
-            from kpip.network.http import DEFAULT_RETRIES, NetworkSession
+            from kpip.network.session import DEFAULT_RETRIES, NetworkSession
 
             session = NetworkSession(
                 index_urls=self.index_urls,

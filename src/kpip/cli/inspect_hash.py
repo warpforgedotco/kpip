@@ -13,7 +13,7 @@ def run_hash(args: list[str]) -> int:
     import hashlib
     import os
 
-    from kpip.cli.parsers.inspect import create_hash_parser
+    from kpip.cli.parsers.inspection import create_hash_parser
 
     options = create_hash_parser().parse_args(args)
     for filename in options.files:

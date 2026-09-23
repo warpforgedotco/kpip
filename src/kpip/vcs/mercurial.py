@@ -9,7 +9,7 @@ from kpip.core.urls import path_to_url
 from kpip.core.utils import display_path
 
 from .errors import BadCommand
-from .subprocess import make_command
+from .subprocesses import make_command
 from .support import HiddenText
 from .versioncontrol import (
     RevOptions,

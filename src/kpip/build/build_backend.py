@@ -32,8 +32,8 @@ from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
 from kpip.core.errors import BuildError
 from kpip.core.packaging import canonicalize_name, parse_requirement
 from kpip.core.versions import InvalidVersion, Version
-from kpip.core.subprocess import call_subprocess
-from kpip.install.build_env.venv import create_isolated_venv
+from kpip.core.subprocesses import call_subprocess
+from kpip.install.build_env.isolated_venv import create_isolated_venv
 
 
 LEGACY_SETUPTOOLS_REQUIREMENT = "setuptools>=40.8.0,<82"

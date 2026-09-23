@@ -13,7 +13,7 @@ from http import HTTPStatus
 from typing import BinaryIO
 
 from kpip._vendor.urllib3.exceptions import HTTPError
-from kpip.core.http import HttpResponse, HttpStatusError, raise_for_status
+from kpip.core.http_contracts import HttpResponse, HttpStatusError, raise_for_status
 from kpip.core.urls import redact_auth_from_url
 from kpip.index.links import Link
 from kpip.index.paths import PathComponent
@@ -24,8 +24,8 @@ from kpip.network.exceptions import (
     ProxyConnectionError,
     SSLVerificationError,
 )
-from kpip.network.http import NetworkSession
-from kpip.platform.filesystem import format_size
+from kpip.network.session import NetworkSession
+from kpip.host.filesystem import format_size
 
 logger = logging.getLogger(__name__)
 

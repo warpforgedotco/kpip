@@ -27,7 +27,7 @@ from kpip.core.versions import Version
 from kpip.core.utils import load_snapshot, save_snapshot, versioned_bucket
 from kpip.core.wheel import PureWheelCandidate, WheelCandidate
 from kpip.core.wheel import parse_wheel_filename
-from kpip.platform.clone import clone_path
+from kpip.host.clone import clone_path
 
 
 NAME = f"{versioned_bucket('fast-install', 1, interpreter=True)}.marshal"
@@ -1499,7 +1499,7 @@ def run_local_fallback(args: list[str]) -> int | None:
     target = InstallTarget.from_options("kpip", target=options.target)
 
     if options.cache_dir is not None:
-        from kpip.platform.lock import environment_write_lock
+        from kpip.host.lock import environment_write_lock
 
         # Same environment lock the normal transaction takes; this route
         # writes the target directly from the archive cache.

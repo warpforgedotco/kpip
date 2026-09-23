@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Iterable
 
 from kpip.core.errors import InstallationError
-from kpip.platform.clone import clone_path
+from kpip.host.clone import clone_path
 
 
 def _read_staged_source(path: str | None) -> bytes:

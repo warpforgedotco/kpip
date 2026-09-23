@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from kpip.core.errors import InstallationError
-from kpip.core.http import HttpResponse
+from kpip.core.http_contracts import HttpResponse
 from kpip.resolution.files.models import RequirementsFileParseError
 from kpip.resolution.files.parser import parse_requirements
 from kpip_test_support.transport_mocks import make_response

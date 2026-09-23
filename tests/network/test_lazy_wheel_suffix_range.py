@@ -18,7 +18,7 @@ from io import BytesIO
 from zipfile import ZipFile
 
 import pytest
-from kpip.core.http import HttpResponse
+from kpip.core.http_contracts import HttpResponse
 from kpip.network.lazy_wheel import (
     TAIL_CHUNK_SIZE,
     HTTPRangeRequestUnsupported,
