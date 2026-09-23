@@ -12,7 +12,7 @@ from kpip._vendor.urllib3.exceptions import DecodeError, NewConnectionError
 from kpip._vendor.urllib3.response import HTTPResponse as Urllib3HTTPResponse
 from kpip._vendor.urllib3.util import Timeout
 from kpip.network.exceptions import ConnectionFailedError, TooManyRedirectsError
-from kpip.network.http import DEFAULT_TIMEOUT, NetworkSession
+from kpip.network.session import DEFAULT_TIMEOUT, NetworkSession
 from kpip_test_support.transport_mocks import make_response
 
 

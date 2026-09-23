@@ -2,7 +2,7 @@ from collections.abc import Iterator
 
 import pytest
 from kpip.network.exceptions import InvalidWheel
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 from kpip.network.lazy_wheel import (
     HTTPRangeRequestUnsupported,
     dist_from_wheel_url,

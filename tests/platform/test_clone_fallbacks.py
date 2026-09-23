@@ -17,7 +17,7 @@ import types
 from pathlib import Path
 
 import pytest
-from kpip.platform import clone
+from kpip.host import clone
 
 FILES = ("pkg/__init__.py", "pkg/sub/mod.py", "pkg/tool")
 

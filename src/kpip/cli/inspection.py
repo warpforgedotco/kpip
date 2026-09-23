@@ -12,7 +12,7 @@ from __future__ import annotations
 
 
 def run_inspect(args: list[str]) -> int:
-    from kpip.cli.parsers.inspect import create_inspect_parser
+    from kpip.cli.parsers.inspection import create_inspect_parser
 
     options = create_inspect_parser().parse_args(args)
 

@@ -18,7 +18,7 @@ def target_paths() -> list[str] | None:
     prefix = target_prefix()
     if prefix is None:
         return None
-    from kpip.platform.locations.sysconfig import get_scheme
+    from kpip.host.locations.sysconfig_scheme import get_scheme
 
     scheme = get_scheme("kpip", prefix=prefix)
     return [scheme.purelib, scheme.platlib]

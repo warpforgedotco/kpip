@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from typing import Any, NoReturn
 
-    from kpip.core.http import HttpResponse as HttpResponseProtocol
+    from kpip.core.http_contracts import HttpResponse as HttpResponseProtocol
 
 logger = get_logger(__name__)
 

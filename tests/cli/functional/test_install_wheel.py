@@ -168,7 +168,7 @@ def get_header_scheme_path_for_script(
     dist_name: str,
 ) -> Path:
     command = (
-        "from kpip.platform.locations.sysconfig import get_scheme;"
+        "from kpip.host.locations.sysconfig_scheme import get_scheme;"
         f"scheme = get_scheme({dist_name!r});"
         "print(scheme.headers);"
     )

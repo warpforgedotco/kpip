@@ -11,7 +11,7 @@ import urllib.parse
 
 from kpip.core.versions import Version
 from kpip.core.wheel import WheelFile, WheelTag, parse_wheel_file, wheel_tag
-from kpip.index.datetime import parse_iso_datetime
+from kpip.index.dates import parse_iso_datetime
 from kpip.index.directory_index import project_version_from_filename
 from kpip.index.links import Link, split_plain_url
 from kpip.index.source_models import ArtifactKind, MetadataFile

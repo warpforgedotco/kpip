@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from kpip.core.format_control import FormatControl
-    from kpip.core.http import HttpSession
+    from kpip.core.http_contracts import HttpSession
     from kpip.core.wheel import TargetContext, WheelFile
     from kpip.index.candidate_materialization import CandidateStream
 
@@ -2845,7 +2845,7 @@ class CandidateProvider:
 
         def ready(done: Future[Any]) -> None:
             try:
-                from kpip.core.http import raise_for_status, response_text
+                from kpip.core.http_contracts import raise_for_status, response_text
                 from kpip.core.wheel_metadata import parse_metadata_headers
 
                 response = done.result()

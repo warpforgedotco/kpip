@@ -16,7 +16,7 @@ def cache_tmpdir(tmp_path: Path) -> Path:
 
 class TestSafeFileCache:
     """The no_perms test are useless on Windows since SafeFileCache uses
-    kpip.platform.filesystem.check_path_owner which is based on
+    kpip.host.filesystem.check_path_owner which is based on
     os.geteuid which is absent on Windows.
     """
 

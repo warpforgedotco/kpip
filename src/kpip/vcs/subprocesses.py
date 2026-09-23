@@ -5,7 +5,7 @@ import os
 from collections.abc import Iterable, Mapping, Sequence
 
 from kpip.core.errors import InstallationError
-from kpip.core.subprocess import CommandArg, CommandArgs, command_args_to_argv
+from kpip.core.subprocesses import CommandArg, CommandArgs, command_args_to_argv
 
 from .support import HiddenText
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
         def finish(self, final_status: str) -> None: ...
 
 
-logger = logging.getLogger("kpip.vcs.subprocess")
+logger = logging.getLogger("kpip.vcs.subprocesses")
 
 
 def make_command(*args: str | HiddenText | Sequence[CommandArg]) -> CommandArgs:

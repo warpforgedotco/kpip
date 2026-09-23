@@ -22,7 +22,7 @@ from kpip.network.exceptions import (
     ProxyConnectionError,
     SSLMissingError,
 )
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 from kpip_test_support.transport_mocks import BrokenStream, MockResponse
 from kpip_test_support.server import Body, MockServer
 
@@ -596,7 +596,7 @@ def test_resumed_download_caching(tmp_path: Path) -> None:
 
 def test_error_response_is_drained_and_closed(monkeypatch) -> None:
     """A streamed error response must not keep its connection checked out."""
-    from kpip.core.http import HttpStatusError
+    from kpip.core.http_contracts import HttpStatusError
     from kpip_test_support.transport_mocks import make_response
 
     url = "https://example.invalid/demo.whl"

@@ -1,5 +1,5 @@
 import pytest
-from kpip.core.http import (
+from kpip.core.http_contracts import (
     HttpResponse,
     HttpStatusError,
     raise_for_status,

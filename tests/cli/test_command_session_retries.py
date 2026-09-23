@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from kpip.network.deferred import DeferredNetworkSession
-from kpip.network.http import DEFAULT_RETRIES
+from kpip.network.session import DEFAULT_RETRIES
 
 
 def test_the_install_session_retries() -> None:

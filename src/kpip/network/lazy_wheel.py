@@ -18,9 +18,9 @@ from zipfile import BadZipFile, ZipFile
 
 from kpip._vendor.urllib3.exceptions import DecodeError
 from kpip.build.metadata import MetadataDistribution
-from kpip.core.http import HttpResponse, HttpStatusError, raise_for_status
+from kpip.core.http_contracts import HttpResponse, HttpStatusError, raise_for_status
 from kpip.network.exceptions import InvalidWheel
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 
 CONTENT_CHUNK_SIZE = 10 * 1024
 

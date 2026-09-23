@@ -8,7 +8,7 @@ import stat
 import sys
 
 from kpip.core.errors import InstallationError
-from kpip.platform.clone import replace_contents
+from kpip.host.clone import replace_contents
 
 
 def rewrite_shebang(path: str, executable: str | None) -> None:

@@ -58,7 +58,7 @@ from kpip.install.wheel_transaction_direct import (
     direct_batch_preflight,
     install_wheels_directly,
 )
-from kpip.platform.clone import clone_path
+from kpip.host.clone import clone_path
 
 TYPE_CHECKING = False
 
@@ -787,7 +787,7 @@ def install_wheels_transactionally(
     Candidate planning stays outside the lock: parsing each wheel's metadata
     touches nothing in the target and would otherwise serialize too.
     """
-    from kpip.platform.lock import environment_write_lock
+    from kpip.host.lock import environment_write_lock
 
     requests = tuple(items)
     planned_candidates = (

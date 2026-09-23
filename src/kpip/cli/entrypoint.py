@@ -229,7 +229,7 @@ def handle_global_commands(
         return 0
 
     if require_virtualenv:
-        from kpip.platform.virtualenv import running_under_virtualenv
+        from kpip.host.virtualenv import running_under_virtualenv
 
         if not running_under_virtualenv():
             print(

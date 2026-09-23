@@ -11,7 +11,7 @@ directly so they run on every platform.
 from __future__ import annotations
 
 import pytest
-from kpip.platform import clone
+from kpip.host import clone
 
 MB = 1024 * 1024
 

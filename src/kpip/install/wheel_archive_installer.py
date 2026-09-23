@@ -32,7 +32,7 @@ from kpip.install.wheel_scripts import (
     generate_entry_point_files,
     rewrite_shebang,
 )
-from kpip.platform.clone import clone_path, replace_contents
+from kpip.host.clone import clone_path, replace_contents
 
 if TYPE_CHECKING:
     from types import CodeType

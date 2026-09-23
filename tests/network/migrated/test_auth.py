@@ -13,7 +13,7 @@ from unittest.mock import Mock
 import kpip.network.auth
 import pytest
 from kpip.network.auth import MultiDomainBasicAuth
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 from kpip_test_support.transport_mocks import MockResponse
 
 

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from kpip.core.packaging import parse_requirement
 from kpip.index.provider import CandidateProvider
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 from pytest_codspeed import BenchmarkFixture
 
 pytestmark = [

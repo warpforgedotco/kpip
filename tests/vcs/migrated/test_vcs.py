@@ -9,7 +9,7 @@ from unittest import mock
 
 import pytest
 from kpip.core.errors import InstallationError
-from kpip.core.subprocess import CommandArgs
+from kpip.core.subprocesses import CommandArgs
 from kpip.vcs.bazaar import Bazaar
 from kpip.vcs.errors import BadCommand
 from kpip.vcs.git import Git, RemoteNotValidError, looks_like_hash

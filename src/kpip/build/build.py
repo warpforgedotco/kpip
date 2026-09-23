@@ -116,7 +116,7 @@ def unpack_source(source: str, destination: str) -> str:
 
 def unpack_source_internal(source: str, destination: str) -> str:
     from kpip.core.errors import InstallationError
-    from kpip.platform.unpacking import ArchiveExtractor
+    from kpip.host.unpacking import ArchiveExtractor
 
     source_text = os.fspath(source)
     destination_text = os.fspath(destination)

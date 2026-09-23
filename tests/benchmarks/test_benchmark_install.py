@@ -30,7 +30,7 @@ from kpip.core.wheel import (
 )
 from kpip.install.output import materialize_candidates
 from kpip.install.target import InstallTarget
-from kpip.platform.unpacking import untar_file, unzip_file
+from kpip.host.unpacking import untar_file, unzip_file
 from kpip.install.wheel_transaction import (
     WheelInstaller,
     install_wheels_transactionally,

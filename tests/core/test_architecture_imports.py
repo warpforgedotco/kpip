@@ -6,19 +6,19 @@ from pathlib import Path
 
 ALLOWED_IMPORTS = {
     "core": frozenset(),
-    "platform": frozenset({"core"}),
-    "build": frozenset({"core", "platform"}),
-    "index": frozenset({"core", "build", "platform"}),
-    "network": frozenset({"core", "platform", "build", "index"}),
+    "host": frozenset({"core"}),
+    "build": frozenset({"core", "host"}),
+    "index": frozenset({"core", "build", "host"}),
+    "network": frozenset({"core", "host", "build", "index"}),
     "vcs": frozenset({"core"}),
     "resolution": frozenset({"core", "index", "network", "vcs"}),
     "install": frozenset(
-        {"core", "platform", "build", "index", "network", "vcs", "resolution"},
+        {"core", "host", "build", "index", "network", "vcs", "resolution"},
     ),
     "cli": frozenset(
         {
             "core",
-            "platform",
+            "host",
             "build",
             "index",
             "network",
@@ -75,3 +75,43 @@ def test_first_party_imports_follow_architecture() -> None:
         "remove stale architecture debt exceptions: "
         f"{sorted(KNOWN_DEBT - observed_debt)}"
     )
+
+
+def test_no_module_shadows_a_standard_library_name() -> None:
+    """No kpip module or package is named after one in the standard library.
+
+    Absolute imports make this safe inside CPython, which is why it went
+    unnoticed. It stops being safe the moment something flattens the
+    namespace: compiling the package with Nuitka as a loose script made
+    ``kpip/platform/`` answer to a bare ``import platform``, and
+    ``kpip lock`` died on macOS with ``module 'platform' has no attribute
+    'machine'``.
+
+    The rule is cheap to keep and the failure it prevents is baffling to
+    diagnose, so it is asserted rather than remembered.
+    """
+    import sys
+
+    root = Path(__file__).resolve().parents[2] / "src" / "kpip"
+    standard = sys.stdlib_module_names
+
+    shadows = sorted(
+        str(path.relative_to(root.parent))
+        for path in root.rglob("*")
+        if "_vendor" not in path.parts
+        and "__pycache__" not in path.parts
+        and (
+            (
+                path.is_dir()
+                and (path / "__init__.py").is_file()
+                and path.name in standard
+            )
+            or (
+                path.suffix == ".py"
+                and path.name != "__init__.py"
+                and path.stem in standard
+            )
+        )
+    )
+
+    assert shadows == [], shadows

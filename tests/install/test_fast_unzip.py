@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from kpip.core.errors import InstallationError
-from kpip.platform import unpacking
+from kpip.host import unpacking
 
 
 def _write_zip(

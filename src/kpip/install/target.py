@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import os
 
-from kpip.platform.locations.sysconfig import get_scheme
-from kpip.platform.scheme import Scheme
+from kpip.host.locations.sysconfig_scheme import get_scheme
+from kpip.host.scheme import Scheme
 
 
 class InstallTarget:

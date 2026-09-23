@@ -19,7 +19,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from typing import Any
 
-    from kpip.core.http import HttpSession
+    from kpip.core.http_contracts import HttpSession
 
 logger = get_logger(__name__)
 

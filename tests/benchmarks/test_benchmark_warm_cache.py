@@ -405,8 +405,8 @@ def stale_index(
     each resolve must revalidate (304 answered offline) before the summary
     world opens. This is the everyday case -- PyPI pages outlive their
     max-age between two kpip runs while their content stays unchanged."""
-    from kpip.core.http import HttpResponse
-    from kpip.network.http import NetworkSession
+    from kpip.core.http_contracts import HttpResponse
+    from kpip.network.session import NetworkSession
     from kpip_test_support.transport_mocks import make_response
 
     class Stale304Session(NetworkSession):

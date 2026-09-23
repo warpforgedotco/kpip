@@ -9,7 +9,7 @@ dropped connection is not evidence about range support.
 from __future__ import annotations
 
 import pytest
-from kpip.network.http import NetworkSession
+from kpip.network.session import NetworkSession
 from kpip.network.lazy_wheel import HTTPRangeRequestUnsupported
 
 _URL = "https://example.invalid/demo-1.0-py3-none-any.whl"

@@ -24,7 +24,7 @@ from zipfile import ZipFile
 import pytest
 from kpip.cli import main
 from kpip.core.direct_url import DIRECT_URL_METADATA_NAME, DirectUrl
-from kpip.platform.locations.base import get_major_minor_version
+from kpip.host.locations.base import get_major_minor_version
 from kpip_test_support.filesystem import create_file
 from kpip_test_support.venv import VirtualEnvironment
 from kpip_test_support.wheel import make_wheel

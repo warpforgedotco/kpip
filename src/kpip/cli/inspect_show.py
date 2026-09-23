@@ -10,7 +10,7 @@ from __future__ import annotations
 def run_show(args: list[str]) -> int:
     import sys
 
-    from kpip.cli.parsers.inspect import create_show_parser
+    from kpip.cli.parsers.inspection import create_show_parser
 
     options = create_show_parser().parse_args(args)
 
