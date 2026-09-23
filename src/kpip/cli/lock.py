@@ -12,6 +12,7 @@ from kpip.core.errors import CommandError, KpipError
 from kpip.core.format_control import FormatControl
 from kpip.core.hashes import file_hashes
 from kpip.core.packaging import (
+    marker_applies,
     normalize_python_version,
     parse_requirement,
     set_target_python_version,
@@ -46,6 +47,43 @@ def tag_python_version(value: str) -> str:
     parts = value.split(".")
 
     return ".".join(parts[:2]) if len(parts) > 1 else value
+
+
+def applies_to_target(requirement: str | InstallRequirement) -> bool:
+    """Whether a requirement's environment marker holds for the lock's target.
+
+    Requirement files routinely carry one line per interpreter --
+
+        aiohttp==3.8.5;python_version<'3.12'
+        aiohttp==3.9.0b0;python_version>='3.12'
+
+    -- and only one of them is a requirement of the lock being written. Both
+    were being kept, which locked a release the target interpreter cannot
+    use, and, where the two lines named the same project, turned a file that
+    resolves into "your project's requirements cannot be satisfied".
+
+    The target is already in place when this runs: ``run_lock`` sets it
+    before calling ``perform_lock``, so ``--python-version`` is what the
+    marker is read against rather than the interpreter kpip happens to be
+    running on.
+
+    Anything that carries no marker is kept, and so is anything this parser
+    cannot read -- a path, a URL, an option line. Dropping what cannot be
+    understood would be a worse answer than handing it to the resolver.
+    """
+    if not isinstance(requirement, str):
+        return requirement.match_markers()
+
+    try:
+        parsed = parse_requirement(requirement)
+
+    except ValueError:
+        return True
+
+    if parsed.marker is None:
+        return True
+
+    return marker_applies(parsed.marker, extras=parsed.extras)
 
 
 def read_requirement_lines(filename: str) -> list[str]:
@@ -122,6 +160,17 @@ def remote_hashed_sdist(candidate: object) -> dict[str, object] | None:
 
 def render_lock(packages: list[dict[str, object]]) -> str:
     lines = list(LOCK_HEADER)
+
+    if not packages:
+        # ``packages`` is required by PEP 751, and an array of tables with no
+        # entries writes no key at all. A lock whose requirements were all
+        # for another interpreter is the reachable case, and without this it
+        # is a file kpip itself refuses to read back.
+        lines.append("packages = []")
+
+        lines.append("")
+
+        return "\n".join(lines)
 
     for package in packages:
         lines.append("[[packages]]")
@@ -463,6 +512,13 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     if not requirements and not archive_packages and not directory_packages:
         raise CommandError("You must give at least one requirement")
+
+    # After the emptiness check, not before: a file whose every line is for
+    # another interpreter is a file that asks for nothing here, and the
+    # honest answer to that is an empty lock rather than an error.
+    requirements = [item for item in requirements if applies_to_target(item)]
+
+    constraints = [value for value in constraints if applies_to_target(value)]
 
     plan = None
 
