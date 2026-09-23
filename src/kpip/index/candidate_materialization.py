@@ -972,8 +972,8 @@ class CandidateMaterializer:
         if candidate.metadata_loader is not None:
             return candidate
 
-        return candidate.copy_with(
-            metadata_loader=self.metadata_loader(candidate, requirement),
+        return candidate.with_metadata_loader(
+            self.metadata_loader(candidate, requirement),
         )
 
     def materialize(
