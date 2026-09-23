@@ -85,6 +85,15 @@ def _as_written(text: str) -> str:
     return text
 
 
+# Whether ``_theme`` can be assigned at all. It is a plain attribute on
+# 3.14 and a read-only property from 3.15, where argparse keeps the colour
+# import off this path without any help.
+_THEME_IS_WRITABLE = not isinstance(
+    getattr(argparse.HelpFormatter, "_theme", None),
+    property,
+)
+
+
 def colour_is_possible() -> bool:
     """Whether anything downstream could render colour.
 
@@ -141,7 +150,7 @@ class HelpFormatter(argparse.HelpFormatter):
             **kwargs,
         )
 
-    def _set_color(self, color: bool) -> None:
+    def _set_color(self, color: bool, *args: Any, **kwargs: Any) -> None:
         """Settle colour without importing the machinery that renders it.
 
         ``argparse.HelpFormatter`` imports ``_colorize`` here whatever the
@@ -153,15 +162,24 @@ class HelpFormatter(argparse.HelpFormatter):
         still reaches the real implementation, which decides as it always
         did.
 
-        Only Python 3.14 and later colour help at all; on anything earlier
-        this override is never called.
+        This is worth doing on exactly one version. Before 3.14 there is no
+        colour and no hook to override. From 3.15 argparse defers the import
+        itself -- ``_set_color`` only records the setting, and the theme is
+        built lazily by a property that short-circuits before touching
+        ``_colorize`` -- so the base method is already cheap and its
+        ``_theme`` is read-only, which makes writing one an error rather
+        than a saving. 3.14 is the version that pays, and the one this
+        answers for.
         """
         # Looked up rather than called directly: the base method only exists
-        # from 3.14, which is also the only place this one is ever reached.
+        # from 3.14.
         inherited = getattr(super(), "_set_color", None)
 
-        if color and inherited is not None and colour_is_possible():
-            inherited(color)
+        if inherited is None:
+            return
+
+        if not _THEME_IS_WRITABLE or (color and colour_is_possible()):
+            inherited(color, *args, **kwargs)
 
             return
 

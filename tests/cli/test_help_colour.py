@@ -7,13 +7,24 @@ import sys
 from typing import Any
 
 import pytest
-from kpip.cli.parser import HelpFormatter, colour_is_possible
+from kpip.cli.parser import (
+    _THEME_IS_WRITABLE,
+    HelpFormatter,
+    colour_is_possible,
+)
 
 # argparse only colours help from 3.14; earlier versions never call the
 # hook at all, so there is nothing there to keep cheap.
 colours_help = pytest.mark.skipif(
     not hasattr(argparse.HelpFormatter, "_set_color"),
     reason="argparse colours help only from Python 3.14",
+)
+# From 3.15 argparse keeps the import off this path by itself, behind a
+# read-only ``_theme``. There the override has nothing left to save and
+# nothing left to write, so it steps aside.
+short_circuits_itself = pytest.mark.skipif(
+    not _THEME_IS_WRITABLE,
+    reason="argparse defers the colour import itself from Python 3.15",
 )
 
 
@@ -82,6 +93,7 @@ def test_stdout_that_cannot_answer_is_not_shown_colour(
 
 
 @colours_help
+@short_circuits_itself
 def test_a_pipe_gets_a_formatter_that_never_asked_about_colour(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -102,6 +114,7 @@ def test_a_pipe_gets_a_formatter_that_never_asked_about_colour(
 
 
 @colours_help
+@short_circuits_itself
 def test_a_terminal_reaches_the_real_implementation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -109,7 +122,7 @@ def test_a_terminal_reaches_the_real_implementation(
 
     reached: list[bool] = []
 
-    def record(self: Any, color: bool) -> None:
+    def record(self: Any, color: bool, *args: Any, **kwargs: Any) -> None:
         reached.append(color)
         self._theme = None
         self._decolor = str
@@ -151,3 +164,19 @@ def test_no_color_wins_over_force_color_eventually(
     monkeypatch.setenv("FORCE_COLOR", "1")
 
     assert colour_is_possible() is True
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_the_help_page_renders(monkeypatch: pytest.MonkeyPatch, tty: bool) -> None:
+    """The whole point, asked of the real machinery on every version.
+
+    Nothing here is patched away: whichever branch of ``_set_color`` this
+    interpreter takes has to leave a formatter that can actually format,
+    with a ``_theme`` and a ``_decolor`` argparse can use.
+    """
+    monkeypatch.setattr(sys, "stdout", _Stdout(tty=tty))
+
+    parser = argparse.ArgumentParser(prog="kpip", formatter_class=HelpFormatter)
+    parser.add_argument("--quiet", help="say less")
+
+    assert "say less" in parser.format_help()
