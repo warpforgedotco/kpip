@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import threading
 
 
 from kpip.cli.dependency_groups import toml_module
@@ -18,7 +17,7 @@ from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_ra
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.index.links import Link
 from kpip.index.source_locations import resolve_source_location
-from kpip.core.appdirs import http_cache_path
+from kpip.network.deferred import DeferredNetworkSession
 from kpip.resolution.input_requirements import install_req_from_line
 
 RELEASE_OPTIONS = frozenset(("pre", "all-releases"))
@@ -111,102 +110,6 @@ class RequirementsBundle:
         self.require_hashes = require_hashes
 
         self.session = session
-
-
-class DeferredNetworkSession:
-    """Delay transport policy and cache setup until a session attribute is used."""
-
-    __slots__ = (
-        "cache_dir",
-        "cert",
-        "client_cert",
-        "index_urls",
-        "keyring_provider",
-        "lock",
-        "no_input",
-        "proxy",
-        "session",
-    )
-
-    def __init__(
-        self,
-        *,
-        index_urls: list[str],
-        cache_dir: str | None,
-        cert: str | None,
-        client_cert: str | None,
-        no_input: bool,
-        keyring_provider: str,
-        proxy: str | None,
-    ) -> None:
-        self.index_urls = index_urls
-
-        self.cache_dir = cache_dir
-
-        self.cert = cert
-
-        self.client_cert = client_cert
-
-        self.no_input = no_input
-
-        self.keyring_provider = keyring_provider
-
-        self.proxy = proxy
-
-        self.session: Any = None
-
-        self.lock = threading.Lock()
-
-    def materialize(self) -> Any:
-        if self.session is not None:
-            return self.session
-
-        with self.lock:
-            if self.session is not None:
-                return self.session
-
-            from kpip.network.http import DEFAULT_RETRIES, NetworkSession
-
-            session = NetworkSession(
-                index_urls=self.index_urls,
-                cache=(http_cache_path(self.cache_dir) if self.cache_dir else None),
-                retries=DEFAULT_RETRIES,
-            )
-
-            assert session.auth is not None
-
-            session.auth.prompting = not self.no_input
-
-            session.auth.keyring_provider = self.keyring_provider
-
-            if self.cert:
-                session.verify = self.cert
-
-            if self.client_cert:
-                session.cert = self.client_cert
-
-            if self.proxy is not None:
-                session.proxies = (
-                    {"http": self.proxy, "https": self.proxy} if self.proxy else {}
-                )
-
-            self.session = session
-
-            return session
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.materialize(), name)
-
-    @property
-    def auth(self) -> Any:
-        return self.materialize().auth
-
-    @property
-    def trusted_hosts(self) -> Any:
-        return self.materialize().trusted_hosts
-
-    def get(self, *args: Any, **kwargs: Any) -> Any:
-        return self.materialize().get(*args, **kwargs)
 
 
 class RequirementSourceState:

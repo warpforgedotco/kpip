@@ -5,9 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import sysconfig
-import tempfile
 
 from kpip.core.logger import get_logger
 from kpip.core.hashes import file_hashes
@@ -18,7 +16,7 @@ from kpip.index.artifacts import ArtifactLocator
 from kpip.index.cache import origin_hashes, wheel_cache_path
 from kpip.index.links import Link
 from kpip.index.source_models import ArtifactKind, CandidateRecord
-from kpip.index.vcs import is_immutable_vcs_link, vcs_reference
+from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_reference
 
 logger = get_logger(__name__)
 
@@ -164,6 +162,8 @@ def built_wheel_cache_key(
 
 
 def _discard_invalid_entry(path: str) -> None:
+    import shutil
+
     try:
         shutil.rmtree(path)
     except OSError:
@@ -266,6 +266,9 @@ def cache_built_wheel(
     entry_dir_text = wheel_cache_path(os.fspath(wheel_cache_dir), cache_key)
     parent = os.path.dirname(entry_dir_text)
     temporary = ""
+
+    import shutil
+    import tempfile
 
     try:
         os.makedirs(parent, exist_ok=True)

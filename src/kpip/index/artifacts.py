@@ -6,16 +6,13 @@ import atexit
 import hashlib
 import os
 import posixpath
-import shutil
-import tempfile
 import urllib.parse
 
 from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.urls import url_to_path
 from kpip.index.artifact_cache import ArtifactCache, materialize_cached_artifact
-from kpip.index.vcs import materialize_vcs
-from kpip.index.vcs import vcs_scheme
+from kpip.index.vcs_urls import vcs_scheme
 
 TYPE_CHECKING = False
 
@@ -34,6 +31,9 @@ def download_dir_internal() -> str:
     global DOWNLOAD_DIR
 
     if DOWNLOAD_DIR is None:
+        import shutil
+        import tempfile
+
         DOWNLOAD_DIR = tempfile.mkdtemp(prefix="kpip-index-downloads-")
 
         atexit.register(shutil.rmtree, DOWNLOAD_DIR, ignore_errors=True)
@@ -96,6 +96,10 @@ class ArtifactLocator:
             is_vcs = vcs_scheme(url_or_path) is not None
 
         if is_vcs:
+            # Only a URL that turned out to name a repository pays for the
+            # machinery that clones one.
+            from kpip.index.vcs import materialize_vcs
+
             prompting = True
 
             if self.session is not None:
@@ -193,6 +197,8 @@ class ArtifactLocator:
             if cached_body is not None:
                 try:
                     os.makedirs(os.path.dirname(target), exist_ok=True)
+
+                    import shutil
 
                     with open(target, "wb") as file:
                         shutil.copyfileobj(cached_body, file)

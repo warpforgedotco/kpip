@@ -7,8 +7,6 @@ from kpip.core.utils import versioned_bucket
 import hashlib
 import marshal
 import os
-import shutil
-import tempfile
 from collections.abc import Iterable, Mapping
 
 from kpip.core.errors import HashMismatch
@@ -141,6 +139,9 @@ class ArtifactCache:
         path = self._receipt_path(url)
         directory = os.path.dirname(path)
         os.makedirs(directory, exist_ok=True)
+
+        import tempfile
+
         descriptor, temporary = tempfile.mkstemp(prefix=".receipt-", dir=directory)
         try:
             with os.fdopen(descriptor, "wb") as file:
@@ -195,6 +196,9 @@ class ArtifactCache:
     ) -> CachedArtifact:
         staging = os.path.join(self.root, ".tmp")
         os.makedirs(staging, exist_ok=True)
+
+        import tempfile
+
         descriptor, temporary = tempfile.mkstemp(prefix=".artifact-", dir=staging)
         digests = self._digests(expected_hashes)
         size = 0
@@ -247,6 +251,9 @@ def materialize_cached_artifact(source: str, destination: str) -> None:
     except OSError:
         pass
     temporary = f"{destination}.{os.getpid()}.tmp"
+
+    import shutil
+
     try:
         shutil.copyfile(source, temporary)
         try:

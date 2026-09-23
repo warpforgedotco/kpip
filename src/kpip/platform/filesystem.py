@@ -5,7 +5,6 @@ import os.path
 from collections.abc import Generator
 from contextlib import contextmanager
 from functools import wraps
-from tempfile import NamedTemporaryFile
 from time import perf_counter, sleep
 from typing import Any, BinaryIO, Callable, ParamSpec, TypeVar, cast
 
@@ -65,6 +64,10 @@ def adjacent_tmp_file(
     kwargs will be passed to tempfile.NamedTemporaryFile to control
     the way the temporary file will be opened.
     """
+    # Imported here rather than at module scope: this writes a cache entry,
+    # and a command that only reads the cache never reaches it.
+    from tempfile import NamedTemporaryFile
+
     with NamedTemporaryFile(
         delete=False,
         dir=os.path.dirname(path),

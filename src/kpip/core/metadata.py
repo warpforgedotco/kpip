@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import pathlib
 import site
 import sys
 from collections.abc import Collection, Iterable
@@ -20,8 +19,9 @@ TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     import importlib.metadata
+    import pathlib
     from email.message import Message
-    from typing import Protocol
+    from typing import Protocol, TypeGuard
 
     HeaderIdentity = tuple[str, int, int]
 
@@ -62,6 +62,21 @@ def _read_text_file(target: str) -> str | None:
         return None
 
 
+def is_loaded_path_internal(value: object) -> TypeGuard[pathlib.Path]:
+    """Whether ``value`` is a ``pathlib.Path``, asked without importing one.
+
+    ``sys.modules`` is the whole test: a ``Path`` cannot exist unless
+    ``pathlib`` has been imported, so an absent module is a definite no and
+    costs nothing to establish. That matters because ``pathlib`` is not a
+    small import -- ``zipfile`` reaches it too -- and the distributions kpip
+    builds itself carry plain strings, so the answer here is almost always
+    reached by the cheap half of the ``or``.
+    """
+    module = sys.modules.get("pathlib")
+
+    return module is not None and isinstance(value, module.Path)
+
+
 def _read_raw_metadata_text(
     raw: RawDistribution,
 ) -> str | None:
@@ -78,7 +93,7 @@ def _read_raw_metadata_text(
     """
     path = getattr(raw, "_path", None)
 
-    if isinstance(path, (str, pathlib.Path)):
+    if isinstance(path, str) or is_loaded_path_internal(path):
         base = os.fspath(path)
 
         for filename in ("METADATA", "PKG-INFO", ""):
@@ -115,12 +130,15 @@ class PathDistribution:
         return _read_text_file(os.path.join(self._path, filename))
 
     def locate_file(self, path: str | os.PathLike[str]) -> pathlib.Path:
+        import pathlib
+
         return pathlib.Path(os.path.dirname(self._path), path)
 
     @property
     def stdlib(self) -> importlib.metadata.PathDistribution:
         if self._stdlib is None:
             import importlib.metadata
+            import pathlib
 
             self._stdlib = importlib.metadata.PathDistribution(pathlib.Path(self._path))
 
@@ -386,7 +404,7 @@ def _iter_installed_distributions(
         for dist in found:
             path = getattr(dist, "_path", None)
 
-            if isinstance(path, (str, pathlib.Path)):
+            if isinstance(path, str) or is_loaded_path_internal(path):
                 identity = _metadata_file_identity(os.fspath(path))
 
                 if identity is not None:

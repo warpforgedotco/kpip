@@ -17,7 +17,6 @@ from kpip.index.source_models import (
     RejectedCandidate,
     RejectionReason,
 )
-from kpip.index.vcs import materialize_vcs, release_checkout
 
 TYPE_CHECKING = False
 
@@ -214,6 +213,12 @@ class InstallationCandidate(CandidateRecord):
         cached = _vcs_candidates.get(link.url)
         if cached is not None:
             return cached
+
+        # Imported here rather than at module scope: ``kpip.index.vcs``
+        # reaches ``shutil`` and ``tempfile``, and a resolve that meets no
+        # VCS link -- nearly every one -- never needs either.
+        from kpip.index.vcs import materialize_vcs, release_checkout
+
         if lookup is not None:
             persisted = lookup(link)
             if persisted is not None:

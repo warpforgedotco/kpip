@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import enum
 import json
 import os
 import ssl
@@ -28,6 +27,7 @@ from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.core.utils import current_version
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
+from kpip.network.freshness import cached_response_is_fresh
 from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
@@ -67,15 +67,6 @@ _NOT_UPDATED_BY_304 = frozenset(
         "connection",
     ),
 )
-
-
-class _MissingCacheExpiry(enum.Enum):
-    """Single-member enum so ``is not`` narrowing keeps the ``float | None`` type."""
-
-    TOKEN = enum.auto()
-
-
-_MISSING_CACHE_EXPIRY = _MissingCacheExpiry.TOKEN
 
 
 class CachedResponse:
@@ -758,41 +749,11 @@ class NetworkSession:
     def has_fresh_cached_response(self, url: str) -> bool:
         """Check cache freshness without reading the cached response body."""
 
-        if self.cache is None:
-            return False
-
-        cached_expiry = self.fresh_cached_response_cache.get(
+        return cached_response_is_fresh(
+            self.cache,
+            self.fresh_cached_response_cache,
             url,
-            _MISSING_CACHE_EXPIRY,
         )
-
-        if cached_expiry is not _MISSING_CACHE_EXPIRY:
-            if cached_expiry is None or cached_expiry > time.time():
-                return True
-
-            self.fresh_cached_response_cache.pop(url, None)
-
-        metadata = self.cache.get(url)
-
-        if metadata is None:
-            return False
-
-        try:
-            values = json.loads(metadata)
-
-            expires_at = values.get("expires_at")
-
-            expires_at_value = None if expires_at is None else float(expires_at)
-
-            if expires_at_value is not None and expires_at_value <= time.time():
-                return False
-
-        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
-            return False
-
-        self.fresh_cached_response_cache[url] = expires_at_value
-
-        return True
 
     def revalidated_response(
         self,

@@ -226,7 +226,10 @@ def test_failed_built_wheel_cache_write_is_not_published(
     def fail_copy(*args: object, **kwargs: object) -> None:
         raise PermissionError("read-only cache")
 
-    monkeypatch.setattr("kpip.index.candidate_cache.shutil.copy2", fail_copy)
+    # Patched on ``shutil`` itself: the cache imports it where it stages a
+    # built wheel rather than at module scope, so there is no name to reach
+    # through here, and a resolve that stages nothing never loads it.
+    monkeypatch.setattr("shutil.copy2", fail_copy)
 
     cache_built_wheel(
         cache,
