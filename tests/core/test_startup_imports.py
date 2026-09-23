@@ -93,12 +93,17 @@ FAST_INSTALL_FORBIDDEN = frozenset(
     {
         "dataclasses",
         "email.parser",
+        "hashlib",
         "importlib.resources",
         "inspect",
+        # ``urllib.parse`` reaches it, and an install from a wheelhouse has
+        # no URL to read.
+        "ipaddress",
         "logging",
         "tempfile",
         "json",
         "sqlite3",
+        "urllib.parse",
         "zipfile",
         "kpip.resolution.models",
         "kpip.resolution.api",

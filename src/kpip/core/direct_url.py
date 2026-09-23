@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import urllib.parse
 
 DIRECT_URL_METADATA_NAME = "direct_url.json"
 
@@ -207,6 +206,8 @@ class DirectUrl:
 
     def to_dict(self) -> dict[str, object]:
         self.validate()
+        import urllib.parse
+
         parsed = urllib.parse.urlsplit(self.url)
         redacted_url = self.url
         if parsed.scheme != "ssh" and "@" in parsed.netloc:
