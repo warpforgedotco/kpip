@@ -293,13 +293,20 @@ class Range(Generic[VersionType]):
 
         Cheaper than folding :meth:`singleton` with ``|``.
         """
-        # sorted() needs an ordering bound, which VersionType does not declare.
-        points = frozenset(cast("Iterable[Any]", versions))
-        result = cls(
-            tuple((version, True, version, True) for version in sorted(points))
-        )
-        if len(points) >= _POINT_SET_MIN_INTERVALS:
-            result._points = points
+        values = versions if isinstance(versions, (list, tuple)) else list(versions)
+        # Callers nearly always pass distinct versions in ascending order,
+        # e.g. a slice of a sorted catalog.  Confirming that costs one
+        # comparison per version, where sorting the arbitrary order of a set
+        # of them costs a full sort.
+        for index in range(1, len(values)):
+            if not values[index - 1] < values[index]:
+                # sorted() needs an ordering bound, which VersionType does not
+                # declare.
+                values = sorted(frozenset(cast("Iterable[Any]", values)))
+                break
+        result = cls(tuple([(version, True, version, True) for version in values]))
+        if len(values) >= _POINT_SET_MIN_INTERVALS:
+            result._points = frozenset(values)
         return result
 
     @classmethod
