@@ -19,7 +19,7 @@ from kpip.cli.requirements import (
 )
 from kpip.cli.resolution_errors import resolution_error_message
 from kpip.cli.target import target_prefix
-from kpip.core.appdirs import resolve_cache_dir
+from kpip.core.appdirs import command_cache_dir
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import (
     CommandError,
@@ -330,7 +330,7 @@ def runtime_setup(
     else:
         os.environ.pop("KPIP_QUIET", None)
 
-    cache_dir = None if options.no_cache_dir else resolve_cache_dir(options.cache_dir)
+    cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
     return InstallRuntimeSetup(
         config=load_source_config("install"),
         explicit_index_url=any(arg in index_url_options for arg in args),

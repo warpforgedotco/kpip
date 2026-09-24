@@ -105,3 +105,13 @@ def test_a_requirement_with_no_marker_always_applies() -> None:
 def test_a_line_that_is_not_a_requirement_is_kept() -> None:
     """Dropping what cannot be parsed would be a worse answer than resolving it."""
     assert applies_to_target("--index-url https://packages.invalid/simple") is True
+
+
+def test_the_fast_path_reads_the_cache_options() -> None:
+    options = parse_lock_arguments(["--cache-dir", "/c", "--no-index", "demo"])
+    assert options is not None
+    assert (options.cache_dir, options.no_cache_dir) == ("/c", False)
+
+    options = parse_lock_arguments(["--cache-dir=/c", "--no-cache-dir", "demo"])
+    assert options is not None
+    assert (options.cache_dir, options.no_cache_dir) == ("/c", True)

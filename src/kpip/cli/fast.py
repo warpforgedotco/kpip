@@ -19,10 +19,11 @@ import os
 import sys
 
 from kpip.cli.lock_format import render_wheel_lock, write_lock_output
-from kpip.core.appdirs import configured_cache_dir
+from kpip.core.appdirs import command_cache_dir
+from kpip.core.code_identity import code_identity
 from kpip.core.names import canonicalize_name
 
-FAST_LOCK_PLAN_BUCKET = versioned_bucket("fast-lock-plan", 1)
+FAST_LOCK_PLAN_BUCKET = versioned_bucket("fast-lock-plan", 2)
 """Directory under the cache directory holding rendered lock plans."""
 
 REMOTE_EXACT_OPTIONS = ("--ignore-installed", "--no-compile", "--target")
@@ -595,7 +596,14 @@ def run_freeze(args: list[str]) -> int | None:
 
 
 class LockOptions:
-    __slots__ = ("find_links", "no_index", "output", "requirements")
+    __slots__ = (
+        "cache_dir",
+        "find_links",
+        "no_cache_dir",
+        "no_index",
+        "output",
+        "requirements",
+    )
 
     def __init__(
         self,
@@ -603,11 +611,15 @@ class LockOptions:
         find_links: list[str],
         no_index: bool,
         output: str,
+        cache_dir: str | None = None,
+        no_cache_dir: bool = False,
     ) -> None:
         self.requirements = requirements
         self.find_links = find_links
         self.no_index = no_index
         self.output = output
+        self.cache_dir = cache_dir
+        self.no_cache_dir = no_cache_dir
 
 
 PlanCacheKey = tuple[object, ...]
@@ -618,12 +630,18 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
     find_links: list[str] = []
     no_index = False
     output = "pylock.toml"
+    cache_dir: str | None = None
+    no_cache_dir = False
 
     index = 0
     while index < len(args):
         token = args[index]
         if token == "--no-index":
             no_index = True
+            index += 1
+            continue
+        if token == "--no-cache-dir":
+            no_cache_dir = True
             index += 1
             continue
         if token == "--quiet":
@@ -633,11 +651,13 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
         option = consume_option(
             args,
             index,
-            ("-f", "--find-links", "-r", "--requirement", "--output"),
+            ("-f", "--find-links", "-r", "--requirement", "--output", "--cache-dir"),
         )
         if option is not None:
             name, value, index = option
-            if name in ("-f", "--find-links"):
+            if name == "--cache-dir":
+                cache_dir = value
+            elif name in ("-f", "--find-links"):
                 find_links.append(value)
             elif name in ("-r", "--requirement"):
                 if not extend_requirements(
@@ -663,7 +683,9 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
         # full command, which evaluates markers against the lock's target.
         return None
 
-    return LockOptions(requirements, find_links, no_index, output)
+    return LockOptions(
+        requirements, find_links, no_index, output, cache_dir, no_cache_dir
+    )
 
 
 def cache_digest(value: bytes) -> str:
@@ -701,6 +723,8 @@ def plan_cache_key(options: LockOptions) -> PlanCacheKey | None:
             return None
 
     return (
+        # The rendered lock outlives this kpip in the default cache.
+        code_identity(),
         sys.version_info[:3],
         sys.platform,
         tuple(options.requirements),
@@ -710,7 +734,7 @@ def plan_cache_key(options: LockOptions) -> PlanCacheKey | None:
 
 
 def cache_path(options: LockOptions) -> str | None:
-    root = configured_cache_dir()
+    root = command_cache_dir(options.cache_dir, options.no_cache_dir)
     if not root:
         return None
     key = (

@@ -4,7 +4,11 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from import_harness import ROOT, baseline_modules, imported_modules, run_kpip
+
+from kpip.cli.fast import FAST_LOCK_PLAN_BUCKET
 
 if sys.version_info >= (3, 11):
     from tomllib import loads
@@ -87,6 +91,40 @@ def test_fast_lock_produces_output_on_cache_hit(tmp_path: Path) -> None:
     assert first.returncode == 0
     assert second.returncode == 0
     assert output.is_file()
+
+
+@pytest.mark.parametrize("disable", [None, "--no-cache-dir", "KPIP_NO_CACHE_DIR"])
+def test_fast_lock_caches_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    disable: str | None,
+) -> None:
+    """Without KPIP_CACHE_DIR a lock caches in the default place, unless told not to."""
+
+    monkeypatch.delenv("KPIP_CACHE_DIR", raising=False)
+    monkeypatch.delenv("KPIP_NO_CACHE_DIR", raising=False)
+    default_cache = tmp_path / "user-cache"
+    env = {"XDG_CACHE_HOME": str(default_cache), "LOCALAPPDATA": str(default_cache)}
+    args = [
+        "lock",
+        "--quiet",
+        "--no-index",
+        "--find-links",
+        str(SIMPLEWHEEL),
+        "--output",
+        str(tmp_path / "pylock.toml"),
+        "simplewheel==2.0",
+    ]
+    if disable == "--no-cache-dir":
+        args.insert(1, disable)
+    elif disable is not None:
+        env[disable] = "1"
+
+    result = run_kpip(args, cwd=tmp_path, env=env)
+
+    assert result.returncode == 0, result.stderr
+    plans = list(default_cache.rglob(f"{FAST_LOCK_PLAN_BUCKET}/*.cache"))
+    assert len(plans) == (0 if disable else 1)
 
 
 FAST_INSTALL_FORBIDDEN = frozenset(
