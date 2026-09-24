@@ -369,27 +369,31 @@ def record_replayable_lock(
     provider: CandidateProvider,
     session: DeferredNetworkSession,
     rendered: str,
+    previous: bytes | None,
 ) -> None:
     """Keep this lock so an identical one can replay it while its pages are unchanged.
 
-    It is kept for the next lock, which starts from this one: preferring the
+    It is kept for a lock that starts from ``previous``, as this one did,
+    and for the next lock, which starts from this one: preferring the
     versions of a lock that satisfies the same inputs gives that lock back,
     so the answer is known without resolving. With ``--upgrade-package`` it
-    is not kept; the package resolved afresh could come out differently when
-    the rest are preferred from the start.
+    is kept only for the first; the package resolved afresh could come out
+    differently when the rest are preferred from the start.
     """
 
-    if options.upgrade_packages:
-        return
-
     http_cache = session.cache
-    key = lock_replay_key(
-        options,
-        cache_dir,
-        lock_left_behind(options.output, options.upgrade, rendered),
-    )
+    starts = [previous]
 
-    if key is None or http_cache is None:
+    if not options.upgrade_packages:
+        starts.append(lock_left_behind(options.output, options.upgrade, rendered))
+
+    keys = {
+        key
+        for start in starts
+        if (key := lock_replay_key(options, cache_dir, start)) is not None
+    }
+
+    if not keys or http_cache is None:
         return
 
     assert cache_dir is not None
@@ -402,7 +406,8 @@ def record_replayable_lock(
     validators = page_validators(http_cache, pages) if pages else None
 
     if validators is not None:
-        save_record(cache_dir, key, validators, rendered)
+        for key in keys:
+            save_record(cache_dir, key, validators, rendered)
 
 
 def run_lock(args: list[str]) -> int:
@@ -886,7 +891,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     if every_package_is_an_index_wheel and provider is not None:
         record_replayable_lock(
-            options, cache_dir, provider, resolution_session, rendered
+            options, cache_dir, provider, resolution_session, rendered, previous
         )
 
     if quiet_environment is None:
