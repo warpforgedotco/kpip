@@ -86,3 +86,44 @@ def test_the_fast_path_reads_the_upgrade_options() -> None:
     assert options is not None
     assert options.upgrade
     assert options.upgrade_packages == ["a", "b"]
+
+
+WRITTEN = b"""\
+created-by = "kpip"
+lock-version = "1.0"
+
+[[packages]]
+name = "demo"
+version = "1.2"
+[[packages.wheels]]
+name = "demo-1.2-py3-none-any.whl"
+url = "https://files.invalid/demo-1.2-py3-none-any.whl"
+[packages.wheels.hashes]
+sha256 = "00"
+
+[[packages]]
+name = "other"
+version = "3.0"
+[packages.sdist]
+name = "other-3.0.tar.gz"
+"""
+
+
+def test_a_lock_kpip_wrote_is_read_from_its_lines() -> None:
+    """A wheel's own ``name`` is not taken for the package's."""
+    assert lock_preferences(WRITTEN, []) == {"demo": "1.2", "other": "3.0"}
+
+
+def test_a_lock_another_tool_wrote_is_read_as_toml() -> None:
+    other_tool = WRITTEN.replace(b'created-by = "kpip"', b'created-by = "uv"')
+    reordered = other_tool.replace(
+        b'name = "demo"\nversion = "1.2"', b'version = "1.2"\nname = "demo"'
+    )
+
+    assert lock_preferences(reordered, []) == {"demo": "1.2", "other": "3.0"}
+
+
+def test_an_escaped_value_is_read_as_toml() -> None:
+    escaped = WRITTEN.replace(b'version = "1.2"', b'version = "1\\u002e2"')
+
+    assert lock_preferences(escaped, []) == {"demo": "1.2", "other": "3.0"}
