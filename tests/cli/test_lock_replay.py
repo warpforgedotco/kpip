@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from kpip.core.appdirs import http_cache_path, resolve_cache_dir
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.network.cache import SafeFileCache
 from kpip.network.freshness import CacheMetadataReader
+from kpip.network.freshness import encode_metadata
 
 PAGE = "https://pypi.org/simple/demo/"
 RENDERED = 'lock-version = "1.0"\n# replayed\n'
@@ -41,7 +41,7 @@ def store_page(
     }
     SafeFileCache(http_cache_path(cache_dir)).set_with_body(
         url,
-        json.dumps(metadata).encode("utf-8"),
+        encode_metadata(metadata),
         b"{}",
     )
 

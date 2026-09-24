@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import marshal
 import os
 import time
 
@@ -66,6 +66,27 @@ def read_cache_metadata(directory: str, key: str) -> bytes | None:
         return None
 
     return metadata
+
+
+def encode_metadata(values: dict[str, Any]) -> bytes:
+    """A cache entry's metadata as stored: plain values in ``marshal`` form.
+
+    Not JSON: the interpreter has ``marshal`` built in, while ``json`` brings
+    ``re`` with it, and a lock replayed from the cache reads nothing else.
+    """
+
+    return marshal.dumps(values)
+
+
+def decode_metadata(raw: bytes) -> dict[str, Any] | None:
+    """What :func:`encode_metadata` stored; None for anything else."""
+
+    try:
+        values = marshal.loads(raw)
+    except (EOFError, TypeError, ValueError):
+        return None
+
+    return values if isinstance(values, dict) else None
 
 
 class CacheMetadataReader:
@@ -233,12 +254,9 @@ def cached_response_is_fresh(
     if metadata is None:
         return False
 
-    try:
-        values = json.loads(metadata)
-    except (TypeError, ValueError):
-        return False
+    values = decode_metadata(metadata)
 
-    if not isinstance(values, dict) or not metadata_is_fresh(values, now):
+    if values is None or not metadata_is_fresh(values, now):
         return False
 
     stored_at = values.get("stored_at")

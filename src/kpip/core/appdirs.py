@@ -22,8 +22,9 @@ def user_cache_dir(appname: str) -> str:
 
 
 # Version 2: entries nest one 256-wide level deep instead of five (see
-# network/cache.py:get_cache_path).
-HTTP_CACHE_BUCKET = versioned_bucket("http", 2)
+# network/cache.py:get_cache_path). Version 3: metadata is marshal, not JSON
+# (network/freshness.py:encode_metadata).
+HTTP_CACHE_BUCKET = versioned_bucket("http", 3)
 WHEEL_CACHE_BUCKET = versioned_bucket("wheels", 2)
 
 

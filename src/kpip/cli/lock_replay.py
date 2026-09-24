@@ -12,7 +12,6 @@ resolves, and a replay must not import the resolver or the HTTP client.
 
 from __future__ import annotations
 
-import json
 import marshal
 import os
 import sys
@@ -21,7 +20,11 @@ import time
 from kpip.core.appdirs import http_cache_path
 from kpip.core.code_identity import code_identity
 from kpip.core.utils import versioned_bucket
-from kpip.network.freshness import CacheMetadataReader, metadata_is_fresh
+from kpip.network.freshness import (
+    CacheMetadataReader,
+    decode_metadata,
+    metadata_is_fresh,
+)
 
 TYPE_CHECKING = False
 
@@ -255,15 +258,7 @@ def save_record(
 def _page_metadata(http_cache: MetadataCache, url: str) -> dict[str, object] | None:
     raw = http_cache.get(url)
 
-    if raw is None:
-        return None
-
-    try:
-        values = json.loads(raw)
-    except (TypeError, ValueError):
-        return None
-
-    return values if isinstance(values, dict) else None
+    return None if raw is None else decode_metadata(raw)
 
 
 def page_validators(

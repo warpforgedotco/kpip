@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import ssl
 import sys
@@ -29,6 +28,8 @@ from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
 from kpip.network.freshness import (
     cached_response_is_fresh,
+    decode_metadata,
+    encode_metadata,
     freshness_deadline,
     metadata_is_fresh,
 )
@@ -698,7 +699,10 @@ class NetworkSession:
             return None, None, None
 
         try:
-            values = json.loads(metadata)
+            values = decode_metadata(metadata)
+
+            if values is None:
+                raise ValueError("unreadable cache metadata")
 
             if not metadata_is_fresh(values, time.time()):
                 if not values.get("etag") and not values.get("last_modified"):
@@ -723,7 +727,7 @@ class NetworkSession:
 
             reason = str(values["reason"])
 
-        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (AttributeError, KeyError, TypeError, ValueError):
             if body is not None:
                 body.close()
 
@@ -839,7 +843,7 @@ class NetworkSession:
 
             updated["last_modified"] = last_modified
 
-            cache.set(url, json.dumps(updated).encode("utf-8"))
+            cache.set(url, encode_metadata(updated))
 
         if cached_body is None:
             body = cache.get_body(url)
@@ -898,7 +902,7 @@ class NetworkSession:
         if getattr(response, "_has_decoded_content", False):
             cached_headers.discard("Content-Encoding")
 
-        metadata = json.dumps(
+        metadata = encode_metadata(
             {
                 "status": response.status,
                 "reason": response.reason,
@@ -909,7 +913,7 @@ class NetworkSession:
                 "etag": response.headers.get("ETag"),
                 "last_modified": response.headers.get("Last-Modified"),
             },
-        ).encode("utf-8")
+        )
 
         self.cache.set_with_body(response.url, metadata, body)
 
