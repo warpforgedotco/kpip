@@ -407,12 +407,19 @@ def _extract_member(
 ) -> ArchiveEntry:
     member, relative, destination, hint = item
 
-    metadata = copy_member_with_metadata(archive, member, destination, metadata=hint)
-
     mode = zip_mode(member)
 
-    if mode is not None:
-        os.chmod(destination, mode)
+    # Created with its permissions rather than chmod-ed after: a file the
+    # wheel marks executable is 0o777 under the umask, any other 0o666, as
+    # pip and uv install them -- one syscall fewer for every file of every
+    # wheel a cold install extracts.
+    metadata = copy_member_with_metadata(
+        archive,
+        member,
+        destination,
+        metadata=hint,
+        creation_mode=0o777 if mode is not None and mode & 0o111 else 0o666,
+    )
 
     return (relative, metadata[0], metadata[1], mode or 0)
 
