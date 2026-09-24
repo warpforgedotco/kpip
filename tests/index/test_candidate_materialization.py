@@ -17,7 +17,7 @@ from kpip.index.candidate_materialization import (
 )
 from kpip.index.links import Link
 from kpip.index.provider import CandidateProvider
-from kpip.index.source_models import CandidateRecord
+from kpip.index.source_models import CandidateRecord, MetadataFile
 from kpip.resolution.api import ResolutionEngine
 from kpip.core.archive import WheelArchive
 
@@ -467,3 +467,49 @@ def test_unparsable_metadata_falls_back_instead_of_propagating() -> None:
         materializer.ranged_wheel_metadata(_remote_wheel_record(), frozenset()) is None
     )
     assert session.calls, "the range read was never attempted"
+
+
+class _RecordingSession:
+    """A session whose HTTP cache holds ``fresh`` and which counts requests."""
+
+    def __init__(self, fresh: set[str]) -> None:
+        self.fresh = fresh
+        self.requested: list[str] = []
+
+    def has_fresh_cached_response(self, url: str) -> bool:
+        return url in self.fresh
+
+    def get(self, url: str) -> object:
+        self.requested.append(url)
+        return object()
+
+
+def test_metadata_prefetch_leaves_fresh_cached_responses_to_the_resolver() -> None:
+    """A fresh cached response hides no latency; fetching it only builds a client."""
+    records = tuple(
+        CandidateRecord(
+            name="demo",
+            version=Version(version),
+            link=Link.from_url(
+                f"https://example.invalid/demo-{version}-py3-none-any.whl",
+                source_url=None,
+                metadata_file=MetadataFile(None),
+            ),
+        )
+        for version in ("1.0", "2.0")
+    )
+    cached = "https://example.invalid/demo-1.0-py3-none-any.whl.metadata"
+    missing = "https://example.invalid/demo-2.0-py3-none-any.whl.metadata"
+    session = _RecordingSession({cached})
+    materializer = CandidateMaterializer(session=session)
+
+    try:
+        materializer.prefetch_metadata(records)
+        assert materializer.prefetched_metadata_future(cached) is None
+        future = materializer.prefetched_metadata_future(missing)
+        assert future is not None
+        future.result()
+    finally:
+        materializer.close()
+
+    assert session.requested == [missing]

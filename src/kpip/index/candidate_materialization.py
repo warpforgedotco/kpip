@@ -1160,6 +1160,12 @@ class CandidateMaterializer:
 
         requested_extras = frozenset(requirement.extras if requirement else ())
 
+        # A response the HTTP cache holds fresh is read on demand without a
+        # round trip, so prefetching it hides no latency. It only built the
+        # client -- importing the HTTP stack -- and read 152 cached files on
+        # every warm airflow lock, for releases the resolve never reached.
+        has_fresh_response = getattr(self.session, "has_fresh_cached_response", None)
+
         pending: list[tuple[str, str]] = []
 
         for candidate in records:
@@ -1172,6 +1178,9 @@ class CandidateMaterializer:
                 continue
 
             if self.has_cached_metadata(candidate, requested_extras):
+                continue
+
+            if has_fresh_response is not None and has_fresh_response(metadata_link.url):
                 continue
 
             pending.append((metadata_link.url, metadata_link.url))
