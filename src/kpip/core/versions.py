@@ -24,14 +24,12 @@ The rules that follow from that:
 
 from __future__ import annotations
 
-import re
-
 from kpip.core.caches import register_table
-from kpip.core.names import NORMALIZE_RE
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    import re
     from typing import Any
 
 
@@ -40,6 +38,10 @@ class InvalidVersion(ValueError):
 
 
 _version_re: re.Pattern[str] | None = None
+
+_local_separators: re.Pattern[str] | None = None
+"""Runs of local-label separators, compiled with :func:`version_re`: only a
+version that pattern parses can carry a local label."""
 
 
 def version_re() -> re.Pattern[str]:
@@ -52,9 +54,13 @@ def version_re() -> re.Pattern[str]:
     requirement, so most of them would pay for a pattern they never match.
     """
 
-    global _version_re
+    global _version_re, _local_separators
 
     if _version_re is None:
+        # Imported here too: ``re`` costs some 2.5 ms to import, which a
+        # plain dotted version never needs.
+        import re
+
         _version_re = re.compile(
             r"""
             ^\s*
@@ -80,6 +86,7 @@ def version_re() -> re.Pattern[str]:
             """,
             re.IGNORECASE | re.VERBOSE,
         )
+        _local_separators = re.compile(r"[-_.]+")
 
     return _version_re
 
@@ -173,9 +180,12 @@ class Version(tuple):
                 )
 
             if local_text is not None:
+                # Compiled with the pattern that matched this version.
+                separators = _local_separators
+                assert separators is not None
                 local = tuple(
                     (1, int(part)) if part.isdigit() else (0, part)
-                    for part in NORMALIZE_RE.sub(".", local_text.lower()).split(".")
+                    for part in separators.sub(".", local_text.lower()).split(".")
                 )
             else:
                 local = _NO_LOCAL
