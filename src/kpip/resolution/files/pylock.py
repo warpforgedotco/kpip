@@ -57,8 +57,18 @@ def is_pylock_reference(value: str) -> bool:
 
 
 def pylock_location(reference: str, path: str | None) -> str:
+    """Where a distribution's ``path`` or ``url`` points, as a URL.
+
+    A ``url`` is absolute already; a ``path`` is relative to the lock. Joined
+    onto the lock's directory, an index wheel's ``https://`` URL became a
+    file beside the lock that did not exist, and a lock kpip wrote could not
+    be installed.
+    """
     if path is None:
         raise InstallationError("pylock package is missing its path")
+
+    if urllib.parse.urlsplit(path).scheme in (*HTTP_SCHEMES, "file"):
+        return path
 
     parsed = urllib.parse.urlparse(reference)
 
