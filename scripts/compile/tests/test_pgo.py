@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -83,7 +84,8 @@ def test_nuitka_runs_the_training_through_a_script(tmp_path: Path) -> None:
         str(binary),
         str(result),
     ]
-    assert script.stat().st_mode & 0o111
+    # Windows has no execute bits, and --pgo is not supported there.
+    assert sys.platform == "win32" or script.stat().st_mode & 0o111
     assert "-m kpip_compile.pgo" in script.read_text(encoding="utf-8")
     assert not result.exists()
 
