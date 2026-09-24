@@ -208,74 +208,83 @@ def _unit_propagation_core(
             undetermined_assignment: RangeProtocol[Any] | None = None
             conflict = True
             for term in incompatibility.terms:
-                assignment = effective_get(term.package, _MISSING)
+                package = term.package
+                assignment = effective_get(package, _MISSING)
                 if assignment is _MISSING:
-                    assignment = solution_get(term.package)
+                    assignment = solution_get(package)
                 if assignment is None:
                     relation = None
                 else:
                     positive = term._positive  # noqa: SLF001
-                    constraint = term.constraint
-
-                    key = None
-                    relation = None
-                    if cache_on:
-                        assignment_token = id_tokens_get(id(assignment))
-                        if assignment_token is None:
-                            assignment_token = _intern_range(resolver, assignment)
-                        constraint_token = id_tokens_get(id(constraint))
-                        if constraint_token is None:
-                            constraint_token = _intern_range(resolver, constraint)
-                        # Packed int key; see resolver.relation_cache.  Tokens
-                        # stay far below 2**32, so the fields cannot collide.
-                        key = (
-                            (assignment_token << 33)
-                            | (constraint_token << 1)
-                            | positive
-                        )
-                        relation = cache_get(key)
-
-                    if relation is None:
-                        range_relation = assignment.relation(constraint)
-                        subset = range_relation.is_subset
-                        disjoint = range_relation.is_disjoint
-                        if positive:
-                            relation = (
-                                satisfied
-                                if subset
-                                else (
-                                    contradicted
-                                    if disjoint
-                                    else undetermined
-                                )
-                            )
-                        else:
-                            relation = (
-                                satisfied
-                                if disjoint
-                                else (
-                                    contradicted if subset else undetermined
-                                )
-                            )
-                        probes_left -= 1
-                        if key is not None:
-                            if len(cache) >= RELATION_CACHE_MAX:
-                                cache.clear()
-                            cache[key] = relation
-                        if probes_left <= gate_hits:
-                            resolver.relation_gate_hits = gate_hits
-                            resolver.relation_gate_probes_left = probes_left
-                            _resample_relation_gate(resolver)
-                            cache_on = resolver.relation_cache_on
-                            gate_hits = resolver.relation_gate_hits
-                            probes_left = resolver.relation_gate_probes_left
+                    # Ranges are immutable, so a term met again with the range
+                    # it was last checked against relates to it the same way;
+                    # over half the checks of a resolve are such repeats.
+                    if term._memo_range is assignment:  # noqa: SLF001
+                        relation = term._memo_relation  # noqa: SLF001
                     else:
-                        gate_hits += 1
+                        constraint = term.constraint
+
+                        key = None
+                        relation = None
+                        if cache_on:
+                            assignment_token = id_tokens_get(id(assignment))
+                            if assignment_token is None:
+                                assignment_token = _intern_range(resolver, assignment)
+                            constraint_token = id_tokens_get(id(constraint))
+                            if constraint_token is None:
+                                constraint_token = _intern_range(resolver, constraint)
+                            # Packed int key; see resolver.relation_cache.  Tokens
+                            # stay far below 2**32, so the fields cannot collide.
+                            key = (
+                                (assignment_token << 33)
+                                | (constraint_token << 1)
+                                | positive
+                            )
+                            relation = cache_get(key)
+
+                        if relation is None:
+                            range_relation = assignment.relation(constraint)
+                            subset = range_relation.is_subset
+                            disjoint = range_relation.is_disjoint
+                            if positive:
+                                relation = (
+                                    satisfied
+                                    if subset
+                                    else (
+                                        contradicted
+                                        if disjoint
+                                        else undetermined
+                                    )
+                                )
+                            else:
+                                relation = (
+                                    satisfied
+                                    if disjoint
+                                    else (
+                                        contradicted if subset else undetermined
+                                    )
+                                )
+                            probes_left -= 1
+                            if key is not None:
+                                if len(cache) >= RELATION_CACHE_MAX:
+                                    cache.clear()
+                                cache[key] = relation
+                            if probes_left <= gate_hits:
+                                resolver.relation_gate_hits = gate_hits
+                                resolver.relation_gate_probes_left = probes_left
+                                _resample_relation_gate(resolver)
+                                cache_on = resolver.relation_cache_on
+                                gate_hits = resolver.relation_gate_hits
+                                probes_left = resolver.relation_gate_probes_left
+                        else:
+                            gate_hits += 1
+                        term._memo_range = assignment  # noqa: SLF001
+                        term._memo_relation = relation  # noqa: SLF001
 
                     if (
                         (positive and relation is satisfied)
                         or (not positive and relation is contradicted)
-                    ) and not has_positive_constraint(term.package):
+                    ) and not has_positive_constraint(package):
                         relation = None
 
                 if relation is satisfied:
