@@ -407,7 +407,9 @@ def test_unit_propagation_reuses_the_classified_assignment(
     assert propagate.unit_propagation(candidate, "gate") is None
     assert solution_get("target") == ~excluded
     assert candidate.stats.derivations == 1
-    assert get_calls == ["target", "gate", "target", "target"]
+    # "gate" is already in the solution's effective-range cache, which
+    # propagation reads directly; only the uncached "target" goes through get.
+    assert get_calls == ["target", "target"]
 
 
 @_REQUIRES_RESOLVER_OPTIMIZATIONS
