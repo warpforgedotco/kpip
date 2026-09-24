@@ -470,10 +470,16 @@ def test_a_lock_does_not_build_the_client_it_may_never_use(tmp_path: Path) -> No
     assert not (modules & INDEX_LOCK_FORBIDDEN), sorted(modules & INDEX_LOCK_FORBIDDEN)
 
 
+@pytest.mark.parametrize("quiet", [True, False])
 def test_a_replayed_lock_loads_neither_the_resolver_nor_the_client(
     tmp_path: Path,
+    quiet: bool,
 ) -> None:
-    """A lock answered from its record never gets as far as resolving."""
+    """A lock answered from its record never gets as far as resolving.
+
+    Nor, since it neither prints nor logs, as far as configuring logging:
+    ``--quiet`` or not, it is answered before CLI startup.
+    """
     from kpip.cli import lock_replay
     from kpip.core.appdirs import http_cache_path, resolve_cache_dir
     from kpip.index.config import DEFAULT_INDEX_URL
@@ -502,7 +508,7 @@ def test_a_replayed_lock_loads_neither_the_resolver_nor_the_client(
     modules = imported_modules(
         [
             "lock",
-            "--quiet",
+            *(["--quiet"] if quiet else []),
             "--cache-dir",
             str(cache_root),
             "-r",
@@ -518,6 +524,7 @@ def test_a_replayed_lock_loads_neither_the_resolver_nor_the_client(
     forbidden = INDEX_LOCK_FORBIDDEN | {
         "hashlib",
         "kpip.cli.lock",
+        "kpip.cli.logging_config",
         "kpip.resolution.api",
     }
     assert not (modules & forbidden), sorted(modules & forbidden)
