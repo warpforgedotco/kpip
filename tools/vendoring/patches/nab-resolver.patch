@@ -752,9 +752,18 @@ index fba4d17..a79bdd1 100644
  
      if result is None:
 diff --git a/src/kpip/_vendor/nab_resolver/ranges.py b/src/kpip/_vendor/nab_resolver/ranges.py
-index 4385af4..07565b4 100644
+index 4385af4..2eb2d50 100644
 --- a/src/kpip/_vendor/nab_resolver/ranges.py
 +++ b/src/kpip/_vendor/nab_resolver/ranges.py
+@@ -19,7 +19,7 @@ from ._compat import override
+ from .types import RangeRelation, VersionType
+ 
+ if TYPE_CHECKING:
+-    from collections.abc import Iterable
++    from collections.abc import Iterable, Sequence
+ 
+ # Bound once so the hot return paths load a module global instead of a class
+ # attribute.
 @@ -27,6 +27,8 @@ _EMPTY_REL = RangeRelation.EMPTY
  _SUBSET_REL = RangeRelation.SUBSET
  _DISJOINT_REL = RangeRelation.DISJOINT
@@ -848,13 +857,32 @@ index 4385af4..07565b4 100644
  
      @classmethod
      def empty(cls) -> Range[VersionType]:
-@@ -246,8 +294,13 @@ class Range(Generic[VersionType]):
+@@ -245,9 +293,32 @@ class Range(Generic[VersionType]):
+ 
          Cheaper than folding :meth:`singleton` with ``|``.
          """
++        values: Sequence[Any] = (
++            versions if isinstance(versions, (list, tuple)) else list(versions)
++        )
++        # Callers nearly always pass distinct versions in ascending order,
++        # e.g. a slice of a sorted catalog.  Confirming that costs one
++        # comparison per version, where sorting the arbitrary order of a set
++        # of them costs a full sort.
++        ordered = True
++        for index in range(1, len(values)):
++            if not values[index - 1] < values[index]:
++                ordered = False
++                break
++        if ordered:
++            result = cls(tuple([(version, True, version, True) for version in values]))
++            if len(values) >= _POINT_SET_MIN_INTERVALS:
++                result._points = frozenset(values)
++            return result
++
          # sorted() needs an ordering bound, which VersionType does not declare.
 -        distinct = sorted(set(cast("Iterable[Any]", versions)))
 -        return cls(tuple((version, True, version, True) for version in distinct))
-+        points = frozenset(cast("Iterable[Any]", versions))
++        points = frozenset(cast("Iterable[Any]", values))
 +        result = cls(
 +            tuple((version, True, version, True) for version in sorted(points))
 +        )
@@ -864,7 +892,7 @@ index 4385af4..07565b4 100644
  
      @classmethod
      def at_least(cls, version: VersionType) -> Range[VersionType]:
-@@ -270,13 +323,23 @@ class Range(Generic[VersionType]):
+@@ -270,13 +341,23 @@ class Range(Generic[VersionType]):
          return cls(((NEGATIVE_INFINITY, False, version, False),))
  
      @classmethod
@@ -892,7 +920,7 @@ index 4385af4..07565b4 100644
  
      @property
      def is_empty(self) -> bool:
-@@ -284,28 +347,65 @@ class Range(Generic[VersionType]):
+@@ -284,28 +365,65 @@ class Range(Generic[VersionType]):
          return len(self._intervals) == 0
  
      def __contains__(self, version: object) -> bool:
@@ -972,7 +1000,7 @@ index 4385af4..07565b4 100644
  
              inter_lower, inter_lower_inc = _max_lower_bound(
                  left_interval, right_interval
-@@ -333,7 +433,7 @@ class Range(Generic[VersionType]):
+@@ -333,7 +451,7 @@ class Range(Generic[VersionType]):
              # Advance the side with the smaller upper bound
              left_upper = left_interval[2]
              right_upper = right_interval[2]
@@ -981,7 +1009,7 @@ index 4385af4..07565b4 100644
                  left_index += 1
                  right_index += 1
              elif left_upper is POSITIVE_INFINITY or (
-@@ -349,8 +449,22 @@ class Range(Generic[VersionType]):
+@@ -349,8 +467,22 @@ class Range(Generic[VersionType]):
          """Union of two ranges (versions in either)."""
          if not isinstance(other, Range):
              return NotImplemented
@@ -1006,7 +1034,7 @@ index 4385af4..07565b4 100644
  
      def __invert__(self) -> Range[VersionType]:
          """Complement (versions NOT in this range)."""
-@@ -411,48 +525,59 @@ class Range(Generic[VersionType]):
+@@ -411,48 +543,59 @@ class Range(Generic[VersionType]):
          if not isinstance(other, Range):
              return NotImplemented
  
@@ -1087,7 +1115,7 @@ index 4385af4..07565b4 100644
                      and (
                          lower > right_lower
                          or (
-@@ -466,29 +591,22 @@ class Range(Generic[VersionType]):
+@@ -466,29 +609,22 @@ class Range(Generic[VersionType]):
                      )
  
                  if right_upper is POSITIVE_INFINITY:
@@ -1123,7 +1151,7 @@ index 4385af4..07565b4 100644
                  lower is not NEGATIVE_INFINITY
                  and upper is not POSITIVE_INFINITY
                  and (
-@@ -508,27 +626,32 @@ class Range(Generic[VersionType]):
+@@ -508,27 +644,32 @@ class Range(Generic[VersionType]):
          ``other`` always leave a gap, so an interval of self is covered only
          when a single interval of other holds all of it.
          """
@@ -1172,7 +1200,7 @@ index 4385af4..07565b4 100644
                      break
                  right_index += 1
  
-@@ -536,10 +659,24 @@ class Range(Generic[VersionType]):
+@@ -536,10 +677,24 @@ class Range(Generic[VersionType]):
                  return False
  
              right = right_intervals[right_index]
@@ -1201,7 +1229,7 @@ index 4385af4..07565b4 100644
                  return False
  
          return True
-@@ -554,6 +691,15 @@ class Range(Generic[VersionType]):
+@@ -554,6 +709,15 @@ class Range(Generic[VersionType]):
          Stops at the first shared version rather than building the whole
          intersection.
          """
@@ -1217,7 +1245,7 @@ index 4385af4..07565b4 100644
          left_intervals = self._intervals
          right_intervals = other._intervals
          left_count = len(left_intervals)
-@@ -586,84 +732,85 @@ class Range(Generic[VersionType]):
+@@ -586,84 +750,85 @@ class Range(Generic[VersionType]):
          return True
  
      def relation(self, other: Range[VersionType]) -> RangeRelation:
@@ -1362,7 +1390,7 @@ index 4385af4..07565b4 100644
              return _DISJOINT_REL
          return _OVERLAPPING_REL
  
-@@ -703,6 +850,7 @@ class Range(Generic[VersionType]):
+@@ -703,6 +868,7 @@ class Range(Generic[VersionType]):
          """Restore from :meth:`__getstate__`, leaving the hash to be recomputed."""
          (self._intervals,) = state
          self._hash = 0
@@ -1370,7 +1398,7 @@ index 4385af4..07565b4 100644
  
      @override
      def __repr__(self) -> str:
-@@ -731,6 +879,14 @@ class Range(Generic[VersionType]):
+@@ -731,6 +897,14 @@ class Range(Generic[VersionType]):
          return not self.is_empty
  
  
@@ -1385,7 +1413,7 @@ index 4385af4..07565b4 100644
  def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
      """Sort intervals by lower bound and merge overlapping or adjacent ones.
  
-@@ -742,13 +898,7 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
+@@ -742,13 +916,7 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
      if not intervals:
          return ()
  

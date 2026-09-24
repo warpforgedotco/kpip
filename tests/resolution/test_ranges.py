@@ -262,6 +262,30 @@ def test_large_discrete_range_rebuilds_point_cache_after_pickle() -> None:
     assert restored._points == frozenset(range(32))
 
 
+@pytest.mark.parametrize("size", [0, 1, 5, 40])
+def test_from_versions_does_not_depend_on_order_or_repeats(size: int) -> None:
+    """Ordered input skips the sort, and must build the same range."""
+    ascending = list(range(0, size * 2, 2))
+    shuffled = random.Random(size).sample(ascending, len(ascending))
+    inputs = [
+        ascending,
+        tuple(ascending),
+        ascending[::-1],
+        shuffled,
+        ascending + ascending[: size // 2],
+        iter(shuffled),
+    ]
+
+    built = [Range.from_versions(versions) for versions in inputs]
+
+    for result in built:
+        assert result == built[0]
+        assert result._as_points() == built[0]._as_points()
+    assert list(built[0]._intervals) == [
+        (version, True, version, True) for version in ascending
+    ]
+
+
 def test_empty_range_is_subset_and_disjoint() -> None:
     empty: Range = Range.empty()
     other = Range.between(1, 5)
