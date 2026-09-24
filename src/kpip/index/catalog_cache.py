@@ -35,6 +35,8 @@ CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 3)}:"
 CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 3).encode() + b"\0"
 SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 4).encode() + b"\0"
 CHOICE_HEADER = versioned_bucket("kpip-index-choice", 3).encode() + b"\0"
+SUMMARY_SNAPSHOT = f"{versioned_bucket('kpip-index-summary', 4)}.snapshot"
+"""The one file a lock's summaries are also stored in, beside the entries."""
 
 _SUMMARY_FRESHNESS = struct.Struct("<ddI")
 """When the summary's page expires and was stored, and a CRC-32 of the two.
@@ -290,6 +292,12 @@ def load_summary(cache: Any, url: str) -> CatalogSummary | None:
     if cache is None:
         return None
     return load_summary_from(cache, url, read_summary(cache, url))
+
+
+def serve_summaries_from_snapshot(cache: Any) -> None:
+    """Read summaries through ``cache``'s snapshot until it is saved."""
+    if cache is not None:
+        cache.use_snapshot(SUMMARY_SNAPSHOT, SUMMARY_PREFIX)
 
 
 def read_summary(cache: Any, url: str) -> bytes | None:
