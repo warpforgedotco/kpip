@@ -111,6 +111,22 @@ def compiled_version(binary: str) -> str:
     return f"{head} ({python}" if bracket else head
 
 
+def binary_fingerprint(binary: str) -> str:
+    """The SHA-256 of a compiled kpip, which tells two builds apart.
+
+    Two builds can print the same version and embedded Python -- a
+    standalone and a onefile one, or before and after a change -- so the
+    version alone cannot say which binary a run measured.
+    """
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(binary, "rb") as file:
+        for chunk in iter(lambda: file.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def collect_run_metadata(
     *, kpip_python: str, uv_path: str, kpip_compiled: str | None = None
 ) -> dict[str, str]:
@@ -134,6 +150,7 @@ def collect_run_metadata(
     }
     if kpip_compiled is not None:
         metadata["kpip_compiled_version"] = compiled_version(kpip_compiled)
+        metadata["kpip_compiled_sha256"] = binary_fingerprint(kpip_compiled)
     return metadata
 
 

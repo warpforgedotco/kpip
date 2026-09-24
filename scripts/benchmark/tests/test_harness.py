@@ -588,3 +588,16 @@ def test_a_compiled_version_leaves_out_where_it_was_built(
     )
 
     assert cli.compiled_version("kpip") == "kpip 0.0.1 (python 3.14)"
+
+
+def test_the_compiled_binary_is_fingerprinted(tmp_path: Path) -> None:
+    import hashlib
+
+    from kpip_benchmark.cli import binary_fingerprint
+
+    binary = tmp_path / "kpip"
+    binary.write_bytes(b"compiled kpip")
+
+    assert (
+        binary_fingerprint(str(binary)) == hashlib.sha256(b"compiled kpip").hexdigest()
+    )
