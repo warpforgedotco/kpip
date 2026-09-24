@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from kpip.cli.fast import read_requirements
 from kpip.cli.lock_format import (
@@ -25,6 +26,7 @@ from kpip.cli.lock_replay import (
 )
 from kpip.cli.parsers.lock import create_parser
 from kpip.core.appdirs import command_cache_dir
+from kpip.core.expiry import refresh_since
 from kpip.core.errors import CommandError, KpipError
 from kpip.core.format_control import FormatControl
 from kpip.core.hashes import file_hashes
@@ -459,6 +461,9 @@ def close_resolvers(resolvers: list[ResolutionEngine]) -> None:
 
 
 def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
+    if options.refresh:
+        refresh_since(time.time())
+
     cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
 
     resolution_session = DeferredNetworkSession(cache_dir=cache_dir)

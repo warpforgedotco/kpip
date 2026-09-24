@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import time
 import sys
 
 from kpip.build.build import build_editable_from_source
@@ -20,6 +21,7 @@ from kpip.cli.requirements import (
 from kpip.cli.resolution_errors import resolution_error_message
 from kpip.cli.target import target_prefix
 from kpip.core.appdirs import command_cache_dir
+from kpip.core.expiry import refresh_since
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import (
     CommandError,
@@ -710,6 +712,7 @@ def cached_remote_plan_key(
 ) -> str | None:
     if (
         options.no_cache_dir
+        or options.refresh
         or options.target is None
         or not options.ignore_installed
         or options.dry_run
@@ -1129,6 +1132,9 @@ def run_install(args: list[str]) -> int:
     cache_dir = prepared.cache_dir
     quiet = prepared.quiet
     parsed_release_control_args = prepared.release_control
+
+    if options.refresh:
+        refresh_since(time.time())
 
     outcome = InstallOutcome(report_enabled=bool(options.report))
     reinstall = options.force_reinstall or options.ignore_installed
