@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -90,7 +89,11 @@ class DownloadInfo:
 
 
 class NoOpBuildEnvironment_internal:
-    python_executable = sys.executable
+    @property
+    def python_executable(self) -> str:
+        from kpip.core.interpreter import build_interpreter
+
+        return build_interpreter()
 
     def __enter__(self) -> NoOpBuildEnvironment_internal:
         return self
