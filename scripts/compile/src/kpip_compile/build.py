@@ -75,5 +75,7 @@ def build(options: BuildOptions, nuitka_dir: Path) -> int:
         filter(None, (str(nuitka_dir), env.get("PYTHONPATH")))
     )
     options.output_dir.mkdir(parents=True, exist_ok=True)
+    # The binary embeds this interpreter's version, so say which one it is.
+    subprocess.run([options.python, "-VV"], check=True)
     print(" ".join(command), flush=True)
     return subprocess.run(command, env=env, check=False).returncode
