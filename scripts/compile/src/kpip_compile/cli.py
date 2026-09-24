@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from kpip_compile.build import DEFAULT_OUTPUT_DIR, BuildOptions, build
+from kpip_compile.pgo import PgoError
 from kpip_compile.vendor import (
     NUITKA_BRANCH,
     STAMP_NAME,
@@ -66,6 +67,13 @@ def _parser() -> argparse.ArgumentParser:
         default="cached",
         help="Onefile unpacking: reuse a cache directory, or unpack on every run.",
     )
+    build_parser.add_argument(
+        "--pgo",
+        action="store_true",
+        help="Profile-guided optimization with Nuitka's --pgo-c: an instrumented "
+        "build, a training run of real kpip commands (needs network), then the "
+        "final build.",
+    )
     build_parser.add_argument("nuitka_args", nargs=argparse.REMAINDER)
     return parser
 
@@ -92,8 +100,13 @@ def main(argv: list[str] | None = None) -> int:
         mode=args.mode,
         cache_mode=args.cache_mode,
         extra_args=extra_args,
+        pgo=args.pgo,
     )
-    return build(options, nuitka_dir)
+    try:
+        return build(options, nuitka_dir)
+    except PgoError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
