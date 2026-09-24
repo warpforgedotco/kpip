@@ -20,7 +20,7 @@ COMBINED_MAGIC = b"kpip-http-cache:1\n"
 _COMBINED_HEADER_SIZE = len(COMBINED_MAGIC) + 8
 
 
-def _sha224_hexdigest(data: bytes) -> str:
+def sha224_hexdigest(data: bytes) -> str:
     # The interpreter's own SHA-2, not ``hashlib``: that loads OpenSSL, and a
     # lock replayed from the cache would spend more on that import than on
     # every page it checks.  The digests are the same.
@@ -38,7 +38,7 @@ def _sha224_hexdigest(data: bytes) -> str:
 def cache_entry_path(directory: str, key: str) -> str:
     """Where the entry for ``key`` lives: one fan-out level, 256 wide."""
 
-    hashed = _sha224_hexdigest(key.encode())
+    hashed = sha224_hexdigest(key.encode())
     return os.path.join(directory, hashed[:2], hashed)
 
 

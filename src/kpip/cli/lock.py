@@ -5,7 +5,15 @@ from __future__ import annotations
 import os
 
 from kpip.cli.fast import read_requirements
-from kpip.cli.lock_format import LOCK_HEADER, toml_string, write_lock_output
+from kpip.cli.lock_format import (
+    LOCK_HEADER,
+    lock_left_behind,
+    lock_preferences,
+    previous_lock_digest,
+    read_previous_lock,
+    toml_string,
+    write_lock_output,
+)
 from kpip.cli.lock_replay import (
     FRESH,
     load_record,
@@ -287,8 +295,13 @@ def _resolved_metadata_name(candidate: object) -> str | None:
         return None
 
 
-def lock_replay_key(options: Namespace, cache_dir: str | None) -> bytes | None:
-    """The key this lock is replayed under, when it can be at all."""
+def lock_replay_key(
+    options: Namespace, cache_dir: str | None, previous: bytes | None
+) -> bytes | None:
+    """The key this lock is replayed under, when it can be at all.
+
+    ``previous`` is the lock it starts from, as ``read_previous_lock`` read it.
+    """
 
     if cache_dir is None or options.no_index or options.find_links or options.editable:
         return None
@@ -301,6 +314,7 @@ def lock_replay_key(options: Namespace, cache_dir: str | None) -> bytes | None:
         no_binary=options.no_binary,
         no_build_isolation=options.no_build_isolation,
         python_version=options.python_version,
+        previous_lock=previous_lock_digest(previous, options.upgrade_packages),
     )
 
 
@@ -308,6 +322,7 @@ def replay_after_revalidation(
     options: Namespace,
     cache_dir: str | None,
     session: DeferredNetworkSession,
+    previous: bytes | None,
 ) -> bool:
     """Replay the recorded lock once every page it read has been revalidated.
 
@@ -319,7 +334,7 @@ def replay_after_revalidation(
     resolve that follows finds every page fresh in the cache.
     """
 
-    key = lock_replay_key(options, cache_dir)
+    key = lock_replay_key(options, cache_dir, previous)
     http_cache = session.cache
 
     if key is None or http_cache is None:
@@ -355,10 +370,24 @@ def record_replayable_lock(
     session: DeferredNetworkSession,
     rendered: str,
 ) -> None:
-    """Keep this lock so an identical one can replay it while its pages are unchanged."""
+    """Keep this lock so an identical one can replay it while its pages are unchanged.
+
+    It is kept for the next lock, which starts from this one: preferring the
+    versions of a lock that satisfies the same inputs gives that lock back,
+    so the answer is known without resolving. With ``--upgrade-package`` it
+    is not kept; the package resolved afresh could come out differently when
+    the rest are preferred from the start.
+    """
+
+    if options.upgrade_packages:
+        return
 
     http_cache = session.cache
-    key = lock_replay_key(options, cache_dir)
+    key = lock_replay_key(
+        options,
+        cache_dir,
+        lock_left_behind(options.output, options.upgrade, rendered),
+    )
 
     if key is None or http_cache is None:
         return
@@ -434,8 +463,12 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     resolution_session = DeferredNetworkSession(cache_dir=cache_dir)
 
-    if replay_after_revalidation(options, cache_dir, resolution_session):
+    previous = read_previous_lock(options.output, options.upgrade)
+
+    if replay_after_revalidation(options, cache_dir, resolution_session, previous):
         return 0
+
+    preferences = lock_preferences(previous, options.upgrade_packages)
 
     artifact_locator = ArtifactLocator(resolution_session, cache_dir=cache_dir)
 
@@ -642,6 +675,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             string_requirements,
             constraints=constraints,
             session=resolution_session,
+            preferences=preferences,
         )
 
     if plan is None and requirements:
@@ -672,6 +706,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             no_deps=False,
             ignore_installed=True,
             constraints=constraints,
+            preferences=preferences,
             python_version=(
                 normalize_python_version(str(options.python_version))
                 if options.python_version

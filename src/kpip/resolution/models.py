@@ -55,6 +55,7 @@ class ResolutionConfig(_FrozenRecord):
         "index_urls",
         "no_deps",
         "no_index",
+        "preferences",
         "python_version",
         "require_hashes",
         "upgrade",
@@ -74,6 +75,9 @@ class ResolutionConfig(_FrozenRecord):
     require_hashes: bool
     compute_source_hashes: bool
     upgrade_strategy: str
+    preferences: Mapping[str, str]
+    """Versions to choose when they are allowed, by canonical name: a lock's
+    previous answer, so a changed input moves no pin it does not have to."""
 
     def __init__(
         self,
@@ -90,6 +94,7 @@ class ResolutionConfig(_FrozenRecord):
         require_hashes: bool = False,
         compute_source_hashes: bool = True,
         upgrade_strategy: str = "only-if-needed",
+        preferences: Mapping[str, str] | None = None,
     ) -> None:
         store = object.__setattr__
         store(self, "find_links", find_links)
@@ -105,6 +110,7 @@ class ResolutionConfig(_FrozenRecord):
         store(self, "require_hashes", require_hashes)
         store(self, "compute_source_hashes", compute_source_hashes)
         store(self, "upgrade_strategy", upgrade_strategy)
+        store(self, "preferences", preferences or {})
 
 
 class RequirementInput(Protocol):

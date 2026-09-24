@@ -18,7 +18,13 @@ import marshal
 import os
 import sys
 
-from kpip.cli.lock_format import render_wheel_lock, write_lock_output
+from kpip.cli.lock_format import (
+    lock_left_behind,
+    previous_lock_digest,
+    read_previous_lock,
+    render_wheel_lock,
+    write_lock_output,
+)
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.code_identity import code_identity
 from kpip.core.names import canonicalize_name
@@ -609,6 +615,8 @@ class LockOptions:
         "requirement_args",
         "requirement_files",
         "requirements",
+        "upgrade",
+        "upgrade_packages",
     )
 
     def __init__(
@@ -634,6 +642,8 @@ class LockOptions:
         self.no_binary: list[str] = []
         self.no_build_isolation = False
         self.python_version: str | None = None
+        self.upgrade = False
+        self.upgrade_packages: list[str] = []
 
 
 PlanCacheKey = tuple[object, ...]
@@ -660,6 +670,10 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
         if token == "--quiet":
             index += 1
             continue
+        if token in ("-U", "--upgrade"):
+            options.upgrade = True
+            index += 1
+            continue
 
         option = consume_option(
             args,
@@ -675,6 +689,8 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
                 "--cache-dir",
                 "--no-binary",
                 "--python-version",
+                "-P",
+                "--upgrade-package",
             ),
         )
         if option is not None:
@@ -697,6 +713,8 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
                 options.no_binary.append(value)
             elif name == "--python-version":
                 options.python_version = value
+            elif name in ("-P", "--upgrade-package"):
+                options.upgrade_packages.append(value)
             else:
                 options.output = value
             continue
@@ -728,7 +746,7 @@ def cache_digest(value: bytes) -> str:
     return f"{digest:016x}"
 
 
-def plan_cache_key(options: LockOptions) -> PlanCacheKey | None:
+def plan_cache_key(options: LockOptions, previous: bytes | None) -> PlanCacheKey | None:
     signatures: list[tuple[str, str, int, int]] = []
     for value in options.find_links:
         root = os.path.abspath(value)
@@ -763,6 +781,7 @@ def plan_cache_key(options: LockOptions) -> PlanCacheKey | None:
         tuple(options.requirements),
         tuple(options.find_links),
         tuple(sorted(signatures)),
+        previous_lock_digest(previous, options.upgrade_packages),
     )
 
 
@@ -829,6 +848,10 @@ def replay_lock(options: LockOptions) -> int | None:
         no_binary=options.no_binary,
         no_build_isolation=options.no_build_isolation,
         python_version=options.python_version,
+        previous_lock=previous_lock_digest(
+            read_previous_lock(options.output, options.upgrade),
+            options.upgrade_packages,
+        ),
     )
     if key is None:
         return None
@@ -872,7 +895,8 @@ def run_lock(args: list[str]) -> int | None:
         return None
 
     cache_file = cache_path(options)
-    plan_key = plan_cache_key(options)
+    previous = read_previous_lock(options.output, options.upgrade)
+    plan_key = plan_cache_key(options, previous)
     if plan_key is None:
         return None
 
@@ -882,10 +906,15 @@ def run_lock(args: list[str]) -> int | None:
         write_lock_output(options.output, cached_output)
         return 0
 
+    from kpip.cli.lock_format import lock_preferences
     from kpip.resolution.api import ResolutionEngine
     from kpip.core.hashes import file_hashes
 
-    plan = ResolutionEngine.resolve_wheelhouse(options.find_links, options.requirements)
+    plan = ResolutionEngine.resolve_wheelhouse(
+        options.find_links,
+        options.requirements,
+        preferences=lock_preferences(previous, options.upgrade_packages),
+    )
     if plan is None:
         return None
 
@@ -911,7 +940,12 @@ def run_lock(args: list[str]) -> int | None:
         )
 
     rendered = render_wheel_lock(packages)
-    save_plan_cache(cache_file, serialized_plan_key, rendered)
+    # Kept for the next lock, which starts from this one; see
+    # cli.lock.record_replayable_lock for why that gives the same answer.
+    if not options.upgrade_packages:
+        written = lock_left_behind(options.output, options.upgrade, rendered)
+        next_key = (*plan_key[:-1], previous_lock_digest(written, []))
+        save_plan_cache(cache_file, marshal.dumps(next_key), rendered)
     write_lock_output(options.output, rendered)
     return 0
 

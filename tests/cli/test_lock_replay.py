@@ -9,11 +9,11 @@ import pytest
 
 from kpip.cli import lock_replay
 from kpip.cli.fast import run_lock
+from kpip.cli.lock_format import previous_lock_digest
 from kpip.core.appdirs import http_cache_path, resolve_cache_dir
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.network.cache import SafeFileCache
-from kpip.network.freshness import CacheMetadataReader
-from kpip.network.freshness import encode_metadata
+from kpip.network.freshness import CacheMetadataReader, encode_metadata
 
 PAGE = "https://pypi.org/simple/demo/"
 RENDERED = 'lock-version = "1.0"\n# replayed\n'
@@ -96,6 +96,7 @@ class TestReplayKey:
             key_for(requirements, no_binary=[":all:"]),
             key_for(requirements, no_build_isolation=True),
             key_for(requirements, python_version="3.9"),
+            key_for(requirements, previous_lock="started from another lock"),
         ]
 
         assert base == key_for(requirements)
@@ -298,6 +299,33 @@ class TestFastPath:
         assert run_lock(self.arguments(requirements, output, cache_root)) == 0
         assert output.read_text(encoding="utf-8") == RENDERED
 
+    def test_a_lock_is_replayed_only_from_the_lock_it_started_from(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        """The lock at the output decides which versions are preferred.
+
+        A record is kept for the run after it, which starts from the lock the
+        record holds; from any other starting point, or with ``--upgrade``,
+        the answer may differ, so it is not replayed.
+        """
+        cache_root = tmp_path / "cache"
+        output = tmp_path / "pylock.toml"
+        output.write_text(RENDERED, encoding="utf-8")
+        started_from = previous_lock_digest(RENDERED.encode("utf-8"), [])
+        record(
+            resolve_cache_dir(str(cache_root)),
+            key_for(requirements, previous_lock=started_from),
+        )
+        arguments = self.arguments(requirements, output, cache_root)
+
+        assert run_lock(arguments) == 0
+        assert run_lock([*arguments, "--upgrade"]) is None
+        assert run_lock([*arguments, "-P", "demo"]) is None
+
+        output.write_text(RENDERED + "# edited\n", encoding="utf-8")
+
+        assert run_lock(arguments) is None
+
     def test_a_stale_page_goes_to_the_full_command(
         self,
         tmp_path: Path,
@@ -421,7 +449,10 @@ class TestRevalidationWave:
         index = Revalidating(cache_dir)
 
         replayed = replay_after_revalidation(
-            self.options(requirements, tmp_path), cache_dir, index.deferred(cache_dir)
+            self.options(requirements, tmp_path),
+            cache_dir,
+            index.deferred(cache_dir),
+            None,
         )
 
         assert replayed
@@ -443,7 +474,10 @@ class TestRevalidationWave:
         index = Revalidating(cache_dir, changed=frozenset({self.OTHER}))
 
         replayed = replay_after_revalidation(
-            self.options(requirements, tmp_path), cache_dir, index.deferred(cache_dir)
+            self.options(requirements, tmp_path),
+            cache_dir,
+            index.deferred(cache_dir),
+            None,
         )
 
         assert not replayed
@@ -461,7 +495,10 @@ class TestRevalidationWave:
         index = Revalidating(cache_dir, failing=frozenset({PAGE}))
 
         replayed = replay_after_revalidation(
-            self.options(requirements, tmp_path), cache_dir, index.deferred(cache_dir)
+            self.options(requirements, tmp_path),
+            cache_dir,
+            index.deferred(cache_dir),
+            None,
         )
 
         assert not replayed

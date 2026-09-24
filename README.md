@@ -88,6 +88,11 @@ kpip lock -r requirements.in
 kpip --python .venv install -r pylock.toml
 ```
 
+A lock starts from the one already at its `--output`: each package keeps its
+version there while the requirements still allow it, so adding or changing
+one requirement moves no pin it does not have to. `--upgrade` (`-U`) resolves
+every package afresh, and `--upgrade-package NAME` (`-P NAME`) just that one.
+
 To lock for a Python version other than the one running kpip, including
 versions below kpip's own 3.10 floor:
 
