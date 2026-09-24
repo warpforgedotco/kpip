@@ -6,6 +6,7 @@ import os
 
 from kpip.cli.fast import read_requirements
 from kpip.cli.lock_format import LOCK_HEADER, toml_string, write_lock_output
+from kpip.cli.lock_replay import page_validators, replay_key, save_record
 from kpip.cli.parsers.lock import create_parser
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.errors import CommandError, KpipError
@@ -22,6 +23,7 @@ from kpip.core.urls import path_to_url, url_to_path
 from kpip.core.versions import InvalidVersion, Version
 from kpip.core.wheel import TargetContext
 from kpip.index.artifacts import ArtifactLocator
+from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.index.provider import CandidateProvider
 from kpip.index.vcs_urls import vcs_reference
 from kpip.network.deferred import DeferredNetworkSession
@@ -277,6 +279,47 @@ def _resolved_metadata_name(candidate: object) -> str | None:
         return None
 
 
+def record_replayable_lock(
+    options: Namespace,
+    cache_dir: str | None,
+    provider: CandidateProvider,
+    session: DeferredNetworkSession,
+    rendered: str,
+) -> None:
+    """Keep this lock so an identical one can replay it while its pages are unchanged."""
+
+    http_cache = session.cache
+
+    if cache_dir is None or http_cache is None:
+        return
+
+    if options.no_index or options.find_links or options.editable:
+        return
+
+    key = replay_key(
+        requirements=options.requirements,
+        requirement_files=options.requirement,
+        constraint_files=options.constraints,
+        index_urls=(DEFAULT_INDEX_URL,),
+        no_binary=options.no_binary,
+        no_build_isolation=options.no_build_isolation,
+        python_version=options.python_version,
+    )
+
+    if key is None:
+        return
+
+    pages: set[str] = set()
+
+    for source in provider.index_sources:
+        pages.update(source.pages_read)
+
+    validators = page_validators(http_cache, pages) if pages else None
+
+    if validators is not None:
+        save_record(cache_dir, key, validators, rendered)
+
+
 def run_lock(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
@@ -522,6 +565,8 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     plan = None
 
+    provider = None
+
     string_requirements = [item for item in requirements if isinstance(item, str)]
 
     if (
@@ -589,6 +634,10 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     editable_names = {str(package["name"]) for package in editable_packages}
 
+    # Only a lock of hashed index wheels is replayed: the dependencies of an
+    # sdist come from building it, which the index pages do not pin.
+    every_package_is_an_index_wheel = not packages and not locked_order
+
     for candidate in plan.candidates if plan is not None else []:
         source = candidate.source_url
 
@@ -597,6 +646,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
         remote_artifact = remote_hashed_wheel(candidate)
         if remote_artifact is None:
+            every_package_is_an_index_wheel = False
             remote_artifact = remote_hashed_sdist(candidate)
         if remote_artifact is not None:
             packages.append(remote_artifact)
@@ -739,6 +789,11 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     rendered = render_lock(packages)
 
     write_lock_output(options.output, rendered)
+
+    if every_package_is_an_index_wheel and provider is not None:
+        record_replayable_lock(
+            options, cache_dir, provider, resolution_session, rendered
+        )
 
     if quiet_environment is None:
         os.environ.pop("KPIP_QUIET", None)

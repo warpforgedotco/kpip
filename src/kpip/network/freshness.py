@@ -3,12 +3,79 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from typing import Any
+
+
+COMBINED_MAGIC = b"kpip-http-cache:1\n"
+"""Starts an entry holding its metadata and body in one file."""
+
+_COMBINED_HEADER_SIZE = len(COMBINED_MAGIC) + 8
+
+
+def _sha224_hexdigest(data: bytes) -> str:
+    # The interpreter's own SHA-2, not ``hashlib``: that loads OpenSSL, and a
+    # lock replayed from the cache would spend more on that import than on
+    # every page it checks.  The digests are the same.
+    try:
+        from _sha2 import sha224  # ty: ignore[unresolved-import]
+    except ImportError:
+        try:
+            from _sha256 import sha224  # ty: ignore[unresolved-import]
+        except ImportError:
+            from hashlib import sha224
+
+    return sha224(data).hexdigest()
+
+
+def cache_entry_path(directory: str, key: str) -> str:
+    """Where the entry for ``key`` lives: one fan-out level, 256 wide."""
+
+    hashed = _sha224_hexdigest(key.encode())
+    return os.path.join(directory, hashed[:2], hashed)
+
+
+def read_cache_metadata(directory: str, key: str) -> bytes | None:
+    """The stored metadata for ``key``, without its body; None when absent.
+
+    A combined entry carries both behind a header; the older layout keeps
+    them in two files, and is only an entry while its body is there too.
+    """
+
+    path = cache_entry_path(directory, key)
+
+    try:
+        with open(path, "rb", buffering=0) as file:
+            head = file.read(_COMBINED_HEADER_SIZE)
+
+            if len(head) == _COMBINED_HEADER_SIZE and head.startswith(COMBINED_MAGIC):
+                length = int.from_bytes(head[len(COMBINED_MAGIC) :], "little")
+                return file.read(length)
+
+            metadata = head + file.read()
+
+        os.stat(path + ".body")
+    except OSError:
+        return None
+
+    return metadata
+
+
+class CacheMetadataReader:
+    """Just enough of the HTTP cache to ask what it holds, cheap to import."""
+
+    __slots__ = ("directory",)
+
+    def __init__(self, directory: str) -> None:
+        self.directory = directory
+
+    def get(self, key: str) -> bytes | None:
+        return read_cache_metadata(self.directory, key)
 
 
 # A stored entry claiming to come from further in the future than this has

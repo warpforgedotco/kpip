@@ -1,0 +1,325 @@
+"""A lock is replayed only while its inputs and every page it read are unchanged."""
+
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+
+import pytest
+
+from kpip.cli import lock_replay
+from kpip.cli.fast import run_lock
+from kpip.core.appdirs import http_cache_path, resolve_cache_dir
+from kpip.index.config import DEFAULT_INDEX_URL
+from kpip.network.cache import SafeFileCache
+from kpip.network.freshness import CacheMetadataReader
+
+PAGE = "https://pypi.org/simple/demo/"
+RENDERED = 'lock-version = "1.0"\n# replayed\n'
+
+
+def store_page(
+    cache_dir: str,
+    url: str = PAGE,
+    *,
+    etag: str | None = '"v1"',
+    fresh: bool = True,
+) -> None:
+    """An HTTP cache entry shaped like the ones ``NetworkSession`` writes."""
+
+    now = time.time()
+    metadata = {
+        "status": 200,
+        "reason": "OK",
+        "url": url,
+        "headers": {"Cache-Control": "max-age=600"},
+        "expires_at": now + 600 if fresh else now - 1,
+        "stored_at": now,
+        "etag": etag,
+        "last_modified": None,
+    }
+    SafeFileCache(http_cache_path(cache_dir)).set_with_body(
+        url,
+        json.dumps(metadata).encode("utf-8"),
+        b"{}",
+    )
+
+
+def key_for(requirement_file: Path, **overrides: object) -> bytes:
+    arguments: dict[str, object] = {
+        "requirements": [],
+        "requirement_files": [str(requirement_file)],
+        "constraint_files": [],
+        "index_urls": (DEFAULT_INDEX_URL,),
+    }
+    arguments.update(overrides)
+    key = lock_replay.replay_key(**arguments)  # type: ignore[arg-type]
+    assert key is not None
+    return key
+
+
+@pytest.fixture
+def requirements(tmp_path: Path) -> Path:
+    path = tmp_path / "requirements.txt"
+    path.write_text(
+        "demo>=1\n# a comment\nother; python_version >= '3'\n", encoding="utf-8"
+    )
+    return path
+
+
+@pytest.fixture
+def cache_dir(tmp_path: Path) -> str:
+    return resolve_cache_dir(str(tmp_path / "cache"))
+
+
+def record(cache_dir: str, key: bytes, *, fresh: bool = True) -> None:
+    store_page(cache_dir, fresh=fresh)
+    http_cache = lock_replay.open_http_cache(cache_dir)
+    pages = lock_replay.page_validators(http_cache, [PAGE])
+    assert pages is not None
+    lock_replay.save_record(cache_dir, key, pages, RENDERED)
+
+
+class TestReplayKey:
+    def test_every_input_is_part_of_the_key(
+        self, requirements: Path, tmp_path: Path
+    ) -> None:
+        base = key_for(requirements)
+        constraints = tmp_path / "constraints.txt"
+        constraints.write_text("demo<3\n", encoding="utf-8")
+
+        variants = [
+            key_for(requirements, requirements=["extra"]),
+            key_for(requirements, constraint_files=[str(constraints)]),
+            key_for(requirements, index_urls=("https://mirror.invalid/simple",)),
+            key_for(requirements, no_binary=[":all:"]),
+            key_for(requirements, no_build_isolation=True),
+            key_for(requirements, python_version="3.9"),
+        ]
+
+        assert base == key_for(requirements)
+        assert len({base, *variants}) == len(variants) + 1
+
+    def test_a_requirement_file_is_keyed_on_its_bytes(self, requirements: Path) -> None:
+        before = key_for(requirements)
+        requirements.write_text("demo>=2\n", encoding="utf-8")
+
+        assert key_for(requirements) != before
+
+    def test_a_new_kpip_does_not_replay_an_old_lock(
+        self,
+        requirements: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        before = key_for(requirements)
+        monkeypatch.setattr(lock_replay, "code_identity", lambda: ("another kpip",))
+
+        assert key_for(requirements) != before
+
+    @pytest.mark.parametrize(
+        "requirement",
+        [
+            "demo @ https://files.invalid/demo-1.0-py3-none-any.whl",
+            "./local/project",
+            "demo-1.0-py3-none-any.whl",
+            "git+https://example.invalid/demo.git",
+        ],
+    )
+    def test_requirements_the_index_does_not_answer_are_not_replayed(
+        self,
+        requirement: str,
+    ) -> None:
+        assert (
+            lock_replay.replay_key(
+                requirements=[requirement],
+                requirement_files=[],
+                constraint_files=[],
+                index_urls=(DEFAULT_INDEX_URL,),
+            )
+            is None
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "-r other.txt",
+            "--index-url https://mirror.invalid/simple",
+            "-e .",
+            "demo \\",
+        ],
+    )
+    def test_a_file_with_options_is_not_replayed(
+        self, tmp_path: Path, line: str
+    ) -> None:
+        path = tmp_path / "requirements.txt"
+        path.write_text(f"demo\n{line}\n", encoding="utf-8")
+
+        assert (
+            lock_replay.replay_key(
+                requirements=[],
+                requirement_files=[str(path)],
+                constraint_files=[],
+                index_urls=(DEFAULT_INDEX_URL,),
+            )
+            is None
+        )
+
+    def test_a_pylock_input_is_not_replayed(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text("", encoding="utf-8")
+
+        assert (
+            lock_replay.replay_key(
+                requirements=[],
+                requirement_files=[str(path)],
+                constraint_files=[],
+                index_urls=(DEFAULT_INDEX_URL,),
+            )
+            is None
+        )
+
+
+class TestPageState:
+    def test_unchanged_fresh_pages_replay(self, cache_dir: str) -> None:
+        store_page(cache_dir)
+        http_cache = lock_replay.open_http_cache(cache_dir)
+        pages = lock_replay.page_validators(http_cache, [PAGE])
+        assert pages == ((PAGE, '"v1"', None),)
+
+        assert lock_replay.page_state(http_cache, pages) == lock_replay.FRESH
+
+    def test_an_expired_page_must_be_revalidated_first(self, cache_dir: str) -> None:
+        store_page(cache_dir, fresh=False)
+        http_cache = lock_replay.open_http_cache(cache_dir)
+
+        state = lock_replay.page_state(http_cache, ((PAGE, '"v1"', None),))
+
+        assert state == lock_replay.STALE_SAME
+
+    def test_a_page_with_a_new_validator_changed(self, cache_dir: str) -> None:
+        store_page(cache_dir, etag='"v2"')
+        http_cache = lock_replay.open_http_cache(cache_dir)
+
+        state = lock_replay.page_state(http_cache, ((PAGE, '"v1"', None),))
+
+        assert state == lock_replay.CHANGED
+
+    def test_a_missing_page_changed(self, cache_dir: str) -> None:
+        http_cache = lock_replay.open_http_cache(cache_dir)
+
+        state = lock_replay.page_state(http_cache, ((PAGE, '"v1"', None),))
+
+        assert state == lock_replay.CHANGED
+
+    def test_a_page_without_a_validator_cannot_be_recorded(
+        self, cache_dir: str
+    ) -> None:
+        store_page(cache_dir, etag=None)
+        http_cache = lock_replay.open_http_cache(cache_dir)
+
+        assert lock_replay.page_validators(http_cache, [PAGE]) is None
+
+
+class TestRecord:
+    def test_a_record_round_trips(self, cache_dir: str, requirements: Path) -> None:
+        key = key_for(requirements)
+        record(cache_dir, key)
+
+        loaded = lock_replay.load_record(cache_dir, key)
+
+        assert loaded is not None
+        assert loaded.rendered == RENDERED
+        assert loaded.pages == ((PAGE, '"v1"', None),)
+
+    def test_a_record_for_another_key_in_the_same_file_is_a_miss(
+        self,
+        cache_dir: str,
+        requirements: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(lock_replay, "_digest", lambda value: "collision")
+        record(cache_dir, key_for(requirements))
+
+        assert (
+            lock_replay.load_record(
+                cache_dir, key_for(requirements, python_version="3.9")
+            )
+            is None
+        )
+
+    def test_a_corrupt_record_is_a_miss(
+        self, cache_dir: str, requirements: Path
+    ) -> None:
+        key = key_for(requirements)
+        record(cache_dir, key)
+        Path(lock_replay.record_path(cache_dir, key)).write_bytes(b"\x00garbage")
+
+        assert lock_replay.load_record(cache_dir, key) is None
+
+
+def test_the_metadata_reader_agrees_with_the_cache(
+    cache_dir: str, tmp_path: Path
+) -> None:
+    store_page(cache_dir)
+    directory = http_cache_path(cache_dir)
+    split = "https://pypi.org/simple/split/"
+    SafeFileCache(directory).set(split, b'{"etag": "\\"s\\""}')
+    Path(SafeFileCache(directory).get_cache_path(split) + ".body").write_bytes(b"")
+
+    reader = CacheMetadataReader(directory)
+    files = SafeFileCache(directory)
+
+    for url in (PAGE, split, "https://pypi.org/simple/absent/"):
+        assert reader.get(url) == files.get(url)
+
+
+class TestFastPath:
+    def arguments(
+        self, requirements: Path, output: Path, cache_root: Path
+    ) -> list[str]:
+        return [
+            "--cache-dir",
+            str(cache_root),
+            "-r",
+            str(requirements),
+            "--output",
+            str(output),
+        ]
+
+    def test_an_unchanged_lock_is_replayed(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        cache_root = tmp_path / "cache"
+        cache_dir = resolve_cache_dir(str(cache_root))
+        record(cache_dir, key_for(requirements))
+        output = tmp_path / "pylock.toml"
+
+        assert run_lock(self.arguments(requirements, output, cache_root)) == 0
+        assert output.read_text(encoding="utf-8") == RENDERED
+
+    def test_a_stale_page_goes_to_the_full_command(
+        self,
+        tmp_path: Path,
+        requirements: Path,
+    ) -> None:
+        cache_root = tmp_path / "cache"
+        record(resolve_cache_dir(str(cache_root)), key_for(requirements), fresh=False)
+        output = tmp_path / "pylock.toml"
+
+        assert run_lock(self.arguments(requirements, output, cache_root)) is None
+        assert not output.exists()
+
+    def test_no_cache_dir_never_replays(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        cache_root = tmp_path / "cache"
+        record(resolve_cache_dir(str(cache_root)), key_for(requirements))
+        output = tmp_path / "pylock.toml"
+
+        arguments = [
+            *self.arguments(requirements, output, cache_root),
+            "--no-cache-dir",
+        ]
+
+        assert run_lock(arguments) is None

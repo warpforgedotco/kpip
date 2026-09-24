@@ -468,3 +468,56 @@ def test_a_lock_does_not_build_the_client_it_may_never_use(tmp_path: Path) -> No
     assert "simplewheel" in output.read_text(encoding="utf-8")
     assert "kpip.cli.lock" in modules
     assert not (modules & INDEX_LOCK_FORBIDDEN), sorted(modules & INDEX_LOCK_FORBIDDEN)
+
+
+def test_a_replayed_lock_loads_neither_the_resolver_nor_the_client(
+    tmp_path: Path,
+) -> None:
+    """A lock answered from its record never gets as far as resolving."""
+    from kpip.cli import lock_replay
+    from kpip.core.appdirs import http_cache_path, resolve_cache_dir
+    from kpip.index.config import DEFAULT_INDEX_URL
+    from kpip.network.cache import SafeFileCache
+
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("demo>=1\n", encoding="utf-8")
+    cache_root = tmp_path / "cache"
+    cache_dir = resolve_cache_dir(str(cache_root))
+    page = "https://pypi.org/simple/demo/"
+    SafeFileCache(http_cache_path(cache_dir)).set_with_body(
+        page,
+        json.dumps({"expires_at": 4e9, "etag": '"v1"', "last_modified": None}).encode(),
+        b"{}",
+    )
+    key = lock_replay.replay_key(
+        requirements=[],
+        requirement_files=[str(requirements)],
+        constraint_files=[],
+        index_urls=(DEFAULT_INDEX_URL,),
+    )
+    assert key is not None
+    lock_replay.save_record(cache_dir, key, ((page, '"v1"', None),), "# replayed\n")
+    output = tmp_path / "pylock.toml"
+
+    modules = imported_modules(
+        [
+            "lock",
+            "--quiet",
+            "--cache-dir",
+            str(cache_root),
+            "-r",
+            str(requirements),
+            "--output",
+            str(output),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert output.read_text(encoding="utf-8") == "# replayed\n"
+    assert "kpip.cli.lock_replay" in modules
+    forbidden = INDEX_LOCK_FORBIDDEN | {
+        "hashlib",
+        "kpip.cli.lock",
+        "kpip.resolution.api",
+    }
+    assert not (modules & forbidden), sorted(modules & forbidden)

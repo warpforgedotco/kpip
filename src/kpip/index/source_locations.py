@@ -217,7 +217,13 @@ class FindLinksSource:
 
 
 class SimpleIndexSource:
-    __slots__ = ("index_url", "page_fetch_outcomes", "session", "trusted_hosts")
+    __slots__ = (
+        "index_url",
+        "page_fetch_outcomes",
+        "pages_read",
+        "session",
+        "trusted_hosts",
+    )
 
     def __init__(
         self,
@@ -233,8 +239,15 @@ class SimpleIndexSource:
 
         self.page_fetch_outcomes: dict[str, tuple[list[Link]]] = {}
 
+        # Every project page consulted, so a lock can later tell whether any
+        # of them changed (``cli/lock_replay.py``).  Recording a page the
+        # resolve did not need only makes a replay less likely.
+        self.pages_read: set[str] = set()
+
     def collect_links(self, requirement: Requirement) -> list[Link]:
         project_url = self.project_page_url(self.index_url, requirement.canonical_name)
+
+        self.pages_read.add(project_url)
 
         outcome = self.page_fetch_outcomes.pop(project_url, None)
 
@@ -264,6 +277,8 @@ class SimpleIndexSource:
             return None
 
         project_url = self.project_page_url(self.index_url, requirement.canonical_name)
+
+        self.pages_read.add(project_url)
 
         cache = getattr(self.session, "cache", None)
 
@@ -323,6 +338,8 @@ class SimpleIndexSource:
             return False
 
         project_url = self.project_page_url(self.index_url, requirement.canonical_name)
+
+        self.pages_read.add(project_url)
 
         return bool(
             getattr(self.session, "has_fresh_cached_response", lambda _: False)(
