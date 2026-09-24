@@ -601,3 +601,23 @@ def test_the_compiled_binary_is_fingerprinted(tmp_path: Path) -> None:
     assert (
         binary_fingerprint(str(binary)) == hashlib.sha256(b"compiled kpip").hexdigest()
     )
+
+
+def test_lock_refresh_revalidates_a_warm_cache_with_both_tools(tmp_path: Path) -> None:
+    from kpip_benchmark.cli import needs_warm_setup
+
+    commands = build_commands(
+        "lock-refresh",
+        workload="offline",
+        workspace=tmp_path,
+        kpip_python=sys.executable,
+        kpip_console=None,
+        kpip_launcher="module",
+        uv_path="uv",
+        python=sys.executable,
+    )
+
+    assert all("--refresh" in command.command for command in commands)
+    assert needs_warm_setup("lock-refresh")
+    assert needs_warm_setup("lock-warm")
+    assert not needs_warm_setup("lock-cold")

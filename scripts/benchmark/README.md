@@ -43,6 +43,14 @@ uv run kpip-bench \
   --benchmark lock-warm
 ```
 
+`lock-refresh` locks from a warm cache with `--refresh` on both tools, so
+every cached page is revalidated: the lock a cache gets once the index's
+`max-age` has passed. It runs only when asked for:
+
+```console
+uv run kpip-bench --workload jupyter --benchmark lock-refresh
+```
+
 By default, kpip is measured as `python -m kpip`. To measure the direct
 console-script style launcher, pass `--kpip-launcher direct`:
 

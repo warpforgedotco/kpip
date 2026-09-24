@@ -30,6 +30,7 @@ BENCHMARKS = (
     "startup-fast-install",
     "lock-cold",
     "lock-warm",
+    "lock-refresh",
     "install-cold",
     "install-warm",
     "install-incremental-warm",
@@ -251,6 +252,19 @@ def prepare_with_cache(
 def setup_log(workspace: Path) -> Path:
     """Where a failed warm setup leaves the output hyperfine discarded."""
     return workspace / "setup-failure.log"
+
+
+def needs_warm_setup(benchmark: str) -> bool:
+    """Whether each timed run starts from a cache one untimed run filled.
+
+    ``lock-refresh`` does too: every page is then in the cache, and each run
+    revalidates all of them, which is the lock an expired cache gets.
+    """
+    return (
+        benchmark.endswith("warm")
+        or benchmark == "lock-refresh"
+        or benchmark.startswith("startup-fast-")
+    )
 
 
 def warm_setup(commands: list[Command], stale: list[Path], *, log: Path) -> str:
@@ -495,6 +509,9 @@ def build_commands(
         if constraint_requirements is not None:
             kpip_args.extend(["--constraint", constraint_requirements])
             uv_args.extend(["--constraint", constraint_requirements])
+        if benchmark == "lock-refresh":
+            kpip_args.append("--refresh")
+            uv_args.append("--refresh")
         if recommended_python is not None:
             # A workload curated for one interpreter is only a benchmark on
             # that interpreter: resolved against the one running the suite it
@@ -751,7 +768,7 @@ def main() -> None:
                 compiled_only=args.compiled_only,
             )
             setup = None
-            if benchmark.endswith("warm") or benchmark.startswith("startup-fast-"):
+            if needs_warm_setup(benchmark):
                 setup = warm_setup(
                     commands,
                     [
