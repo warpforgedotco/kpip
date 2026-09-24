@@ -56,6 +56,7 @@ from kpip.index.source_models import (
     PackageSource,
     RejectedCandidate,
     RejectionReason,
+    UniformRecords,
 )
 
 TYPE_CHECKING = False
@@ -2479,6 +2480,17 @@ class CandidateProvider:
         self,
         requirement: Requirement,
     ) -> tuple[CandidateSummary, ...]:
+        return self._catalog(requirement).summaries
+
+    def catalog_versions(
+        self, requirement: Requirement
+    ) -> tuple[tuple[Version, ...], frozenset[Version]]:
+        """The versions :meth:`available_versions` lists, and which of them
+        have a yanked entry, without building a summary per release."""
+        catalog = self._catalog(requirement)
+        return catalog.summary_versions, catalog.yanked_versions
+
+    def _catalog(self, requirement: Requirement) -> PackageCatalog:
         allow_binary, allow_source = self.allowed_formats_internal(requirement)
 
         cache_key = (
@@ -2501,14 +2513,14 @@ class CandidateProvider:
                     self.last_rejected_requires_python[requirement.canonical_name] = (
                         link.requires_python
                     )
-            return catalog.summaries
+            return catalog
 
         future = (
             self.prefetcher.take(cache_key) if self.prefetcher is not None else None
         )
 
         if future is not None:
-            summaries = future.result()
+            prefetched_catalog = future.result()
             with self.cache_lock:
                 prefetched = self.package_catalog_cache.get(cache_key)
             if prefetched is not None:
@@ -2525,15 +2537,22 @@ class CandidateProvider:
                                 requirement.canonical_name
                             ] = link.requires_python
                             break
-            return summaries
+            return prefetched_catalog
 
-        return self.load_available_versions(requirement, cache_key)
+        return self.load_catalog(requirement, cache_key)
 
     def load_available_versions(
         self,
         requirement: Requirement,
         cache_key: tuple[str, bool, bool] | None = None,
     ) -> tuple[CandidateSummary, ...]:
+        return self.load_catalog(requirement, cache_key).summaries
+
+    def load_catalog(
+        self,
+        requirement: Requirement,
+        cache_key: tuple[str, bool, bool] | None = None,
+    ) -> PackageCatalog:
         allow_binary, allow_source = self.allowed_formats_internal(requirement)
 
         if cache_key is None:
@@ -2553,11 +2572,19 @@ class CandidateProvider:
 
         cached_groups = self.catalog_groups(requirement, allow_fetch=True)
 
-        ordered_summaries: list[CandidateSummary] | None = (
-            [] if cached_groups is not None and len(cached_groups) == 1 else None
-        )
+        # One source's summary lists its releases in order, each once or --
+        # with yanked and unyanked files -- twice; its summaries are built
+        # from ``ordered_versions`` and ``yanked_positions`` if asked for.
+        single_source = cached_groups is not None and len(cached_groups) == 1
 
         ordered_versions: list[Version] = []
+
+        yanked_positions: dict[int, str | None] = {}
+
+        # The release each record went to, in order, for a single source.
+        recorded_versions: list[Version] = []
+
+        group_records: tuple[object, ...] = ()
 
         catalog_links = (
             () if cached_groups is not None else self.catalog_links(requirement)
@@ -2590,15 +2617,13 @@ class CandidateProvider:
                         continue
 
                     version = (
-                        None
-                        if ordered_summaries is not None
-                        else parsed_versions.get(version_text)
+                        None if single_source else parsed_versions.get(version_text)
                     )
 
                     if version is None:
                         version = from_wire(version_state)
 
-                        if ordered_summaries is None:
+                        if not single_source:
                             parsed_versions[version_text] = version
 
                     has_eligible_artifact = False
@@ -2640,7 +2665,7 @@ class CandidateProvider:
 
                         yanked_reason = yanked if isinstance(yanked, str) else None
 
-                        if ordered_summaries is None:
+                        if not single_source:
                             versions[(version_text, is_yanked)] = CandidateSummary(
                                 version, is_yanked, yanked_reason
                             )
@@ -2654,27 +2679,25 @@ class CandidateProvider:
                             ordered_has_unyanked = True
 
                     if has_eligible_artifact:
-                        version_records = records_by_version.get(version)
-                        records_by_version[version] = (
-                            group_records
-                            if version_records is None
-                            else version_records + group_records
-                        )
+                        if single_source:
+                            recorded_versions.append(version)
 
-                        if ordered_summaries is not None:
                             if ordered_has_unyanked:
-                                ordered_summaries.append(
-                                    CandidateSummary(version, False, None)
-                                )
                                 ordered_versions.append(version)
 
                             if ordered_has_yanked:
-                                ordered_summaries.append(
-                                    CandidateSummary(
-                                        version, True, ordered_yanked_reason
-                                    )
+                                yanked_positions[len(ordered_versions)] = (
+                                    ordered_yanked_reason
                                 )
                                 ordered_versions.append(version)
+
+                        else:
+                            version_records = records_by_version.get(version)
+                            records_by_version[version] = (
+                                group_records
+                                if version_records is None
+                                else version_records + group_records
+                            )
 
         parsed_link_cache = self.parsed_link_cache
 
@@ -2759,13 +2782,27 @@ class CandidateProvider:
                 yanked_reason=link.yanked_reason,
             )
 
-        result = (
-            tuple(ordered_summaries)
-            if ordered_summaries is not None
-            else tuple(
-                sorted(versions.values(), key=_SUMMARY_ORDER),
+        summaries: tuple[CandidateSummary, ...] | None
+        records: Mapping[Version, tuple[object, ...]] | None
+        if single_source:
+            summaries = None
+            summary_versions = tuple(ordered_versions)
+            distinct = tuple(dict.fromkeys(recorded_versions))
+            if len(distinct) == len(recorded_versions):
+                records = UniformRecords(distinct, group_records)
+            else:
+                # Two spellings of one release, each with its record.
+                for version in recorded_versions:
+                    records_by_version[version] = (
+                        records_by_version.get(version, ()) + group_records
+                    )
+                records = MappingProxyType(records_by_version)
+        else:
+            summaries = tuple(sorted(versions.values(), key=_SUMMARY_ORDER))
+            summary_versions = tuple([summary.version for summary in summaries])
+            records = (
+                None if cached_groups is None else MappingProxyType(records_by_version)
             )
-        )
 
         catalog = PackageCatalog(
             links=tuple(link for links in links_by_version.values() for link in links),
@@ -2775,34 +2812,29 @@ class CandidateProvider:
                     for version, candidates in candidates_by_version.items()
                 },
             ),
-            summaries=result,
-            summary_versions=(
-                tuple(ordered_versions)
-                if ordered_summaries is not None
-                else tuple([summary.version for summary in result])
-            ),
+            summaries=summaries,
+            summary_versions=summary_versions,
             links_by_version=MappingProxyType(
                 {version: tuple(links) for version, links in links_by_version.items()},
             ),
-            records_by_version=(
-                None if cached_groups is None else MappingProxyType(records_by_version)
-            ),
+            records_by_version=records,
+            yanked=yanked_positions if single_source else None,
         )
 
         with self.cache_lock:
             self.package_catalog_cache[cache_key] = catalog
 
-        return result
+        return catalog
 
     def load_prefetched_versions(
         self,
         value: tuple[Requirement, tuple[str, bool, bool]],
-    ) -> tuple[CandidateSummary, ...]:
+    ) -> PackageCatalog:
         requirement, cache_key = value
 
         started = time.perf_counter()
 
-        result = self.load_available_versions(requirement, cache_key)
+        catalog = self.load_catalog(requirement, cache_key)
 
         accepted: tuple[CandidateRecord, ...] = ()
 
@@ -2826,7 +2858,7 @@ class CandidateProvider:
 
         elapsed = time.perf_counter() - started
 
-        self.prefetch_policy.observe(cache_key, elapsed, len(result))
+        self.prefetch_policy.observe(cache_key, elapsed, len(catalog.summary_versions))
 
         if accepted:
             self._chain_dependency_catalogs(
@@ -2835,7 +2867,7 @@ class CandidateProvider:
                 materializer,
             )
 
-        return result
+        return catalog
 
     def _chain_dependency_catalogs(
         self,

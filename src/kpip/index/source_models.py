@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from enum import Enum
 from typing import TYPE_CHECKING, Callable, Protocol
 
@@ -258,15 +258,57 @@ class CandidateRecord:
         return metadata
 
 
+class UniformRecords(Mapping[Version, tuple[object, ...]]):
+    """``records_by_version`` for a catalog every release of which has the
+    same records: one source's summary, where they name the source.
+
+    A dict of them cost a resolve an insertion for each of 56,000 releases
+    on airflow's graph, each storing the same tuple.
+    """
+
+    __slots__ = ("_members", "_ordered", "_records")
+
+    def __init__(
+        self, ordered: tuple[Version, ...], records: tuple[object, ...]
+    ) -> None:
+        self._ordered = ordered
+        self._members = frozenset(ordered)
+        self._records = records
+
+    def __getitem__(self, version: Version) -> tuple[object, ...]:
+        if version in self._members:
+            return self._records
+        raise KeyError(version)
+
+    def get(self, version: Version, default: object = None) -> object:  # ty: ignore[invalid-method-override]
+        return self._records if version in self._members else default
+
+    def __contains__(self, version: object) -> bool:
+        return version in self._members
+
+    def __iter__(self) -> Iterator[Version]:
+        return iter(self._ordered)
+
+    def __len__(self) -> int:
+        return len(self._ordered)
+
+
 class PackageCatalog:
-    """Immutable package metadata shared by candidate and resolver queries."""
+    """Immutable package metadata shared by candidate and resolver queries.
+
+    ``summaries`` may be built on first use from ``summary_versions`` and
+    the positions of its yanked entries: the resolver reads only the
+    versions and which are yanked (:attr:`yanked_versions`), and building a
+    summary per release cost a warm airflow resolve 56,000 objects.
+    """
 
     __slots__ = (
+        "_summaries",
+        "_yanked",
         "candidates_by_version",
         "links",
         "links_by_version",
         "records_by_version",
-        "summaries",
         "summary_versions",
     )
 
@@ -274,22 +316,51 @@ class PackageCatalog:
         self,
         links: tuple[Link, ...],
         candidates_by_version: Mapping[Version, tuple[CandidateRecord, ...]],
-        summaries: tuple[CandidateSummary, ...],
+        summaries: tuple[CandidateSummary, ...] | None,
         summary_versions: tuple[Version, ...],
         links_by_version: Mapping[Version, tuple[Link, ...]],
         records_by_version: Mapping[Version, tuple[object, ...]] | None = None,
+        yanked: Mapping[int, str | None] | None = None,
     ) -> None:
         self.links = links
 
         self.candidates_by_version = candidates_by_version
 
-        self.summaries = summaries
+        self._summaries = summaries
+
+        # With no summaries given: the positions in ``summary_versions`` of
+        # yanked entries, and each one's reason.
+        self._yanked = yanked
 
         self.summary_versions = summary_versions
 
         self.links_by_version = links_by_version
 
         self.records_by_version = records_by_version
+
+    @property
+    def summaries(self) -> tuple[CandidateSummary, ...]:
+        summaries = self._summaries
+        if summaries is None:
+            yanked = self._yanked or {}
+            summaries = tuple(
+                [
+                    CandidateSummary(version, position in yanked, yanked.get(position))
+                    for position, version in enumerate(self.summary_versions)
+                ]
+            )
+            self._summaries = summaries
+        return summaries
+
+    @property
+    def yanked_versions(self) -> frozenset[Version]:
+        """The versions with a yanked entry among the summaries."""
+        if self._summaries is None:
+            versions = self.summary_versions
+            return frozenset([versions[position] for position in self._yanked or ()])
+        return frozenset(
+            [summary.version for summary in self._summaries if summary.is_yanked]
+        )
 
 
 class PackageSource(Protocol):

@@ -317,13 +317,19 @@ class NabProvider:
             candidates = tuple(self.provider.find_candidates(requirement))
             versions = tuple(candidate.version for candidate in candidates)
         else:
-            summaries = self.provider.available_versions(requirement)
-            versions = tuple(summary.version for summary in summaries)
-            yanked = frozenset(
-                summary.version
-                for summary in summaries
-                if getattr(summary, "is_yanked", False)
-            )
+            catalog_versions = getattr(self.provider, "catalog_versions", None)
+            if catalog_versions is not None:
+                # The versions and which are yanked, without a summary built
+                # for each of a catalog's releases.
+                versions, yanked = catalog_versions(requirement)
+            else:
+                summaries = self.provider.available_versions(requirement)
+                versions = tuple(summary.version for summary in summaries)
+                yanked = frozenset(
+                    summary.version
+                    for summary in summaries
+                    if getattr(summary, "is_yanked", False)
+                )
             if yanked:
                 self._yanked_versions[package] = yanked
             else:

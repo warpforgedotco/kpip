@@ -87,6 +87,9 @@ class IndexedFakeProvider(CandidateProvider):
     def available_versions(self, requirement):
         return (SimpleNamespace(version=Version("1")),)
 
+    def catalog_versions(self, requirement):
+        return (Version("1"),), frozenset()
+
     def find_candidates(self, requirement, *, allowed_versions):
         raise AssertionError("indexed releases should not rescan the catalog")
 
