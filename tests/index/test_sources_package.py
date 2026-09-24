@@ -1992,3 +1992,48 @@ def test_an_artifact_kind_hashes_by_identity() -> None:
     assert {sdist: 1}[ArtifactKind("sdist")] == 1
     # And the hash really is the inherited one, not Enum's.
     assert type(sdist).__hash__ is object.__hash__
+
+
+def test_catalog_prefetch_evaluates_every_release_only_without_the_pinned_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    link = Link.from_url(
+        "https://packages.invalid/demo-1.0-py3-none-any.whl",
+        source_url=None,
+        metadata_file=MetadataFile(None),
+    )
+    pinned = CandidateRecord("demo", Version("1.0"), link)
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=None,
+    )
+    evaluated: list[str] = []
+    monkeypatch.setattr(
+        provider, "load_available_versions", lambda requirement, cache_key: ()
+    )
+    monkeypatch.setattr(
+        provider,
+        "evaluate_links",
+        lambda requirement: evaluated.append(requirement.name)
+        or CandidateSelection((), ()),
+    )
+    monkeypatch.setattr(
+        provider,
+        "release_candidates",
+        lambda requirement, version: (pinned,) if version == pinned.version else None,
+    )
+
+    try:
+        provider.preferred_versions = {"demo": Version("1.0")}
+        provider.load_prefetched_versions(
+            (parse_requirement("demo"), ("demo", True, True))
+        )
+        assert evaluated == []
+
+        provider.preferred_versions = {"demo": Version("9.9")}
+        provider.load_prefetched_versions(
+            (parse_requirement("demo"), ("demo", True, True))
+        )
+        assert evaluated == ["demo"]
+    finally:
+        provider.close()

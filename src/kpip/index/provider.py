@@ -2804,14 +2804,18 @@ class CandidateProvider:
 
         result = self.load_available_versions(requirement, cache_key)
 
-        accepted = self.evaluate_links(requirement).accepted
+        accepted: tuple[CandidateRecord, ...] = ()
 
         preferred = self.preferred_versions.get(requirement.canonical_name)
 
         if preferred is not None:
             # The resolve is going to choose this release, not the newest:
-            # warm its metadata, and the pages of its dependencies.
-            accepted = self.release_candidates(requirement, preferred) or accepted
+            # warm its metadata, and the pages of its dependencies. Read
+            # alone, without evaluating every other release first.
+            accepted = self.release_candidates(requirement, preferred) or ()
+
+        if not accepted:
+            accepted = self.evaluate_links(requirement).accepted
 
         materializer = self.get_materializer_internal()
 

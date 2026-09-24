@@ -282,7 +282,6 @@ class NabProvider:
         if not self._preferences or not isinstance(self.provider, CandidateProvider):
             return
 
-        self.provider.preferred_versions = self._preferences
         self.provider.prefetch_available_versions(
             tuple(parse_requirement(name) for name in self._preferences),
             lookahead=True,
@@ -2118,6 +2117,10 @@ class NabProvider:
             self._constrained_root_packages = {package}
             return {package: Range.empty()}
 
+        if self._preferences and isinstance(self.provider, CandidateProvider):
+            # Before any prefetch starts: a root's worker warms the release
+            # the resolve will choose only if it can already see the pins.
+            self.provider.preferred_versions = self._preferences
         self._prefetch_available_versions(tuple(merged))
         self._prefetch_preferred_catalogs()
         roots: dict[str, Range[Version]] = {}

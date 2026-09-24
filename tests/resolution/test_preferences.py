@@ -40,10 +40,24 @@ def test_every_preferred_page_starts_in_one_wave(monkeypatch: Any) -> None:
     subject._prefetch_preferred_catalogs()
 
     assert started == [(("demo", "other"), True)]
-    assert subject.provider.preferred_versions == {
-        "demo": Version("1.0"),
-        "other": Version("2.0"),
-    }
+
+
+def test_the_pins_are_published_before_any_prefetch(monkeypatch: Any) -> None:
+    """A root's prefetch worker warms the pinned release only if it can see it."""
+    from kpip.core.packaging import parse_requirement
+
+    subject = adapter({"demo": "1.0"})
+    seen: list[object] = []
+    monkeypatch.setattr(
+        subject,
+        "_prefetch_available_versions",
+        lambda requirements: seen.append(dict(subject.provider.preferred_versions)),
+    )
+    monkeypatch.setattr(subject, "_prefetch_preferred_catalogs", lambda: None)
+
+    subject.add_roots([parse_requirement("demo"), parse_requirement("other")])
+
+    assert seen == [{"demo": Version("1.0")}]
 
 
 def test_no_previous_lock_starts_nothing(monkeypatch: Any) -> None:
