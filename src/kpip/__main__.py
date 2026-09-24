@@ -9,11 +9,9 @@ if not __spec__ or __spec__.parent == "":
     sys.path.insert(0, path)
 
 if __name__ == "__main__":
-    from kpip.cli.entrypoint import main
+    from kpip.cli.entrypoint import console_main
 
-    sys.exit(
-        main(
-            version=None,
-            location=os.path.join(os.path.dirname(__file__), "__init__.py"),
-        ),
+    console_main(
+        version=None,
+        location=os.path.join(os.path.dirname(__file__), "__init__.py"),
     )
