@@ -31,6 +31,27 @@ unpacks into a fresh temporary directory on every run and removes it on
 exit. `--mode=standalone` builds a directory instead of a single file, with the
 binary at `build/kpip.dist/kpip.bin` (`kpip.exe` on Windows).
 
+## Profile-guided optimization
+
+```console
+uv run kpip-compile build --pgo
+```
+
+This uses Nuitka's `--pgo-c`, as fixed by the vendored patch `0005`:
+
+1. **Instrumented build:** Nuitka compiles kpip with profiling and assembles its standalone distribution.
+2. **Training run:** Nuitka runs `build/pgo-train`, which runs `python -m kpip_compile.pgo` over 72 kpip commands in that distribution. They cover startup, help, locks of every benchmark requirement set (from a fresh cache and from a warm one, with backtracking and unsatisfiable sets), a download, installs, `list`, `freeze`, `inspect`, an sdist wheel build and `cache`. Each process writes a profile, and Nuitka merges them.
+3. **Final build:** Nuitka compiles again with the profile and builds the binary you asked for.
+
+A failed training step fails the build. Steps that need the network, git or a build backend, or that are meant to fail, are allowed to fail.
+
+On a warm airflow resolve this cuts CPU time by about 10% and wall time by about 5%. Output is identical. Startup and small locks don't change, since most of their time is spent in the CPython runtime, which the profile doesn't cover. The build takes about twice as long, and training needs network access.
+
+Requirements:
+
+- **Compiler:** Nuitka's default compiler: clang on macOS, gcc on Linux, or clang with `--clang` after `--`. With clang, `llvm-profdata` from the same LLVM is needed; on macOS it comes from Xcode.
+- **Windows:** not supported, since the training runs through a shell script.
+
 ## Vendored Nuitka
 
 `kpip-compile vendor` resolves the current commit of Nuitka's `develop`

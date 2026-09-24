@@ -1,0 +1,439 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 24 Sep 2026 03:49:24 -0400
+Subject: [PATCH] Scons: Support C level PGO with clang, and in standalone and
+ onefile modes
+
+With clang, "--pgo-c" waited for a gcc profile file that never appears.
+Now the instrumented binary writes LLVM raw profiles, one per process,
+which are merged with the "llvm-profdata" of the compiler's LLVM, and
+the final build compiles with the merged profile.
+
+In standalone and onefile modes, the instrumented binary ran before the
+distribution existed, so it could not find its DLLs and data files.
+Now it is trained in a complete distribution, which is then created
+again for the final binary.
+
+For zig, which ships no profile runtime, PGO now reports that clearly
+instead of failing to link.
+
+Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+ nuitka/MainControl.py                 | 204 +++++++++++++++++++++-----
+ nuitka/build/SconsCompilerSettings.py |  31 +++-
+ nuitka/build/SconsUtils.py            |  10 ++
+ nuitka/options/OptionParsing.py       |   4 +-
+ nuitka/options/Options.py             |   5 -
+ 5 files changed, 206 insertions(+), 48 deletions(-)
+
+diff --git a/nuitka/MainControl.py b/nuitka/MainControl.py
+index 0962da23d..c3a97c930 100644
+--- a/nuitka/MainControl.py
++++ b/nuitka/MainControl.py
+@@ -20,8 +20,11 @@ from nuitka.build.SconsInterface import (
+     provideStaticSourceFilesBackend,
+ )
+ from nuitka.build.SconsUtils import (
++    getLlvmProfileDataFilename,
++    getLlvmProfileDirectory,
+     getSconsCompilerUsed,
+     getSconsReportValue,
++    getSconsReportValueBool,
+     readSconsErrorReport,
+     readSconsObjectSizes,
+     readSconsReport,
+@@ -173,6 +176,9 @@ from nuitka.tree.ReformulationMultidist import createMultidistMainSourceCode
+ from nuitka.utils.Distributions import getDistribution, getDistributionName
+ from nuitka.utils.Execution import (
+     executeCompiledBinary,
++    executeProcess,
++    executeToolChecked,
++    getExecutablePath,
+     withEnvironmentVarOverridden,
+     wrapCommandForDebuggerForExec,
+ )
+@@ -183,6 +189,7 @@ from nuitka.utils.FileOperations import (
+     getNormalizedPathJoin,
+     getReportPath,
+     isFilesystemEncodable,
++    listDir,
+     openTextFile,
+     removeDirectory,
+ )
+@@ -663,6 +670,89 @@ def _deleteMsvcPGOFiles(pgo_mode):
+     return msvc_pgc_filename
+ 
+ 
++def _isLlvmProfileCompiler(source_dir):
++    """Does the compiler used write LLVM profiles, i.e. is it clang."""
++    return getSconsReportValueBool(
++        source_dir, "clang_mode"
++    ) and not getSconsReportValueBool(source_dir, "msvc_mode")
++
++
++def _getLlvmProfdataPath(source_dir):
++    """Find the "llvm-profdata" matching the LLVM version that compiled.
++
++    The merged profile format changes with LLVM versions, so the tool of
++    the compiler is preferred over any other one found.
++    """
++    compiler = getSconsReportValue(source_dir, "the_compiler")
++
++    if not os.path.isabs(compiler):
++        compiler = getExecutablePath(compiler)
++
++    tool_name = "llvm-profdata" + (".exe" if isWin32Windows() else "")
++
++    if compiler is not None:
++        # LLVM installations have the tool next to "clang", even when it is
++        # a symlink, e.g. "/usr/bin/clang-19" on Debian or Homebrew LLVM.
++        candidate = getNormalizedPathJoin(
++            os.path.dirname(os.path.realpath(compiler)), tool_name
++        )
++
++        if os.path.isfile(candidate):
++            return candidate
++
++        # Versioned names, e.g. "clang-19" comes with "llvm-profdata-19".
++        compiler_name = os.path.splitext(os.path.basename(compiler))[0]
++        if compiler_name.startswith("clang-"):
++            candidate = getExecutablePath(
++                "llvm-profdata-" + compiler_name[len("clang-") :]
++            )
++
++            if candidate is not None:
++                return candidate
++
++    if isMacOS():
++        # Apple clang ships the tool matching it with Xcode only.
++        process_result = executeProcess(command=("xcrun", "-f", "llvm-profdata"))
++
++        if process_result.exit_code == 0 and process_result.stdout.strip():
++            return process_result.stdout.strip().decode("utf8")
++
++    return getExecutablePath("llvm-profdata")
++
++
++def _mergeLlvmProfiles(source_dir):
++    profile_dir = getLlvmProfileDirectory(source_dir)
++
++    if not os.path.isdir(profile_dir):
++        return False
++
++    raw_profiles = [
++        filename
++        for filename, _basename in listDir(profile_dir)
++        if filename.endswith(".profraw")
++    ]
++
++    if not raw_profiles:
++        return False
++
++    llvm_profdata = _getLlvmProfdataPath(source_dir)
++
++    if llvm_profdata is None:
++        return pgo_logger.sysexit("""\
++Error, C level PGO with clang needs 'llvm-profdata' of the same LLVM \
++version as the compiler, install it or put it in PATH.""")
++
++    executeToolChecked(
++        logger=pgo_logger,
++        command=[llvm_profdata, "merge", "-o", getLlvmProfileDataFilename(source_dir)]
++        + raw_profiles,
++        absence_message="needs 'llvm-profdata' to merge C level PGO information",
++        stderr_is_fatal=False,
++    )
++
++    return True
++
++
+ def _runCPgoBinary():
+     # Note: For exit codes, we do not insist on anything yet, maybe we could point it out
+     # or ask people to make scripts that buffer these kinds of errors, and take an error
+@@ -672,30 +762,43 @@ def _runCPgoBinary():
+         "Running created binary to produce C level PGO information:", style="blue"
+     )
+ 
+-    if getSconsCompilerUsed(
+-        OutputDirectories.getSourceDirectoryPath(onefile=False, create=False)
+-    ) in ("MSVC", "ClangCL"):
++    source_dir = OutputDirectories.getSourceDirectoryPath(onefile=False, create=False)
++
++    if getSconsCompilerUsed(source_dir) in ("MSVC", "ClangCL"):
+         msvc_pgc_filename = _deleteMsvcPGOFiles(pgo_mode="generate")
+ 
+         with withEnvironmentVarOverridden(
+             "PATH",
+-            getSconsReportValue(
+-                source_dir=OutputDirectories.getSourceDirectoryPath(
+-                    onefile=False, create=False
+-                ),
+-                key="PATH",
+-            ),
++            getSconsReportValue(source_dir=source_dir, key="PATH"),
+         ):
+             exit_code_pgo = _runPgoBinary()
+ 
+         pgo_data_collected = os.path.exists(msvc_pgc_filename)
++    elif _isLlvmProfileCompiler(source_dir):
++        profile_dir = getLlvmProfileDirectory(source_dir)
++
++        removeDirectory(
++            path=profile_dir,
++            logger=pgo_logger,
++            ignore_errors=False,
++            extra_recommendation=None,
++        )
++
++        # Every process writes its own profile, so programs that run copies
++        # of themselves, e.g. with "multiprocessing", do not overwrite them.
++        with withEnvironmentVarOverridden(
++            "LLVM_PROFILE_FILE",
++            getNormalizedPathJoin(profile_dir, "default-%p.profraw"),
++        ):
++            exit_code_pgo = _runPgoBinary()
++
++        pgo_data_collected = _mergeLlvmProfiles(source_dir)
+     else:
+         exit_code_pgo = _runPgoBinary()
+ 
+         # gcc file suffix, spell-checker: ignore gcda
+         gcc_constants_pgo_filename = getNormalizedPathJoin(
+-            OutputDirectories.getSourceDirectoryPath(onefile=False, create=False),
+-            "__constants.gcda",
++            source_dir, "__constants.gcda"
+         )
+ 
+         pgo_data_collected = os.path.exists(gcc_constants_pgo_filename)
+@@ -929,9 +1032,7 @@ def runSconsBackend():
+ 
+         # Need to restart compilation from scratch here.
+     if isCPgoMode():
+-        # For C level PGO, we have a 2 pass system. TODO: Make it more global for onefile
+-        # and standalone mode proper support, which might need data files to be
+-        # there, which currently are not yet there, so it won't run.
++        # For C level PGO, we have a 2 pass system.
+         if isCPgoMode():
+             scons_options["pgo_mode"] = "generate"
+ 
+@@ -950,7 +1051,17 @@ def runSconsBackend():
+ 
+             # Need to make it usable before executing it.
+             executePostProcessing(scons_options["result_exe"])
+-            _runCPgoBinary()
++
++            if isStandaloneMode():
++                # The program needs its DLLs and data files to run, so train
++                # it in a complete distribution, that is created again for
++                # the final binary afterwards.
++                _createStandaloneDistribution(scons_options)
++                _runCPgoBinary()
++                OutputDirectories.initStandaloneDirectory(logger=pgo_logger)
++            else:
++                _runCPgoBinary()
++
+             scons_options["pgo_mode"] = "use"
+ 
+     applyPreprocessorSymbols(scons_options, onefile=False)
+@@ -1201,8 +1312,19 @@ def _detectEarlyDLLs():
+     )
+ 
+ 
++_late_dlls_detected = False
++
++
+ def _detectLateDLLs(scons_options):
+     assert isStandaloneMode()
++
++    # With C level PGO, the distribution is created for the training and then
++    # again for the final binary, which uses the same DLLs.
++    global _late_dlls_detected  # singleton, pylint: disable=global-statement
++    if _late_dlls_detected:
++        return
++    _late_dlls_detected = True
++
+     binary_filename = scons_options["result_exe"]
+ 
+     detectUsedDLLs(
+@@ -1213,6 +1335,34 @@ def _detectLateDLLs(scons_options):
+     )
+ 
+ 
++def _createStandaloneDistribution(scons_options):
++    _detectLateDLLs(scons_options)
++
++    dist_dir = OutputDirectories.getStandaloneDirectoryPath(bundle=True, real=False)
++
++    if not shallOnlyExecCCompilerCall():
++        main_standalone_entry_point, copy_standalone_entry_points = copyDllsUsed(
++            dist_dir=dist_dir,
++            standalone_entry_points=getStandaloneEntryPoints(),
++        )
++
++        data_file_paths = copyDataFiles(
++            standalone_entry_points=getStandaloneEntryPoints()
++        )
++
++        if isMacOS():
++            signDistributionMacOS(
++                dist_dir=dist_dir,
++                data_file_paths=data_file_paths,
++                main_standalone_entry_point=main_standalone_entry_point,
++                copy_standalone_entry_points=copy_standalone_entry_points,
++            )
++
++        dist_dir = OutputDirectories.renameStandaloneDirectory(dist_dir)
++
++    return dist_dir
++
++
+ def _main():
+     """Main program flow of Nuitka
+ 
+@@ -1321,29 +1471,7 @@ def _main():
+     executePostProcessing(scons_options["result_exe"])
+ 
+     if isStandaloneMode():
+-        _detectLateDLLs(scons_options)
+-
+-        dist_dir = OutputDirectories.getStandaloneDirectoryPath(bundle=True, real=False)
+-
+-        if not shallOnlyExecCCompilerCall():
+-            main_standalone_entry_point, copy_standalone_entry_points = copyDllsUsed(
+-                dist_dir=dist_dir,
+-                standalone_entry_points=getStandaloneEntryPoints(),
+-            )
+-
+-            data_file_paths = copyDataFiles(
+-                standalone_entry_points=getStandaloneEntryPoints()
+-            )
+-
+-            if isMacOS():
+-                signDistributionMacOS(
+-                    dist_dir=dist_dir,
+-                    data_file_paths=data_file_paths,
+-                    main_standalone_entry_point=main_standalone_entry_point,
+-                    copy_standalone_entry_points=copy_standalone_entry_points,
+-                )
+-
+-            dist_dir = OutputDirectories.renameStandaloneDirectory(dist_dir)
++        dist_dir = _createStandaloneDistribution(scons_options)
+ 
+         onStandaloneDistributionFinished(
+             dist_dir=dist_dir,
+diff --git a/nuitka/build/SconsCompilerSettings.py b/nuitka/build/SconsCompilerSettings.py
+index 5d1e541bc..0e75b9b09 100644
+--- a/nuitka/build/SconsCompilerSettings.py
++++ b/nuitka/build/SconsCompilerSettings.py
+@@ -50,6 +50,7 @@ from .SconsUtils import (
+     getArgumentRequired,
+     getExecutablePath,
+     getLinkerArch,
++    getLlvmProfileDataFilename,
+     getMsvcVersion,
+     getMsvcVersionString,
+     initScons,
+@@ -67,7 +68,8 @@ from .WindowsObjGenerator import generateWindowsCoffObject
+ # spell-checker: ignore -flto,-fpartial-inlining,-freorder-functions,-defsym,-fprofile
+ # spell-checker: ignore -fwrapv,-Wunused,-ftrack,-fvisibility,-municode
+ # spell-checker: ignore -feliminate,noexecstack,implib,bexpall,blibpath
+-# spell-checker: ignore LTCG,GENPROFILE,USEPROFILE,CGTHREADS,CCVERSION
++# spell-checker: ignore LTCG,GENPROFILE,USEPROFILE,CGTHREADS,CCVERSION,profdata
++# spell-checker: ignore unprofiled
+ 
+ 
+ def _detectWindowsSDK(env):
+@@ -1794,7 +1796,13 @@ def _enablePgoSettings(env):
+         env.progressbar_name = "Profile"
+         env.Append(CPPDEFINES=["_NUITKA_PGO_GENERATE"])
+ 
+-        if env.gcc_mode or env.zig_mode:
++        if env.zig_mode:
++            # Linking instrumented code needs the LLVM profile runtime, which
++            # zig does not ship.
++            scons_logger.sysexit(
++                "Error, PGO not supported for 'zig' compiler, it lacks the profile runtime."
++            )
++        elif env.gcc_mode:
+             env.Append(CCFLAGS=["-fprofile-generate"])
+             env.Append(LINKFLAGS=["-fprofile-generate"])
+         elif env.msvc_mode:
+@@ -1812,7 +1820,24 @@ def _enablePgoSettings(env):
+ 
+         env.Append(CPPDEFINES=["_NUITKA_PGO_USE"])
+ 
+-        if env.gcc_mode or env.zig_mode:
++        if env.clang_mode and not env.msvc_mode:
++            # LLVM needs the profile merged from the raw ones of the training
++            # run. Code the training did not reach, e.g. error paths, is
++            # expected to be without profile, so do not warn about it.
++            profile_use = "-fprofile-use=%s" % getLlvmProfileDataFilename(
++                env.source_dir
++            )
++
++            env.Append(
++                CCFLAGS=[
++                    profile_use,
++                    "-Wno-profile-instr-unprofiled",
++                    "-Wno-profile-instr-out-of-date",
++                    "-Wno-backend-plugin",
++                ]
++            )
++            env.Append(LINKFLAGS=[profile_use])
++        elif env.gcc_mode:
+             env.Append(CCFLAGS=["-fprofile-use"])
+             env.Append(LINKFLAGS=["-fprofile-use"])
+         elif env.msvc_mode:
+diff --git a/nuitka/build/SconsUtils.py b/nuitka/build/SconsUtils.py
+index 314bbfae5..f2c3d7137 100644
+--- a/nuitka/build/SconsUtils.py
++++ b/nuitka/build/SconsUtils.py
+@@ -788,6 +788,16 @@ def getSconsCompilerUsed(source_dir):
+     return "Unknown"
+ 
+ 
++def getLlvmProfileDirectory(source_dir):
++    """Directory where the LLVM instrumented binary writes raw profiles."""
++    return getNormalizedPathJoin(source_dir, "pgo-profiles")
++
++
++def getLlvmProfileDataFilename(source_dir):
++    """Merged LLVM profile that the C level PGO "use" pass compiles with."""
++    return getNormalizedPathJoin(source_dir, "pgo.profdata")
++
++
+ def readSconsErrorReport(source_dir):
+     if source_dir not in _scons_error_reports:
+         scons_error_report = OrderedDict()
+diff --git a/nuitka/options/OptionParsing.py b/nuitka/options/OptionParsing.py
+index d2d1d7931..b1a4aa5dd 100644
+--- a/nuitka/options/OptionParsing.py
++++ b/nuitka/options/OptionParsing.py
+@@ -1556,8 +1556,8 @@ pgo_group.add_option(
+     help="""\
+ Enables C level profile guided optimization (PGO), by executing a dedicated build first
+ for a profiling run, and then using the result to feedback into the C compilation.
+-Note: This is experimental and not working with standalone modes of Nuitka yet.
+-Defaults to off.""",
++In standalone and onefile modes, the profiling run is done in the created
++distribution folder. Supported with gcc, clang, and MSVC. Defaults to off.""",
+ )
+ 
+ pgo_group.add_option(
+diff --git a/nuitka/options/Options.py b/nuitka/options/Options.py
+index 80a52213a..65b8fb8fa 100644
+--- a/nuitka/options/Options.py
++++ b/nuitka/options/Options.py
+@@ -1323,11 +1323,6 @@ make sure that is intended."""
+         )
+ 
+     if isCPgoMode():
+-        if isStandaloneMode():
+-            optimization_logger.warning("""\
+-Using C level PGO with standalone/onefile mode is not \
+-currently working. Expect errors.""")
+-
+         if shallMakeModule():
+             optimization_logger.warning("""\
+ Using C level PGO with module mode is not currently \

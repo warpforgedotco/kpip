@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from kpip_compile.vendor import PACKAGE_ROOT, REPO_ROOT
@@ -46,6 +46,7 @@ class BuildOptions:
     cache_mode: str = "cached"
     platform: str = sys.platform
     extra_args: tuple[str, ...] = field(default=())
+    pgo: bool = False
 
 
 def kpip_version(package_dir: Path = KPIP_PACKAGE) -> str:
@@ -101,14 +102,47 @@ def nuitka_command(
     return command
 
 
-def build(options: BuildOptions, nuitka_dir: Path) -> int:
-    command = nuitka_command(options, kpip_version(), interpreter_tag(options.python))
-    env = dict(os.environ)
+def _run_nuitka(
+    options: BuildOptions, nuitka_dir: Path, environ: dict[str, str], interpreter: str
+) -> int:
+    command = nuitka_command(options, kpip_version(), interpreter)
+    env = dict(environ)
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(nuitka_dir), env.get("PYTHONPATH")))
     )
     options.output_dir.mkdir(parents=True, exist_ok=True)
-    # The binary embeds this interpreter's version, so say which one it is.
-    subprocess.run([options.python, "-VV"], check=True)
     print(" ".join(command), flush=True)
     return subprocess.run(command, env=env, check=False).returncode
+
+
+def build(options: BuildOptions, nuitka_dir: Path) -> int:
+    # The binary embeds this interpreter's version, so say which one it is.
+    subprocess.run([options.python, "-VV"], check=True)
+    interpreter = interpreter_tag(options.python)
+
+    if not options.pgo:
+        return _run_nuitka(options, nuitka_dir, dict(os.environ), interpreter)
+
+    from kpip_compile import pgo
+
+    pgo.check_supported(options.platform)
+
+    # Nuitka trains the instrumented build in its standalone distribution,
+    # which holds the binary under its standalone name in either mode.
+    binary = (
+        options.output_dir
+        / "kpip.dist"
+        / executable_name(replace(options, mode="standalone"))
+    )
+    result = options.output_dir / "pgo-training.result"
+    pgo_options = pgo.nuitka_options(options.output_dir / "pgo-train", binary, result)
+    status = _run_nuitka(
+        replace(options, extra_args=(*pgo_options, *options.extra_args)),
+        nuitka_dir,
+        dict(os.environ),
+        interpreter,
+    )
+    if status != 0:
+        return status
+    pgo.check_training(result)
+    return 0
