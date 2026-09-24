@@ -14,6 +14,7 @@ from kpip.index.catalog_cache import (
     load_summary,
     save_choices,
     save_links,
+    save_summary_value,
     summary_key,
 )
 from kpip.index.links import Link
@@ -254,3 +255,30 @@ def test_catalog_with_an_unparseable_upload_time_is_a_miss(tmp_path: Path) -> No
 
     assert load_catalog(cache, page_url) is None
     assert load_links(cache, page_url) is None
+
+
+def test_a_stored_summary_shares_what_releases_have_in_common(tmp_path: Path) -> None:
+    """Equal facts and version parts are stored, and loaded, as one object."""
+    cache = SafeFileCache(str(tmp_path))
+    page_url = "https://example.test/simple/demo/"
+    facts = [(WHEEL_RECORD, ">=3.9", None)]
+    summary = (
+        "generation",
+        [
+            ("demo", text, Version(text).to_wire(), list(facts))
+            for text in ("1.0", "1.1", "2.0")
+        ],
+        False,
+        {},
+    )
+
+    save_summary_value(cache, page_url, summary)
+    loaded = load_summary(cache, page_url)
+
+    assert loaded == summary
+    assert loaded is not None
+    first, second, third = loaded[1]
+    assert first[3] is second[3] is third[3]
+    suffix = first[2][1][2]
+    assert second[2][1][2] is suffix
+    assert third[2][1][2] is suffix
