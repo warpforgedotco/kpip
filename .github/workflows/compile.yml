@@ -71,7 +71,7 @@ jobs:
           # The first run unpacks and leaves the cache manifest; the second
           # starts from it without unpacking.
           "$kpip" --version
-          find "$cache" -maxdepth 2 -name .nuitka-onefile-manifest | grep .
+          find "$cache" -maxdepth 3 -name .nuitka-onefile-manifest | grep .
           "$kpip" --version
 
           # Commands load by module name, and HTTPS needs certifi's bundle.
