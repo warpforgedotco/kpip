@@ -163,6 +163,9 @@ def child_env(
     env["PYTHONPATH"] = str(SRC)
     env["KPIP_IMPORT_DUMP"] = str(dump_path)
     env["KPIP_IMPORT_ARGV"] = "\n".join(args)
+    # The harness writes its dump after the command returns, which a kpip
+    # that ends the process straight away would never get to.
+    env["KPIP_EXIT"] = "full"
     if extra:
         env.update(extra)
     return env

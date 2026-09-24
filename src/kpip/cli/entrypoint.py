@@ -8,6 +8,11 @@ import sys
 from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
 from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
 
+TYPE_CHECKING = False
+
+if TYPE_CHECKING:
+    from typing import NoReturn
+
 _SWITCH_INTERVAL_SECONDS = 0.020
 """How long a thread may hold the interpreter lock before offering it up."""
 
@@ -16,6 +21,12 @@ _OLD_GENERATION_RATIO = 100
 
 _YOUNG_GENERATION_THRESHOLD = 10_000
 """Allocations between generation-0 collections, at the least."""
+
+_UNCOLLECTED_COMMANDS = frozenset({"lock"})
+"""Commands that run with garbage collection off, see :func:`pause_collection`."""
+
+_FLUSH_FAILED = 120
+"""The status CPython exits with when it cannot flush a standard stream."""
 
 VISIBLE_COMMAND_NAMES = tuple(spec.name for spec in COMMAND_SPECS if spec.visible)
 COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECS)
@@ -299,6 +310,34 @@ def switch_threads_less_often() -> float | None:
     return previous
 
 
+def pause_collection(command: str) -> bool:
+    """Turn garbage collection off for a command that gains nothing from it.
+
+    A lock's heap is the catalog and the resolver's clause set, alive until
+    the command ends, and collecting it reclaims nothing: peak memory of the
+    airflow, bio-embeddings, pydantic and backtracking locks is the same to
+    the megabyte with collection off. Collecting only walks it, which with
+    the thresholds of :func:`collect_less_often` still cost a warm airflow
+    lock some 10% compiled. Commands that install stay collected: they run
+    build backends and hold on to archives, where cycles can matter.
+
+    Returns whether it turned collection off, for ``main`` to turn it back
+    on for an in-process caller. ``KPIP_GC=default`` leaves it on.
+    """
+    import gc
+
+    if (
+        command not in _UNCOLLECTED_COMMANDS
+        or os.environ.get("KPIP_GC") == "default"
+        or not gc.isenabled()
+    ):
+        return False
+
+    gc.disable()
+
+    return True
+
+
 def collect_less_often() -> tuple[int, int, int] | None:
     """Make garbage collections rare for the length of one command.
 
@@ -349,6 +388,8 @@ def main(
     restore_thresholds: tuple[int, int, int] | None = None
 
     restore_switch_interval: float | None = None
+
+    collection_paused = False
 
     managed_environment = {
         name: os.environ.get(name)
@@ -432,6 +473,8 @@ def main(
 
         restore_thresholds = collect_less_often()
 
+        collection_paused = pause_collection(spec.name)
+
         restore_switch_interval = switch_threads_less_often()
 
         if spec.needs_tempdir:
@@ -514,5 +557,60 @@ def main(
 
             gc.set_threshold(*restore_thresholds)
 
+        if collection_paused:
+            import gc
+
+            gc.enable()
+
         if restore_switch_interval is not None:
             sys.setswitchinterval(restore_switch_interval)
+
+
+def exit_without_teardown(status: int) -> NoReturn:
+    """End the process after a command, without tearing the interpreter down.
+
+    Teardown frees every object one at a time and runs full collections over
+    what is left, which after a resolve is the whole catalog and clause set:
+    a fifth of a warm airflow lock went there, after the lock file was
+    written. The operating system takes the memory back at once instead.
+
+    What a normal exit does that anything can observe still happens, in the
+    order CPython does it: non-daemon threads and executor workers are waited
+    for, the atexit callbacks run (logging's flush among them), and the
+    standard streams are flushed, exiting with 120 if one cannot be, as
+    CPython does. Files a command left open are not flushed, so commands
+    close what they write. ``KPIP_EXIT=full`` exits normally, e.g. for a leak
+    checker.
+    """
+    if os.environ.get("KPIP_EXIT") == "full":
+        sys.exit(status)
+
+    import atexit
+    import threading
+
+    # Private, but it is what interpreter shutdown calls: it joins non-daemon
+    # threads and runs the callbacks concurrent.futures registers there.
+    shutdown = getattr(threading, "_shutdown", None)
+    if shutdown is not None:
+        shutdown()
+
+    atexit._run_exitfuncs()  # noqa: SLF001
+
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None or stream.closed:
+            continue
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            status = _FLUSH_FAILED
+
+    os._exit(status)
+
+
+def console_main(
+    *,
+    version: str | None = None,
+    location: str | None = None,
+) -> NoReturn:
+    """The ``kpip`` command: run :func:`main`, then end the process."""
+    exit_without_teardown(main(version=version, location=location))
