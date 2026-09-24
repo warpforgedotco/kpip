@@ -77,6 +77,10 @@ jobs:
           # Commands load by module name, and HTTPS needs certifi's bundle.
           "$kpip" download certifi --no-cache-dir -d "$RUNNER_TEMP/download"
           ls "$RUNNER_TEMP"/download/certifi-*.whl
+
+          # A source-only package is built with a real Python, not the binary.
+          "$kpip" lock --no-cache-dir --output "$RUNNER_TEMP/sdist.toml" atlasclient==1.0.0
+          grep -q 'name = "atlasclient"' "$RUNNER_TEMP/sdist.toml"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kpip-${{ runner.os }}
