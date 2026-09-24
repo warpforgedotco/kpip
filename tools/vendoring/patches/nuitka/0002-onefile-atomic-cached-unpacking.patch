@@ -14,6 +14,9 @@ Now new contents are written to a process specific temporary file that
 then atomically replaces the target, so other processes keep seeing
 the complete old or new file. Temporary mode is not affected, as its
 directory is private to the process.
+
+Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
  nuitka/build/static_src/OnefileBootstrap.c | 92 ++++++++++++++++------
  1 file changed, 66 insertions(+), 26 deletions(-)

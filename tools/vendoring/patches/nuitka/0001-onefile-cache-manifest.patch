@@ -20,6 +20,9 @@ For a 40MB payload on macOS, warm start goes from 80.8ms to 18.9ms,
 with standalone at 17.2ms.
 
 See #4028
+
+Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
  nuitka/build/static_src/OnefileBootstrap.c | 550 +++++++++++++++++----
  nuitka/freezer/Onefile.py                  |  16 +-
