@@ -2545,13 +2545,15 @@ class CandidateProvider:
 
         candidates_by_version: dict[Version, list[CandidateRecord]] = {}
 
-        records_by_version: dict[Version, list[object]] = {}
+        records_by_version: dict[Version, tuple[object, ...]] = {}
 
         cached_groups = self.catalog_groups(requirement, allow_fetch=True)
 
         ordered_summaries: list[CandidateSummary] | None = (
             [] if cached_groups is not None and len(cached_groups) == 1 else None
         )
+
+        ordered_versions: list[Version] = []
 
         catalog_links = (
             () if cached_groups is not None else self.catalog_links(requirement)
@@ -2570,7 +2572,15 @@ class CandidateProvider:
 
             from_wire = Version.from_wire
 
+            # Releases share a few Requires-Python values, and the verdict
+            # cannot change within one call.
+            python_verdicts: dict[str, bool] = {}
+
             for groups, source_url, generation in cached_groups:
+                # Every release of a group has the same record, so they share
+                # one tuple rather than each building a list of it.
+                group_records = ((source_url, generation),)
+
                 for name, version_text, version_state, facts in groups:
                     if not unnamed_direct and name != canonical_name:
                         continue
@@ -2600,16 +2610,21 @@ class CandidateProvider:
                             continue
 
                         if isinstance(requires_python, str):
-                            try:
-                                if not CandidateEvaluator.requires_python_matches(
-                                    requires_python
-                                ):
-                                    self.last_rejected_requires_python[
-                                        canonical_name
-                                    ] = requires_python
-                                    continue
+                            matches = python_verdicts.get(requires_python)
 
-                            except ValueError:
+                            if matches is None:
+                                try:
+                                    matches = (
+                                        CandidateEvaluator.requires_python_matches(
+                                            requires_python
+                                        )
+                                    )
+                                except ValueError:
+                                    matches = False
+
+                                python_verdicts[requires_python] = matches
+
+                            if not matches:
                                 self.last_rejected_requires_python[canonical_name] = (
                                     requires_python
                                 )
@@ -2636,16 +2651,18 @@ class CandidateProvider:
 
                     if has_eligible_artifact:
                         version_records = records_by_version.get(version)
-                        if version_records is None:
-                            records_by_version[version] = [(source_url, generation)]
-                        else:
-                            version_records.append((source_url, generation))
+                        records_by_version[version] = (
+                            group_records
+                            if version_records is None
+                            else version_records + group_records
+                        )
 
                         if ordered_summaries is not None:
                             if ordered_has_unyanked:
                                 ordered_summaries.append(
                                     CandidateSummary(version, False, None)
                                 )
+                                ordered_versions.append(version)
 
                             if ordered_has_yanked:
                                 ordered_summaries.append(
@@ -2653,6 +2670,7 @@ class CandidateProvider:
                                         version, True, ordered_yanked_reason
                                     )
                                 )
+                                ordered_versions.append(version)
 
         parsed_link_cache = self.parsed_link_cache
 
@@ -2754,19 +2772,16 @@ class CandidateProvider:
                 },
             ),
             summaries=result,
-            summary_versions=tuple(summary.version for summary in result),
+            summary_versions=(
+                tuple(ordered_versions)
+                if ordered_summaries is not None
+                else tuple([summary.version for summary in result])
+            ),
             links_by_version=MappingProxyType(
                 {version: tuple(links) for version, links in links_by_version.items()},
             ),
             records_by_version=(
-                None
-                if cached_groups is None
-                else MappingProxyType(
-                    {
-                        version: tuple(records)
-                        for version, records in records_by_version.items()
-                    },
-                )
+                None if cached_groups is None else MappingProxyType(records_by_version)
             ),
         )
 
