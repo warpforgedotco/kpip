@@ -133,3 +133,19 @@ def test_checkout_marks_the_upstream_commit(
     vendor_dir = vendor_nuitka(spec, tmp_path / "vendor")
 
     assert _git("rev-parse", "upstream", cwd=vendor_dir) == commit
+
+
+def test_refetch_removes_read_only_files(
+    upstream: tuple[Path, str], tmp_path: Path
+) -> None:
+    """Git objects are read-only; Windows would refuse to delete them."""
+    repo, commit = upstream
+    spec = VendorSpec(repository=str(repo), commit=commit, patches=())
+    vendor_dir = vendor_nuitka(spec, tmp_path / "vendor")
+    read_only = vendor_dir / "read-only"
+    read_only.write_text("x")
+    read_only.chmod(0o444)
+
+    vendor_nuitka(spec, vendor_dir, force=True)
+
+    assert not read_only.exists()

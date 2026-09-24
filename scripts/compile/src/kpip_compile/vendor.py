@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
+import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,6 +85,22 @@ def is_current(spec: VendorSpec, vendor_dir: Path = VENDOR_DIR) -> bool:
         return False
 
 
+def _remove_tree(path: Path) -> None:
+    """``shutil.rmtree`` that also removes read-only files.
+
+    Git writes its objects read-only, and Windows refuses to delete those.
+    """
+
+    def make_writable_and_retry(function, target, _error) -> None:
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=make_writable_and_retry)
+    else:
+        shutil.rmtree(path, onerror=make_writable_and_retry)
+
+
 def _git(*args: str, cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True)
 
@@ -102,7 +121,7 @@ def vendor_nuitka(
         return vendor_dir
 
     if vendor_dir.exists():
-        shutil.rmtree(vendor_dir)
+        _remove_tree(vendor_dir)
     vendor_dir.mkdir(parents=True)
 
     _git("init", "--quiet", cwd=vendor_dir)
