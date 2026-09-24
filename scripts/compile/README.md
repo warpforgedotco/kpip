@@ -47,6 +47,7 @@ The patches live in a subdirectory so that `vendoring sync`, which applies
 | --- | --- |
 | `0001-onefile-cache-manifest.patch` | Cached mode records every unpacked file's size, mtime and inode in a manifest tied to the payload hash, so an unchanged unpacking skips decompression and checksums. Upstream issue [Nuitka#4028](https://github.com/Nuitka/Nuitka/issues/4028). |
 | `0002-onefile-atomic-cached-unpacking.patch` | Cached mode writes each file under a temporary name and renames it into place, so concurrent first runs no longer truncate files that other processes are executing (`SIGBUS`). |
+| `0003-lazy-inspect-typing.patch` | Standalone programs no longer import `inspect` and `typing` at startup just to patch them. `inspect` and `types` are patched once something first imports them, and the typing types are taken from the built-in `_typing`. |
 
 `_vendor/nuitka` is a git checkout whose `upstream` branch is the fetched
 `develop` commit, so `git diff` inside it shows exactly what the patches
