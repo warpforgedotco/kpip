@@ -112,10 +112,33 @@ _versions: dict[str, Version] = register_table({})
 _versions_get = _versions.get
 
 
+class _Release:
+    """``Version.release``, for a Version built from its wire record.
+
+    A parsed Version holds its release in its own ``__dict__``, which a
+    non-data descriptor defers to. One built by ``from_wire`` does not, and
+    reads it back here, once, from the canonical text's leading numbers.
+    A ``__getattr__`` on Version did the same, but it put every attribute
+    read on every Version on CPython's slow path.
+    """
+
+    def __get__(self, version: Version | None, owner: type | None = None) -> Any:
+        if version is None:
+            return self
+        text = version.public
+        text = text.partition("!")[2] or text
+        end = 0
+        while end < len(text) and (text[end].isdigit() or text[end] == "."):
+            end += 1
+        release = tuple(map(int, text[:end].rstrip(".").split(".")))
+        version.__dict__["release"] = release
+        return release
+
+
 class Version(tuple):
     """A parsed PEP 440 version; see the module docstring for the rules."""
 
-    release: tuple[int, ...]
+    release: tuple[int, ...] = _Release()  # ty: ignore[invalid-assignment]
 
     def __new__(cls, value: str) -> Version:
         cached = _versions_get(value)
@@ -288,7 +311,7 @@ class Version(tuple):
         airflow resolve reads 58,000 of these, 17,000 of them new to the
         process. The key is what parsing the text gave when it was stored,
         and the text is the canonical spelling, so the two agree; ``release``
-        is read back from the text if something asks for it.
+        is read back from the text if something asks for it (``_Release``).
         """
         # A hit skips building one, which a warm catalog read does for
         # nearly every version it lists.
@@ -302,20 +325,6 @@ class Version(tuple):
             _versions.clear()
         _versions[text] = self
         return self
-
-    def __getattr__(self, name: str) -> Any:
-        # Only reached for an attribute a Version does not hold yet: the
-        # release of one built by :meth:`from_wire`, which is the canonical
-        # text's leading dotted numbers.
-        if name != "release":
-            raise AttributeError(name)
-        text = self.public.partition("!")[2] or self.public
-        end = 0
-        while end < len(text) and (text[end].isdigit() or text[end] == "."):
-            end += 1
-        release = tuple(map(int, text[:end].rstrip(".").split(".")))
-        self.__dict__["release"] = release
-        return release
 
 
 def version_of(value: Version | str) -> Version | None:
