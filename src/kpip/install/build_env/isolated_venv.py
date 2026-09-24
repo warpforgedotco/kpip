@@ -85,13 +85,98 @@ class CreatedVenv:
         )
 
 
-def create_isolated_venv(env_path: str, *, with_pip: bool = True) -> CreatedVenv:
+def _bootstrap_environment() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("KPIP_") and key != "PYTHONPATH"
+    }
+
+
+_VENV_PATHS = (
+    "import json, sys, sysconfig; "
+    "print(json.dumps([sysconfig.get_path('purelib'), "
+    "sysconfig.get_path('scripts'), sys.executable]))"
+)
+
+
+def _create_with_interpreter(
+    env_path: str, *, with_pip: bool, python: str
+) -> CreatedVenv:
+    """Have ``python`` create the environment, and describe it in its own terms.
+
+    The running process may not be that interpreter -- or any interpreter,
+    when kpip is compiled -- so both the creation and the layout of the new
+    environment come from ``python`` itself rather than from this process's
+    ``venv`` and ``sysconfig``.
+    """
+    import json
+    import subprocess
+
+    command = [
+        python,
+        "-m",
+        "venv",
+        *(() if with_pip else ("--without-pip",)),
+        env_path,
+    ]
+
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            cwd=env_path,
+            env=_bootstrap_environment(),
+            capture_output=True,
+            text=True,
+        )
+
+        executable = (
+            os.path.join(env_path, "Scripts", "python.exe")
+            if os.name == "nt"
+            else os.path.join(env_path, "bin", "python")
+        )
+        described = subprocess.run(
+            [executable, "-c", _VENV_PATHS],
+            check=True,
+            cwd=env_path,
+            env=_bootstrap_environment(),
+            capture_output=True,
+            text=True,
+        )
+        purelib, scripts, venv_python = json.loads(described.stdout)
+    except (OSError, ValueError, subprocess.CalledProcessError) as e:
+        detail = str(e)
+        if isinstance(e, subprocess.CalledProcessError):
+            output = "\n".join(part for part in (e.stdout, e.stderr) if part)
+            if output:
+                detail = f"{detail}: {output}"
+        raise VenvCreationError(detail)
+
+    return CreatedVenv(
+        lib_dirs=[purelib], bin_path=scripts, python_executable=venv_python
+    )
+
+
+def create_isolated_venv(
+    env_path: str,
+    *,
+    with_pip: bool = True,
+    python: str | None = None,
+) -> CreatedVenv:
     """Create a fresh virtualenv (or stdlib ``venv`` fallback) at ``env_path``.
 
     Used by ``BackendRunner.caller()`` in ``build.build_backend`` (the
     project builder used by ``kpip build``/``kpip wheel`` and metadata-only
     resolution reads) to get "a working isolated venv at this path".
+    ``python`` is the interpreter the environment is for; when it is not the
+    one running kpip, that interpreter creates it.
     """
+    from kpip.core.interpreter import is_own_interpreter
+
+    if python is not None and not is_own_interpreter(python):
+        return _create_with_interpreter(env_path, with_pip=with_pip, python=python)
+
     context: Any = None
     try:
         import virtualenv
@@ -107,11 +192,7 @@ def create_isolated_venv(env_path: str, *, with_pip: bool = True) -> CreatedVenv
         try:
             context = env.ensure_directories(env_path)
             env.create(env_path)
-            bootstrap_environment = {
-                key: value
-                for key, value in os.environ.items()
-                if not key.startswith("KPIP_") and key != "PYTHONPATH"
-            }
+            bootstrap_environment = _bootstrap_environment()
             if with_pip:
                 subprocess.run(
                     [

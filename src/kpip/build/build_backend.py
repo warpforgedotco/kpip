@@ -14,7 +14,6 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 import tarfile
 import tempfile
 
@@ -33,6 +32,7 @@ from kpip.core.errors import BuildError
 from kpip.core.packaging import canonicalize_name, parse_requirement
 from kpip.core.versions import InvalidVersion, Version
 from kpip.core.subprocesses import call_subprocess
+from kpip.core.interpreter import build_interpreter, is_own_interpreter
 from kpip.install.build_env.isolated_venv import create_isolated_venv
 
 
@@ -273,7 +273,7 @@ class BackendRunner:
                     os.fspath(self.source_dir),
                     self.spec.name,
                     backend_path=list(self.spec.backend_path) or None,
-                    python_executable=sys.executable,
+                    python_executable=build_interpreter(),
                 )
 
                 yield caller, metadata_dir
@@ -286,6 +286,7 @@ class BackendRunner:
             python = create_isolated_venv(
                 env_path,
                 with_pip=bool(self.spec.requirements),
+                python=build_interpreter(),
             ).python_executable
 
             if self.spec.requirements:
@@ -358,7 +359,10 @@ class BackendRunner:
                             in detail
                         )
                     ) and (
-                        importlib.util.find_spec("setuptools.build_meta")  # type: ignore
+                        # Only this process's own interpreter can be asked
+                        # in-process whether it has setuptools.
+                        is_own_interpreter(build_interpreter())
+                        and importlib.util.find_spec("setuptools.build_meta")  # type: ignore
                         is not None
                     ):
                         with tempfile.TemporaryDirectory(
@@ -368,7 +372,7 @@ class BackendRunner:
                                 os.fspath(self.source_dir),
                                 self.spec.name,
                                 backend_path=list(self.spec.backend_path) or None,
-                                python_executable=sys.executable,
+                                python_executable=build_interpreter(),
                             )
 
                             yield caller, metadata_dir

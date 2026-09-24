@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from contextlib import contextmanager
 
 TYPE_CHECKING = False
@@ -74,7 +73,12 @@ class BuildBackendHookCaller:
             os.path.abspath(os.path.join(self.source_dir, path))
             for path in (backend_path or ())
         )
-        self.python_executable = python_executable or sys.executable
+        if python_executable is None:
+            from kpip.core.interpreter import build_interpreter
+
+            python_executable = build_interpreter()
+
+        self.python_executable = python_executable
 
     @contextmanager
     def subprocess_runner(self, runner: Any) -> Iterator[None]:
