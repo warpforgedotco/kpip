@@ -63,8 +63,10 @@ A onefile build (`../compile/build/kpip`) works too. Its first run unpacks the
 payload, which hyperfine's warm-up runs absorb. `--compiled-only` leaves out
 the kpip launched from source, so the compiled binary is compared with uv
 alone. With `--json`, `meta.json` records the compiled build's version and
-embedded Python as `kpip_compiled_version`, and `kpip-bench-compare` warns
-when two runs used different builds.
+embedded Python as `kpip_compiled_version` and the binary's SHA-256 as
+`kpip_compiled_sha256`. `kpip-bench-compare` warns when the version or
+embedded Python differs, names the two binaries when they differ, and warns
+when both runs measured the same one.
 
 Startup-focused cases:
 

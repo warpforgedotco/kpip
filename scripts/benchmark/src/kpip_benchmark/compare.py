@@ -64,6 +64,22 @@ def warn_on_mismatched_metadata(
                 "reflect a different interpreter/tool, not a real change.",
                 file=sys.stderr,
             )
+    # A different compiled kpip is usually the point of the comparison, so it
+    # is reported rather than warned about -- unless nothing changed at all.
+    before_binary = before.get("kpip_compiled_sha256")
+    after_binary = after.get("kpip_compiled_sha256")
+    if before_binary and after_binary:
+        if before_binary == after_binary:
+            print(
+                f"Warning: both runs measured the same compiled kpip "
+                f"(sha256 {before_binary[:12]}); its deltas are noise.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"Compiled kpip: sha256 {before_binary[:12]} -> {after_binary[:12]}",
+                file=sys.stderr,
+            )
 
 
 def compare(before: Path, after: Path) -> int:

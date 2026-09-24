@@ -147,3 +147,34 @@ def test_compare_labels_a_compiled_kpip_and_checks_its_build(
     assert "kpip-compiled" in captured.out
     assert "-10.0%" in captured.out
     assert "kpip_compiled_version differs" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("before_binary", "after_binary", "expected"),
+    [
+        ("a" * 64, "b" * 64, "sha256 aaaaaaaaaaaa -> bbbbbbbbbbbb"),
+        ("a" * 64, "a" * 64, "same compiled kpip"),
+    ],
+)
+def test_compare_tells_which_compiled_binaries_ran(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    before_binary: str,
+    after_binary: str,
+    expected: str,
+) -> None:
+    """Same version, different binaries: the fingerprint tells them apart."""
+    before, after = tmp_path / "before", tmp_path / "after"
+    for directory, binary in ((before, before_binary), (after, after_binary)):
+        write_export(directory, "lock-warm", kpip_mean=0.1, uv_mean=0.05)
+        write_meta(directory, python_version="Python 3.14.7")
+        meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+        meta["kpip_compiled_version"] = "kpip 0.0.1 (python 3.14)"
+        meta["kpip_compiled_sha256"] = binary
+        (directory / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert compare(before, after) == 0
+
+    err = capsys.readouterr().err
+    assert expected in err
+    assert "kpip_compiled_version differs" not in err
