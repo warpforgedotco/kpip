@@ -293,13 +293,27 @@ def _other_distribution_finders() -> bool:
     )
 
 
-def canonical_release(value: str) -> bool:
-    """Whether ``Version(value)`` renders back as ``value``: dotted integers
-    without leading zeros, the one spelling that needs no normalization."""
+def canonical_version(value: str) -> bool:
+    """Whether ``Version(value)`` renders back as ``value``.
+
+    Dotted integers without leading zeros are answered without the version
+    parser. Anything else -- a pre-, post- or dev-release, an epoch, a local
+    label -- is parsed: declining them sent any environment holding one,
+    such as python-dateutil 2.9.0.post0, down the normal path, 38 ms for a
+    freeze the fast path answers in 11.
+    """
     parts = value.split(".")
-    return all(
+    if all(
         part.isdigit() and part.isascii() and str(int(part)) == part for part in parts
-    )
+    ):
+        return True
+
+    from kpip.core.versions import InvalidVersion, Version
+
+    try:
+        return str(Version(value)) == value
+    except InvalidVersion:
+        return False
 
 
 def json_string(value: str) -> str:
@@ -393,7 +407,7 @@ def run_list(args: list[str]) -> int | None:
 
     verbose = options.verbose > 0
     if options.format in ("json", "freeze"):
-        if not all(canonical_release(entry.headers["version"]) for entry in entries):
+        if not all(canonical_version(entry.headers["version"]) for entry in entries):
             return None
 
     if options.format == "json":
@@ -590,7 +604,7 @@ def run_freeze(args: list[str]) -> int | None:
                     return None
                 requirement = direct_url.as_pep440_direct_reference(name)
         if requirement is None:
-            if not canonical_release(version):
+            if not canonical_version(version):
                 return None
             requirement = f"{name}=={version}"
         lines.append((name.lower(), requirement))
