@@ -29,6 +29,7 @@ from kpip.network.cache import SafeFileCache
 from kpip.network.freshness import (
     cached_response_is_fresh,
     decode_metadata,
+    has_cached_validator,
     encode_metadata,
     freshness_deadline,
     metadata_is_fresh,
@@ -767,6 +768,11 @@ class NetworkSession:
         :meth:`has_fresh_cached_response` has found it fresh."""
 
         return self.fresh_cached_response_cache.get(url)
+
+    def can_revalidate(self, url: str) -> bool:
+        """Whether ``url``'s cached response could be answered with a 304."""
+
+        return has_cached_validator(self.cache, url)
 
     def revalidated_response(
         self,

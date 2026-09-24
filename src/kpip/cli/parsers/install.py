@@ -94,6 +94,7 @@ def create_parser() -> ArgumentParser:
     parser.add_argument("-t", "--target")
     parser.add_argument("--cache-dir")
     parser.add_argument("--no-cache-dir", action="store_true")
+    parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--no-binary", action="append", default=[])
     parser.add_argument("--only-binary", action="append", default=[])
     parser.add_argument("--platform", action="append", default=[])

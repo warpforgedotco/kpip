@@ -326,6 +326,9 @@ def isolate(tmpdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     every test has it's own isolated home directory.
     """
 
+    # --refresh sets a process-wide cut-off; one command's must not outlive it.
+    monkeypatch.setattr("kpip.core.expiry._refreshed_since", float("-inf"))
+
     home_dir = os.path.join(str(tmpdir), "home")
     os.makedirs(home_dir)
 

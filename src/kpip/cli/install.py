@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import time
 import sys
 
 from kpip.build.build import build_editable_from_source
@@ -20,6 +21,7 @@ from kpip.cli.requirements import (
 from kpip.cli.resolution_errors import resolution_error_message
 from kpip.cli.target import target_prefix
 from kpip.core.appdirs import command_cache_dir
+from kpip.core.expiry import refresh_since
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import (
     CommandError,
@@ -710,6 +712,7 @@ def cached_remote_plan_key(
 ) -> str | None:
     if (
         options.no_cache_dir
+        or options.refresh
         or options.target is None
         or not options.ignore_installed
         or options.dry_run
@@ -1130,6 +1133,9 @@ def run_install(args: list[str]) -> int:
     quiet = prepared.quiet
     parsed_release_control_args = prepared.release_control
 
+    if options.refresh:
+        refresh_since(time.time())
+
     outcome = InstallOutcome(report_enabled=bool(options.report))
     reinstall = options.force_reinstall or options.ignore_installed
 
@@ -1314,27 +1320,30 @@ def run_install(args: list[str]) -> int:
             try:
                 if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
                     print("Reporter.starting()")
-                plan = ResolutionEngine(
-                    provider=get_provider(),
-                    no_deps=execution.options.no_deps,
-                    upgrade=execution.options.upgrade,
-                    upgrade_strategy=execution.options.upgrade_strategy,
-                    ignore_installed=reinstall,
-                    constraints=execution.bundle.constraints,
-                    allow_prereleases=execution.options.pre,
-                    require_hashes=execution.bundle.require_hashes,
-                    compute_source_hashes=(
-                        bool(execution.options.report)
-                        or execution.bundle.require_hashes
-                        or bool(execution.bundle.requirement_hashes)
+                plan = ResolutionEngine.resolve_serving_stale_pages(
+                    lambda: ResolutionEngine(
+                        provider=get_provider(),
+                        no_deps=execution.options.no_deps,
+                        upgrade=execution.options.upgrade,
+                        upgrade_strategy=execution.options.upgrade_strategy,
+                        ignore_installed=reinstall,
+                        constraints=execution.bundle.constraints,
+                        allow_prereleases=execution.options.pre,
+                        require_hashes=execution.bundle.require_hashes,
+                        compute_source_hashes=(
+                            bool(execution.options.report)
+                            or execution.bundle.require_hashes
+                            or bool(execution.bundle.requirement_hashes)
+                        ),
+                        ignore_requires_python=execution.options.ignore_requires_python,
+                        python_version=(
+                            execution.python_version
+                            if execution.options.python_version
+                            else None
+                        ),
                     ),
-                    ignore_requires_python=execution.options.ignore_requires_python,
-                    python_version=(
-                        execution.python_version
-                        if execution.options.python_version
-                        else None
-                    ),
-                ).resolve(execution.requirements)
+                    execution.requirements,
+                )
 
             except (DistributionNotFound, ResolutionError) as exc:
                 if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":

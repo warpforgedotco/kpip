@@ -2966,9 +2966,28 @@ class CandidateProvider:
             if not self.prefetcher.pending(key):
                 self.prefetcher.submit(key, (requirement, key))
 
+    def serve_stale_pages(self) -> None:
+        """Answer stale index pages from the cache while they revalidate.
+
+        Whoever turns this on must ask :meth:`stale_pages_unchanged` before
+        trusting a result; see ``SimpleIndexSource.stale_summary``.
+        """
+
+        for source in self.index_sources:
+            source.serve_stale = True
+
+    def stale_pages_unchanged(self) -> bool:
+        """Wait for every page served stale; whether all were unchanged."""
+
+        # Every source is waited for, not just up to the first change.
+        return all([source.stale_pages_unchanged() for source in self.index_sources])
+
     def close(self) -> None:
         with self.cache_lock:
             self.closing = True
+
+        for source in self.index_sources:
+            source.stop_revalidating()
 
         if self.prefetcher is not None:
             self.prefetcher.close()

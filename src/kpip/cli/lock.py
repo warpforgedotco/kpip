@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from kpip.cli.fast import read_requirements
 from kpip.cli.lock_format import (
@@ -25,6 +26,7 @@ from kpip.cli.lock_replay import (
 )
 from kpip.cli.parsers.lock import create_parser
 from kpip.core.appdirs import command_cache_dir
+from kpip.core.expiry import refresh_since
 from kpip.core.errors import CommandError, KpipError
 from kpip.core.format_control import FormatControl
 from kpip.core.hashes import file_hashes
@@ -464,6 +466,9 @@ def close_resolvers(resolvers: list[ResolutionEngine]) -> None:
 
 
 def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
+    if options.refresh:
+        refresh_since(time.time())
+
     cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
 
     resolution_session = DeferredNetworkSession(cache_dir=cache_dir)
@@ -684,46 +689,49 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         )
 
     if plan is None and requirements:
-        provider = CandidateProvider.from_options(
-            find_links=options.find_links,
-            no_index=options.no_index,
-            format_control=format_control,
-            build_isolation=not options.no_build_isolation,
-            wheel_cache_dir=cache_dir,
-            session=resolution_session,
-            dry_run=True,
-            target=(
-                TargetContext(
-                    python_version=tag_python_version(str(options.python_version)),
-                )
-                if options.python_version
-                else None
-            ),
-        )
 
-        install_requirements = [
-            item if not isinstance(item, str) else install_req_from_line(item)
-            for item in requirements
-        ]
-
-        resolver = ResolutionEngine(
-            provider=provider,
-            no_deps=False,
-            ignore_installed=True,
-            constraints=constraints,
-            preferences=preferences,
-            python_version=(
-                normalize_python_version(str(options.python_version))
-                if options.python_version
-                else None
-            ),
-        )
+        def build_resolver() -> ResolutionEngine:
+            return ResolutionEngine(
+                provider=CandidateProvider.from_options(
+                    find_links=options.find_links,
+                    no_index=options.no_index,
+                    format_control=format_control,
+                    build_isolation=not options.no_build_isolation,
+                    wheel_cache_dir=cache_dir,
+                    session=resolution_session,
+                    dry_run=True,
+                    target=(
+                        TargetContext(
+                            python_version=tag_python_version(
+                                str(options.python_version)
+                            ),
+                        )
+                        if options.python_version
+                        else None
+                    ),
+                ),
+                no_deps=False,
+                ignore_installed=True,
+                constraints=constraints,
+                preferences=preferences,
+                python_version=(
+                    normalize_python_version(str(options.python_version))
+                    if options.python_version
+                    else None
+                ),
+            )
 
         # Closed by the caller rather than here: the candidates it produced
         # are read below, and closing takes the prepared sources with it.
-        resolvers.append(resolver)
-
-        plan = resolver.resolve(install_requirements)
+        plan = ResolutionEngine.resolve_serving_stale_pages(
+            build_resolver,
+            [
+                item if not isinstance(item, str) else install_req_from_line(item)
+                for item in requirements
+            ],
+            engines=resolvers,
+        )
+        provider = resolvers[-1].provider
 
     packages: list[dict] = [
         *editable_packages,

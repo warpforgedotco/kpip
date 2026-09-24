@@ -93,6 +93,9 @@ version there while the requirements still allow it, so adding or changing
 one requirement moves no pin it does not have to. `--upgrade` (`-U`) resolves
 every package afresh, and `--upgrade-package NAME` (`-P NAME`) just that one.
 
+`--refresh`, on `lock` and `install`, revalidates every cached index page
+before it is trusted, however long the index allowed it to be kept.
+
 To lock for a Python version other than the one running kpip, including
 versions below kpip's own 3.10 floor:
 

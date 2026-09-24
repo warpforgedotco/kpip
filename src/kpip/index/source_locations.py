@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ntpath
 import os
+import threading
 import time
 import urllib.parse
 from functools import lru_cache
@@ -28,6 +29,8 @@ from kpip.index.source_models import ArtifactKind
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from concurrent.futures import Future, ThreadPoolExecutor
+
     from kpip.core.http_contracts import HttpSession
     from kpip.index.catalog_cache import CatalogSummary
 
@@ -228,6 +231,10 @@ class SimpleIndexSource:
         "index_url",
         "page_fetch_outcomes",
         "pages_read",
+        "revalidating",
+        "revalidation_lock",
+        "revalidation_pool",
+        "serve_stale",
         "session",
         "summaries_read",
         "trusted_hosts",
@@ -256,6 +263,15 @@ class SimpleIndexSource:
         # catalog load that follows so each is read from disk once; a missing
         # summary is kept too, as ``(None,)``.
         self.summaries_read: dict[str, tuple[bytes | None]] = {}
+
+        # With ``serve_stale``, a stale page is answered from the cache at
+        # once and revalidated in the background, in ``revalidating``; the
+        # caller must ask :meth:`stale_pages_unchanged` before trusting any
+        # answer built on it.
+        self.serve_stale = False
+        self.revalidating: dict[str, Future[bool]] = {}
+        self.revalidation_lock = threading.Lock()
+        self.revalidation_pool: ThreadPoolExecutor | None = None
 
     def collect_links(self, requirement: Requirement) -> list[Link]:
         project_url = self.project_page_url(self.index_url, requirement.canonical_name)
@@ -316,6 +332,12 @@ class SimpleIndexSource:
         if not allow_fetch or not project_url.startswith(("http://", "https://")):
             return None
 
+        if self.serve_stale:
+            summary = self.stale_summary(project_url)
+
+            if summary is not None:
+                return summary
+
         parser = IndexPageParser(
             trusted_hosts=self.trusted_hosts,
             session=self.session,
@@ -361,8 +383,8 @@ class SimpleIndexSource:
 
         return None
 
-    def refresh_page(self, project_url: str) -> None:
-        """Bring one cached project page up to date.
+    def refresh_page(self, project_url: str) -> bool:
+        """Bring one cached project page up to date; whether it was unchanged.
 
         A conditional request, so an unchanged page costs a 304; a changed
         one is compiled again exactly as a fetch during resolution would, so
@@ -370,7 +392,7 @@ class SimpleIndexSource:
         """
 
         if self.session is None or not project_url.startswith(("http://", "https://")):
-            return
+            return False
 
         parser = IndexPageParser(
             trusted_hosts=self.trusted_hosts,
@@ -382,10 +404,82 @@ class SimpleIndexSource:
         if content.from_cache:
             self.record_revalidation(project_url)
 
-            return
+            return True
 
         if parser.summary_from_content(content, project_url) is None:
             parser.links_from_content(content, project_url)
+
+        return False
+
+    def stale_summary(self, project_url: str) -> CatalogSummary | None:
+        """A stale page's summary now, its revalidation in the background.
+
+        A resolve otherwise meets stale pages a dependency level at a time,
+        since a package's dependencies are known only once its metadata is:
+        an hour-old jupyter lock waited on 35 rounds of 304s. Answering from
+        the cache lets it run ahead while every revalidation is in flight.
+        Only a page that can be answered with a 304 is served this way; one
+        that would be downloaded anyway gains nothing.
+        """
+
+        cache = getattr(self.session, "cache", None)
+        can_revalidate = getattr(self.session, "can_revalidate", None)
+
+        if cache is None or can_revalidate is None or not can_revalidate(project_url):
+            return None
+
+        summary = load_summary(cache, project_url)
+
+        if summary is None:
+            return None
+
+        with self.revalidation_lock:
+            if project_url not in self.revalidating:
+                if self.revalidation_pool is None:
+                    from concurrent.futures import ThreadPoolExecutor
+
+                    self.revalidation_pool = ThreadPoolExecutor(
+                        max_workers=REFRESH_WORKERS,
+                        thread_name_prefix="kpip-revalidate",
+                    )
+
+                self.revalidating[project_url] = self.revalidation_pool.submit(
+                    self.refresh_page, project_url
+                )
+
+        return summary
+
+    def stale_pages_unchanged(self) -> bool:
+        """Wait for the pages served stale; whether every one was a 304.
+
+        Anything else -- a changed page, a failed request -- means an answer
+        built on them must be worked out again, now from fresh pages; that
+        resolve meets and reports any failure in context.
+        """
+
+        with self.revalidation_lock:
+            pool, self.revalidation_pool = self.revalidation_pool, None
+            pending, self.revalidating = self.revalidating, {}
+
+        if pool is None:
+            return True
+
+        pool.shutdown(wait=True)
+
+        return all(
+            future.exception() is None and future.result()
+            for future in pending.values()
+        )
+
+    def stop_revalidating(self) -> None:
+        """Drop the revalidations not yet sent; a closing resolve needs none."""
+
+        with self.revalidation_lock:
+            pool, self.revalidation_pool = self.revalidation_pool, None
+            self.revalidating = {}
+
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def has_fresh_cached_page(self, requirement: Requirement) -> bool:
         """Return whether catalog discovery can avoid remote I/O.

@@ -89,6 +89,21 @@ def decode_metadata(raw: bytes) -> dict[str, Any] | None:
     return values if isinstance(values, dict) else None
 
 
+def has_cached_validator(cache: Any, url: str) -> bool:
+    """Whether ``url``'s cached response has an ETag or Last-Modified.
+
+    Only such a response can come back as a 304, so only it can be proven
+    unchanged without being downloaded again.
+    """
+
+    raw = None if cache is None else cache.get(url)
+    values = None if raw is None else decode_metadata(raw)
+
+    return values is not None and bool(
+        values.get("etag") or values.get("last_modified")
+    )
+
+
 class CacheMetadataReader:
     """Just enough of the HTTP cache to ask what it holds, cheap to import."""
 

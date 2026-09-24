@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 
 from kpip.core.appdirs import http_cache_path
-from kpip.network.freshness import cached_response_is_fresh
+from kpip.network.freshness import cached_response_is_fresh, has_cached_validator
 
 TYPE_CHECKING = False
 
@@ -180,3 +180,8 @@ class DeferredNetworkSession:
         :meth:`has_fresh_cached_response` has found it fresh."""
 
         return self.page_expiry_internal.get(url)
+
+    def can_revalidate(self, url: str) -> bool:
+        """Answer from the cache directory, without building a client."""
+
+        return has_cached_validator(self.page_cache(), url)
