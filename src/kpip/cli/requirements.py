@@ -52,6 +52,7 @@ class RequirementsBundle:
             "release_control",
             "require_hashes",
             "session",
+            "only_locked",
         ],
     )
 
@@ -74,8 +75,13 @@ class RequirementsBundle:
         release_control: ReleaseControl | None = None,
         require_hashes: bool = False,
         session: Any = None,
+        only_locked: bool = False,
     ) -> None:
         self.requirements = requirements
+
+        # Every requirement came from a pylock, which lists the whole
+        # environment: installing it resolves nothing.
+        self.only_locked = only_locked
 
         self.constraints = constraints
 
@@ -324,6 +330,8 @@ def collect_requirements(
 
     locked_direct_names: set[str] = set()
 
+    locked_items = 0
+
     editable_settings = dict(editable_config_settings or {})
 
     def store_hashes(
@@ -416,6 +424,8 @@ def collect_requirements(
             options=option_state,
         ):
             if item.locked_link is not None and item.locked_name is not None:
+                locked_items += 1
+
                 locked_links[item.locked_name] = item.locked_link
 
                 if item.locked_hashes:
@@ -507,6 +517,11 @@ def collect_requirements(
         format_control=provider.format_control or FormatControl(),
         locked_links=locked_links,
         locked_direct_names=frozenset(locked_direct_names),
+        only_locked=(
+            locked_items > 0
+            and locked_items == len(collected_requirements) + len(collected_editables)
+            and not collected_constraints
+        ),
         release_control=provider.release_control or ReleaseControl(),
         require_hashes=(
             bool(getattr(option_state, "require_hashes", False))

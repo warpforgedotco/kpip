@@ -12,7 +12,7 @@ import urllib.parse
 
 from kpip.core.errors import InstallationError
 from kpip.core.format_control import FormatControl
-from kpip.core.packaging import SpecifierSet
+from kpip.core.packaging import SpecifierSet, marker_applies
 from kpip.core.versions import Version
 from kpip.core.urls import path_to_url
 from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
@@ -57,8 +57,18 @@ def is_pylock_reference(value: str) -> bool:
 
 
 def pylock_location(reference: str, path: str | None) -> str:
+    """Where a distribution's ``path`` or ``url`` points, as a URL.
+
+    A ``url`` is absolute already; a ``path`` is relative to the lock. Joined
+    onto the lock's directory, an index wheel's ``https://`` URL became a
+    file beside the lock that did not exist, and a lock kpip wrote could not
+    be installed.
+    """
     if path is None:
         raise InstallationError("pylock package is missing its path")
+
+    if urllib.parse.urlsplit(path).scheme in (*HTTP_SCHEMES, "file"):
+        return path
 
     parsed = urllib.parse.urlparse(reference)
 
@@ -109,6 +119,13 @@ def parse_pylock(
             )
 
         package_name = package["name"]
+
+        # A package the lock holds for another environment is not installed
+        # here: PEP 751 installs what applies, without resolving.
+        marker = package.get("marker")
+
+        if isinstance(marker, str) and not marker_applies(marker):
+            continue
 
         requires_python = package.get("requires-python")
 
