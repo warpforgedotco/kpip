@@ -2,9 +2,8 @@
 
 A resolve keeps the index catalog and the resolver's clause set alive and
 allocates millions of short-lived tuples through them, so the stock
-thresholds spend a handful of full generation-2 traversals of a large live
-heap reclaiming almost nothing.  Only the old-generation multipliers move,
-so generation 0 still collects at its usual rate.
+thresholds spend their collections traversing a large live heap and reclaim
+almost nothing.  Every generation collects less often, none is disabled.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ def restore_thresholds() -> Iterator[None]:
         gc.set_threshold(*saved)
 
 
-def test_only_the_old_generation_multipliers_move(
+def test_every_generation_collects_less_often(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("KPIP_GC", raising=False)
@@ -35,7 +34,7 @@ def test_only_the_old_generation_multipliers_move(
 
     assert previous == (700, 10, 10), "the caller is handed what to restore"
     young, first, second = gc.get_threshold()
-    assert young == 700, "generation 0 keeps collecting at its usual rate"
+    assert young == entrypoint._YOUNG_GENERATION_THRESHOLD
     assert (first, second) == (
         entrypoint._OLD_GENERATION_RATIO,
         entrypoint._OLD_GENERATION_RATIO,
@@ -43,16 +42,18 @@ def test_only_the_old_generation_multipliers_move(
     assert first > 10, "a full traversal must become rarer, not more frequent"
 
 
-def test_a_tuned_generation_zero_is_preserved(
+@pytest.mark.parametrize("tuned", [50_000, 0])
+def test_a_generation_zero_tuned_further_is_preserved(
     monkeypatch: pytest.MonkeyPatch,
+    tuned: int,
 ) -> None:
-    """Whatever set generation 0 had a reason; only the multipliers are ours."""
+    """A higher threshold had a reason, and 0 means collection is off."""
     monkeypatch.delenv("KPIP_GC", raising=False)
-    gc.set_threshold(5_000, 10, 10)
+    gc.set_threshold(tuned, 10, 10)
 
     entrypoint.collect_less_often()
 
-    assert gc.get_threshold()[0] == 5_000
+    assert gc.get_threshold()[0] == tuned
 
 
 def test_the_escape_hatch_leaves_cpython_alone(
@@ -105,7 +106,11 @@ def test_a_finished_command_leaves_the_thresholds_as_it_found_them(
     assert entrypoint.main(["check"]) == 0
 
     assert seen == [
-        (700, entrypoint._OLD_GENERATION_RATIO, entrypoint._OLD_GENERATION_RATIO)
+        (
+            entrypoint._YOUNG_GENERATION_THRESHOLD,
+            entrypoint._OLD_GENERATION_RATIO,
+            entrypoint._OLD_GENERATION_RATIO,
+        )
     ]
     assert gc.get_threshold() == (700, 10, 10)
 

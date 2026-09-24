@@ -14,6 +14,9 @@ _SWITCH_INTERVAL_SECONDS = 0.020
 _OLD_GENERATION_RATIO = 100
 """Generation-0 collections per generation-1 one, and the same again for 2."""
 
+_YOUNG_GENERATION_THRESHOLD = 10_000
+"""Allocations between generation-0 collections, at the least."""
+
 VISIBLE_COMMAND_NAMES = tuple(spec.name for spec in COMMAND_SPECS if spec.visible)
 COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECS)
 
@@ -297,21 +300,23 @@ def switch_threads_less_often() -> float | None:
 
 
 def collect_less_often() -> tuple[int, int, int] | None:
-    """Make full garbage collections rare for the length of one command.
+    """Make garbage collections rare for the length of one command.
 
     CPython's thresholds assume a small live heap.  A resolve keeps the whole
-    index catalog and the resolver's clause set alive -- 196 MB on airflow --
-    and allocates millions of short-lived tuples through it, so the stock
-    ``(700, 10, 10)`` runs a handful of generation-2 traversals of that entire
-    heap.  They reclaim almost nothing, because what is alive is alive for the
-    rest of the run, and they cost about 15% of a warm airflow lock.
+    index catalog and the resolver's clause set alive and allocates millions
+    of short-lived tuples through it, so the stock thresholds (``(2000, 10,
+    10)`` on 3.14, ``(700, 10, 10)`` before) spend 16% of a warm airflow
+    lock collecting.  They reclaim almost nothing -- a few hundred objects a
+    run -- because what is alive is alive for the rest of the run.
 
-    Only the generation-1 and generation-2 multipliers move.  Generation 0
-    keeps collecting at its usual rate, so a short-lived cycle is still
-    reclaimed promptly, and a full traversal becomes proportionally rarer
-    rather than disabled -- a resolve large enough to need one still gets it.
-    Peak memory is unchanged either way.  ``KPIP_GC=default`` restores
-    CPython's own settings.
+    The generation-1 and generation-2 multipliers make full traversals of
+    that heap rare, and generation 0 waits for at least 10,000 allocations
+    rather than 2,000: it was still running some 360 times per airflow lock.
+    Together that takes collection from 16% to 5% of the lock, and peak
+    memory is unchanged.  Nothing is disabled -- a cycle is still reclaimed,
+    only later, and a resolve large enough to need a full traversal still
+    gets one.  A generation-0 threshold set higher, or to 0, is kept.
+    ``KPIP_GC=default`` restores CPython's own settings.
 
     Returns the thresholds it replaced, or None if it changed nothing.  A
     command normally runs in a process that is about to exit, but ``main``
@@ -326,7 +331,9 @@ def collect_less_often() -> tuple[int, int, int] | None:
 
     previous = gc.get_threshold()
 
-    gc.set_threshold(previous[0], _OLD_GENERATION_RATIO, _OLD_GENERATION_RATIO)
+    young = previous[0] and max(previous[0], _YOUNG_GENERATION_THRESHOLD)
+
+    gc.set_threshold(young, _OLD_GENERATION_RATIO, _OLD_GENERATION_RATIO)
 
     return previous
 
