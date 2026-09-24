@@ -41,7 +41,8 @@ group pins it for the type checker.
 
 Patches under `tools/vendoring/patches` are applied to un-namespaced wheel
 sources before imports are rewritten. A second `vendoring sync` must reproduce
-the same tracked tree.
+the same tracked tree. The `nuitka/` subdirectory is not part of this: its
+patches apply to the Nuitka checkout that `scripts/compile` builds kpip with.
 
 | Distribution | Patch | Purpose |
 | --- | --- | --- |

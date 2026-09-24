@@ -1,0 +1,743 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Wed, 23 Sep 2026 22:42:34 -0400
+Subject: [PATCH] Onefile: Avoid decompression and checksums for unchanged
+ cached mode unpacking
+
+In cached mode, every start decompressed the whole payload and computed
+the CRC32 of every unpacked file, costing time proportional to the
+payload size even when nothing changed.
+
+Now a completed unpacking writes a manifest file, tied to the payload by
+a build time hash and recording size, mtime, and inode of every unpacked
+file. When all of these match, the next start skips decompression and
+checksumming entirely and only stats the files. Any mismatch falls back
+to the previous full verification path, which repairs the files and
+writes a new manifest. The manifest is removed before unpacking and
+committed via rename, so an interrupted unpacking is never trusted.
+
+For a 40MB payload on macOS, warm start goes from 80.8ms to 18.9ms,
+with standalone at 17.2ms.
+
+See #4028
+
+Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+ nuitka/build/static_src/OnefileBootstrap.c | 550 +++++++++++++++++----
+ nuitka/freezer/Onefile.py                  |  16 +-
+ 2 files changed, 464 insertions(+), 102 deletions(-)
+
+diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
+index 9d66b146d..cef4be5ee 100644
+--- a/nuitka/build/static_src/OnefileBootstrap.c
++++ b/nuitka/build/static_src/OnefileBootstrap.c
+@@ -66,6 +66,7 @@
+ #define _NUITKA_ONEFILE_TEMP_BOOL 0
+ #define _NUITKA_ONEFILE_CHILD_GRACE_TIME_INT 5000
+ #define _NUITKA_ONEFILE_TEMP_SPEC "{TEMP}/onefile_{PID}_{TIME_US}_{RANDOM}"
++#define _NUITKA_ONEFILE_PAYLOAD_HASH "0123456789abcdef"
+ 
+ #define _NUITKA_ONEFILE_PAYLOAD_SIZE_INT 27272
+ 
+@@ -151,7 +152,7 @@ static void fatalErrorAttachedData(void) { fatalError("Error, couldn't decode at
+ static void fatalErrorHeaderAttachedData(void) { fatalError("Error, couldn't find attached data header."); }
+ 
+ // Out of memory error.
+-#if !defined(_WIN32) || _NUITKA_ONEFILE_COMPRESSION_BOOL == 1
++#if !defined(_WIN32) || _NUITKA_ONEFILE_COMPRESSION_BOOL == 1 || _NUITKA_ONEFILE_TEMP_BOOL == 0
+ static void fatalErrorMemory(void) { fatalError("Error, couldn't allocate memory."); }
+ #endif
+ 
+@@ -444,6 +445,316 @@ static filename_char_t payload_path[4096] = {0};
+ static bool payload_created = false;
+ #endif
+ 
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0 && _NUITKA_ONEFILE_HAS_PAYLOAD_BOOL == 1
++// In cached mode, a completed unpacking leaves a manifest file behind. It is
++// tied to the payload through a build time hash and records identity values
++// of every unpacked file. When all of them are unchanged, the next run can
++// skip decompression and checksum verification entirely, which otherwise costs
++// time proportional to the payload size on every start.
++#define ONEFILE_CACHE_MANIFEST_NAME FILENAME_EMPTY_STR ".nuitka-onefile-manifest"
++#define ONEFILE_CACHE_MANIFEST_MAGIC "NUITKAOM"
++#define ONEFILE_CACHE_MANIFEST_VERSION 1
++
++struct OnefileCacheFileIdentity {
++    uint64_t size;
++    uint64_t mtime;
++    uint64_t inode;
++};
++
++struct OnefileCacheManifestEntryHeader {
++    struct OnefileCacheFileIdentity identity;
++    uint32_t name_length;
++};
++
++static bool getOnefileCacheFileIdentity(filename_char_t const *filename, struct OnefileCacheFileIdentity *identity) {
++#if defined(_WIN32)
++    WIN32_FILE_ATTRIBUTE_DATA data;
++
++    if (GetFileAttributesExW(filename, GetFileExInfoStandard, &data) == 0) {
++        return false;
++    }
++
++    identity->size = ((uint64_t)data.nFileSizeHigh << 32) | data.nFileSizeLow;
++    identity->mtime = ((uint64_t)data.ftLastWriteTime.dwHighDateTime << 32) | data.ftLastWriteTime.dwLowDateTime;
++    identity->inode = 0;
++#else
++    struct stat stat_buffer;
++
++    if (lstat(filename, &stat_buffer) != 0) {
++        return false;
++    }
++
++    identity->size = (uint64_t)stat_buffer.st_size;
++#if defined(__APPLE__) && __DARWIN_C_LEVEL >= __DARWIN_C_FULL
++    identity->mtime =
++        (uint64_t)stat_buffer.st_mtimespec.tv_sec * 1000000000ULL + (uint64_t)stat_buffer.st_mtimespec.tv_nsec;
++#elif defined(__APPLE__)
++    identity->mtime = (uint64_t)stat_buffer.st_mtime * 1000000000ULL + (uint64_t)stat_buffer.st_mtimensec;
++#elif defined(__linux__)
++    identity->mtime = (uint64_t)stat_buffer.st_mtim.tv_sec * 1000000000ULL + (uint64_t)stat_buffer.st_mtim.tv_nsec;
++#else
++    identity->mtime = (uint64_t)stat_buffer.st_mtime;
++#endif
++    identity->inode = (uint64_t)stat_buffer.st_ino;
++#endif
++
++    return true;
++}
++
++static char *cache_manifest_buffer = NULL;
++static size_t cache_manifest_size = 0;
++static size_t cache_manifest_allocated = 0;
++
++static void appendCacheManifestData(void const *data, size_t size) {
++    if (cache_manifest_size + size > cache_manifest_allocated) {
++        size_t new_allocated = cache_manifest_allocated == 0 ? 16384 : cache_manifest_allocated * 2;
++
++        while (cache_manifest_size + size > new_allocated) {
++            new_allocated *= 2;
++        }
++
++        char *new_buffer = (char *)realloc(cache_manifest_buffer, new_allocated);
++
++        if (new_buffer == NULL) {
++            fatalErrorMemory();
++        }
++
++        cache_manifest_buffer = new_buffer;
++        cache_manifest_allocated = new_allocated;
++    }
++
++    memcpy(cache_manifest_buffer + cache_manifest_size, data, size);
++    cache_manifest_size += size;
++}
++
++static void getCacheManifestFilename(filename_char_t *buffer, size_t buffer_size) {
++    buffer[0] = 0;
++
++    appendStringSafeFilename(buffer, payload_path, buffer_size);
++    appendCharSafeFilename(buffer, FILENAME_SEP_CHAR, buffer_size);
++    appendStringSafeFilename(buffer, ONEFILE_CACHE_MANIFEST_NAME, buffer_size);
++}
++
++static void startCacheManifest(void) {
++    static char const magic[] = ONEFILE_CACHE_MANIFEST_MAGIC;
++    static char const payload_hash[] = _NUITKA_ONEFILE_PAYLOAD_HASH;
++    uint32_t value;
++
++    appendCacheManifestData(magic, sizeof(magic) - 1);
++    value = ONEFILE_CACHE_MANIFEST_VERSION;
++    appendCacheManifestData(&value, sizeof(value));
++    value = (uint32_t)(sizeof(payload_hash) - 1);
++    appendCacheManifestData(&value, sizeof(value));
++    appendCacheManifestData(payload_hash, sizeof(payload_hash) - 1);
++}
++
++// Record an unpacked file, after it was completely written.
++static void addCacheManifestEntry(filename_char_t const *target_path) {
++    // Stored relative to the payload path, which may differ for the next run.
++    filename_char_t const *filename = target_path + strlenFilename(payload_path) + 1;
++
++    struct OnefileCacheManifestEntryHeader entry_header;
++    memset(&entry_header, 0, sizeof(entry_header));
++
++    // Not being able to record it only means, the next run will not use the
++    // manifest, as that is checked.
++    if (getOnefileCacheFileIdentity(target_path, &entry_header.identity) == false) {
++        entry_header.identity.size = (uint64_t)-1;
++    }
++
++    entry_header.name_length = (uint32_t)strlenFilename(filename);
++
++    appendCacheManifestData(&entry_header, sizeof(entry_header));
++    appendCacheManifestData(filename, entry_header.name_length * sizeof(filename_char_t));
++}
++
++// Commit the manifest, only called after all files were unpacked successfully.
++static void writeCacheManifest(void) {
++    static filename_char_t manifest_filename[4096];
++    static filename_char_t manifest_filename_tmp[4096];
++
++    getCacheManifestFilename(manifest_filename, sizeof(manifest_filename) / sizeof(filename_char_t));
++
++    // Use a process specific temporary name, so concurrent unpacking never
++    // exposes a partially written manifest.
++    copyStringSafeFilename(manifest_filename_tmp, manifest_filename,
++                           sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
++    appendCharSafeFilename(manifest_filename_tmp, '.', sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
++#if defined(_WIN32)
++    appendWStringSafeW(manifest_filename_tmp, L"tmp", sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
++    {
++        wchar_t pid_buffer[32];
++        _snwprintf(pid_buffer, sizeof(pid_buffer) / sizeof(wchar_t), L"%lu", (unsigned long)GetCurrentProcessId());
++        pid_buffer[31] = 0;
++        appendWStringSafeW(manifest_filename_tmp, pid_buffer, sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
++    }
++#else
++    {
++        char pid_buffer[32];
++        snprintf(pid_buffer, sizeof(pid_buffer), "tmp%ld", (long)getpid());
++        appendStringSafe(manifest_filename_tmp, pid_buffer, sizeof(manifest_filename_tmp));
++    }
++#endif
++
++    FILE_HANDLE manifest_file = createFileForWriting(manifest_filename_tmp);
++
++    if (manifest_file == FILE_HANDLE_NULL) {
++        return;
++    }
++
++    bool success = writeFileChunk(manifest_file, cache_manifest_buffer, cache_manifest_size);
++
++    if (closeFile(manifest_file) == false) {
++        success = false;
++    }
++
++    if (success) {
++#if defined(_WIN32)
++        success = MoveFileExW(manifest_filename_tmp, manifest_filename, MOVEFILE_REPLACE_EXISTING) != 0;
++#else
++        success = renameFile(manifest_filename_tmp, manifest_filename);
++#endif
++    }
++
++    if (success == false) {
++        deleteFile(manifest_filename_tmp);
++    }
++}
++
++static void invalidateCacheManifest(void) {
++    static filename_char_t manifest_filename[4096];
++
++    getCacheManifestFilename(manifest_filename, sizeof(manifest_filename) / sizeof(filename_char_t));
++    deleteFile(manifest_filename);
++}
++
++// Check if the manifest proves an unchanged complete unpacking of this very
++// payload. On success, the first file of the payload is provided, as that is
++// what the unpacking would have given.
++static bool checkCacheManifest(filename_char_t *first_filename, size_t first_filename_size) {
++    static filename_char_t manifest_filename[4096];
++
++    getCacheManifestFilename(manifest_filename, sizeof(manifest_filename) / sizeof(filename_char_t));
++
++    FILE_HANDLE manifest_file = openFileForReading(manifest_filename);
++
++    if (manifest_file == FILE_HANDLE_NULL) {
++        return false;
++    }
++
++    int64_t manifest_size = getFileSize(manifest_file);
++    char *manifest_data = NULL;
++    bool result = false;
++
++    if (manifest_size > 0 && manifest_size < 256 * 1024 * 1024) {
++        manifest_data = (char *)malloc((size_t)manifest_size);
++
++        if (manifest_data != NULL && readFileChunk(manifest_file, manifest_data, (size_t)manifest_size) == false) {
++            free(manifest_data);
++            manifest_data = NULL;
++        }
++    }
++
++    closeFile(manifest_file);
++
++    if (manifest_data == NULL) {
++        return false;
++    }
++
++    static char const magic[] = ONEFILE_CACHE_MANIFEST_MAGIC;
++    static char const payload_hash[] = _NUITKA_ONEFILE_PAYLOAD_HASH;
++
++    char const *current = manifest_data;
++    char const *end = manifest_data + manifest_size;
++    uint32_t value;
++
++    // Header is magic, version, hash length, hash value.
++    if ((size_t)(end - current) < sizeof(magic) - 1 + 2 * sizeof(uint32_t) + sizeof(payload_hash) - 1) {
++        goto finish;
++    }
++    if (memcmp(current, magic, sizeof(magic) - 1) != 0) {
++        goto finish;
++    }
++    current += sizeof(magic) - 1;
++
++    memcpy(&value, current, sizeof(value));
++    current += sizeof(value);
++    if (value != ONEFILE_CACHE_MANIFEST_VERSION) {
++        goto finish;
++    }
++
++    memcpy(&value, current, sizeof(value));
++    current += sizeof(value);
++    if (value != sizeof(payload_hash) - 1 || memcmp(current, payload_hash, value) != 0) {
++        goto finish;
++    }
++    current += value;
++
++    {
++        static filename_char_t target_path[4096];
++        static filename_char_t first_target_path[4096];
++        bool first = true;
++
++        while (current < end) {
++            struct OnefileCacheManifestEntryHeader entry_header;
++
++            if ((size_t)(end - current) < sizeof(entry_header)) {
++                goto finish;
++            }
++            memcpy(&entry_header, current, sizeof(entry_header));
++            current += sizeof(entry_header);
++
++            size_t name_size = entry_header.name_length * sizeof(filename_char_t);
++
++            if (entry_header.name_length == 0 || entry_header.name_length >= 1024 ||
++                (size_t)(end - current) < name_size) {
++                goto finish;
++            }
++
++            target_path[0] = 0;
++            appendStringSafeFilename(target_path, payload_path, sizeof(target_path) / sizeof(filename_char_t));
++            appendCharSafeFilename(target_path, FILENAME_SEP_CHAR, sizeof(target_path) / sizeof(filename_char_t));
++
++            size_t offset = strlenFilename(target_path);
++            if (offset + entry_header.name_length + 1 > sizeof(target_path) / sizeof(filename_char_t)) {
++                goto finish;
++            }
++            memcpy(target_path + offset, current, name_size);
++            target_path[offset + entry_header.name_length] = 0;
++            current += name_size;
++
++            struct OnefileCacheFileIdentity identity;
++
++            if (getOnefileCacheFileIdentity(target_path, &identity) == false ||
++                identity.size != entry_header.identity.size || identity.mtime != entry_header.identity.mtime ||
++                identity.inode != entry_header.identity.inode) {
++#ifdef _NUITKA_EXPERIMENTAL_DEBUG_ONEFILE_CACHING
++                fprintf(stderr, "CACHE MANIFEST MISMATCH for '" FILENAME_FORMAT_STR "'.\n", target_path);
++#endif
++                goto finish;
++            }
++
++            if (first) {
++                copyStringSafeFilename(first_target_path, target_path,
++                                       sizeof(first_target_path) / sizeof(filename_char_t));
++                first = false;
++            }
++        }
++
++        result = first == false;
++
++        // With the main binary not part of the payload, that is already known.
++        if (result && first_filename[0] == 0) {
++            copyStringSafeFilename(first_filename, first_target_path, first_filename_size);
++        }
++    }
++
++finish:
++    free(manifest_data);
++    return result;
++}
++#endif
++
+ #define MAX_CREATED_DIRS 1024
+ static filename_char_t *created_dir_paths[MAX_CREATED_DIRS];
+ int created_dir_count = 0;
+@@ -1175,176 +1486,213 @@ int main(int argc, char **argv) {
+     // The onefile bootstrap is setup now.
+ 
+ #if _NUITKA_ONEFILE_HAS_PAYLOAD_BOOL == 1
+-    NUITKA_PRINT_TIMING("ONEFILE: Checking header for compression.");
++    bool payload_cached = false;
++
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++    NUITKA_PRINT_TIMING("ONEFILE: Checking cache manifest.");
+ 
+-    char header[3];
+-    readChunk(&header, sizeof(header));
++    payload_cached = checkCacheManifest(first_filename, sizeof(first_filename) / sizeof(filename_char_t));
+ 
+-    if (header[0] != 'K' || header[1] != 'A') {
+-        fatalErrorHeaderAttachedData();
++    if (payload_cached) {
++        NUITKA_PRINT_TIMING("ONEFILE: Cache manifest matches, no unpacking needed.");
++
++#if _NUITKA_ONEFILE_DLL_MODE
++        if (process_role != NULL) {
++            return runPythonCodeDLL(first_filename, argc, argv);
++        }
++#endif
++    } else {
++        // Remove it before touching any file, so an interrupted unpacking is
++        // never trusted.
++        invalidateCacheManifest();
++        startCacheManifest();
+     }
++#endif
++
++    if (payload_cached == false) {
++        NUITKA_PRINT_TIMING("ONEFILE: Checking header for compression.");
+ 
+-    NUITKA_PRINT_TIMING("ONEFILE: Header is OK.");
++        char header[3];
++        readChunk(&header, sizeof(header));
++
++        if (header[0] != 'K' || header[1] != 'A') {
++            fatalErrorHeaderAttachedData();
++        }
++
++        NUITKA_PRINT_TIMING("ONEFILE: Header is OK.");
+ 
+ // The 'X' stands for no compression, 'Y' is compressed, handle that.
+ #if _NUITKA_ONEFILE_COMPRESSION_BOOL == 1
+-    if (header[2] != 'Y') {
+-        fatalErrorHeaderAttachedData();
+-    }
+-    initZSTD();
++        if (header[2] != 'Y') {
++            fatalErrorHeaderAttachedData();
++        }
++        initZSTD();
+ 
+-    input.src = payload_current;
+-    input.pos = 0;
++        input.src = payload_current;
++        input.pos = 0;
+ 
+-    // TODO: Ought to assert that this doesn't truncate anything.
+-    input.size = (size_t)payload_size;
++        // TODO: Ought to assert that this doesn't truncate anything.
++        input.size = (size_t)payload_size;
+ 
+-    assert(payload_size > 0);
++        assert(payload_size > 0);
+ #else
+-    if (header[2] != 'X') {
+-        fatalErrorHeaderAttachedData();
+-    }
++        if (header[2] != 'X') {
++            fatalErrorHeaderAttachedData();
++        }
+ #endif
+ 
+-    NUITKA_PRINT_TIMING("ONEFILE: Entering decompression.");
++        NUITKA_PRINT_TIMING("ONEFILE: Entering decompression.");
+ 
+ #if _NUITKA_ONEFILE_TEMP_BOOL
+-    payload_created = true;
++        payload_created = true;
+ #endif
+ 
+-    for (;;) {
+-        filename_char_t *filename = readPayloadFilename();
++        for (;;) {
++            filename_char_t *filename = readPayloadFilename();
+ 
+-        // printf("Filename: " FILENAME_FORMAT_STR "\n", filename);
++            // printf("Filename: " FILENAME_FORMAT_STR "\n", filename);
+ 
+-        // Detect EOF from empty filename.
+-        if (filename[0] == 0) {
+-            break;
+-        }
++            // Detect EOF from empty filename.
++            if (filename[0] == 0) {
++                break;
++            }
+ 
+-        static filename_char_t target_path[4096] = {0};
+-        target_path[0] = 0;
++            static filename_char_t target_path[4096] = {0};
++            target_path[0] = 0;
+ 
+-        appendStringSafeFilename(target_path, payload_path, sizeof(target_path) / sizeof(filename_char_t));
+-        appendCharSafeFilename(target_path, FILENAME_SEP_CHAR, sizeof(target_path) / sizeof(filename_char_t));
+-        appendStringSafeFilename(target_path, filename, sizeof(target_path) / sizeof(filename_char_t));
++            appendStringSafeFilename(target_path, payload_path, sizeof(target_path) / sizeof(filename_char_t));
++            appendCharSafeFilename(target_path, FILENAME_SEP_CHAR, sizeof(target_path) / sizeof(filename_char_t));
++            appendStringSafeFilename(target_path, filename, sizeof(target_path) / sizeof(filename_char_t));
+ 
+-        if (first_filename[0] == 0) {
+-            appendStringSafeFilename(first_filename, target_path, sizeof(target_path) / sizeof(filename_char_t));
++            if (first_filename[0] == 0) {
++                appendStringSafeFilename(first_filename, target_path, sizeof(target_path) / sizeof(filename_char_t));
+ 
+-            // Run the Python code DLL if it's already unpacked.
++                // Run the Python code DLL if it's already unpacked.
+ #if _NUITKA_ONEFILE_DLL_MODE
+-            if (process_role != NULL) {
+-                return runPythonCodeDLL(first_filename, argc, argv);
+-            }
++                if (process_role != NULL) {
++                    return runPythonCodeDLL(first_filename, argc, argv);
++                }
+ #endif
+-        }
++            }
+ 
+ #if !defined(_WIN32) && !defined(__MSYS__)
+-        unsigned char file_flags = readPayloadFileFlagsValue();
++            unsigned char file_flags = readPayloadFileFlagsValue();
+ #endif
+ 
+ #if !defined(_WIN32) && !defined(__MSYS__)
+-        if (file_flags & 2) {
+-            filename_char_t *link_target_path = readPayloadFilename();
++            if (file_flags & 2) {
++                filename_char_t *link_target_path = readPayloadFilename();
+ 
+-            // printf("Filename: " FILENAME_FORMAT_STR " symlink to " FILENAME_FORMAT_STR "\n", target_path,
+-            // link_target_path);
++                // printf("Filename: " FILENAME_FORMAT_STR " symlink to " FILENAME_FORMAT_STR "\n", target_path,
++                // link_target_path);
+ 
+-            createContainingDirectory(target_path);
++                createContainingDirectory(target_path);
+ 
+-            unlink(target_path);
+-            if (symlink(link_target_path, target_path) != 0) {
+-                fatalErrorTempFileCreate(target_path);
+-            }
++                unlink(target_path);
++                if (symlink(link_target_path, target_path) != 0) {
++                    fatalErrorTempFileCreate(target_path);
++                }
+ 
+-            continue;
+-        }
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++                addCacheManifestEntry(target_path);
++#endif
++
++                continue;
++            }
+ #endif
+-        // _putws(target_path);
+-        unsigned long long file_size = readPayloadSizeValue();
++            // _putws(target_path);
++            unsigned long long file_size = readPayloadSizeValue();
+ 
+-        bool needs_write = true;
++            bool needs_write = true;
+ 
+ #if _NUITKA_ONEFILE_TEMP_BOOL == 0
+-        uint32_t contained_file_checksum = readPayloadChecksumValue();
+-        uint32_t existing_file_checksum = getFileCRC32(target_path);
++            uint32_t contained_file_checksum = readPayloadChecksumValue();
++            uint32_t existing_file_checksum = getFileCRC32(target_path);
+ 
+-        if (contained_file_checksum == existing_file_checksum) {
+-            needs_write = false;
++            if (contained_file_checksum == existing_file_checksum) {
++                needs_write = false;
+ 
+ #ifdef _NUITKA_EXPERIMENTAL_DEBUG_ONEFILE_CACHING
+-            fprintf(stderr, "CACHE HIT for '" FILENAME_FORMAT_STR "'.\n", target_path);
++                fprintf(stderr, "CACHE HIT for '" FILENAME_FORMAT_STR "'.\n", target_path);
+ #endif
+-        } else {
++            } else {
+ #ifdef _NUITKA_EXPERIMENTAL_DEBUG_ONEFILE_CACHING
+-            fprintf(stderr, "CACHE MISS for '" FILENAME_FORMAT_STR "'.\n", target_path);
++                fprintf(stderr, "CACHE MISS for '" FILENAME_FORMAT_STR "'.\n", target_path);
+ #endif
+-        }
++            }
+ #endif
+ 
+ #if _NUITKA_ONEFILE_ARCHIVE_BOOL == 1
+ #if _NUITKA_ONEFILE_COMPRESSION_BOOL == 1
+-        uint32_t contained_archive_file_size = readArchiveFileSizeValue();
++            uint32_t contained_archive_file_size = readArchiveFileSizeValue();
+ 
+-        input.src = payload_current;
+-        input.pos = 0;
+-        input.size = contained_archive_file_size;
++            input.src = payload_current;
++            input.pos = 0;
++            input.size = contained_archive_file_size;
+ 
+-        output.pos = 0;
+-        output.size = 0;
++            output.pos = 0;
++            output.size = 0;
+ 
+-        payload_current += contained_archive_file_size;
++            payload_current += contained_archive_file_size;
+ #endif
+ #endif
+-        FILE_HANDLE target_file = FILE_HANDLE_NULL;
++            FILE_HANDLE target_file = FILE_HANDLE_NULL;
+ 
+-        if (needs_write) {
+-            createContainingDirectory(target_path);
+-            target_file = createFileForWritingChecked(target_path);
+-        }
++            if (needs_write) {
++                createContainingDirectory(target_path);
++                target_file = createFileForWritingChecked(target_path);
++            }
+ 
+-        writeContainedFile(target_file, file_size);
++            writeContainedFile(target_file, file_size);
+ 
+ #if !defined(_WIN32) && !defined(__MSYS__)
+-        if ((file_flags & 1) && (target_file != FILE_HANDLE_NULL)) {
+-            int fd = fileno(target_file);
++            if ((file_flags & 1) && (target_file != FILE_HANDLE_NULL)) {
++                int fd = fileno(target_file);
+ 
+-            struct stat stat_buffer;
+-            int res = fstat(fd, &stat_buffer);
++                struct stat stat_buffer;
++                int res = fstat(fd, &stat_buffer);
+ 
+-            if (res == -1) {
+-                printOSErrorMessage("fstat", errno);
+-            }
++                if (res == -1) {
++                    printOSErrorMessage("fstat", errno);
++                }
+ 
+-            // User shall be able to execute if at least.
+-            stat_buffer.st_mode |= S_IXUSR;
++                // User shall be able to execute if at least.
++                stat_buffer.st_mode |= S_IXUSR;
+ 
+-            // Follow read flags for group, others according to umask.
+-            if ((stat_buffer.st_mode & S_IRGRP) != 0) {
+-                stat_buffer.st_mode |= S_IXOTH;
+-            }
++                // Follow read flags for group, others according to umask.
++                if ((stat_buffer.st_mode & S_IRGRP) != 0) {
++                    stat_buffer.st_mode |= S_IXOTH;
++                }
+ 
+-            if ((stat_buffer.st_mode & S_IRGRP) != 0) {
+-                stat_buffer.st_mode |= S_IXOTH;
+-            }
++                if ((stat_buffer.st_mode & S_IRGRP) != 0) {
++                    stat_buffer.st_mode |= S_IXOTH;
++                }
+ 
+-            res = fchmod(fd, stat_buffer.st_mode);
++                res = fchmod(fd, stat_buffer.st_mode);
+ 
+-            if (res == -1) {
+-                printOSErrorMessage("fchmod", errno);
++                if (res == -1) {
++                    printOSErrorMessage("fchmod", errno);
++                }
+             }
+-        }
+ #endif
+ 
+-        if (target_file != FILE_HANDLE_NULL) {
+-            if (closeFile(target_file) == false) {
+-                fatalErrorTempFiles();
++            if (target_file != FILE_HANDLE_NULL) {
++                if (closeFile(target_file) == false) {
++                    fatalErrorTempFiles();
++                }
+             }
++
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++            addCacheManifestEntry(target_path);
++#endif
+         }
+-    }
+ 
+-    NUITKA_PRINT_TIMING("ONEFILE: Finishing decompression, cleanup payload.");
++        NUITKA_PRINT_TIMING("ONEFILE: Finishing decompression, cleanup payload.");
++
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++        writeCacheManifest();
++#endif
++    }
+ 
+     closePayloadData();
+ #endif
+diff --git a/nuitka/freezer/Onefile.py b/nuitka/freezer/Onefile.py
+index f93820928..c08eab967 100644
+--- a/nuitka/freezer/Onefile.py
++++ b/nuitka/freezer/Onefile.py
+@@ -52,6 +52,7 @@ from nuitka.utils.Execution import withEnvironmentVarsOverridden
+ from nuitka.utils.FileOperations import (
+     areSamePaths,
+     getExternalUsePath,
++    getFileContentsHash,
+     getFileSize,
+     makeContainingPath,
+     removeDirectory,
+@@ -91,7 +92,11 @@ def packDistFolderToOnefile(dist_dir):
+ 
+ 
+ def _runOnefileScons(
+-    onefile_compression, onefile_archive, backend_resource_mode, onefile_payload_size
++    onefile_compression,
++    onefile_archive,
++    backend_resource_mode,
++    onefile_payload_size,
++    onefile_payload_hash,
+ ):
+     scons_options, env_values = getCommonSconsOptions()
+ 
+@@ -117,6 +122,10 @@ def _runOnefileScons(
+     env_values["_NUITKA_ONEFILE_HAS_PAYLOAD_BOOL"] = "1" if hasOnefilePayload() else "0"
+     env_values["_NUITKA_ONEFILE_PAYLOAD_SIZE_INT"] = str(onefile_payload_size)
+ 
++    # Identifies the payload for the cached mode unpacking manifest.
++    if onefile_payload_hash is not None:
++        env_values["_NUITKA_ONEFILE_PAYLOAD_HASH"] = onefile_payload_hash
++
+     main_filename_in_payload = hasOnefilePayloadMainEntry()
+ 
+     if not main_filename_in_payload:
+@@ -281,6 +290,7 @@ def packDistFolderToOnefileBootstrap(onefile_output_filename, dist_dir, start_bi
+     # We might not even have a payload due to commercial file embedding.
+     has_payload = hasOnefilePayload()
+     onefile_payload_size = 0
++    onefile_payload_hash = None
+ 
+     if has_payload:
+         expected_files = []
+@@ -304,12 +314,16 @@ def packDistFolderToOnefileBootstrap(onefile_output_filename, dist_dir, start_bi
+ 
+         onefile_payload_size = getFileSize(onefile_payload_filename)
+ 
++        if not isOnefileTempDirMode():
++            onefile_payload_hash = getFileContentsHash(onefile_payload_filename)
++
+     # Create the bootstrap binary for unpacking.
+     _runOnefileScons(
+         onefile_compression=compressor_python is not None,
+         onefile_archive=shallOnefileAsArchive(),
+         backend_resource_mode=backend_resource_mode,
+         onefile_payload_size=onefile_payload_size,
++        onefile_payload_hash=onefile_payload_hash,
+     )
+ 
+     if isWin32Windows():

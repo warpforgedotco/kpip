@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Wed, 23 Sep 2026 22:48:15 -0400
+Subject: [PATCH] Onefile: Fix, concurrent cached mode unpacking could crash
+ running processes
+
+In cached mode, unpacking wrote into existing files, truncating them
+while other processes were executing or memory mapping them, e.g. when
+several instances start at once on an empty cache directory. These then
+crashed with SIGBUS, 5 of 320 launches in a test with 8 concurrent
+starts. Symbolic links had a similar race between unlink and symlink.
+
+Now new contents are written to a process specific temporary file that
+then atomically replaces the target, so other processes keep seeing
+the complete old or new file. Temporary mode is not affected, as its
+directory is private to the process.
+
+Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+ nuitka/build/static_src/OnefileBootstrap.c | 98 ++++++++++++++++------
+ 1 file changed, 72 insertions(+), 26 deletions(-)
+
+diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
+index cef4be5ee..379b311a9 100644
+--- a/nuitka/build/static_src/OnefileBootstrap.c
++++ b/nuitka/build/static_src/OnefileBootstrap.c
+@@ -455,6 +455,37 @@ static bool payload_created = false;
+ #define ONEFILE_CACHE_MANIFEST_MAGIC "NUITKAOM"
+ #define ONEFILE_CACHE_MANIFEST_VERSION 1
+ 
++// Other processes may be running from the cache directory at the same time,
++// executing or memory mapping its files. Writing into an existing file would
++// truncate it under them, so new contents go into a process specific temporary
++// file first, that then atomically replaces the target.
++static void makeProcessTemporaryFilename(filename_char_t *buffer, filename_char_t const *filename, size_t buffer_size) {
++    copyStringSafeFilename(buffer, filename, buffer_size);
++    appendCharSafeFilename(buffer, '.', buffer_size);
++#if defined(_WIN32)
++    {
++        wchar_t pid_buffer[32];
++        _snwprintf(pid_buffer, sizeof(pid_buffer) / sizeof(wchar_t), L"tmp%lu", (unsigned long)GetCurrentProcessId());
++        pid_buffer[31] = 0;
++        appendWStringSafeW(buffer, pid_buffer, buffer_size);
++    }
++#else
++    {
++        char pid_buffer[32];
++        snprintf(pid_buffer, sizeof(pid_buffer), "tmp%ld", (long)getpid());
++        appendStringSafe(buffer, pid_buffer, buffer_size);
++    }
++#endif
++}
++
++static bool replaceFileAtomically(filename_char_t const *source, filename_char_t const *dest) {
++#if defined(_WIN32)
++    return MoveFileExW(source, dest, MOVEFILE_REPLACE_EXISTING) != 0;
++#else
++    return renameFile(source, dest);
++#endif
++}
++
+ struct OnefileCacheFileIdentity {
+     uint64_t size;
+     uint64_t mtime;
+@@ -577,24 +608,8 @@ static void writeCacheManifest(void) {
+ 
+     // Use a process specific temporary name, so concurrent unpacking never
+     // exposes a partially written manifest.
+-    copyStringSafeFilename(manifest_filename_tmp, manifest_filename,
+-                           sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
+-    appendCharSafeFilename(manifest_filename_tmp, '.', sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
+-#if defined(_WIN32)
+-    appendWStringSafeW(manifest_filename_tmp, L"tmp", sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
+-    {
+-        wchar_t pid_buffer[32];
+-        _snwprintf(pid_buffer, sizeof(pid_buffer) / sizeof(wchar_t), L"%lu", (unsigned long)GetCurrentProcessId());
+-        pid_buffer[31] = 0;
+-        appendWStringSafeW(manifest_filename_tmp, pid_buffer, sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
+-    }
+-#else
+-    {
+-        char pid_buffer[32];
+-        snprintf(pid_buffer, sizeof(pid_buffer), "tmp%ld", (long)getpid());
+-        appendStringSafe(manifest_filename_tmp, pid_buffer, sizeof(manifest_filename_tmp));
+-    }
+-#endif
++    makeProcessTemporaryFilename(manifest_filename_tmp, manifest_filename,
++                                 sizeof(manifest_filename_tmp) / sizeof(filename_char_t));
+ 
+     FILE_HANDLE manifest_file = createFileForWriting(manifest_filename_tmp);
+ 
+@@ -609,11 +624,7 @@ static void writeCacheManifest(void) {
+     }
+ 
+     if (success) {
+-#if defined(_WIN32)
+-        success = MoveFileExW(manifest_filename_tmp, manifest_filename, MOVEFILE_REPLACE_EXISTING) != 0;
+-#else
+-        success = renameFile(manifest_filename_tmp, manifest_filename);
+-#endif
++        success = replaceFileAtomically(manifest_filename_tmp, manifest_filename);
+     }
+ 
+     if (success == false) {
+@@ -1559,6 +1570,9 @@ int main(int argc, char **argv) {
+ 
+             static filename_char_t target_path[4096] = {0};
+             target_path[0] = 0;
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++            static filename_char_t target_path_tmp[4096] = {0};
++#endif
+ 
+             appendStringSafeFilename(target_path, payload_path, sizeof(target_path) / sizeof(filename_char_t));
+             appendCharSafeFilename(target_path, FILENAME_SEP_CHAR, sizeof(target_path) / sizeof(filename_char_t));
+@@ -1588,13 +1602,25 @@ int main(int argc, char **argv) {
+ 
+                 createContainingDirectory(target_path);
+ 
+-                unlink(target_path);
+-                if (symlink(link_target_path, target_path) != 0) {
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++                makeProcessTemporaryFilename(target_path_tmp, target_path,
++                                             sizeof(target_path_tmp) / sizeof(filename_char_t));
++
++                unlink(target_path_tmp);
++                if (symlink(link_target_path, target_path_tmp) != 0) {
++                    fatalErrorTempFileCreate(target_path_tmp);
++                }
++                if (replaceFileAtomically(target_path_tmp, target_path) == false) {
++                    unlink(target_path_tmp);
+                     fatalErrorTempFileCreate(target_path);
+                 }
+ 
+-#if _NUITKA_ONEFILE_TEMP_BOOL == 0
+                 addCacheManifestEntry(target_path);
++#else
++                unlink(target_path);
++                if (symlink(link_target_path, target_path) != 0) {
++                    fatalErrorTempFileCreate(target_path);
++                }
+ #endif
+ 
+                 continue;
+@@ -1640,7 +1666,14 @@ int main(int argc, char **argv) {
+ 
+             if (needs_write) {
+                 createContainingDirectory(target_path);
++
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++                makeProcessTemporaryFilename(target_path_tmp, target_path,
++                                             sizeof(target_path_tmp) / sizeof(filename_char_t));
++                target_file = createFileForWritingChecked(target_path_tmp);
++#else
+                 target_file = createFileForWritingChecked(target_path);
++#endif
+             }
+ 
+             writeContainedFile(target_file, file_size);
+@@ -1680,6 +1713,19 @@ int main(int argc, char **argv) {
+                 if (closeFile(target_file) == false) {
+                     fatalErrorTempFiles();
+                 }
++
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++                if (replaceFileAtomically(target_path_tmp, target_path) == false) {
++                    deleteFile(target_path_tmp);
++
++                    // A concurrent start may have put the same file in place and
++                    // already be running it, which on Windows prevents replacing
++                    // it. That is only an error if what is there is not the file.
++                    if (getFileCRC32(target_path) != contained_file_checksum) {
++                        fatalErrorTempFileCreate(target_path);
++                    }
++                }
++#endif
+             }
+ 
+ #if _NUITKA_ONEFILE_TEMP_BOOL == 0
