@@ -12,9 +12,8 @@ heavier CLI dependencies are imported only once their shape matches.
 
 from __future__ import annotations
 
-from kpip.core.utils import versioned_bucket
+from kpip.core.utils import key_bytes, versioned_bucket
 
-import marshal
 import os
 import sys
 
@@ -785,7 +784,9 @@ def plan_cache_key(options: LockOptions, previous: bytes | None) -> PlanCacheKey
     )
 
 
-def cache_path(options: LockOptions) -> str | None:
+def cache_path(options: LockOptions, started_from: str) -> str | None:
+    """Where the plan for these inputs, started from ``started_from`` -- a
+    ``previous_lock_digest`` -- is kept."""
     root = command_cache_dir(options.cache_dir, options.no_cache_dir)
     if not root:
         return None
@@ -794,10 +795,10 @@ def cache_path(options: LockOptions) -> str | None:
         sys.platform,
         tuple(options.requirements),
         tuple(options.find_links),
+        started_from,
     )
     try:
-        serialized = marshal.dumps(key)
-        digest = cache_digest(serialized)
+        digest = cache_digest(key_bytes(key))
     except (OSError, TypeError, ValueError):
         return None
     return os.path.join(root, FAST_LOCK_PLAN_BUCKET, f"{digest}.cache")
@@ -894,14 +895,15 @@ def run_lock(args: list[str]) -> int | None:
         # The wheelhouse path answers none of these.
         return None
 
-    cache_file = cache_path(options)
     previous = read_previous_lock(options.output, options.upgrade)
     plan_key = plan_cache_key(options, previous)
     if plan_key is None:
         return None
 
-    serialized_plan_key = marshal.dumps(plan_key)
-    cached_output = load_plan_cache(cache_file, serialized_plan_key)
+    started_from = previous_lock_digest(previous, options.upgrade_packages)
+    cached_output = load_plan_cache(
+        cache_path(options, started_from), key_bytes(plan_key)
+    )
     if cached_output is not None:
         write_lock_output(options.output, cached_output)
         return 0
@@ -940,12 +942,19 @@ def run_lock(args: list[str]) -> int | None:
         )
 
     rendered = render_wheel_lock(packages)
-    # Kept for the next lock, which starts from this one; see
-    # cli.lock.record_replayable_lock for why that gives the same answer.
+    # Kept for a lock that starts where this one did, and for the next lock,
+    # which starts from this one; see cli.lock.record_replayable_lock for why
+    # both give the same answer.
+    starts = [started_from]
     if not options.upgrade_packages:
         written = lock_left_behind(options.output, options.upgrade, rendered)
-        next_key = (*plan_key[:-1], previous_lock_digest(written, []))
-        save_plan_cache(cache_file, marshal.dumps(next_key), rendered)
+        starts.append(previous_lock_digest(written, []))
+    for start in starts:
+        save_plan_cache(
+            cache_path(options, start),
+            key_bytes((*plan_key[:-1], start)),
+            rendered,
+        )
     write_lock_output(options.output, rendered)
     return 0
 

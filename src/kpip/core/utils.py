@@ -93,6 +93,19 @@ def versioned_bucket(name: str, version: int, *, interpreter: bool = False) -> s
     return f"{name}-v{version}{tag}"
 
 
+def key_bytes(key: object) -> bytes:
+    """``key`` -- tuples of strings, bytes, numbers, booleans, None -- as bytes
+    that depend only on its value.
+
+    Not ``marshal``: it flags and back-references any object that has more
+    than one reference, so two equal keys built differently -- one sharing
+    a string with another tuple -- serialize differently, and a cache
+    keyed on the bytes misses.
+    """
+
+    return repr(key).encode("utf-8")
+
+
 def default_worker_count() -> int:
     """How many threads a machine-sized pool should use.
 

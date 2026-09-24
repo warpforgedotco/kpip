@@ -124,7 +124,9 @@ def test_fast_lock_caches_by_default(
 
     assert result.returncode == 0, result.stderr
     plans = list(default_cache.rglob(f"{FAST_LOCK_PLAN_BUCKET}/*.cache"))
-    assert len(plans) == (0 if disable else 1)
+    # One for a lock that starts where this one did, one for the next lock,
+    # which starts from this one.
+    assert len(plans) == (0 if disable else 2)
 
 
 FAST_INSTALL_FORBIDDEN = frozenset(

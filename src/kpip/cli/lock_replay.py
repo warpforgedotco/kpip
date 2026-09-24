@@ -19,7 +19,7 @@ import time
 
 from kpip.core.appdirs import http_cache_path
 from kpip.core.code_identity import code_identity
-from kpip.core.utils import versioned_bucket
+from kpip.core.utils import key_bytes, versioned_bucket
 from kpip.network.freshness import (
     CacheMetadataReader,
     decode_metadata,
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 REPLAY_BUCKET = versioned_bucket("lock-replay", 1)
 """Directory under the cache directory holding replayable locks."""
 
-REPLAY_FORMAT = 2
+REPLAY_FORMAT = 3
 
 FRESH = "fresh"
 """Every page is unchanged and still fresh: the lock can be replayed."""
@@ -199,10 +199,7 @@ def replay_key(
         previous_lock,
     )
 
-    try:
-        return marshal.dumps(key)
-    except ValueError:
-        return None
+    return key_bytes(key)
 
 
 def _digest(value: bytes) -> str:

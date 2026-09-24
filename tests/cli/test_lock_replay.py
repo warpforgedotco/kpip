@@ -538,3 +538,73 @@ class TestRevalidationWave:
             == 0
         )
         assert (tmp_path / "pylock.toml").read_text(encoding="utf-8") == RENDERED
+
+
+class TestRecording:
+    def record(
+        self, tmp_path: Path, requirements: Path, *extra: str, previous: bytes | None
+    ) -> str:
+        from types import SimpleNamespace
+
+        from kpip.cli.lock import record_replayable_lock
+        from kpip.cli.parsers.lock import create_parser
+
+        cache_dir = resolve_cache_dir(str(tmp_path / "cache"))
+        store_page(cache_dir)
+        options = create_parser().parse_args(
+            [
+                "-r",
+                str(requirements),
+                "--output",
+                str(tmp_path / "pylock.toml"),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+                *extra,
+            ]
+        )
+        provider = SimpleNamespace(index_sources=[SimpleNamespace(pages_read={PAGE})])
+        session = SimpleNamespace(cache=lock_replay.open_http_cache(cache_dir))
+        record_replayable_lock(
+            options,
+            cache_dir,
+            provider,  # type: ignore[arg-type]
+            session,  # type: ignore[arg-type]
+            RENDERED,
+            previous,
+        )
+        return cache_dir
+
+    def recorded_for(self, cache_dir: str, requirements: Path, **key: object) -> bool:
+        return (
+            lock_replay.load_record(cache_dir, key_for(requirements, **key)) is not None
+        )
+
+    def test_kept_for_where_it_started_and_for_the_next_lock(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        """A lock whose output is gone before the next run still replays."""
+        cache_dir = self.record(tmp_path, requirements, previous=None)
+
+        assert self.recorded_for(cache_dir, requirements)
+        assert self.recorded_for(
+            cache_dir,
+            requirements,
+            previous_lock=previous_lock_digest(RENDERED.encode("utf-8"), []),
+        )
+
+    def test_an_upgraded_package_keeps_it_only_for_where_it_started(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        started = b"# an older lock\n"
+        cache_dir = self.record(tmp_path, requirements, "-P", "demo", previous=started)
+
+        assert self.recorded_for(
+            cache_dir,
+            requirements,
+            previous_lock=previous_lock_digest(started, ["demo"]),
+        )
+        assert not self.recorded_for(
+            cache_dir,
+            requirements,
+            previous_lock=previous_lock_digest(RENDERED.encode("utf-8"), []),
+        )
