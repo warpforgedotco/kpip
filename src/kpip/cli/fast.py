@@ -845,6 +845,14 @@ def replay_lock(options: LockOptions) -> int | None:
     return 0
 
 
+def replay_lock_arguments(args: list[str]) -> int | None:
+    """Replay an index lock, and try nothing else."""
+    options = parse_lock_arguments(args)
+    if options is None or options.no_index:
+        return None
+    return replay_lock(options)
+
+
 def run_lock(args: list[str]) -> int | None:
     options = parse_lock_arguments(args)
     if options is None:
@@ -939,7 +947,10 @@ def run_before_startup(args: list[str]) -> tuple[int | None, bool]:
 
     if command == "lock":
         if "--quiet" not in options:
-            return None, False
+            # A replayed lock neither prints nor logs, so it does not wait for
+            # logging to be configured. The wheelhouse path resolves, and
+            # whatever it reports should look like the full command's.
+            return replay_lock_arguments(options), False
         return run_lock(options), False
 
     if command == "list":

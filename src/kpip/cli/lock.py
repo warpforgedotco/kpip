@@ -6,7 +6,15 @@ import os
 
 from kpip.cli.fast import read_requirements
 from kpip.cli.lock_format import LOCK_HEADER, toml_string, write_lock_output
-from kpip.cli.lock_replay import page_validators, replay_key, save_record
+from kpip.cli.lock_replay import (
+    FRESH,
+    load_record,
+    page_state,
+    page_validators,
+    replay_key,
+    save_record,
+    stale_pages,
+)
 from kpip.cli.parsers.lock import create_parser
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.errors import CommandError, KpipError
@@ -279,6 +287,67 @@ def _resolved_metadata_name(candidate: object) -> str | None:
         return None
 
 
+def lock_replay_key(options: Namespace, cache_dir: str | None) -> bytes | None:
+    """The key this lock is replayed under, when it can be at all."""
+
+    if cache_dir is None or options.no_index or options.find_links or options.editable:
+        return None
+
+    return replay_key(
+        requirements=options.requirements,
+        requirement_files=options.requirement,
+        constraint_files=options.constraints,
+        index_urls=(DEFAULT_INDEX_URL,),
+        no_binary=options.no_binary,
+        no_build_isolation=options.no_build_isolation,
+        python_version=options.python_version,
+    )
+
+
+def replay_after_revalidation(
+    options: Namespace,
+    cache_dir: str | None,
+    session: DeferredNetworkSession,
+) -> bool:
+    """Replay the recorded lock once every page it read has been revalidated.
+
+    The fast path already replays a lock whose pages are all fresh. After
+    the index's ``max-age`` they are stale, and resolving would revalidate
+    them one dependency level at a time as it walked the graph; asking about
+    every recorded page at once costs one round of mostly-304 answers, and
+    if none changed the recorded lock is still the answer. If one did, the
+    resolve that follows finds every page fresh in the cache.
+    """
+
+    key = lock_replay_key(options, cache_dir)
+    http_cache = session.cache
+
+    if key is None or http_cache is None:
+        return False
+
+    assert cache_dir is not None
+
+    record = load_record(cache_dir, key)
+
+    if record is None:
+        return False
+
+    if page_state(http_cache, record.pages) != FRESH:
+        from kpip.index.source_locations import SimpleIndexSource, refresh_pages
+
+        refresh_pages(
+            SimpleIndexSource(DEFAULT_INDEX_URL, (), session),
+            stale_pages(http_cache, record.pages),
+        )
+
+        if page_state(http_cache, record.pages) != FRESH:
+            return False
+
+    write_lock_output(options.output, record.rendered)
+
+    return True
+
+
 def record_replayable_lock(
     options: Namespace,
     cache_dir: str | None,
@@ -289,25 +358,12 @@ def record_replayable_lock(
     """Keep this lock so an identical one can replay it while its pages are unchanged."""
 
     http_cache = session.cache
+    key = lock_replay_key(options, cache_dir)
 
-    if cache_dir is None or http_cache is None:
+    if key is None or http_cache is None:
         return
 
-    if options.no_index or options.find_links or options.editable:
-        return
-
-    key = replay_key(
-        requirements=options.requirements,
-        requirement_files=options.requirement,
-        constraint_files=options.constraints,
-        index_urls=(DEFAULT_INDEX_URL,),
-        no_binary=options.no_binary,
-        no_build_isolation=options.no_build_isolation,
-        python_version=options.python_version,
-    )
-
-    if key is None:
-        return
+    assert cache_dir is not None
 
     pages: set[str] = set()
 
@@ -377,6 +433,9 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
 
     resolution_session = DeferredNetworkSession(cache_dir=cache_dir)
+
+    if replay_after_revalidation(options, cache_dir, resolution_session):
+        return 0
 
     artifact_locator = ArtifactLocator(resolution_session, cache_dir=cache_dir)
 

@@ -323,3 +323,181 @@ class TestFastPath:
         ]
 
         assert run_lock(arguments) is None
+
+
+class Revalidating:
+    """An index whose pages answer conditional requests, recording each one."""
+
+    def __init__(
+        self,
+        cache_dir: str,
+        *,
+        changed: frozenset[str] = frozenset(),
+        failing: frozenset[str] = frozenset(),
+    ) -> None:
+        from kpip.network.session import NetworkSession
+        from kpip_test_support.transport_mocks import make_response
+
+        requests: list[tuple[str, str | None]] = []
+        self.requests = requests
+
+        class Session(NetworkSession):
+            def open_internal(
+                self, method, url, headers, body, timeout, *, stream=False
+            ):
+                requests.append((url, headers.get("if-none-match")))
+                if url in failing:
+                    raise OSError("unreachable")
+                if url in changed:
+                    page = (
+                        b'{"meta": {"api-version": "1.0"}, "name": "demo", "files": []}'
+                    )
+                    return make_response(
+                        status=200,
+                        reason="OK",
+                        url=url,
+                        headers={
+                            "Content-Type": "application/vnd.pypi.simple.v1+json",
+                            "Cache-Control": "max-age=600",
+                            "ETag": '"v2"',
+                            "Content-Length": str(len(page)),
+                        },
+                        body=page,
+                    )
+                return make_response(
+                    status=304,
+                    reason="Not Modified",
+                    url=url,
+                    headers={
+                        "ETag": headers.get("if-none-match", ""),
+                        "Cache-Control": "max-age=600",
+                    },
+                    body=b"",
+                )
+
+        self.session = Session(cache=http_cache_path(cache_dir))
+
+    def deferred(self, cache_dir: str):
+        from kpip.network.deferred import DeferredNetworkSession
+
+        deferred = DeferredNetworkSession(cache_dir=cache_dir)
+        deferred.session = self.session
+        return deferred
+
+
+class TestRevalidationWave:
+    OTHER = "https://pypi.org/simple/other/"
+
+    def recorded(self, tmp_path: Path, requirements: Path) -> str:
+        cache_dir = resolve_cache_dir(str(tmp_path / "cache"))
+        store_page(cache_dir, fresh=False)
+        store_page(cache_dir, self.OTHER, fresh=False)
+        http_cache = lock_replay.open_http_cache(cache_dir)
+        pages = lock_replay.page_validators(http_cache, [PAGE, self.OTHER])
+        assert pages is not None
+        lock_replay.save_record(cache_dir, key_for(requirements), pages, RENDERED)
+        return cache_dir
+
+    def options(self, requirements: Path, tmp_path: Path):
+        from kpip.cli.parsers.lock import create_parser
+
+        return create_parser().parse_args(
+            [
+                "-r",
+                str(requirements),
+                "--output",
+                str(tmp_path / "pylock.toml"),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+            ],
+        )
+
+    def test_unchanged_pages_are_revalidated_together_and_replayed(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        from kpip.cli.lock import replay_after_revalidation
+
+        cache_dir = self.recorded(tmp_path, requirements)
+        index = Revalidating(cache_dir)
+
+        replayed = replay_after_revalidation(
+            self.options(requirements, tmp_path), cache_dir, index.deferred(cache_dir)
+        )
+
+        assert replayed
+        assert (tmp_path / "pylock.toml").read_text(encoding="utf-8") == RENDERED
+        assert sorted(index.requests) == [(PAGE, '"v1"'), (self.OTHER, '"v1"')]
+        record = lock_replay.load_record(cache_dir, key_for(requirements))
+        assert record is not None
+        assert (
+            lock_replay.page_state(lock_replay.open_http_cache(cache_dir), record.pages)
+            == lock_replay.FRESH
+        )
+
+    def test_a_changed_page_is_resolved_again(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        from kpip.cli.lock import replay_after_revalidation
+
+        cache_dir = self.recorded(tmp_path, requirements)
+        index = Revalidating(cache_dir, changed=frozenset({self.OTHER}))
+
+        replayed = replay_after_revalidation(
+            self.options(requirements, tmp_path), cache_dir, index.deferred(cache_dir)
+        )
+
+        assert not replayed
+        assert not (tmp_path / "pylock.toml").exists()
+        http_cache = lock_replay.open_http_cache(cache_dir)
+        # The resolve that follows finds the new page already fresh.
+        assert lock_replay.stale_pages(http_cache, ((self.OTHER, '"v2"', None),)) == []
+
+    def test_an_unreachable_page_is_left_to_resolution(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        from kpip.cli.lock import replay_after_revalidation
+
+        cache_dir = self.recorded(tmp_path, requirements)
+        index = Revalidating(cache_dir, failing=frozenset({PAGE}))
+
+        replayed = replay_after_revalidation(
+            self.options(requirements, tmp_path), cache_dir, index.deferred(cache_dir)
+        )
+
+        assert not replayed
+
+    def test_the_lock_command_skips_resolution(
+        self,
+        tmp_path: Path,
+        requirements: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from kpip.cli import lock as lock_command
+
+        cache_dir = self.recorded(tmp_path, requirements)
+        index = Revalidating(cache_dir)
+        monkeypatch.setattr(
+            lock_command,
+            "DeferredNetworkSession",
+            lambda cache_dir: index.deferred(cache_dir),
+        )
+
+        def unexpected(*args: object, **kwargs: object) -> None:
+            pytest.fail("resolved a lock whose pages were all unchanged")
+
+        monkeypatch.setattr(lock_command.ResolutionEngine, "resolve", unexpected)
+
+        assert (
+            lock_command.run_lock(
+                [
+                    "-r",
+                    str(requirements),
+                    "--output",
+                    str(tmp_path / "pylock.toml"),
+                    "--cache-dir",
+                    str(tmp_path / "cache"),
+                ],
+            )
+            == 0
+        )
+        assert (tmp_path / "pylock.toml").read_text(encoding="utf-8") == RENDERED
