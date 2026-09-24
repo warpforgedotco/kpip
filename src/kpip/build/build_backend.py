@@ -283,11 +283,12 @@ class BackendRunner:
         with tempfile.TemporaryDirectory(prefix="pip-build-env-") as env_dir:
             env_path = env_dir
 
-            python = create_isolated_venv(
+            venv = create_isolated_venv(
                 env_path,
                 with_pip=bool(self.spec.requirements),
                 python=build_interpreter(),
-            ).python_executable
+            )
+            python = venv.python_executable
 
             if self.spec.requirements:
                 constraint_args = [
@@ -386,6 +387,7 @@ class BackendRunner:
                 self.spec.name,
                 backend_path=list(self.spec.backend_path) or None,
                 python_executable=python,
+                scripts_dir=venv.bin_path,
             )
 
             yield caller, env_path

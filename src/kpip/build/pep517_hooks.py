@@ -66,8 +66,13 @@ class BuildBackendHookCaller:
         *,
         backend_path: list[str] | None = None,
         python_executable: str | None = None,
+        scripts_dir: str | None = None,
     ) -> None:
         self.source_dir = os.path.abspath(source_dir)
+        # An isolated build environment's own scripts, first on the hook's
+        # PATH: backends such as maturin run the tool their build
+        # requirements installed there, as pip's build environments allow.
+        self.scripts_dir = scripts_dir
         self.backend = backend
         self.backend_path = tuple(
             os.path.abspath(os.path.join(self.source_dir, path))
@@ -108,6 +113,13 @@ class BuildBackendHookCaller:
             if inherited:
                 search_path.append(inherited)
             environment["PYTHONPATH"] = os.pathsep.join(search_path)
+            if self.scripts_dir:
+                inherited_path = environment.get("PATH")
+                environment["PATH"] = (
+                    self.scripts_dir
+                    if not inherited_path
+                    else os.pathsep.join((self.scripts_dir, inherited_path))
+                )
             if self.backend_path:
                 environment["KPIP_BUILD_BACKEND_PATH"] = os.pathsep.join(
                     self.backend_path,
