@@ -432,6 +432,57 @@ def test_exact_catalog_prefetch_starts_wheel_metadata(
     assert calls == [metadata_link.url]
 
 
+def test_catalog_prefetch_warms_the_preferred_release_rather_than_the_newest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relock is going to choose its previous pin, so that is what to warm."""
+    calls: list[str] = []
+
+    class Session:
+        def get(self, url: str) -> object:
+            calls.append(url)
+            return object()
+
+    def record(version: str) -> CandidateRecord:
+        link = Link.from_url(
+            f"https://packages.invalid/demo-{version}-py3-none-any.whl",
+            source_url=None,
+            metadata_file=MetadataFile(None),
+        )
+        return CandidateRecord("demo", Version(version), link)
+
+    newest, pinned = record("2.0"), record("1.0")
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=Session(),
+    )
+    provider.preferred_versions = {"demo": Version("1.0")}
+    monkeypatch.setattr(
+        provider, "load_available_versions", lambda requirement, cache_key: ()
+    )
+    monkeypatch.setattr(
+        provider,
+        "evaluate_links",
+        lambda requirement: CandidateSelection((newest, pinned), ()),
+    )
+    monkeypatch.setattr(
+        provider,
+        "release_candidates",
+        lambda requirement, version: (pinned,) if version == pinned.version else (),
+    )
+
+    try:
+        provider.load_prefetched_versions(
+            (parse_requirement("demo"), ("demo", True, True)),
+        )
+    finally:
+        provider.close()
+
+    metadata_link = pinned.link.metadata_link()
+    assert metadata_link is not None
+    assert calls == [metadata_link.url]
+
+
 def test_remote_index_fanout_preserves_order_and_deduplicates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1941,3 +1992,48 @@ def test_an_artifact_kind_hashes_by_identity() -> None:
     assert {sdist: 1}[ArtifactKind("sdist")] == 1
     # And the hash really is the inherited one, not Enum's.
     assert type(sdist).__hash__ is object.__hash__
+
+
+def test_catalog_prefetch_evaluates_every_release_only_without_the_pinned_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    link = Link.from_url(
+        "https://packages.invalid/demo-1.0-py3-none-any.whl",
+        source_url=None,
+        metadata_file=MetadataFile(None),
+    )
+    pinned = CandidateRecord("demo", Version("1.0"), link)
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=None,
+    )
+    evaluated: list[str] = []
+    monkeypatch.setattr(
+        provider, "load_available_versions", lambda requirement, cache_key: ()
+    )
+    monkeypatch.setattr(
+        provider,
+        "evaluate_links",
+        lambda requirement: evaluated.append(requirement.name)
+        or CandidateSelection((), ()),
+    )
+    monkeypatch.setattr(
+        provider,
+        "release_candidates",
+        lambda requirement, version: (pinned,) if version == pinned.version else None,
+    )
+
+    try:
+        provider.preferred_versions = {"demo": Version("1.0")}
+        provider.load_prefetched_versions(
+            (parse_requirement("demo"), ("demo", True, True))
+        )
+        assert evaluated == []
+
+        provider.preferred_versions = {"demo": Version("9.9")}
+        provider.load_prefetched_versions(
+            (parse_requirement("demo"), ("demo", True, True))
+        )
+        assert evaluated == ["demo"]
+    finally:
+        provider.close()

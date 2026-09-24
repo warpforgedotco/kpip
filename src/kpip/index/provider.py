@@ -9,7 +9,7 @@ import stat
 import time
 import urllib.parse
 from bisect import bisect_left, bisect_right
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from itertools import chain
 from threading import RLock
 from types import MappingProxyType
@@ -209,6 +209,10 @@ class CandidateProvider:
         self.warm_catalog_cache: dict[tuple[str, bool, bool], bool] = {}
 
         self.prefetch_settled: set[tuple[str, bool, bool]] = set()
+
+        # The release a resolve is expected to choose, by canonical name,
+        # when that is not the newest: a relock's previous pins.
+        self.preferred_versions: Mapping[str, Version] = {}
 
         self.candidate_work_cost_cache = {}
 
@@ -2800,12 +2804,23 @@ class CandidateProvider:
 
         result = self.load_available_versions(requirement, cache_key)
 
-        selection = self.evaluate_links(requirement)
+        accepted: tuple[CandidateRecord, ...] = ()
+
+        preferred = self.preferred_versions.get(requirement.canonical_name)
+
+        if preferred is not None:
+            # The resolve is going to choose this release, not the newest:
+            # warm its metadata, and the pages of its dependencies. Read
+            # alone, without evaluating every other release first.
+            accepted = self.release_candidates(requirement, preferred) or ()
+
+        if not accepted:
+            accepted = self.evaluate_links(requirement).accepted
 
         materializer = self.get_materializer_internal()
 
         materializer.prefetch_metadata(
-            selection.accepted[:_CATALOG_METADATA_PREFETCH],
+            accepted[:_CATALOG_METADATA_PREFETCH],
             requirement=requirement,
         )
 
@@ -2813,10 +2828,10 @@ class CandidateProvider:
 
         self.prefetch_policy.observe(cache_key, elapsed, len(result))
 
-        if selection.accepted:
+        if accepted:
             self._chain_dependency_catalogs(
                 requirement,
-                selection.accepted[0],
+                accepted[0],
                 materializer,
             )
 
