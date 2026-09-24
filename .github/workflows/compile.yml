@@ -81,6 +81,19 @@ jobs:
           # A source-only package is built with a real Python, not the binary.
           "$kpip" lock --no-cache-dir --output "$RUNNER_TEMP/sdist.toml" atlasclient==1.0.0
           grep -q 'name = "atlasclient"' "$RUNNER_TEMP/sdist.toml"
+
+          # A build that fails reaches the user as kpip reports it, rather
+          # than being taken for "no dependencies" or lost in a SystemError.
+          if KPIP_BUILD_PYTHON=/nonexistent/python "$kpip" lock --no-cache-dir \
+              --output "$RUNNER_TEMP/failed.toml" atlasclient==1.0.0 2> "$RUNNER_TEMP/failed.err"; then
+            echo "a lock whose only sdist cannot be built succeeded"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/failed.err"
+          grep -q "Failed to build 'atlasclient'" "$RUNNER_TEMP/failed.err"
+          if grep -q "SystemError" "$RUNNER_TEMP/failed.err"; then
+            exit 1
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kpip-${{ runner.os }}

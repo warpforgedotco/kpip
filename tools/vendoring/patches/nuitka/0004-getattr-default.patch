@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 24 Sep 2026 02:53:41 -0400
+Subject: [PATCH] Fix, "getattr" with a default swallowed other exceptions and
+ left them set
+
+With a default, the "BUILTIN_GETATTR" helper returned it for any error
+of the attribute lookup, while only clearing "AttributeError". Code went
+on with the default instead of raising, and the next call noticed the
+still set exception and raised "SystemError" about it. Only an
+"AttributeError" gives the default now, as with CPython.
+
+Fixes #4061
+
+Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+ nuitka/build/static_src/HelpersBuiltin.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/nuitka/build/static_src/HelpersBuiltin.c b/nuitka/build/static_src/HelpersBuiltin.c
+index 3e798b41a..f5c36715b 100644
+--- a/nuitka/build/static_src/HelpersBuiltin.c
++++ b/nuitka/build/static_src/HelpersBuiltin.c
+@@ -738,10 +738,14 @@ PyObject *BUILTIN_GETATTR(PyThreadState *tstate, PyObject *object, PyObject *att
+ 
+     if (result == NULL) {
+         if (default_value != NULL) {
++            // Only an "AttributeError" means the default, anything else is
++            // raised, as "getattr" does.
+             if (HAS_ERROR_OCCURRED(tstate)) {
+-                if (EXCEPTION_MATCH_BOOL_SINGLE(tstate, GET_ERROR_OCCURRED(tstate), PyExc_AttributeError)) {
+-                    CLEAR_ERROR_OCCURRED(tstate);
++                if (!EXCEPTION_MATCH_BOOL_SINGLE(tstate, GET_ERROR_OCCURRED(tstate), PyExc_AttributeError)) {
++                    return NULL;
+                 }
++
++                CLEAR_ERROR_OCCURRED(tstate);
+             }
+ 
+             Py_INCREF(default_value);
