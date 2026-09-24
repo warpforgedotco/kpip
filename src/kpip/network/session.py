@@ -342,7 +342,7 @@ class NetworkSession:
 
         self.no_range_requests_lock = threading.Lock()
 
-        self.fresh_cached_response_cache: dict[str, float] = {}
+        self.fresh_cached_response_cache: dict[str, tuple[float, float]] = {}
 
         self.environ_proxies_cache: dict[tuple[str, int | None], dict[str, str]] = {}
 

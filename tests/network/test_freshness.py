@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -29,8 +30,24 @@ DATE = "Mon, 12 Jan 1970 13:46:40 GMT"  # NOW as an HTTP date
         ({"Cache-Control": "max-age=0"}, NOW),
         ({"Cache-Control": "max-age=soon"}, NOW),
         ({"Cache-Control": "no-cache, max-age=600"}, NOW),
-        # Qualified no-cache only concerns the named fields.
-        ({"Cache-Control": 'no-cache="Set-Cookie", max-age=600'}, NOW + 600),
+        # Qualified no-cache allows reuse only without the fields it names,
+        # and a cached response is served with all of them.
+        ({"Cache-Control": 'no-cache="Set-Cookie", max-age=600'}, NOW),
+        # Of a repeated directive the first counts: a later one cannot
+        # lengthen what an earlier one allowed.
+        ({"Cache-Control": "max-age=0, max-age=600"}, NOW),
+        ({"Cache-Control": "max-age=60, max-age=600"}, NOW + 60),
+        # A response the origin dated a while ago arrives that old.
+        (
+            {"Cache-Control": "max-age=600", "Date": "Mon, 12 Jan 1970 13:41:40 GMT"},
+            NOW + 300,
+        ),
+        (
+            {"Cache-Control": "max-age=600", "Date": "Mon, 12 Jan 1970 12:46:40 GMT"},
+            NOW,
+        ),
+        # Age wins when it says the response is older than its Date does.
+        ({"Cache-Control": "max-age=600", "Date": DATE, "Age": "120"}, NOW + 480),
         ({"Cache-Control": "no-store, max-age=600"}, None),
         # Expires is measured against the response's own Date, so a server
         # clock an hour ahead still yields the lifetime it meant.
@@ -57,6 +74,41 @@ DATE = "Mon, 12 Jan 1970 13:46:40 GMT"  # NOW as an HTTP date
 )
 def test_freshness_deadline(headers: dict[str, str], deadline: float | None) -> None:
     assert freshness_deadline(headers, NOW) == deadline
+
+
+def test_a_directive_repeated_across_header_lines_keeps_its_first_value() -> None:
+    from kpip._vendor.urllib3._collections import HTTPHeaderDict
+
+    headers = HTTPHeaderDict()
+    headers.add("Cache-Control", "max-age=0")
+    headers.add("Cache-Control", "max-age=600")
+
+    assert freshness_deadline(headers, NOW) == NOW
+
+
+def test_a_remembered_answer_does_not_survive_the_clock_going_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = NetworkSession(cache=str(tmp_path / "http-cache"))
+    url = "https://example.invalid/simple/demo/"
+    session.cache_response(
+        make_response(
+            status=200,
+            reason="OK",
+            url=url,
+            headers={"Cache-Control": "max-age=86400", "ETag": '"tag"'},
+            body=b"page",
+        ),
+    )
+    remembered: dict[str, tuple[float, float]] = {}
+    assert cached_response_is_fresh(session.cache, remembered, url)
+    assert url in remembered
+
+    stored = time.time()
+    monkeypatch.setattr(time, "time", lambda: stored - 3600)
+
+    assert not cached_response_is_fresh(session.cache, remembered, url)
 
 
 @pytest.mark.parametrize(
