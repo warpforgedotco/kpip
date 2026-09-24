@@ -101,6 +101,8 @@ _NO_LOCAL: tuple[()] = ()
 
 _VERSIONS_LIMIT = 65536
 _versions: dict[str, Version] = register_table({})
+# Cleared in place, never rebound, so the bound lookup stays valid.
+_versions_get = _versions.get
 
 
 class Version(tuple):
@@ -109,7 +111,7 @@ class Version(tuple):
     release: tuple[int, ...]
 
     def __new__(cls, value: str) -> Version:
-        cached = _versions.get(value)
+        cached = _versions_get(value)
         if cached is not None:
             return cached
 
@@ -271,6 +273,11 @@ class Version(tuple):
     @classmethod
     def from_wire(cls, state: Any) -> Version:
         """The Version for a :meth:`to_wire` record, through the intern table."""
+        # A hit skips calling the class, which a warm catalog read does for
+        # nearly every version it lists.
+        cached = _versions_get(state[0])
+        if cached is not None:
+            return cached
         return cls(state[0])
 
 

@@ -55,10 +55,22 @@ index 48119d5..a3c1a13 100644
      return apply_targeted_backtrack(resolver)
  
 diff --git a/src/kpip/_vendor/nab_resolver/decide.py b/src/kpip/_vendor/nab_resolver/decide.py
-index 9dd16ee..822a662 100644
+index 9dd16ee..874255b 100644
 --- a/src/kpip/_vendor/nab_resolver/decide.py
 +++ b/src/kpip/_vendor/nab_resolver/decide.py
-@@ -71,10 +71,18 @@
+@@ -55,7 +55,10 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
+     tiebreak_cache = resolver.tiebreak_cache
+     root_order = resolver.root_package_order
+ 
+-    def sort_key(package: Any) -> tuple[Any, ...]:
++    # Unannotated on purpose: this closure is created on every scan, and a
++    # compiler that builds an annotations object per definition would pay for
++    # it each time.
++    def sort_key(package):
+         priority = prioritize(
+             package,
+             get_range(package) or any_range,
+@@ -71,10 +74,18 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
              tiebreak_cache[package] = tiebreak
          return (ready_penalty, priority, tiebreak)
  
@@ -78,7 +90,7 @@ index 9dd16ee..822a662 100644
          resolver.priority_epoch,
          key_inputs_arrived,
      )
-@@ -154,6 +162,14 @@
+@@ -154,6 +165,14 @@ def absorb_redundant_requirement(
      if positive is None:
          return
  
@@ -277,10 +289,10 @@ index c771106..eebbef5 100644
 +    _register_fallback_parent(resolver, existing_pkg.package, existing_index)
      return True
 diff --git a/src/kpip/_vendor/nab_resolver/partial_solution.py b/src/kpip/_vendor/nab_resolver/partial_solution.py
-index e5af1f7..b5efee9 100644
+index e5af1f7..74ee4a1 100644
 --- a/src/kpip/_vendor/nab_resolver/partial_solution.py
 +++ b/src/kpip/_vendor/nab_resolver/partial_solution.py
-@@ -204,6 +204,7 @@
+@@ -204,6 +204,7 @@ class Assignment(Generic[PackageType, VersionType]):
      """A single entry in the partial solution trail."""
  
      __slots__ = (
@@ -288,17 +300,17 @@ index e5af1f7..b5efee9 100644
          "accumulated_range",
          "cause",
          "cum_negative",
-@@ -247,6 +248,9 @@
- 
+@@ -248,6 +249,9 @@ class Assignment(Generic[PackageType, VersionType]):
      cum_negative: RangeProtocol[VersionType] | None
      """Latest negative accumulated range for the package as of this entry."""
-+
+ 
 +    _effective: RangeProtocol[VersionType] | None
 +    """Lazily cached ``cum_positive - cum_negative`` for conflict probes."""
- 
++
      def __init__(  # noqa: PLR0913, PLR0917 - one parameter per field
          self,
-@@ -273,6 +277,7 @@
+         package: PackageType,
+@@ -273,6 +277,7 @@ class Assignment(Generic[PackageType, VersionType]):
          self.positive = positive
          self.cum_positive = cum_positive
          self.cum_negative = cum_negative
@@ -306,7 +318,7 @@ index e5af1f7..b5efee9 100644
  
      @override
      def __eq__(self, other: object) -> bool:
-@@ -316,6 +321,9 @@
+@@ -316,6 +321,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
          self._contradiction_epoch = contradiction_epoch
          self._range_type = range_type
          self._assignments: list[Assignment[PackageType, VersionType]] = []
@@ -316,7 +328,7 @@ index e5af1f7..b5efee9 100644
          self._decision_level = 0
          self._positive_ranges: dict[PackageType, RangeProtocol[VersionType]] = {}
          self._negative_ranges: dict[PackageType, RangeProtocol[VersionType]] = {}
-@@ -418,10 +426,12 @@
+@@ -418,10 +426,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
  
          Computes ``positive - negative``, cached per package.
          """
@@ -332,7 +344,7 @@ index e5af1f7..b5efee9 100644
  
          positive = self._positive_ranges.get(package)
          negative = self._negative_ranges.get(package)
-@@ -552,6 +562,8 @@
+@@ -552,6 +562,8 @@ class PartialSolution(Generic[PackageType, VersionType]):
          _detach_snapshots(self._decision_snapshots)
  
          self._decision_level = target_level
@@ -341,7 +353,7 @@ index e5af1f7..b5efee9 100644
          if (
              not self._assignments
              or self._assignments[-1].decision_level <= target_level
-@@ -562,8 +574,12 @@
+@@ -562,8 +574,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
          changed_packages: dict[PackageType, None] = {}
          assignments = self._assignments
          while assignments and assignments[-1].decision_level > target_level:
@@ -355,7 +367,7 @@ index e5af1f7..b5efee9 100644
          # Untouched packages keep their cached state.
          self._changed.update(changed_packages)
          for package in changed_packages:
-@@ -629,6 +645,10 @@
+@@ -629,6 +645,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
          """
          return _take_snapshot(self._decided_versions, self._decision_snapshots)
  
@@ -366,7 +378,7 @@ index e5af1f7..b5efee9 100644
      def _freeze_decisions(self, package: PackageType) -> None:
          """Preserve the package's decided version in outstanding snapshots."""
          for holder in self._decision_snapshots:
-@@ -694,15 +714,18 @@
+@@ -694,15 +714,18 @@ class PartialSolution(Generic[PackageType, VersionType]):
          if is_positive and cum_positive is None:
              return False
  
@@ -395,7 +407,7 @@ index e5af1f7..b5efee9 100644
          return term.satisfies(effective)
  
 diff --git a/src/kpip/_vendor/nab_resolver/propagate.py b/src/kpip/_vendor/nab_resolver/propagate.py
-index fba4d17..c5e99af 100644
+index fba4d17..a79bdd1 100644
 --- a/src/kpip/_vendor/nab_resolver/propagate.py
 +++ b/src/kpip/_vendor/nab_resolver/propagate.py
 @@ -11,6 +11,9 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propa
@@ -408,7 +420,16 @@ index fba4d17..c5e99af 100644
  from typing import TYPE_CHECKING, Any
  
  from .types import IncompatibilityState, SetRelation, Term
-@@ -50,6 +53,23 @@ RELATION_GATE_RECHECK = 65_536
+@@ -44,12 +47,32 @@ RELATION_GATE_WINDOW = 4_096
+ RELATION_GATE_MIN_HITS = 1_024
+ RELATION_GATE_RECHECK = 65_536
+ 
++# Marks a package absent from the solution's effective-range cache.
++_MISSING = object()
++
+ # Upper bound on the address-keyed token memo, cleared on overflow together
+ # with the range objects it holds alive.  A larger cap wipes less often and so
+ # holds on to more ranges, which costs peak memory.
  RANGE_ID_MEMO_MAX = 8_192
  
  
@@ -432,7 +453,7 @@ index fba4d17..c5e99af 100644
  def unit_propagation(
      resolver: Resolver[Any, Any], changed_package: Any
  ) -> Incompatibility[Any, Any] | None:
-@@ -64,57 +84,223 @@ def unit_propagation(
+@@ -64,58 +87,245 @@ def unit_propagation(
      contradiction epoch.  Each clause records the epoch it was last settled in,
      and is skipped while that stamp is current.
  
@@ -466,16 +487,27 @@ index fba4d17..c5e99af 100644
 -    epoch = resolver.solution.contradiction_epoch
 +    solution = resolver.solution
 +    solution_get = solution.get
++    # The cache ``solution.get`` answers from first; it is cleared per package
++    # in place, never rebound, so reading it here skips a call on each hit.
++    effective_get = solution._effective_range_cache.get  # noqa: SLF001
 +    has_positive_constraint = solution.has_positive_constraint
 +    derive = solution.derive
 +    incompatibilities = resolver.incompatibilities
 +    stats = resolver.stats
 +    observer = resolver.observer
 +    cache = resolver.relation_cache
++    cache_get = cache.get
 +    # Cleared in place on overflow, never rebound, so the hoist is sound.
 +    id_tokens = resolver.range_token_by_id
-+    satisfied = SetRelation.SATISFIED
-+    contradicted = SetRelation.CONTRADICTED
++    id_tokens_get = id_tokens.get
++    satisfied = _SATISFIED_REL
++    contradicted = _CONTRADICTED_REL
++    undetermined = _UNDETERMINED_REL
++    # The memo gate's state lives in locals while the loop runs, and goes back
++    # to the resolver before each resample and on return.
++    cache_on = resolver.relation_cache_on
++    gate_hits = resolver.relation_gate_hits
++    probes_left = resolver.relation_gate_probes_left
  
      while propagation_queue:
          package = propagation_queue.popleft()
@@ -554,7 +586,9 @@ index fba4d17..c5e99af 100644
 +            undetermined_assignment: RangeProtocol[Any] | None = None
 +            conflict = True
 +            for term in incompatibility.terms:
-+                assignment = solution_get(term.package)
++                assignment = effective_get(term.package, _MISSING)
++                if assignment is _MISSING:
++                    assignment = solution_get(term.package)
 +                if assignment is None:
 +                    relation = None
 +                else:
@@ -563,11 +597,11 @@ index fba4d17..c5e99af 100644
 +
 +                    key = None
 +                    relation = None
-+                    if resolver.relation_cache_on:
-+                        assignment_token = id_tokens.get(id(assignment))
++                    if cache_on:
++                        assignment_token = id_tokens_get(id(assignment))
 +                        if assignment_token is None:
 +                            assignment_token = _intern_range(resolver, assignment)
-+                        constraint_token = id_tokens.get(id(constraint))
++                        constraint_token = id_tokens_get(id(constraint))
 +                        if constraint_token is None:
 +                            constraint_token = _intern_range(resolver, constraint)
 +                        # Packed int key; see resolver.relation_cache.  Tokens
@@ -577,7 +611,7 @@ index fba4d17..c5e99af 100644
 +                            | (constraint_token << 1)
 +                            | positive
 +                        )
-+                        relation = cache.get(key)
++                        relation = cache_get(key)
 +
 +                    if relation is None:
 +                        range_relation = assignment.relation(constraint)
@@ -590,7 +624,7 @@ index fba4d17..c5e99af 100644
 +                                else (
 +                                    contradicted
 +                                    if disjoint
-+                                    else SetRelation.UNDETERMINED
++                                    else undetermined
 +                                )
 +                            )
 +                        else:
@@ -598,19 +632,23 @@ index fba4d17..c5e99af 100644
 +                                satisfied
 +                                if disjoint
 +                                else (
-+                                    contradicted if subset else SetRelation.UNDETERMINED
++                                    contradicted if subset else undetermined
 +                                )
 +                            )
-+                        probes_left = resolver.relation_gate_probes_left - 1
-+                        resolver.relation_gate_probes_left = probes_left
++                        probes_left -= 1
 +                        if key is not None:
 +                            if len(cache) >= RELATION_CACHE_MAX:
 +                                cache.clear()
 +                            cache[key] = relation
-+                        if probes_left <= resolver.relation_gate_hits:
++                        if probes_left <= gate_hits:
++                            resolver.relation_gate_hits = gate_hits
++                            resolver.relation_gate_probes_left = probes_left
 +                            _resample_relation_gate(resolver)
++                            cache_on = resolver.relation_cache_on
++                            gate_hits = resolver.relation_gate_hits
++                            probes_left = resolver.relation_gate_probes_left
 +                    else:
-+                        resolver.relation_gate_hits += 1
++                        gate_hits += 1
 +
 +                    if (
 +                        (positive and relation is satisfied)
@@ -634,6 +672,8 @@ index fba4d17..c5e99af 100644
 +
 +            if undetermined_term is None:
 +                if conflict:
++                    resolver.relation_gate_hits = gate_hits
++                    resolver.relation_gate_probes_left = probes_left
 +                    return incompatibility
                  continue
  
@@ -668,7 +708,10 @@ index fba4d17..c5e99af 100644
 +                    positive=negated_positive,
                      cause=incompatibility,
                  )
--
++                if negated_package not in in_queue:
++                    propagation_queue.append(negated_package)
++                    in_queue.add(negated_package)
+ 
 -                # A derive that empties a range advances the epoch, which
 -                # retires the stamps taken before it.
 -                epoch = resolver.solution.contradiction_epoch
@@ -683,13 +726,13 @@ index fba4d17..c5e99af 100644
 -                    if negated_term.package not in in_queue:
 -                        propagation_queue.append(negated_term.package)
 -                        in_queue.add(negated_term.package)
-+                if negated_package not in in_queue:
-+                    propagation_queue.append(negated_package)
-+                    in_queue.add(negated_package)
- 
+-
++    resolver.relation_gate_hits = gate_hits
++    resolver.relation_gate_probes_left = probes_left
      return None
  
-@@ -158,6 +344,8 @@ def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> i
+ 
+@@ -158,6 +368,8 @@ def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> i
      tokens = resolver.range_tokens
      token = tokens.get(range_)
      if token is None:
@@ -698,7 +741,7 @@ index fba4d17..c5e99af 100644
          token = resolver.next_range_token
          resolver.next_range_token = token + 1
          tokens[range_] = token
-@@ -221,7 +409,8 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
+@@ -221,7 +433,8 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
          if constraint_token is None:
              constraint_token = _intern_range(resolver, constraint)
  
@@ -709,7 +752,7 @@ index fba4d17..c5e99af 100644
  
      if result is None:
 diff --git a/src/kpip/_vendor/nab_resolver/ranges.py b/src/kpip/_vendor/nab_resolver/ranges.py
-index 4385af4..6de29ba 100644
+index 4385af4..07565b4 100644
 --- a/src/kpip/_vendor/nab_resolver/ranges.py
 +++ b/src/kpip/_vendor/nab_resolver/ranges.py
 @@ -27,6 +27,8 @@ _EMPTY_REL = RangeRelation.EMPTY
@@ -878,7 +921,7 @@ index 4385af4..6de29ba 100644
 +            if lower is not NEGATIVE_INFINITY:
 +                if version < lower:
 +                    return False
-+                if _same_bound(version, lower) and not lower_inclusive:
++                if not lower_inclusive and _same_bound(version, lower):
 +                    return False
 +        else:
 +            low = 0
@@ -899,7 +942,7 @@ index 4385af4..6de29ba 100644
              return True
 -        return False
 +        return not (
-+            version > upper or (_same_bound(version, upper) and not upper_inclusive)
++            version > upper or (not upper_inclusive and _same_bound(version, upper))
 +        )
  
      def __and__(self, other: object) -> Range[VersionType]:
@@ -1080,7 +1123,7 @@ index 4385af4..6de29ba 100644
                  lower is not NEGATIVE_INFINITY
                  and upper is not POSITIVE_INFINITY
                  and (
-@@ -508,27 +626,31 @@ class Range(Generic[VersionType]):
+@@ -508,27 +626,32 @@ class Range(Generic[VersionType]):
          ``other`` always leave a gap, so an interval of self is covered only
          when a single interval of other holds all of it.
          """
@@ -1099,11 +1142,13 @@ index 4385af4..6de29ba 100644
          right_index = 0
  
 -        for left in self._intervals:
-+        for left in left_intervals:
-             left_lower, left_lower_inclusive = left[0], left[1]
+-            left_lower, left_lower_inclusive = left[0], left[1]
 -
 -            # Retire every right interval that finishes below this one:
 -            # _ends_before, written out.
++        for left in left_intervals:
++            left_lower = left[0]
++            left_lower_inclusive = left[1]
              while right_index < right_count:
 -                candidate = right_intervals[right_index]
 -                candidate_upper = candidate[2]
@@ -1127,7 +1172,7 @@ index 4385af4..6de29ba 100644
                      break
                  right_index += 1
  
-@@ -536,10 +658,24 @@ class Range(Generic[VersionType]):
+@@ -536,10 +659,24 @@ class Range(Generic[VersionType]):
                  return False
  
              right = right_intervals[right_index]
@@ -1156,7 +1201,7 @@ index 4385af4..6de29ba 100644
                  return False
  
          return True
-@@ -554,6 +690,15 @@ class Range(Generic[VersionType]):
+@@ -554,6 +691,15 @@ class Range(Generic[VersionType]):
          Stops at the first shared version rather than building the whole
          intersection.
          """
@@ -1172,7 +1217,7 @@ index 4385af4..6de29ba 100644
          left_intervals = self._intervals
          right_intervals = other._intervals
          left_count = len(left_intervals)
-@@ -586,84 +731,84 @@ class Range(Generic[VersionType]):
+@@ -586,84 +732,85 @@ class Range(Generic[VersionType]):
          return True
  
      def relation(self, other: Range[VersionType]) -> RangeRelation:
@@ -1187,11 +1232,12 @@ index 4385af4..6de29ba 100644
 -        walk skipped ended below, and the invariant leaves a gap after the one
 -        it stopped on, so nothing else can cover what that one leaves out.
 -        """
+-        if self.is_empty:
 +        """Return how self's members sit against other's in one interval walk."""
-         if self.is_empty:
++        left_intervals = self._intervals
++        if not left_intervals:
              return _EMPTY_REL
  
-+        left_intervals = self._intervals
          right_intervals = other._intervals
 +        if (
 +            len(left_intervals) >= _POINT_SET_MIN_INTERVALS
@@ -1217,11 +1263,13 @@ index 4385af4..6de29ba 100644
 -        disjoint = True
 -
 -        for left in self._intervals:
-+        for left in left_intervals:
-             left_lower, left_lower_inclusive = left[0], left[1]
+-            left_lower, left_lower_inclusive = left[0], left[1]
 -
 -            # Retire every right interval that finishes below this one:
 -            # _ends_before, written out.
++        for left in left_intervals:
++            left_lower = left[0]
++            left_lower_inclusive = left[1]
              while right_index < right_count:
 -                candidate = right_intervals[right_index]
 -                candidate_upper = candidate[2]
@@ -1314,7 +1362,7 @@ index 4385af4..6de29ba 100644
              return _DISJOINT_REL
          return _OVERLAPPING_REL
  
-@@ -703,6 +848,7 @@ class Range(Generic[VersionType]):
+@@ -703,6 +850,7 @@ class Range(Generic[VersionType]):
          """Restore from :meth:`__getstate__`, leaving the hash to be recomputed."""
          (self._intervals,) = state
          self._hash = 0
@@ -1322,7 +1370,7 @@ index 4385af4..6de29ba 100644
  
      @override
      def __repr__(self) -> str:
-@@ -731,6 +877,14 @@ class Range(Generic[VersionType]):
+@@ -731,6 +879,14 @@ class Range(Generic[VersionType]):
          return not self.is_empty
  
  
@@ -1337,7 +1385,7 @@ index 4385af4..6de29ba 100644
  def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
      """Sort intervals by lower bound and merge overlapping or adjacent ones.
  
-@@ -742,13 +896,7 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
+@@ -742,13 +898,7 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
      if not intervals:
          return ()
  
@@ -1353,10 +1401,10 @@ index 4385af4..6de29ba 100644
      merged: list[Interval] = [intervals[0]]
      for lower, lower_inclusive, upper, upper_inclusive in intervals[1:]:
 diff --git a/src/kpip/_vendor/nab_resolver/resolver.py b/src/kpip/_vendor/nab_resolver/resolver.py
-index 5cb1fd8..ebcbd77 100644
+index 5cb1fd8..ee27b60 100644
 --- a/src/kpip/_vendor/nab_resolver/resolver.py
 +++ b/src/kpip/_vendor/nab_resolver/resolver.py
-@@ -20,7 +20,7 @@
+@@ -20,7 +20,7 @@ Rust implementation: https://github.com/pubgrub-rs/pubgrub
  
  from __future__ import annotations
  
@@ -1365,7 +1413,7 @@ index 5cb1fd8..ebcbd77 100644
  from collections.abc import Callable, Mapping, Sequence
  from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
  
-@@ -233,6 +233,14 @@
+@@ -233,6 +233,14 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
          """
          ...
  
@@ -1380,7 +1428,7 @@ index 5cb1fd8..ebcbd77 100644
      def receive_partial_solution_hint(
          self,
          positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
-@@ -311,11 +319,12 @@
+@@ -311,11 +319,12 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
  
  
  class BaseProvider(Generic[PackageType, VersionType]):
@@ -1396,7 +1444,7 @@ index 5cb1fd8..ebcbd77 100644
      :class:`ResolverProvider` methods with nothing to do when there is no async
      layer, no queued clauses and no widening.  A subclass still owes
      ``choose_version``, ``has_satisfying_version``, ``get_dependencies``,
-@@ -335,6 +344,10 @@
+@@ -335,6 +344,10 @@ class BaseProvider(Generic[PackageType, VersionType]):
          del package
          return True
  
@@ -1407,7 +1455,7 @@ index 5cb1fd8..ebcbd77 100644
      def receive_partial_solution_hint(
          self,
          positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
-@@ -555,7 +568,7 @@
+@@ -555,7 +568,7 @@ def _as_root_requirements(
      requirements: Mapping[PackageType, RangeProtocol[VersionType]]
      | Sequence[RootRequirement[PackageType, VersionType]],
  ) -> Sequence[RootRequirement[PackageType, VersionType]]:
@@ -1416,7 +1464,7 @@ index 5cb1fd8..ebcbd77 100644
      if _is_root_sequence(requirements):
          return requirements
      # The parameters are spelled out because ``constraint`` is a contravariant
-@@ -615,10 +628,7 @@
+@@ -615,10 +628,7 @@ class Resolver(Generic[PackageType, VersionType]):
          """
          self.provider = provider
  
@@ -1428,18 +1476,16 @@ index 5cb1fd8..ebcbd77 100644
  
          self.observer: ResolverObserver[PackageType, VersionType] = (
              observer or ResolverObserver()
-@@ -643,8 +653,18 @@
- 
-         self.incompatibilities: list[Incompatibility[Any, Any]] = []
+@@ -645,6 +655,16 @@ class Resolver(Generic[PackageType, VersionType]):
          self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(
-+            list
-+        )
+             list
+         )
 +        self.dependency_parent_incompatibilities: defaultdict[Any, list[int]] = (
 +            defaultdict(list)
 +        )
 +        self.dependency_parent_fallbacks: defaultdict[Any, list[int]] = defaultdict(
-             list
-         )
++            list
++        )
 +        self.dependency_parent_fallback_indices: set[int] = set()
 +        self.dependency_parent_versions: defaultdict[
 +            Any, defaultdict[Any, list[int]]
@@ -1447,7 +1493,7 @@ index 5cb1fd8..ebcbd77 100644
  
          # Per clause, the contradiction epoch in which one of its terms was
          # last seen contradicted; unit propagation skips a clause whose stamp
-@@ -654,16 +674,31 @@
+@@ -654,15 +674,30 @@ class Resolver(Generic[PackageType, VersionType]):
          # Keyed by (package, dep_package, dep_constraint, dep_positive); used
          # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
          self.dependency_index: dict[Any, int] = {}
@@ -1472,15 +1518,14 @@ index 5cb1fd8..ebcbd77 100644
          self.constraints: Mapping[PackageType, RangeProtocol[VersionType]] = {}
          self.root_package_order: dict[PackageType, tuple[int, int, str]] = {}
 -        self.pending_targeted_backtrack: list[PackageType] = []
- 
++
 +        # Dict-as-ordered-set: enqueue order stays deterministic while the
 +        # per-conflict de-dupe is an O(1) key write instead of a list scan.
 +        self.pending_targeted_backtrack: dict[PackageType, None] = {}
-+
+ 
          # Memoises the tiebreak tuple in choose_package_to_decide.
          self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
- 
-@@ -673,9 +708,11 @@
+@@ -673,9 +708,11 @@ class Resolver(Generic[PackageType, VersionType]):
          self.decision_queue: DecisionQueue[PackageType] = DecisionQueue()
          self.priority_epoch = 0
  
@@ -1495,7 +1540,7 @@ index 5cb1fd8..ebcbd77 100644
  
          # relation_cache_on goes off while the memo's hit rate does not pay for
          # the key it builds. A window of probes decides that: relation_gate_hits
-@@ -698,6 +735,23 @@
+@@ -698,6 +735,23 @@ class Resolver(Generic[PackageType, VersionType]):
          self.range_token_by_id: dict[int, int] = {}
          self.interned_ranges: list[RangeProtocol[Any]] = []
  
@@ -1519,7 +1564,7 @@ index 5cb1fd8..ebcbd77 100644
      def as_term_range(self, range_: RangeProtocol[Any]) -> RangeProtocol[VersionType]:
          """Return the term constraint to record for a supplied range.
  
-@@ -816,18 +870,60 @@
+@@ -816,18 +870,60 @@ class Resolver(Generic[PackageType, VersionType]):
              changed_package = ROOT
          return changed_package, restart_threshold, restarts_remaining
  
@@ -1583,13 +1628,11 @@ index 5cb1fd8..ebcbd77 100644
              if triggering is not None:
                  return triggering
  
-@@ -842,43 +938,111 @@
+@@ -842,43 +938,111 @@ class Resolver(Generic[PackageType, VersionType]):
          )
  
          dependencies = self.provider.get_dependencies(next_package, chosen_version)
 -        if not dependencies:
--            return next_package
--        widened = self.provider.widen_decision(next_package, chosen_version)
 +        # A backjump undoes decisions that are then made again, almost always
 +        # with the same version (on a 700-package graph, 52,000 of 53,000
 +        # decisions replayed an earlier one).  The dependency clauses those
@@ -1609,7 +1652,8 @@ index 5cb1fd8..ebcbd77 100644
 +            invalidated = self._backtrack_dependency_invalidations()
 +            if invalidated is not None:
 +                return invalidated
-+            return next_package
+             return next_package
+-        widened = self.provider.widen_decision(next_package, chosen_version)
 +        if recorded is not None:
 +            recorded[(next_package, chosen_version)] = dependencies
 +        widened = (
@@ -1640,6 +1684,9 @@ index 5cb1fd8..ebcbd77 100644
 -                    Term(next_package, parent_range, positive=True),
 -                    Term(dependency_package, dependency_range, positive=False),
 -                ]
+-
+-            # The merged term drops the required range, so the clause carries
+-            # it for the report.
 +            if dependency_package != next_package:
 +                incompatibility = incompat_index.add_dependency_incompatibility(
 +                    self,
@@ -1653,9 +1700,7 @@ index 5cb1fd8..ebcbd77 100644
 +                    self, dependency_package, dependency_range, incompatibility
 +                )
 +                continue
- 
--            # The merged term drops the required range, so the clause carries
--            # it for the report.
++
 +            # An incompatibility holds at most one term per package, so
 +            # self-dependency terms merge to {v} & ~range: empty (a vacuous
 +            # clause) when the range contains the chosen version, else exactly
@@ -1722,7 +1767,7 @@ index 5cb1fd8..ebcbd77 100644
      def _build_result(self) -> Solution[PackageType, VersionType]:
          """Build the final result, including only reachable packages.
  
-@@ -899,11 +1063,20 @@
+@@ -899,11 +1063,20 @@ class Resolver(Generic[PackageType, VersionType]):
      ) -> None:
          """Reset solver state for a new resolution."""
          self.incompatibilities.clear()
@@ -1743,7 +1788,7 @@ index 5cb1fd8..ebcbd77 100644
  
          self.constraints = constraints or {}
          self.root_package_order.clear()
-@@ -922,7 +1095,7 @@
+@@ -922,7 +1095,7 @@ class Resolver(Generic[PackageType, VersionType]):
          self.term_range_keepalive.clear()
  
          # Re-asked here, so a hook installed since the last resolve is honoured.
@@ -1753,10 +1798,10 @@ index 5cb1fd8..ebcbd77 100644
      def _add_root_requirements(
          self, requirements: Sequence[RootRequirement[PackageType, VersionType]]
 diff --git a/src/kpip/_vendor/nab_resolver/decision_queue.py b/src/kpip/_vendor/nab_resolver/decision_queue.py
-index 2369c55..1c1bba4 100644
+index 2369c55..94d6f31 100644
 --- a/src/kpip/_vendor/nab_resolver/decision_queue.py
 +++ b/src/kpip/_vendor/nab_resolver/decision_queue.py
-@@ -46,11 +46,21 @@
+@@ -46,11 +46,21 @@ class DecisionQueue(Generic[PackageType]):
          self._rebuild_at = _REBUILD_MINIMUM
  
      def clear(self) -> None:
@@ -1780,7 +1825,7 @@ index 2369c55..1c1bba4 100644
          self._rebuild_at = _REBUILD_MINIMUM
  
      def pick(
-@@ -123,9 +133,14 @@
+@@ -123,9 +133,14 @@ class DecisionQueue(Generic[PackageType]):
      ) -> None:
          """Re-evaluate the stale keys, pushing an entry for each one that moved.
  
@@ -1798,7 +1843,7 @@ index 2369c55..1c1bba4 100644
  
          Given ``key_inputs_arrived``, an unready package the solution left
          alone reaches ``sort_key`` only once its key's inputs have landed. The
-@@ -137,10 +152,12 @@
+@@ -137,10 +152,12 @@ class DecisionQueue(Generic[PackageType]):
          unready = self._unready
          pushes = self._pushes
  

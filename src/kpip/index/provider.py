@@ -2566,9 +2566,13 @@ class CandidateProvider:
 
             unnamed_direct = requirement.is_unnamed_direct
 
+            canonical_name = requirement.canonical_name
+
+            from_wire = Version.from_wire
+
             for groups, source_url, generation in cached_groups:
                 for name, version_text, version_state, facts in groups:
-                    if not unnamed_direct and name != requirement.canonical_name:
+                    if not unnamed_direct and name != canonical_name:
                         continue
 
                     version = (
@@ -2578,7 +2582,7 @@ class CandidateProvider:
                     )
 
                     if version is None:
-                        version = Version.from_wire(version_state)
+                        version = from_wire(version_state)
 
                         if ordered_summaries is None:
                             parsed_versions[version_text] = version
@@ -2601,14 +2605,14 @@ class CandidateProvider:
                                     requires_python
                                 ):
                                     self.last_rejected_requires_python[
-                                        requirement.canonical_name
+                                        canonical_name
                                     ] = requires_python
                                     continue
 
                             except ValueError:
-                                self.last_rejected_requires_python[
-                                    requirement.canonical_name
-                                ] = requires_python
+                                self.last_rejected_requires_python[canonical_name] = (
+                                    requires_python
+                                )
                                 continue
 
                         has_eligible_artifact = True
@@ -2619,9 +2623,7 @@ class CandidateProvider:
 
                         if ordered_summaries is None:
                             versions[(version_text, is_yanked)] = CandidateSummary(
-                                version=version,
-                                is_yanked=is_yanked,
-                                yanked_reason=yanked_reason,
+                                version, is_yanked, yanked_reason
                             )
 
                         elif is_yanked:
@@ -2633,27 +2635,23 @@ class CandidateProvider:
                             ordered_has_unyanked = True
 
                     if has_eligible_artifact:
-                        records_by_version.setdefault(version, []).append(
-                            (source_url, generation),
-                        )
+                        version_records = records_by_version.get(version)
+                        if version_records is None:
+                            records_by_version[version] = [(source_url, generation)]
+                        else:
+                            version_records.append((source_url, generation))
 
                         if ordered_summaries is not None:
                             if ordered_has_unyanked:
                                 ordered_summaries.append(
-                                    CandidateSummary(
-                                        version=version,
-                                        is_yanked=False,
-                                        yanked_reason=None,
-                                    ),
+                                    CandidateSummary(version, False, None)
                                 )
 
                             if ordered_has_yanked:
                                 ordered_summaries.append(
                                     CandidateSummary(
-                                        version=version,
-                                        is_yanked=True,
-                                        yanked_reason=ordered_yanked_reason,
-                                    ),
+                                        version, True, ordered_yanked_reason
+                                    )
                                 )
 
         parsed_link_cache = self.parsed_link_cache

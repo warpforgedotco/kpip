@@ -362,7 +362,7 @@ class Range(Generic[VersionType]):
             if lower is not NEGATIVE_INFINITY:
                 if version < lower:
                     return False
-                if _same_bound(version, lower) and not lower_inclusive:
+                if not lower_inclusive and _same_bound(version, lower):
                     return False
         else:
             low = 0
@@ -382,7 +382,7 @@ class Range(Generic[VersionType]):
         if upper is POSITIVE_INFINITY:
             return True
         return not (
-            version > upper or (_same_bound(version, upper) and not upper_inclusive)
+            version > upper or (not upper_inclusive and _same_bound(version, upper))
         )
 
     def __and__(self, other: object) -> Range[VersionType]:
@@ -641,7 +641,8 @@ class Range(Generic[VersionType]):
         right_index = 0
 
         for left in left_intervals:
-            left_lower, left_lower_inclusive = left[0], left[1]
+            left_lower = left[0]
+            left_lower_inclusive = left[1]
             while right_index < right_count:
                 right = right_intervals[right_index]
                 right_upper = right[2]
@@ -732,10 +733,10 @@ class Range(Generic[VersionType]):
 
     def relation(self, other: Range[VersionType]) -> RangeRelation:
         """Return how self's members sit against other's in one interval walk."""
-        if self.is_empty:
+        left_intervals = self._intervals
+        if not left_intervals:
             return _EMPTY_REL
 
-        left_intervals = self._intervals
         right_intervals = other._intervals
         if (
             len(left_intervals) >= _POINT_SET_MIN_INTERVALS
@@ -756,7 +757,8 @@ class Range(Generic[VersionType]):
         right_index = 0
 
         for left in left_intervals:
-            left_lower, left_lower_inclusive = left[0], left[1]
+            left_lower = left[0]
+            left_lower_inclusive = left[1]
             while right_index < right_count:
                 right = right_intervals[right_index]
                 right_upper = right[2]
