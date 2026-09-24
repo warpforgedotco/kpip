@@ -546,6 +546,8 @@ def _extract_archive(
     candidate: WheelInstallCandidate,
     digest: str,
     entry_root: str,
+    *,
+    pycompile: bool,
 ) -> CachedWheelArchive:
     shard = os.path.dirname(entry_root)
 
@@ -641,11 +643,12 @@ def _extract_archive(
                 f"Wheel {candidate.path} has no valid dist-info metadata",
             )
 
-        _compile_archive_pyc(
-            tree,
-            os.path.join(temporary, PYC_CACHE_SUBDIR),
-            entries,
-        )
+        if pycompile:
+            _compile_archive_pyc(
+                tree,
+                os.path.join(temporary, PYC_CACHE_SUBDIR),
+                entries,
+            )
 
         manifest = (
             digest,
@@ -679,12 +682,36 @@ def _extract_archive(
 def prepare_cached_wheel(
     candidate: WheelInstallCandidate,
     cache_dir: str,
+    *,
+    pycompile: bool = True,
 ) -> CachedWheelArchive:
+    """The wheel's archive cache entry, filled if need be.
+
+    Its modules are byte-compiled only for an install that compiles them:
+    compiling holds the GIL, and a cold ``--no-compile`` install of jupyter
+    spent more on byte code it never used than on extracting. An entry filled
+    without is compiled the first time a compiling install asks for it.
+    """
     layout = loaded_layout(candidate)
 
     if isinstance(layout, CachedWheelArchive):
-        return layout
+        archive = layout
 
+    else:
+        archive = _cached_wheel(candidate, cache_dir, pycompile=pycompile)
+
+    if pycompile:
+        _ensure_pyc(archive)
+
+    return archive
+
+
+def _cached_wheel(
+    candidate: WheelInstallCandidate,
+    cache_dir: str,
+    *,
+    pycompile: bool,
+) -> CachedWheelArchive:
     digest = wheel_digest(candidate, cache_dir)
 
     entry_root = archive_entry_root(cache_dir, digest)
@@ -706,12 +733,46 @@ def prepare_cached_wheel(
         if cached is not None:
             return cached
 
-        return _extract_archive(candidate, digest, entry_root)
+        return _extract_archive(candidate, digest, entry_root, pycompile=pycompile)
+
+
+def _ensure_pyc(archive: CachedWheelArchive) -> None:
+    """Byte-compile an entry filled without, once, for every later install.
+
+    Compiled beside the entry and renamed into place, so a concurrent fill
+    of the same entry costs a duplicate compile rather than a lock.
+    """
+
+    entry_root = os.path.dirname(archive.tree)
+
+    target = pyc_root(entry_root)
+
+    if os.path.isdir(target):
+        return
+
+    import tempfile
+
+    try:
+        temporary = tempfile.mkdtemp(prefix=".pyc-", dir=entry_root)
+    except OSError:
+        return
+
+    try:
+        _compile_archive_pyc(archive.tree, temporary, archive.entries)
+        os.rename(temporary, target)
+        temporary = ""
+    except OSError:
+        pass
+    finally:
+        if temporary:
+            shutil.rmtree(temporary, ignore_errors=True)
 
 
 def prepare_cached_wheels(
     candidates: tuple[WheelInstallCandidate, ...],
     cache_dir: str,
+    *,
+    pycompile: bool = True,
 ) -> tuple[CachedWheelArchive, ...]:
     digests = prefetch_wheel_digests(candidates, cache_dir)
 
@@ -728,11 +789,15 @@ def prepare_cached_wheels(
             break
         cached_archives.append(cached)
     if len(cached_archives) == len(candidates):
+        if pycompile:
+            for archive in cached_archives:
+                _ensure_pyc(archive)
         return tuple(cached_archives)
 
     if len(candidates) < PARALLEL_THRESHOLD:
         return tuple(
-            prepare_cached_wheel(candidate, cache_dir) for candidate in candidates
+            prepare_cached_wheel(candidate, cache_dir, pycompile=pycompile)
+            for candidate in candidates
         )
 
     from concurrent.futures import ThreadPoolExecutor
@@ -743,7 +808,9 @@ def prepare_cached_wheels(
     ) as pool:
         return tuple(
             pool.map(
-                lambda candidate: prepare_cached_wheel(candidate, cache_dir),
+                lambda candidate: prepare_cached_wheel(
+                    candidate, cache_dir, pycompile=pycompile
+                ),
                 candidates,
             ),
         )

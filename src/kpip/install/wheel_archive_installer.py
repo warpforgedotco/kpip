@@ -795,7 +795,7 @@ def install_wheels_from_archive_cache(
         return None
 
     try:
-        archives = prepare_cached_wheels(candidates, cache_dir)
+        archives = prepare_cached_wheels(candidates, cache_dir, pycompile=pycompile)
 
     except OSError:
         return None

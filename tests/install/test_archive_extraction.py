@@ -161,3 +161,21 @@ def test_default_worker_count_scales_and_can_be_overridden(
     for bad in ("0", "-2", "many", ""):
         monkeypatch.setenv("KPIP_CONCURRENCY", bad)
         assert default_worker_count() >= 1, f"{bad!r} should be ignored, not fatal"
+
+
+def test_byte_code_is_compiled_only_for_an_install_that_compiles(
+    tmp_path: Path,
+) -> None:
+    """A --no-compile fill skips byte code; the first compiling install adds it."""
+    wheel = _wheel_with(tmp_path, "demo", {"demo/__init__.py": "VALUE = 1\n"})
+    cache = tmp_path / "cache"
+
+    (archive,) = prepare_cached_wheels(
+        (_candidate(wheel),), str(cache), pycompile=False
+    )
+    pyc = Path(cache_module.pyc_root(os.path.dirname(archive.tree)))
+    assert not pyc.exists()
+
+    (again,) = prepare_cached_wheels((_candidate(wheel),), str(cache), pycompile=True)
+    assert again.tree == archive.tree
+    assert list(pyc.rglob("*.pyc"))

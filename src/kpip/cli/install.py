@@ -1441,10 +1441,13 @@ def run_install(args: list[str]) -> int:
                                 "THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.\n"
                                 f"Expected sha256 {allowed[0]}\nGot        {actual}",
                             )
+            pycompile = not execution.options.no_compile
             materialized_candidates = prepare_install_candidates(
                 plan.candidates,
                 execution.cache_dir,
-                prepare_cached_wheel,
+                lambda candidate, cache_dir: prepare_cached_wheel(
+                    candidate, cache_dir, pycompile=pycompile
+                ),
             )
             plan = plan.replace(candidates=tuple(materialized_candidates))
 
