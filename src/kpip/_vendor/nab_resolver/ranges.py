@@ -19,7 +19,7 @@ from ._compat import override
 from .types import RangeRelation, VersionType
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
 
 # Bound once so the hot return paths load a module global instead of a class
 # attribute.
@@ -293,31 +293,20 @@ class Range(Generic[VersionType]):
 
         Cheaper than folding :meth:`singleton` with ``|``.
         """
-        values: Sequence[Any] = (
-            versions if isinstance(versions, (list, tuple)) else list(versions)
-        )
+        values = versions if isinstance(versions, (list, tuple)) else list(versions)
         # Callers nearly always pass distinct versions in ascending order,
         # e.g. a slice of a sorted catalog.  Confirming that costs one
         # comparison per version, where sorting the arbitrary order of a set
         # of them costs a full sort.
-        ordered = True
         for index in range(1, len(values)):
             if not values[index - 1] < values[index]:
-                ordered = False
+                # sorted() needs an ordering bound, which VersionType does not
+                # declare.
+                values = sorted(frozenset(cast("Iterable[Any]", values)))
                 break
-        if ordered:
-            result = cls(tuple([(version, True, version, True) for version in values]))
-            if len(values) >= _POINT_SET_MIN_INTERVALS:
-                result._points = frozenset(values)
-            return result
-
-        # sorted() needs an ordering bound, which VersionType does not declare.
-        points = frozenset(cast("Iterable[Any]", values))
-        result = cls(
-            tuple((version, True, version, True) for version in sorted(points))
-        )
-        if len(points) >= _POINT_SET_MIN_INTERVALS:
-            result._points = points
+        result = cls(tuple([(version, True, version, True) for version in values]))
+        if len(values) >= _POINT_SET_MIN_INTERVALS:
+            result._points = frozenset(values)
         return result
 
     @classmethod
