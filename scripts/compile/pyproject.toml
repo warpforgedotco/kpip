@@ -1,0 +1,26 @@
+[project]
+name = "kpip-compile"
+version = "0.0.1"
+description = "Compile kpip with a vendored, patched Nuitka"
+requires-python = ">=3.10"
+dependencies = [
+  # Onefile payload compression; 3.14 ships compression.zstd instead.
+  "zstandard>=0.15; python_version < '3.14'",
+]
+
+[project.scripts]
+kpip-compile = "kpip_compile.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--confcutdir=."
+pythonpath = ["src"]
+
+[dependency-groups]
+tests = [
+    "pytest",
+]
