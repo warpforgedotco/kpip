@@ -17,7 +17,7 @@ from kpip.cli.requirements import (
     collect_requirements,
 )
 from kpip.cli.resolution_errors import resolution_error_message
-from kpip.core.appdirs import resolve_cache_dir
+from kpip.core.appdirs import command_cache_dir
 from kpip.core.errors import DistributionNotFound, ResolutionError
 from kpip.core.format_control import FormatControl
 from kpip.index.artifacts import ArtifactLocator
@@ -32,7 +32,7 @@ def run_download(args: list[str]) -> int:
 
     apply_proxy_environment(options.proxy)
 
-    cache_dir = None if options.no_cache_dir else resolve_cache_dir(options.cache_dir)
+    cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
 
     sources = resolve_sources(options, load_source_config("download"))
 

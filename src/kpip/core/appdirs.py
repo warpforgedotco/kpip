@@ -61,16 +61,24 @@ def resolve_cache_dir(explicit: str | None = None) -> str:
     return versioned_cache_dir(cache_root(explicit))
 
 
-def configured_cache_dir() -> str | None:
-    """``KPIP_CACHE_DIR`` only, or ``None`` when no cache is configured.
+_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
 
-    The lock commands use this rather than :func:`resolve_cache_dir`: their
-    caching is opt-in, so an unset variable means "do not cache", not "use the
-    default cache".
+
+def command_cache_dir(explicit: str | None, disabled: bool) -> str | None:
+    """The cache a command uses, or ``None`` when caching is turned off.
+
+    ``--no-cache-dir`` or a truthy ``KPIP_NO_CACHE_DIR`` turns it off;
+    otherwise it is :func:`resolve_cache_dir`. Every command that caches asks
+    here, so ``lock``, ``install`` and ``download`` agree on both.
     """
 
-    root = os.environ.get("KPIP_CACHE_DIR")
-    return None if not root else versioned_cache_dir(root)
+    if disabled:
+        return None
+
+    if os.environ.get("KPIP_NO_CACHE_DIR", "").strip().lower() in _TRUE_VALUES:
+        return None
+
+    return resolve_cache_dir(explicit)
 
 
 def site_config_dirs(appname: str) -> list[str]:

@@ -71,9 +71,10 @@ re-deriving locally:
 | Cache directory policy | `core/appdirs.py` |
 | Resolver report → CLI diagnostic | `cli/resolution_errors.py` |
 
-Known, deliberate divergences: `install` concatenates configured and
-command-line find-links instead of using `resolve_sources`; the lock commands
-use `configured_cache_dir` (opt-in caching) instead of `resolve_cache_dir`.
+Known, deliberate divergence: `install` concatenates configured and
+command-line find-links instead of using `resolve_sources`. Every caching
+command takes its cache from `core/appdirs.py:command_cache_dir`, which is the
+default cache unless `--no-cache-dir` or `KPIP_NO_CACHE_DIR` turns it off.
 
 ## Installation
 
@@ -161,7 +162,7 @@ and benchmarks; no production command imports it, so it is not on this path.
 
 Every persisted cache lives under `<cache root>/v<CACHE_VERSION>/`
 (`core/appdirs.py:versioned_cache_dir`, currently `v1/`), which
-`resolve_cache_dir`/`configured_cache_dir` hand to every writer.
+`resolve_cache_dir`/`command_cache_dir` hand to every writer.
 
 The cache is versioned at two levels, for two different jobs. The `v<N>` root
 retires the whole tree at once; it is the escape hatch for a change that
@@ -179,14 +180,14 @@ has never written; the old one is inert until a purge.
 
 | Owner | Under `v1/` | Contents |
 | --- | --- | --- |
-| `network/cache.py` | `http-v1/` | HTTP metadata and bodies; normal responses use one atomically replaced combined file, while raw artifact bodies use a split metadata/`.body` layout for hard-linking; incomplete split entries are misses |
-| `index/catalog_cache.py` | entries in `http-v1/` | parsed Simple API catalogs, release summaries (`Version.to_wire()`), target choices; key prefixes and payload headers carry their own versions; checksum-validated, recompiled from the catalog on any failure |
+| `network/cache.py` | `http-v2/` | HTTP metadata and bodies, fresh for as long as the response allowed (`network/freshness.py`, RFC 9111) and revalidated after; normal responses use one atomically replaced combined file, while raw artifact bodies use a split metadata/`.body` layout for hard-linking; incomplete split entries are misses |
+| `index/catalog_cache.py` | entries in `http-v2/` | parsed Simple API catalogs, release summaries (`Version.to_wire()`), target choices; key prefixes and payload headers carry their own versions; checksum-validated, recompiled from the catalog on any failure |
 | `index/artifact_cache.py` | `artifacts-v1/` | bodies by SHA-256 plus URL receipts |
 | `index/candidate_cache.py` | `wheels-v2/` | validated wheels built from content-identified sdists or immutable VCS sources, keyed by source, build settings, interpreter and target, then published as completed entry directories |
 | `index/metadata_cache.py` | `metadata-v1.sqlite` | parsed headers of local wheel files and of installed `METADATA` files, and SHA-256 of local wheels, by path, size, mtime |
 | `index/candidate_metadata_cache.py` | `candidate-metadata-v1.sqlite` | dependency metadata reused during resolution |
 | `index/release_facts_cache.py` | `release-facts-v1-<interp>.marshal` | deterministic release rejection reasons |
-| `cli/fast.py` | `fast-lock-plan-v1/` | rendered lock output |
+| `cli/fast.py` | `fast-lock-plan-v2/` | rendered lock output, keyed on `core/code_identity.py` so an upgraded kpip never replays it |
 | `cli/fast_install.py` | `fast-install-v1-<interp>.marshal`, `fast-install-trees-v1-<interp>/` | fast-path plans, metadata, cloneable completed targets |
 | `install/wheel_archive_cache.py` | `archive-v1-<interp>/` | validated unpacked wheel trees by digest, and their byte-compiled `pyc/` sibling |
 | `install/wheel_install_plan_cache.py` | `resolution-v1-<interp>/` | short-lived exact-pin receipts over archive entries |

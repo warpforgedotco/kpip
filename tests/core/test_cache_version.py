@@ -19,7 +19,7 @@ import pytest
 from kpip.cli import fast, fast_install
 from kpip.core.appdirs import (
     cache_root,
-    configured_cache_dir,
+    command_cache_dir,
     resolve_cache_dir,
     versioned_cache_dir,
 )
@@ -72,10 +72,31 @@ def test_every_writer_lands_under_the_versioned_directory(
     monkeypatch.setenv("KPIP_CACHE_DIR", "/configured")
     assert cache_root() == "/configured"
     assert resolve_cache_dir() == os.path.join("/configured", CACHE_VERSION_TAG)
-    assert configured_cache_dir() == os.path.join("/configured", CACHE_VERSION_TAG)
+    assert command_cache_dir(None, False) == os.path.join(
+        "/configured", CACHE_VERSION_TAG
+    )
     monkeypatch.delenv("KPIP_CACHE_DIR")
-    assert configured_cache_dir() is None
     assert resolve_cache_dir() == versioned_cache_dir(cache_root())
+    assert command_cache_dir(None, False) == resolve_cache_dir()
+
+
+@pytest.mark.parametrize("value", ["1", "true", "YES", " on "])
+def test_caching_can_be_turned_off(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    assert command_cache_dir("/explicit", True) is None
+    monkeypatch.setenv("KPIP_NO_CACHE_DIR", value)
+    assert command_cache_dir("/explicit", False) is None
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no"])
+def test_a_false_no_cache_dir_variable_keeps_the_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("KPIP_NO_CACHE_DIR", value)
+    assert command_cache_dir("/explicit", False) == os.path.join(
+        "/explicit",
+        CACHE_VERSION_TAG,
+    )
 
 
 @pytest.mark.parametrize("name", STORAGE_NAMES)
