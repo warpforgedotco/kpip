@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gzip
-import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +13,7 @@ from kpip._vendor.urllib3.util import Timeout
 from kpip.network.exceptions import ConnectionFailedError, TooManyRedirectsError
 from kpip.network.session import DEFAULT_TIMEOUT, NetworkSession
 from kpip_test_support.transport_mocks import make_response
+from kpip.network.freshness import decode_metadata
 
 
 def test_session_decodes_gzip_responses(tmp_path) -> None:
@@ -504,7 +504,7 @@ def test_session_revalidates_stale_cache_with_conditional_headers(
         assert third.from_cache
         assert Handler.requests == 2
 
-        stored = json.loads(session.cache.get(url).decode("utf-8"))
+        stored = decode_metadata(session.cache.get(url))
         assert stored["etag"] == '"tag-2"'
         assert stored["headers"]["Cache-Control"] == "max-age=3600"
     finally:
@@ -532,7 +532,7 @@ def test_unchanged_immediately_stale_304_skips_metadata_rewrite(
     )
     raw_metadata = session.cache.get(url)
     assert raw_metadata is not None
-    metadata = json.loads(raw_metadata)
+    metadata = decode_metadata(raw_metadata)
     writes: list[tuple[str, bytes]] = []
     monkeypatch.setattr(session.cache, "set", lambda *args: writes.append(args))
 
@@ -568,7 +568,7 @@ def test_cache_response_writes_metadata_and_body_atomically() -> None:
 
     assert len(writes) == 1
     assert writes[0][0] == url
-    assert json.loads(writes[0][1])["status"] == 200
+    assert decode_metadata(writes[0][1])["status"] == 200
     assert writes[0][2] == body
 
 

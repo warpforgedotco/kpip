@@ -12,7 +12,6 @@ resolves, and a replay must not import the resolver or the HTTP client.
 
 from __future__ import annotations
 
-import json
 import marshal
 import os
 import sys
@@ -21,7 +20,11 @@ import time
 from kpip.core.appdirs import http_cache_path
 from kpip.core.code_identity import code_identity
 from kpip.core.utils import versioned_bucket
-from kpip.network.freshness import CacheMetadataReader, metadata_is_fresh
+from kpip.network.freshness import (
+    CacheMetadataReader,
+    decode_metadata,
+    metadata_is_fresh,
+)
 
 TYPE_CHECKING = False
 
@@ -36,7 +39,7 @@ if TYPE_CHECKING:
 REPLAY_BUCKET = versioned_bucket("lock-replay", 1)
 """Directory under the cache directory holding replayable locks."""
 
-REPLAY_FORMAT = 1
+REPLAY_FORMAT = 2
 
 FRESH = "fresh"
 """Every page is unchanged and still fresh: the lock can be replayed."""
@@ -151,8 +154,12 @@ def replay_key(
     no_binary: Iterable[str] = (),
     no_build_isolation: bool = False,
     python_version: str | None = None,
+    previous_lock: str = "",
 ) -> bytes | None:
     """What a replayable lock is keyed on, or None if this lock is not one.
+
+    ``previous_lock`` is ``previous_lock_digest`` of the lock this one starts
+    from, whose versions it prefers.
 
     The command line and the fast path both call this with the options as
     given, so they agree without parsing requirement files the same way:
@@ -189,6 +196,7 @@ def replay_key(
         tuple(sorted(no_binary)),
         no_build_isolation,
         python_version or "",
+        previous_lock,
     )
 
     try:
@@ -255,15 +263,7 @@ def save_record(
 def _page_metadata(http_cache: MetadataCache, url: str) -> dict[str, object] | None:
     raw = http_cache.get(url)
 
-    if raw is None:
-        return None
-
-    try:
-        values = json.loads(raw)
-    except (TypeError, ValueError):
-        return None
-
-    return values if isinstance(values, dict) else None
+    return None if raw is None else decode_metadata(raw)
 
 
 def page_validators(

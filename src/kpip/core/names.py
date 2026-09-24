@@ -9,17 +9,36 @@ benefit.
 
 from __future__ import annotations
 
-import re
 from kpip.core.caches import memoized
-
-NORMALIZE_RE = re.compile(r"[-_.]+")
 
 
 @memoized(4096)
 def canonicalize_name(name: str) -> str:
     if name.islower() and "_" not in name and "." not in name and "--" not in name:
         return name
-    return NORMALIZE_RE.sub("-", name).lower()
+
+    # Runs of "-", "_" and "." become one "-". Written out rather than as
+    # ``re.sub``: importing ``re`` costs some 2.5 ms, and this module is on
+    # the path of every command, most of which never meet a name that needs
+    # rewriting.
+    result: list[str] = []
+
+    separator = False
+
+    for character in name:
+        if character in "-_.":
+            if not separator:
+                result.append("-")
+
+                separator = True
+
+            continue
+
+        result.append(character)
+
+        separator = False
+
+    return "".join(result).lower()
 
 
 def canonicalize_installed_name(value: str) -> str:

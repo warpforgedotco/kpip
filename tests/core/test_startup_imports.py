@@ -484,6 +484,7 @@ def test_a_replayed_lock_loads_neither_the_resolver_nor_the_client(
     from kpip.core.appdirs import http_cache_path, resolve_cache_dir
     from kpip.index.config import DEFAULT_INDEX_URL
     from kpip.network.cache import SafeFileCache
+    from kpip.network.freshness import encode_metadata
 
     requirements = tmp_path / "requirements.txt"
     requirements.write_text("demo>=1\n", encoding="utf-8")
@@ -492,7 +493,7 @@ def test_a_replayed_lock_loads_neither_the_resolver_nor_the_client(
     page = "https://pypi.org/simple/demo/"
     SafeFileCache(http_cache_path(cache_dir)).set_with_body(
         page,
-        json.dumps({"expires_at": 4e9, "etag": '"v1"', "last_modified": None}).encode(),
+        encode_metadata({"expires_at": 4e9, "etag": '"v1"', "last_modified": None}),
         b"{}",
     )
     key = lock_replay.replay_key(

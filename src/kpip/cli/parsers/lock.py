@@ -43,6 +43,19 @@ def create_parser() -> ArgumentParser:
 
     parser.add_argument("--output", default="pylock.toml")
 
+    # The lock already at --output is where this one starts: each package
+    # keeps its version there while that still satisfies the requirements.
+    parser.add_argument("-U", "--upgrade", action="store_true")
+
+    parser.add_argument(
+        "-P",
+        "--upgrade-package",
+        dest="upgrade_packages",
+        metavar="PACKAGE",
+        action="append",
+        default=[],
+    )
+
     parser.add_argument("--cache-dir")
 
     parser.add_argument("--no-cache-dir", action="store_true")

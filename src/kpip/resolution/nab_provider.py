@@ -21,7 +21,7 @@ from kpip.core.packaging import (
     parse_requirement,
 )
 from kpip.core.errors import KpipError
-from kpip.core.versions import Version, ZERO_VERSION
+from kpip.core.versions import InvalidVersion, Version, ZERO_VERSION
 from kpip.core.wheel import WheelCandidate
 from kpip.index.candidate_evaluators import CandidateEvaluator
 from kpip.index.provider import CandidateProvider
@@ -100,6 +100,12 @@ class NabProvider:
         self.no_deps = self.context.no_deps
         self.constraints = self.context.constraints
         self.ignore_requires_python = self.context.ignore_requires_python
+        self._preferences: dict[str, Version] = {}
+        for name, text in self.context.preferences.items():
+            try:
+                self._preferences[name] = Version(text)
+            except InvalidVersion:
+                pass
         self._descent_prefetched: set[tuple[str, Version]] = set()
         self._source_metadata_started: set[str] = set()
         self._release_records: dict[
@@ -459,6 +465,7 @@ class NabProvider:
         if not matching:
             return None
         installed = self._installed_candidate(package)
+        preferred = self._preferences.get(package)
         if self.context.upgrade and installed is not None:
             indexed_matching = [
                 version for version in matching if version != installed.version
@@ -477,6 +484,15 @@ class NabProvider:
             and not self.context.upgrade
         ):
             selected = installed.version
+        elif (
+            preferred is not None
+            and preferred in matching
+            and preferred not in self._yanked_versions.get(package, ())
+        ):
+            # The previous lock's answer, still allowed: keeping it is what
+            # keeps an edit to one requirement from moving every other pin,
+            # and its metadata is what the last lock already read.
+            selected = preferred
         else:
             selected = self._newest_viable(package, matching)
             selected = self._sidestep_yanked(package, selected, matching, constraints)

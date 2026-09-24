@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from kpip.core import errors
 from kpip.core.metadata import installed_index
@@ -70,6 +70,7 @@ class ResolutionEngine:
                 upgrade_strategy=kwargs.pop("upgrade_strategy", "only-if-needed"),
                 ignore_requires_python=kwargs.pop("ignore_requires_python", False),
                 python_version=kwargs.pop("python_version", None),
+                preferences=kwargs.pop("preferences", None),
             )
 
         self.config = config
@@ -187,6 +188,7 @@ class ResolutionEngine:
         *,
         constraints: list[str] | None = None,
         session: Any = None,
+        preferences: Mapping[str, str] | None = None,
     ) -> ResolutionResult | None:
         """Resolve a local wheel directory through the normal nab path."""
 
@@ -196,6 +198,7 @@ class ResolutionEngine:
             constraints=tuple(constraints or ()),
             ignore_installed=True,
             session=session,
+            preferences=preferences,
         )
         try:
             return resolver.resolve(requirements)

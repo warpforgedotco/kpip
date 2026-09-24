@@ -180,15 +180,15 @@ has never written; the old one is inert until a purge.
 
 | Owner | Under `v1/` | Contents |
 | --- | --- | --- |
-| `network/cache.py` | `http-v2/` | HTTP metadata and bodies, fresh for as long as the response allowed (`network/freshness.py`, RFC 9111) and revalidated after; normal responses use one atomically replaced combined file, while raw artifact bodies use a split metadata/`.body` layout for hard-linking; incomplete split entries are misses |
-| `index/catalog_cache.py` | entries in `http-v2/` | parsed Simple API catalogs, release summaries (`Version.to_wire()`), target choices; key prefixes and payload headers carry their own versions; checksum-validated, recompiled from the catalog on any failure. A summary also records its page's freshness, updated in place on revalidation, so a resolve whose pages are fresh reads one file per project |
+| `network/cache.py` | `http-v3/` | HTTP metadata and bodies, fresh for as long as the response allowed (`network/freshness.py`, RFC 9111) and revalidated after; normal responses use one atomically replaced combined file, while raw artifact bodies use a split metadata/`.body` layout for hard-linking; incomplete split entries are misses |
+| `index/catalog_cache.py` | entries in `http-v3/` | parsed Simple API catalogs, release summaries (`Version.to_wire()`), target choices; key prefixes and payload headers carry their own versions; checksum-validated, recompiled from the catalog on any failure. A summary also records its page's freshness, updated in place on revalidation, so a resolve whose pages are fresh reads one file per project |
 | `index/artifact_cache.py` | `artifacts-v1/` | bodies by SHA-256 plus URL receipts |
 | `index/candidate_cache.py` | `wheels-v2/` | validated wheels built from content-identified sdists or immutable VCS sources, keyed by source, build settings, interpreter and target, then published as completed entry directories |
 | `index/metadata_cache.py` | `metadata-v1.sqlite` | parsed headers of local wheel files and of installed `METADATA` files, and SHA-256 of local wheels, by path, size, mtime |
 | `index/candidate_metadata_cache.py` | `candidate-metadata-v1.sqlite` | dependency metadata reused during resolution |
 | `index/release_facts_cache.py` | `release-facts-v1-<interp>.marshal` | deterministic release rejection reasons |
-| `cli/fast.py` | `fast-lock-plan-v2/` | rendered lock output, keyed on `core/code_identity.py` so an upgraded kpip never replays it |
-| `cli/lock_replay.py` | `lock-replay-v1/` | an index lock of hashed wheels, keyed on its inputs, interpreter and `code_identity`, with the ETag/Last-Modified of every project page it read; replayed while each is unchanged -- by the fast path when all are fresh, else after `cli/lock.py:replay_after_revalidation` revalidates the stale ones in one concurrent wave |
+| `cli/fast.py` | `fast-lock-plan-v2/` | rendered lock output, keyed on `core/code_identity.py` so an upgraded kpip never replays it, and on the lock it started from |
+| `cli/lock_replay.py` | `lock-replay-v1/` | an index lock of hashed wheels, keyed on its inputs, interpreter, `code_identity` and the lock it started from (`cli/lock_format.py:previous_lock_digest`), with the ETag/Last-Modified of every project page it read; replayed while each is unchanged -- by the fast path when all are fresh, else after `cli/lock.py:replay_after_revalidation` revalidates the stale ones in one concurrent wave |
 | `cli/fast_install.py` | `fast-install-v1-<interp>.marshal`, `fast-install-trees-v1-<interp>/` | fast-path plans, metadata, cloneable completed targets |
 | `install/wheel_archive_cache.py` | `archive-v1-<interp>/` | validated unpacked wheel trees by digest, and their byte-compiled `pyc/` sibling |
 | `install/wheel_install_plan_cache.py` | `resolution-v1-<interp>/` | short-lived exact-pin receipts over archive entries |

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from kpip.network.freshness import (
 )
 from kpip.network.session import NetworkSession
 from kpip_test_support.transport_mocks import make_response
+from kpip.network.freshness import decode_metadata, encode_metadata
 
 NOW = 1_000_000.0
 DATE = "Mon, 12 Jan 1970 13:46:40 GMT"  # NOW as an HTTP date
@@ -170,10 +170,10 @@ def test_legacy_entry_without_expiry_is_revalidated(tmp_path: Path) -> None:
     )
     raw_metadata = session.cache.get(url)
     assert raw_metadata is not None
-    metadata = json.loads(raw_metadata)
+    metadata = decode_metadata(raw_metadata)
     metadata["expires_at"] = None
     del metadata["stored_at"]
-    session.cache.set(url, json.dumps(metadata).encode("utf-8"))
+    session.cache.set(url, encode_metadata(metadata))
 
     served, stale_metadata, _ = session.cache_lookup(url)
 

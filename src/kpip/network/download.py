@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import email.message
-import json
 import logging
 import mimetypes
 import os
@@ -24,6 +23,7 @@ from kpip.network.exceptions import (
     ProxyConnectionError,
     SSLVerificationError,
 )
+from kpip.network.freshness import encode_metadata
 from kpip.network.session import NetworkSession
 from kpip.host.filesystem import format_size
 
@@ -350,14 +350,14 @@ class Downloader:
 
         key = download.link.url_without_fragment
 
-        metadata = json.dumps(
+        metadata = encode_metadata(
             {
                 "status": 200,
                 "reason": original_response.reason,
                 "url": download.link.url_without_fragment,
                 "headers": dict(original_response.headers.items()),
             },
-        ).encode()
+        )
 
         cache.set(key, metadata)
 
