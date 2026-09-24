@@ -54,7 +54,9 @@ def warn_on_mismatched_metadata(
             file=sys.stderr,
         )
         return
-    for key in ("kpip_python_version", "uv_version"):
+    for key in ("kpip_python_version", "uv_version", "kpip_compiled_version"):
+        if key not in before or key not in after:
+            continue
         if before[key] != after[key]:
             print(
                 f"Warning: {key} differs between runs "
@@ -77,7 +79,7 @@ def compare(before: Path, after: Path) -> int:
 
     warn_on_mismatched_metadata(load_metadata(before), load_metadata(after))
 
-    header = f"{'benchmark':<28}{'tool':<6}{'before':>12}{'after':>12}{'delta':>10}"
+    header = f"{'benchmark':<28}{'tool':<15}{'before':>12}{'after':>12}{'delta':>10}"
     print(header)
     print("-" * len(header))
     for name in names:
@@ -88,7 +90,7 @@ def compare(before: Path, after: Path) -> int:
             after_mean, _after_stddev = after_value
             delta_pct = (after_mean - before_mean) / before_mean * 100
             print(
-                f"{name:<28}{tool_label(command):<6}"
+                f"{name:<28}{tool_label(command):<15}"
                 f"{before_mean:>9.1f}ms{after_mean:>9.1f}ms{delta_pct:>+9.1f}%",
             )
 

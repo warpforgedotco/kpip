@@ -96,7 +96,24 @@ def _version_of(executable: str) -> str:
         return "unknown"
 
 
-def collect_run_metadata(*, kpip_python: str, uv_path: str) -> dict[str, str]:
+def compiled_version(binary: str) -> str:
+    """A compiled kpip's ``--version``, without the path it was built into.
+
+    The line names the directory the binary runs from, which differs between
+    two builds of the same kpip; what they must agree on is the version and
+    the Python it embeds.
+    """
+    version = _version_of(binary)
+    head, separator, rest = version.partition(" from ")
+    if not separator:
+        return version
+    _path, bracket, python = rest.rpartition(" (")
+    return f"{head} ({python}" if bracket else head
+
+
+def collect_run_metadata(
+    *, kpip_python: str, uv_path: str, kpip_compiled: str | None = None
+) -> dict[str, str]:
     """Record what actually ran, so ``kpip-bench-compare`` can catch a
     mismatched interpreter between two runs instead of silently comparing
     apples to oranges (a fresh ``uv sync`` with no pin can resolve a
@@ -110,11 +127,14 @@ def collect_run_metadata(*, kpip_python: str, uv_path: str) -> dict[str, str]:
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         git_commit = "unknown"
-    return {
+    metadata = {
         "kpip_python_version": _version_of(kpip_python),
         "uv_version": _version_of(uv_path),
         "git_commit": git_commit,
     }
+    if kpip_compiled is not None:
+        metadata["kpip_compiled_version"] = compiled_version(kpip_compiled)
+    return metadata
 
 
 def kpip_direct_launcher(workspace: Path) -> Path:
@@ -137,8 +157,14 @@ def kpip_command(
     kpip_console: str | None,
     kpip_launcher: str,
     extra_env: dict[str, str] | None = None,
+    compiled: str | None = None,
 ) -> tuple[list[str], dict[str, str]]:
-    if kpip_console is not None:
+    # A compiled kpip gets the same environment: its own modules are built
+    # in, so PYTHONPATH cannot reach them, and hyperfine runs every command
+    # of a benchmark with one environment.
+    if compiled is not None:
+        command = [compiled, *args]
+    elif kpip_console is not None:
         command = [kpip_console, *args]
     elif kpip_launcher == "direct":
         command = [kpip_python, str(kpip_direct_launcher(workspace)), *args]
@@ -228,7 +254,24 @@ def build_commands(
     kpip_launcher: str,
     uv_path: str,
     python: str,
+    kpip_compiled: str | None = None,
+    compiled_only: bool = False,
 ) -> list[Command]:
+    """The commands one benchmark compares.
+
+    kpip is measured as launched from source, as a compiled binary
+    (``kpip_compiled``), or both, each as its own named command beside uv.
+    The variants share kpip's cache and output paths: every command's
+    preparation resets them, and a warm setup warms each.
+    """
+    if compiled_only and kpip_compiled is None:
+        raise ValueError("compiled_only needs kpip_compiled")
+    variants: list[tuple[str, str | None]] = []
+    if not compiled_only:
+        variants.append(("kpip", None))
+    if kpip_compiled is not None:
+        variants.append(("kpip-compiled", kpip_compiled))
+
     manifest = workload_manifest(workspace / "workload", workload=workload)
     workload_name = manifest["workload"]
     kpip_cache = workspace / "cache" / "kpip"
@@ -249,7 +292,10 @@ def build_commands(
     incremental_update = manifest["incremental_update_requirements"]
 
     def kpip(
-        args: list[str], *, extra_env: dict[str, str] | None = None
+        args: list[str],
+        *,
+        extra_env: dict[str, str] | None = None,
+        compiled: str | None = None,
     ) -> tuple[list[str], dict[str, str]]:
         return kpip_command(
             args,
@@ -258,6 +304,7 @@ def build_commands(
             kpip_console=kpip_console,
             kpip_launcher=kpip_launcher,
             extra_env=extra_env,
+            compiled=compiled,
         )
 
     def label(tool: str) -> str:
@@ -265,46 +312,49 @@ def build_commands(
 
     def kpip_step(
         prepare: str | None, args: list[str], *, extra_env: dict[str, str] | None = None
-    ) -> Command:
-        command, env = kpip(args, extra_env=extra_env)
-        return Command(label("kpip"), prepare, command, env)
+    ) -> list[Command]:
+        steps = []
+        for tool, compiled in variants:
+            command, env = kpip(args, extra_env=extra_env, compiled=compiled)
+            steps.append(Command(label(tool), prepare, command, env))
+        return steps
 
     def uv_step(prepare: str | None, args: list[str]) -> Command:
         return Command(label("uv"), prepare, uv_command(uv_path, args))
 
     if benchmark == "startup-help":
         return [
-            kpip_step(None, ["--help"]),
+            *kpip_step(None, ["--help"]),
             uv_step(None, ["--help"]),
         ]
     if benchmark == "startup-version":
         return [
-            kpip_step(None, ["--version"]),
+            *kpip_step(None, ["--version"]),
             uv_step(None, ["--version"]),
         ]
     if benchmark == "startup-install-help":
         return [
-            kpip_step(None, ["install", "--help"]),
+            *kpip_step(None, ["install", "--help"]),
             uv_step(None, ["pip", "install", "--help"]),
         ]
     if benchmark == "startup-lock-help":
         return [
-            kpip_step(None, ["lock", "--help"]),
+            *kpip_step(None, ["lock", "--help"]),
             uv_step(None, ["pip", "compile", "--help"]),
         ]
     if benchmark == "startup-list-help":
         return [
-            kpip_step(None, ["list", "--help"]),
+            *kpip_step(None, ["list", "--help"]),
             uv_step(None, ["pip", "list", "--help"]),
         ]
     if benchmark == "startup-invalid-command":
         return [
-            kpip_step(None, ["definitely-not-a-command"]),
+            *kpip_step(None, ["definitely-not-a-command"]),
             uv_step(None, ["definitely-not-a-command"]),
         ]
     if benchmark == "startup-list-empty":
         return [
-            kpip_step(
+            *kpip_step(
                 cleanup_command([kpip_target], mkdir=[kpip_target]),
                 ["list", "--format=json", "--path", str(kpip_target)],
             ),
@@ -343,7 +393,7 @@ def build_commands(
         ]
         uv_args.extend(["--no-index", "--find-links", wheelhouse])
         return [
-            kpip_step(
+            *kpip_step(
                 cleanup_command([kpip_output]),
                 kpip_args,
                 extra_env={"KPIP_CACHE_DIR": str(kpip_cache)},
@@ -383,7 +433,7 @@ def build_commands(
         kpip_args.extend(["--no-index", "--find-links", wheelhouse])
         uv_args.extend(["--no-index", "--find-links", wheelhouse])
         return [
-            kpip_step(cleanup_command([kpip_target]), kpip_args),
+            *kpip_step(cleanup_command([kpip_target]), kpip_args),
             uv_step(cleanup_command([uv_target]), uv_args),
         ]
 
@@ -447,7 +497,7 @@ def build_commands(
             kpip_args.extend(["--python-version", recommended_python])
             uv_args[uv_args.index("--python") + 1] = recommended_python
         return [
-            kpip_step(
+            *kpip_step(
                 kpip_prepare,
                 kpip_args,
                 extra_env={"KPIP_CACHE_DIR": str(kpip_cache)},
@@ -479,21 +529,9 @@ def build_commands(
             "--find-links",
             incremental_wheelhouse,
         ]
-        kpip_base, kpip_base_env = kpip(
-            [
-                "install",
-                "--ignore-installed",
-                *kpip_common,
-                "-r",
-                incremental_base,
-            ],
-        )
         uv_base = uv_command(
             uv_path,
             ["pip", "install", *uv_common, "-r", incremental_base],
-        )
-        kpip_update, kpip_update_env = kpip(
-            ["install", "--upgrade", *kpip_common, "-r", incremental_update],
         )
         uv_update = uv_command(
             uv_path,
@@ -506,16 +544,32 @@ def build_commands(
                 incremental_update,
             ],
         )
-        kpip_prepare = chain_command(
-            [cleanup_step([kpip_target]), run_step(kpip_base, kpip_base_env)],
-        )
         uv_prepare = chain_command(
             [cleanup_step([uv_target]), run_step(uv_base)],
         )
-        return [
-            Command(label("kpip"), kpip_prepare, kpip_update, kpip_update_env),
-            Command(label("uv"), uv_prepare, uv_update),
-        ]
+        incremental: list[Command] = []
+        for tool, compiled in variants:
+            kpip_base, kpip_base_env = kpip(
+                [
+                    "install",
+                    "--ignore-installed",
+                    *kpip_common,
+                    "-r",
+                    incremental_base,
+                ],
+                compiled=compiled,
+            )
+            kpip_update, kpip_update_env = kpip(
+                ["install", "--upgrade", *kpip_common, "-r", incremental_update],
+                compiled=compiled,
+            )
+            kpip_prepare = chain_command(
+                [cleanup_step([kpip_target]), run_step(kpip_base, kpip_base_env)],
+            )
+            incremental.append(
+                Command(label(tool), kpip_prepare, kpip_update, kpip_update_env)
+            )
+        return [*incremental, Command(label("uv"), uv_prepare, uv_update)]
 
     if benchmark.startswith("install-"):
         if install_requirements is None:
@@ -571,7 +625,7 @@ def build_commands(
             )
             uv_args.extend(["--no-index", "--find-links", wheelhouse])
         return [
-            kpip_step(kpip_prepare, kpip_args),
+            *kpip_step(kpip_prepare, kpip_args),
             uv_step(uv_prepare, uv_args),
         ]
 
@@ -599,6 +653,17 @@ def main() -> None:
     parser.add_argument(
         "--kpip-launcher", choices=("module", "direct"), default="module"
     )
+    parser.add_argument(
+        "--kpip-compiled",
+        metavar="PATH",
+        help="Also measure this compiled kpip (see scripts/compile), as "
+        "'kpip-compiled' beside kpip and uv",
+    )
+    parser.add_argument(
+        "--compiled-only",
+        action="store_true",
+        help="Measure only the compiled kpip against uv",
+    )
     parser.add_argument("--uv-path", default=shutil.which("uv") or "uv")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--warmup", type=int, default=3)
@@ -609,6 +674,14 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep-workspace", action="store_true")
     args = parser.parse_args()
+
+    if args.compiled_only and args.kpip_compiled is None:
+        parser.error("--compiled-only needs --kpip-compiled")
+    if args.kpip_compiled is not None:
+        compiled = Path(args.kpip_compiled).resolve()
+        if not compiled.is_file():
+            parser.error(f"--kpip-compiled: no such file: {args.kpip_compiled}")
+        args.kpip_compiled = str(compiled)
 
     if args.list_workloads:
         print_workloads()
@@ -639,6 +712,7 @@ def main() -> None:
         metadata = collect_run_metadata(
             kpip_python=args.kpip_python,
             uv_path=args.uv_path,
+            kpip_compiled=args.kpip_compiled,
         )
         Path("meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -656,6 +730,8 @@ def main() -> None:
                 kpip_launcher=args.kpip_launcher,
                 uv_path=args.uv_path,
                 python=args.python,
+                kpip_compiled=args.kpip_compiled,
+                compiled_only=args.compiled_only,
             )
             setup = None
             if benchmark.endswith("warm") or benchmark.startswith("startup-fast-"):
