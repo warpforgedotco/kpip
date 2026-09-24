@@ -25,6 +25,7 @@ def test_session_decodes_gzip_responses(tmp_path) -> None:
             self.send_response(200)
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "max-age=600")
             self.end_headers()
             self.wfile.write(body)
 
@@ -978,3 +979,54 @@ def test_anonymous_cross_host_redirect_stays_anonymous(
 
     assert response.data == b"ok"
     assert seen == [(start_url, None), (target_url, None)]
+
+
+def test_response_without_caching_headers_is_revalidated(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An index that says nothing about caching is asked again, not trusted forever."""
+
+    session = NetworkSession(cache=str(tmp_path / "http-cache"))
+    url = "https://example.invalid/simple/demo/"
+    session.cache_response(
+        make_response(
+            status=200,
+            reason="OK",
+            url=url,
+            headers={"ETag": '"tag"'},
+            body=b"cached body",
+        ),
+    )
+    sent: list[dict[str, str]] = []
+
+    def not_modified(method, request_url, headers, *args, **kwargs):
+        sent.append(headers)
+        return make_response(
+            status=304,
+            reason="Not Modified",
+            url=request_url,
+            headers={"ETag": '"tag"'},
+            body=b"",
+        )
+
+    monkeypatch.setattr(session, "open_coalesced", not_modified)
+
+    response = session.get(url)
+
+    assert response.from_cache
+    assert response.data == b"cached body"
+    assert [headers.get("if-none-match") for headers in sent] == ['"tag"']
+
+
+def test_file_urls_are_never_cached(tmp_path) -> None:
+    page = tmp_path / "index.html"
+    page.write_text("first")
+    session = NetworkSession(cache=str(tmp_path / "http-cache"))
+    assert session.cache is not None
+
+    assert session.get(page.as_uri()).data == b"first"
+    page.write_text("second")
+
+    assert session.get(page.as_uri()).data == b"second"
+    assert session.cache.get(page.as_uri()) is None
