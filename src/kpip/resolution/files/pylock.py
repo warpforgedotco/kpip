@@ -12,7 +12,7 @@ import urllib.parse
 
 from kpip.core.errors import InstallationError
 from kpip.core.format_control import FormatControl
-from kpip.core.packaging import SpecifierSet
+from kpip.core.packaging import SpecifierSet, marker_applies
 from kpip.core.versions import Version
 from kpip.core.urls import path_to_url
 from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
@@ -119,6 +119,13 @@ def parse_pylock(
             )
 
         package_name = package["name"]
+
+        # A package the lock holds for another environment is not installed
+        # here: PEP 751 installs what applies, without resolving.
+        marker = package.get("marker")
+
+        if isinstance(marker, str) and not marker_applies(marker):
+            continue
 
         requires_python = package.get("requires-python")
 

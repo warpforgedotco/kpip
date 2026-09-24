@@ -1323,7 +1323,9 @@ def run_install(args: list[str]) -> int:
                 plan = ResolutionEngine.resolve_serving_stale_pages(
                     lambda: ResolutionEngine(
                         provider=get_provider(),
-                        no_deps=execution.options.no_deps,
+                        no_deps=(
+                            execution.options.no_deps or execution.bundle.only_locked
+                        ),
                         upgrade=execution.options.upgrade,
                         upgrade_strategy=execution.options.upgrade_strategy,
                         ignore_installed=reinstall,
