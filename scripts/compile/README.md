@@ -20,9 +20,11 @@ uv run kpip-compile build --python /opt/homebrew/bin/python3.14 -- --report=repo
 
 ## Onefile cache mode
 
-By default, the binary unpacks once into `{CACHE_DIR}/kpip-onefile/{VERSION}`
-(outside kpip's own cache, which `kpip cache` may clear) and
-later runs start from there. With the patches below, a run that finds an
+By default, the binary unpacks once into
+`{CACHE_DIR}/kpip-onefile/{VERSION}/<interpreter>`, such as
+`~/.cache/kpip-onefile/0.0.1/cpython-314`, and later runs start from there.
+It stays outside kpip's own cache, which `kpip cache` may clear, and each
+Python gets its own directory because unpacking never removes files. With the patches below, a run that finds an
 unchanged unpacking starts within a few milliseconds of an uncompressed
 standalone build. `--cache-mode=temporary` keeps Nuitka's default, which
 unpacks into a fresh temporary directory on every run and removes it on

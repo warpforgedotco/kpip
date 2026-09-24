@@ -13,10 +13,29 @@ from kpip_compile.vendor import PACKAGE_ROOT, REPO_ROOT
 
 KPIP_PACKAGE = REPO_ROOT / "src" / "kpip"
 DEFAULT_OUTPUT_DIR = PACKAGE_ROOT / "build"
-# Static, so onefile runs after the first reuse the unpacked files. The
-# payload hash in the unpacking manifest tells builds of one version apart.
-# Not under kpip's own cache directory, which ``kpip cache`` may clear.
-ONEFILE_TEMPDIR_SPEC = "{CACHE_DIR}/kpip-onefile/{VERSION}"
+
+
+def onefile_tempdir_spec(interpreter: str) -> str:
+    """Where a cached onefile binary unpacks: one directory per kpip and Python.
+
+    Static, so runs after the first reuse the unpacked files, and outside
+    kpip's own cache directory, which ``kpip cache`` may clear. The payload
+    hash in the unpacking manifest tells builds of one version apart, but
+    unpacking never removes a file the new payload lacks, so builds for
+    another Python -- whose runtime library has another name -- get a
+    directory of their own rather than leaving theirs behind in this one.
+    """
+    return f"{{CACHE_DIR}}/kpip-onefile/{{VERSION}}/{interpreter}"
+
+
+def interpreter_tag(python: str) -> str:
+    """The build interpreter's ``cache_tag``, e.g. ``cpython-314t``."""
+    return subprocess.run(
+        [python, "-c", "import sys; print(sys.implementation.cache_tag)"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 @dataclass(frozen=True)
@@ -46,7 +65,11 @@ def executable_name(options: BuildOptions) -> str:
     return "kpip" if options.mode == "onefile" else "kpip.bin"
 
 
-def nuitka_command(options: BuildOptions, version: str) -> list[str]:
+def nuitka_command(
+    options: BuildOptions,
+    version: str,
+    interpreter: str = "cpython-314",
+) -> list[str]:
     is_windows = options.platform == "win32"
     command = [
         options.python,
@@ -70,14 +93,16 @@ def nuitka_command(options: BuildOptions, version: str) -> list[str]:
     if options.mode == "onefile":
         command.append(f"--onefile-cache-mode={options.cache_mode}")
         if options.cache_mode == "cached":
-            command.append(f"--onefile-tempdir-spec={ONEFILE_TEMPDIR_SPEC}")
+            command.append(
+                f"--onefile-tempdir-spec={onefile_tempdir_spec(interpreter)}"
+            )
     command.extend(options.extra_args)
     command.append(str(KPIP_PACKAGE))
     return command
 
 
 def build(options: BuildOptions, nuitka_dir: Path) -> int:
-    command = nuitka_command(options, kpip_version())
+    command = nuitka_command(options, kpip_version(), interpreter_tag(options.python))
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(nuitka_dir), env.get("PYTHONPATH")))
