@@ -71,3 +71,13 @@ def test_extra_arguments_precede_the_target() -> None:
     )
 
     assert command[-2:] == ["--report=r.xml", str(KPIP_PACKAGE)]
+
+
+def test_a_standalone_binary_does_not_collide_with_the_package_folder() -> None:
+    """The folder holds ``kpip/`` package data, so the binary cannot be ``kpip``."""
+    command = nuitka_command(BuildOptions(mode="standalone", platform="darwin"), "1")
+
+    assert "--output-filename=kpip.bin" in command
+    assert "--output-filename=kpip" in nuitka_command(
+        BuildOptions(platform="darwin"), "1"
+    )

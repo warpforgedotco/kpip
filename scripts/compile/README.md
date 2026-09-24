@@ -26,7 +26,8 @@ later runs start from there. With the patches below, a run that finds an
 unchanged unpacking starts within a few milliseconds of an uncompressed
 standalone build. `--cache-mode=temporary` keeps Nuitka's default, which
 unpacks into a fresh temporary directory on every run and removes it on
-exit. `--mode=standalone` builds a directory instead of a single file.
+exit. `--mode=standalone` builds a directory instead of a single file, with the
+binary at `build/kpip.dist/kpip.bin` (`kpip.exe` on Windows).
 
 ## Vendored Nuitka
 

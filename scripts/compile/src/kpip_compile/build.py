@@ -38,6 +38,14 @@ def kpip_version(package_dir: Path = KPIP_PACKAGE) -> str:
     return match.group(1)
 
 
+def executable_name(options: BuildOptions) -> str:
+    """The binary's name; a standalone folder already holds a ``kpip`` package."""
+
+    if options.platform == "win32":
+        return "kpip.exe"
+    return "kpip" if options.mode == "onefile" else "kpip.bin"
+
+
 def nuitka_command(options: BuildOptions, version: str) -> list[str]:
     is_windows = options.platform == "win32"
     command = [
@@ -47,7 +55,7 @@ def nuitka_command(options: BuildOptions, version: str) -> list[str]:
         f"--mode={options.mode}",
         "--assume-yes-for-downloads",
         f"--output-dir={options.output_dir}",
-        f"--output-filename={'kpip.exe' if is_windows else 'kpip'}",
+        f"--output-filename={executable_name(options)}",
         f"--product-version={version}",
         # The command registry imports each command's module by name, which
         # Nuitka cannot follow.
