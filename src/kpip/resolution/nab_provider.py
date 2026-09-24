@@ -16,6 +16,7 @@ from kpip.core.metadata import InstalledDistribution, find_installed
 from kpip.core.packaging import (
     Requirement,
     SpecifierSet,
+    intersect_runs,
     canonicalize_name,
     marker_applies,
     parse_requirement,
@@ -130,6 +131,7 @@ class NabProvider:
         self._matching_memo: dict[
             str, tuple[tuple[Version, ...], RangeProtocol[Version], list[Version]]
         ] = {}
+        self._catalog_shape_memo: dict[str, tuple[tuple[Version, ...], bool, bool]] = {}
         self._descent_order: dict[
             str, tuple[tuple[Version, ...], tuple[Version, ...], dict[Version, int]]
         ] = {}
@@ -355,10 +357,32 @@ class NabProvider:
         return self.provider
 
     def _allows(self, package: str, version: Version) -> bool:
-        if not version.is_prerelease or self.allow_prereleases:
+        return not version.is_prerelease or self._allows_prereleases(package)
+
+    def _allows_prereleases(self, package: str) -> bool:
+        """Whether ``package``'s pre-releases may be chosen at all."""
+        if self.allow_prereleases:
             return True
         control = getattr(self.provider, "release_control", None)
         return control is None or control.allows_prereleases(package) is not False
+
+    def _catalog_shape(
+        self, package: str, versions: tuple[Version, ...]
+    ) -> tuple[bool, bool]:
+        """Whether ``versions`` ascends, and whether it has a pre-release.
+
+        Asked once per catalog tuple: the index's catalog is sorted, but an
+        installed release appended to it need not be.
+        """
+        memo = self._catalog_shape_memo.get(package)
+        if memo is None or memo[0] is not versions:
+            ascending = all(
+                earlier <= later for earlier, later in zip(versions, versions[1:])
+            )
+            has_prerelease = any(version.is_prerelease for version in versions)
+            memo = (versions, ascending, has_prerelease)
+            self._catalog_shape_memo[package] = memo
+        return memo[1], memo[2]
 
     def _eligible_versions(self, package: str) -> tuple[Version, ...]:
         """Return versions that this provider can actually offer.
@@ -443,19 +467,27 @@ class NabProvider:
         # is replaced whenever the requirement changes, so its identity
         # covers everything ``_allows`` reads besides resolve-wide policy.
         memo = self._matching_memo.get(package)
+        ascending, has_prerelease = self._catalog_shape(package, versions)
         if memo is not None and memo[0] is versions and memo[1] == version_range:
             matching = memo[2]
         else:
-            matching = [
-                version
-                for version in versions
-                if version in version_range
-                and (not version.is_prerelease or self._allows(package, version))
-            ]
+            # A catalog is sorted, so the range is bisected rather than asked
+            # about each release: 75,000 membership tests on airflow's graph.
+            matching: list[Version]
+            if ascending and isinstance(version_range, Range):
+                matching = version_range.select_sorted(versions)  # ty: ignore[invalid-argument-type, invalid-assignment]
+            else:
+                matching = [version for version in versions if version in version_range]
+            if has_prerelease and not self._allows_prereleases(package):
+                matching = [
+                    version for version in matching if not version.is_prerelease
+                ]
             self._matching_memo[package] = (versions, version_range, matching)
         control = getattr(self.provider, "release_control", None)
-        if not self.allow_prereleases and (
-            control is None or control.allows_prereleases(package) is None
+        if (
+            has_prerelease
+            and not self.allow_prereleases
+            and (control is None or control.allows_prereleases(package) is None)
         ):
             stable = [version for version in matching if not version.is_prerelease]
             if stable:
@@ -1787,6 +1819,17 @@ class NabProvider:
             and memo[1] == dependency_constraints
         ):
             return memo[2]
+        selected = self._selected_by_order(
+            dependency_key, allowed, dependency, dependency_constraints
+        )
+        if selected is not None:
+            dependency_range = self._finite_range(selected)
+            self._dependency_range_memo[memo_key] = (
+                allowed,
+                dependency_constraints,
+                dependency_range,
+            )
+            return dependency_range
         window = self._bounded_versions(dependency_key, allowed, dependency.specifier)
         contains = dependency.specifier.contains
         if dependency_constraints:
@@ -1859,6 +1902,45 @@ class NabProvider:
             )
         )
 
+    def _sorted_catalog(
+        self, package: str, allowed: tuple[Version, ...]
+    ) -> list[Version]:
+        """``allowed`` in order, kept while ``allowed`` is the same tuple."""
+        memo = self._sorted_versions_memo.get(package)
+        if memo is None or memo[0] is not allowed:
+            memo = (allowed, sorted(allowed))
+            self._sorted_versions_memo[package] = memo
+        return memo[1]
+
+    def _selected_by_order(
+        self,
+        package: str,
+        allowed: tuple[Version, ...],
+        dependency: Requirement,
+        constraints: tuple[Requirement, ...],
+    ) -> list[Version] | None:
+        """The releases of ``allowed`` an edge admits, found by bisection.
+
+        Each specifier admits runs of the sorted catalog
+        (``SpecifierSet.select_indices``), so a resolve asks ``contains`` of
+        the releases at their edges instead of every release in the window:
+        airflow's asked it 58,000 times. None for a specifier that compares
+        spellings, which is left to ``contains``.
+        """
+        ordered = self._sorted_catalog(package, allowed)
+        runs = dependency.specifier.select_indices(ordered)
+        for constraint in constraints or ():
+            if runs is None or not runs:
+                break
+            more = constraint.specifier.select_indices(ordered)
+            runs = None if more is None else intersect_runs(runs, more)
+        if runs is None:
+            return None
+        selected: list[Version] = []
+        for start, stop in runs:
+            selected.extend(ordered[start:stop])
+        return selected
+
     def _bounded_versions(
         self,
         package: str,
@@ -1880,11 +1962,7 @@ class NabProvider:
         lower, upper = specifier.bounds
         if lower is None and upper is None:
             return allowed
-        memo = self._sorted_versions_memo.get(package)
-        if memo is None or memo[0] is not allowed:
-            memo = (allowed, sorted(allowed))
-            self._sorted_versions_memo[package] = memo
-        ordered = memo[1]
+        ordered = self._sorted_catalog(package, allowed)
         start = 0
         stop = len(ordered)
         if lower is not None:

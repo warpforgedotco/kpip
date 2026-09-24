@@ -761,10 +761,26 @@ index fba4d17..ff46dcd 100644
  
      if result is None:
 diff --git a/src/kpip/_vendor/nab_resolver/ranges.py b/src/kpip/_vendor/nab_resolver/ranges.py
-index 4385af4..830f6b4 100644
+index 4385af4..adacaa8 100644
 --- a/src/kpip/_vendor/nab_resolver/ranges.py
 +++ b/src/kpip/_vendor/nab_resolver/ranges.py
-@@ -27,6 +27,8 @@ _EMPTY_REL = RangeRelation.EMPTY
+@@ -13,13 +13,14 @@ provider uses int; the Python provider uses packaging.version.Version.
+ 
+ from __future__ import annotations
+ 
++from bisect import bisect_left, bisect_right
+ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast
+ 
+ from ._compat import override
+ from .types import RangeRelation, VersionType
+ 
+ if TYPE_CHECKING:
+-    from collections.abc import Iterable
++    from collections.abc import Iterable, Sequence
+ 
+ # Bound once so the hot return paths load a module global instead of a class
+ # attribute.
+@@ -27,6 +28,8 @@ _EMPTY_REL = RangeRelation.EMPTY
  _SUBSET_REL = RangeRelation.SUBSET
  _DISJOINT_REL = RangeRelation.DISJOINT
  _OVERLAPPING_REL = RangeRelation.OVERLAPPING
@@ -773,7 +789,7 @@ index 4385af4..830f6b4 100644
  
  __all__ = [
      "NEGATIVE_INFINITY",
-@@ -114,11 +116,25 @@ Bound: TypeAlias = Any  # V | _NegativeInfinity | _PositiveInfinity
+@@ -114,11 +117,25 @@ Bound: TypeAlias = Any  # V | _NegativeInfinity | _PositiveInfinity
  Interval: TypeAlias = tuple[Bound, bool, Bound, bool]
  
  
@@ -800,7 +816,7 @@ index 4385af4..830f6b4 100644
          return left_lower, left_lower_inc and right_lower_inc
      if left_lower is NEGATIVE_INFINITY or (
          right_lower is not NEGATIVE_INFINITY and left_lower < right_lower
-@@ -131,7 +147,7 @@ def _min_upper_bound(left: Interval, right: Interval) -> tuple[Bound, bool]:
+@@ -131,7 +148,7 @@ def _min_upper_bound(left: Interval, right: Interval) -> tuple[Bound, bool]:
      """Return the lower of two upper bounds (for intersection)."""
      left_upper, left_upper_inc = left[2], left[3]
      right_upper, right_upper_inc = right[2], right[3]
@@ -809,7 +825,7 @@ index 4385af4..830f6b4 100644
          return left_upper, left_upper_inc and right_upper_inc
      if left_upper is POSITIVE_INFINITY or (
          right_upper is not POSITIVE_INFINITY and left_upper > right_upper
-@@ -192,7 +208,7 @@ class Range(Generic[VersionType]):
+@@ -192,7 +209,7 @@ class Range(Generic[VersionType]):
      See :meth:`__init__` for the invariant the interval list must satisfy.
      """
  
@@ -818,7 +834,7 @@ index 4385af4..830f6b4 100644
  
      def __init__(self, intervals: tuple[Interval, ...] = ()) -> None:
          """Create a range from intervals that already satisfy the invariant.
-@@ -211,6 +227,38 @@ class Range(Generic[VersionType]):
+@@ -211,6 +228,38 @@ class Range(Generic[VersionType]):
          """
          self._intervals = intervals
          self._hash = 0
@@ -857,7 +873,7 @@ index 4385af4..830f6b4 100644
  
      @classmethod
      def empty(cls) -> Range[VersionType]:
-@@ -245,9 +293,21 @@ class Range(Generic[VersionType]):
+@@ -245,9 +294,21 @@ class Range(Generic[VersionType]):
  
          Cheaper than folding :meth:`singleton` with ``|``.
          """
@@ -882,7 +898,7 @@ index 4385af4..830f6b4 100644
  
      @classmethod
      def at_least(cls, version: VersionType) -> Range[VersionType]:
-@@ -270,13 +330,23 @@ class Range(Generic[VersionType]):
+@@ -270,13 +331,23 @@ class Range(Generic[VersionType]):
          return cls(((NEGATIVE_INFINITY, False, version, False),))
  
      @classmethod
@@ -910,7 +926,7 @@ index 4385af4..830f6b4 100644
  
      @property
      def is_empty(self) -> bool:
-@@ -284,28 +354,65 @@ class Range(Generic[VersionType]):
+@@ -284,28 +355,99 @@ class Range(Generic[VersionType]):
          return len(self._intervals) == 0
  
      def __contains__(self, version: object) -> bool:
@@ -962,6 +978,40 @@ index 4385af4..830f6b4 100644
 +        return not (
 +            version > upper or (not upper_inclusive and _same_bound(version, upper))
 +        )
++
++    def select_sorted(self, ordered: Sequence[VersionType]) -> list[VersionType]:
++        """The members of ``ordered``, in its order, which must be ascending.
++
++        Equal to ``[version for version in ordered if version in self]``,
++        but an interval is two bisections and a slice rather than a
++        membership test per version: a resolver asks this of a package's
++        whole catalog each time it chooses a version for it.
++        """
++        intervals = self._intervals
++        if not intervals:
++            return []
++        if len(intervals) >= _POINT_SET_MIN_INTERVALS:
++            points = self._as_points()
++            if points is not None:
++                return list(filter(points.__contains__, ordered))
++        selected: list[VersionType] = []
++        count = len(ordered)
++        for lower, lower_inclusive, upper, upper_inclusive in intervals:
++            if lower is NEGATIVE_INFINITY:
++                start = 0
++            elif lower_inclusive:
++                start = bisect_left(ordered, lower)
++            else:
++                start = bisect_right(ordered, lower)
++            if upper is POSITIVE_INFINITY:
++                stop = count
++            elif upper_inclusive:
++                stop = bisect_right(ordered, upper)
++            else:
++                stop = bisect_left(ordered, upper)
++            if start < stop:
++                selected.extend(ordered[start:stop])
++        return selected
  
      def __and__(self, other: object) -> Range[VersionType]:
          """Compute the intersection of two ranges (versions in both)."""
@@ -990,7 +1040,7 @@ index 4385af4..830f6b4 100644
  
              inter_lower, inter_lower_inc = _max_lower_bound(
                  left_interval, right_interval
-@@ -333,7 +440,7 @@ class Range(Generic[VersionType]):
+@@ -333,7 +475,7 @@ class Range(Generic[VersionType]):
              # Advance the side with the smaller upper bound
              left_upper = left_interval[2]
              right_upper = right_interval[2]
@@ -999,7 +1049,7 @@ index 4385af4..830f6b4 100644
                  left_index += 1
                  right_index += 1
              elif left_upper is POSITIVE_INFINITY or (
-@@ -349,8 +456,22 @@ class Range(Generic[VersionType]):
+@@ -349,8 +491,22 @@ class Range(Generic[VersionType]):
          """Union of two ranges (versions in either)."""
          if not isinstance(other, Range):
              return NotImplemented
@@ -1024,7 +1074,7 @@ index 4385af4..830f6b4 100644
  
      def __invert__(self) -> Range[VersionType]:
          """Complement (versions NOT in this range)."""
-@@ -411,48 +532,59 @@ class Range(Generic[VersionType]):
+@@ -411,48 +567,59 @@ class Range(Generic[VersionType]):
          if not isinstance(other, Range):
              return NotImplemented
  
@@ -1105,7 +1155,7 @@ index 4385af4..830f6b4 100644
                      and (
                          lower > right_lower
                          or (
-@@ -466,29 +598,22 @@ class Range(Generic[VersionType]):
+@@ -466,29 +633,22 @@ class Range(Generic[VersionType]):
                      )
  
                  if right_upper is POSITIVE_INFINITY:
@@ -1141,7 +1191,7 @@ index 4385af4..830f6b4 100644
                  lower is not NEGATIVE_INFINITY
                  and upper is not POSITIVE_INFINITY
                  and (
-@@ -508,27 +633,32 @@ class Range(Generic[VersionType]):
+@@ -508,27 +668,32 @@ class Range(Generic[VersionType]):
          ``other`` always leave a gap, so an interval of self is covered only
          when a single interval of other holds all of it.
          """
@@ -1190,7 +1240,7 @@ index 4385af4..830f6b4 100644
                      break
                  right_index += 1
  
-@@ -536,10 +666,24 @@ class Range(Generic[VersionType]):
+@@ -536,10 +701,24 @@ class Range(Generic[VersionType]):
                  return False
  
              right = right_intervals[right_index]
@@ -1219,7 +1269,7 @@ index 4385af4..830f6b4 100644
                  return False
  
          return True
-@@ -554,6 +698,15 @@ class Range(Generic[VersionType]):
+@@ -554,6 +733,15 @@ class Range(Generic[VersionType]):
          Stops at the first shared version rather than building the whole
          intersection.
          """
@@ -1235,7 +1285,7 @@ index 4385af4..830f6b4 100644
          left_intervals = self._intervals
          right_intervals = other._intervals
          left_count = len(left_intervals)
-@@ -586,84 +739,85 @@ class Range(Generic[VersionType]):
+@@ -586,84 +774,85 @@ class Range(Generic[VersionType]):
          return True
  
      def relation(self, other: Range[VersionType]) -> RangeRelation:
@@ -1380,7 +1430,7 @@ index 4385af4..830f6b4 100644
              return _DISJOINT_REL
          return _OVERLAPPING_REL
  
-@@ -703,6 +857,7 @@ class Range(Generic[VersionType]):
+@@ -703,6 +892,7 @@ class Range(Generic[VersionType]):
          """Restore from :meth:`__getstate__`, leaving the hash to be recomputed."""
          (self._intervals,) = state
          self._hash = 0
@@ -1388,7 +1438,7 @@ index 4385af4..830f6b4 100644
  
      @override
      def __repr__(self) -> str:
-@@ -731,6 +886,14 @@ class Range(Generic[VersionType]):
+@@ -731,6 +921,14 @@ class Range(Generic[VersionType]):
          return not self.is_empty
  
  
@@ -1403,7 +1453,7 @@ index 4385af4..830f6b4 100644
  def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
      """Sort intervals by lower bound and merge overlapping or adjacent ones.
  
-@@ -742,13 +905,7 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
+@@ -742,13 +940,7 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
      if not intervals:
          return ()
  

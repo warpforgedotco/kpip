@@ -282,13 +282,40 @@ class Version(tuple):
 
     @classmethod
     def from_wire(cls, state: Any) -> Version:
-        """The Version for a :meth:`to_wire` record, through the intern table."""
-        # A hit skips calling the class, which a warm catalog read does for
+        """The Version for a :meth:`to_wire` record, through the intern table.
+
+        Built from the stored key, not by parsing the text again: a warm
+        airflow resolve reads 58,000 of these, 17,000 of them new to the
+        process. The key is what parsing the text gave when it was stored,
+        and the text is the canonical spelling, so the two agree; ``release``
+        is read back from the text if something asks for it.
+        """
+        # A hit skips building one, which a warm catalog read does for
         # nearly every version it lists.
-        cached = _versions_get(state[0])
+        text = state[0]
+        cached = _versions_get(text)
         if cached is not None:
             return cached
-        return cls(state[0])
+        self = tuple.__new__(cls, state[1])
+        self.__dict__["public"] = text
+        if len(_versions) >= _VERSIONS_LIMIT:
+            _versions.clear()
+        _versions[text] = self
+        return self
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached for an attribute a Version does not hold yet: the
+        # release of one built by :meth:`from_wire`, which is the canonical
+        # text's leading dotted numbers.
+        if name != "release":
+            raise AttributeError(name)
+        text = self.public.partition("!")[2] or self.public
+        end = 0
+        while end < len(text) and (text[end].isdigit() or text[end] == "."):
+            end += 1
+        release = tuple(map(int, text[:end].rstrip(".").split(".")))
+        self.__dict__["release"] = release
+        return release
 
 
 def version_of(value: Version | str) -> Version | None:
