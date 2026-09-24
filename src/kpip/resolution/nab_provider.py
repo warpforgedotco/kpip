@@ -270,6 +270,24 @@ class NabProvider:
             ):
                 prefetch(catalog_requirements)
 
+    def _prefetch_preferred_catalogs(self) -> None:
+        """Start the page of every package the previous lock holds, at once.
+
+        Without this the resolve reaches each page a dependency level at a
+        time: a package's dependencies are known only once its own metadata
+        is, so an hour-old jupyter lock revalidated its 99 pages in 35
+        rounds. The previous lock names nearly every package this one will
+        read, so their pages can all be asked for in the first round.
+        """
+        if not self._preferences or not isinstance(self.provider, CandidateProvider):
+            return
+
+        self.provider.preferred_versions = self._preferences
+        self.provider.prefetch_available_versions(
+            tuple(parse_requirement(name) for name in self._preferences),
+            lookahead=True,
+        )
+
     def _versions(self, package: str) -> tuple[Version, ...]:
         requirement = self.requirements[package]
         memo = self._version_memo.get(package)
@@ -2101,6 +2119,7 @@ class NabProvider:
             return {package: Range.empty()}
 
         self._prefetch_available_versions(tuple(merged))
+        self._prefetch_preferred_catalogs()
         roots: dict[str, Range[Version]] = {}
         for requirement in merged:
             package, requirement_range = self.add_root(requirement)
