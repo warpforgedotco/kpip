@@ -47,6 +47,9 @@ RELATION_GATE_WINDOW = 4_096
 RELATION_GATE_MIN_HITS = 1_024
 RELATION_GATE_RECHECK = 65_536
 
+# Marks a package absent from the solution's effective-range cache.
+_MISSING = object()
+
 # Upper bound on the address-keyed token memo, cleared on overflow together
 # with the range objects it holds alive.  A larger cap wipes less often and so
 # holds on to more ranges, which costs peak memory.
@@ -113,16 +116,27 @@ def _unit_propagation_core(
     contradicted_at = resolver.clause_contradicted_at
     solution = resolver.solution
     solution_get = solution.get
+    # The cache ``solution.get`` answers from first; it is cleared per package
+    # in place, never rebound, so reading it here skips a call on each hit.
+    effective_get = solution._effective_range_cache.get  # noqa: SLF001
     has_positive_constraint = solution.has_positive_constraint
     derive = solution.derive
     incompatibilities = resolver.incompatibilities
     stats = resolver.stats
     observer = resolver.observer
     cache = resolver.relation_cache
+    cache_get = cache.get
     # Cleared in place on overflow, never rebound, so the hoist is sound.
     id_tokens = resolver.range_token_by_id
-    satisfied = SetRelation.SATISFIED
-    contradicted = SetRelation.CONTRADICTED
+    id_tokens_get = id_tokens.get
+    satisfied = _SATISFIED_REL
+    contradicted = _CONTRADICTED_REL
+    undetermined = _UNDETERMINED_REL
+    # The memo gate's state lives in locals while the loop runs, and goes back
+    # to the resolver before each resample and on return.
+    cache_on = resolver.relation_cache_on
+    gate_hits = resolver.relation_gate_hits
+    probes_left = resolver.relation_gate_probes_left
 
     while propagation_queue:
         package = propagation_queue.popleft()
@@ -194,7 +208,9 @@ def _unit_propagation_core(
             undetermined_assignment: RangeProtocol[Any] | None = None
             conflict = True
             for term in incompatibility.terms:
-                assignment = solution_get(term.package)
+                assignment = effective_get(term.package, _MISSING)
+                if assignment is _MISSING:
+                    assignment = solution_get(term.package)
                 if assignment is None:
                     relation = None
                 else:
@@ -203,11 +219,11 @@ def _unit_propagation_core(
 
                     key = None
                     relation = None
-                    if resolver.relation_cache_on:
-                        assignment_token = id_tokens.get(id(assignment))
+                    if cache_on:
+                        assignment_token = id_tokens_get(id(assignment))
                         if assignment_token is None:
                             assignment_token = _intern_range(resolver, assignment)
-                        constraint_token = id_tokens.get(id(constraint))
+                        constraint_token = id_tokens_get(id(constraint))
                         if constraint_token is None:
                             constraint_token = _intern_range(resolver, constraint)
                         # Packed int key; see resolver.relation_cache.  Tokens
@@ -217,7 +233,7 @@ def _unit_propagation_core(
                             | (constraint_token << 1)
                             | positive
                         )
-                        relation = cache.get(key)
+                        relation = cache_get(key)
 
                     if relation is None:
                         range_relation = assignment.relation(constraint)
@@ -230,7 +246,7 @@ def _unit_propagation_core(
                                 else (
                                     contradicted
                                     if disjoint
-                                    else SetRelation.UNDETERMINED
+                                    else undetermined
                                 )
                             )
                         else:
@@ -238,19 +254,23 @@ def _unit_propagation_core(
                                 satisfied
                                 if disjoint
                                 else (
-                                    contradicted if subset else SetRelation.UNDETERMINED
+                                    contradicted if subset else undetermined
                                 )
                             )
-                        probes_left = resolver.relation_gate_probes_left - 1
-                        resolver.relation_gate_probes_left = probes_left
+                        probes_left -= 1
                         if key is not None:
                             if len(cache) >= RELATION_CACHE_MAX:
                                 cache.clear()
                             cache[key] = relation
-                        if probes_left <= resolver.relation_gate_hits:
+                        if probes_left <= gate_hits:
+                            resolver.relation_gate_hits = gate_hits
+                            resolver.relation_gate_probes_left = probes_left
                             _resample_relation_gate(resolver)
+                            cache_on = resolver.relation_cache_on
+                            gate_hits = resolver.relation_gate_hits
+                            probes_left = resolver.relation_gate_probes_left
                     else:
-                        resolver.relation_gate_hits += 1
+                        gate_hits += 1
 
                     if (
                         (positive and relation is satisfied)
@@ -274,6 +294,8 @@ def _unit_propagation_core(
 
             if undetermined_term is None:
                 if conflict:
+                    resolver.relation_gate_hits = gate_hits
+                    resolver.relation_gate_probes_left = probes_left
                     return incompatibility
                 continue
 
@@ -302,6 +324,8 @@ def _unit_propagation_core(
                     propagation_queue.append(negated_package)
                     in_queue.add(negated_package)
 
+    resolver.relation_gate_hits = gate_hits
+    resolver.relation_gate_probes_left = probes_left
     return None
 
 

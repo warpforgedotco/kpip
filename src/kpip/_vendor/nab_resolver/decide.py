@@ -55,7 +55,10 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     tiebreak_cache = resolver.tiebreak_cache
     root_order = resolver.root_package_order
 
-    def sort_key(package: Any) -> tuple[Any, ...]:
+    # Unannotated on purpose: this closure is created on every scan, and a
+    # compiler that builds an annotations object per definition would pay for
+    # it each time.
+    def sort_key(package):
         priority = prioritize(
             package,
             get_range(package) or any_range,

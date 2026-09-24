@@ -235,25 +235,27 @@ class NabProvider:
 
         prefetch = getattr(self.provider, "prefetch_available_versions", None)
         if prefetch is not None:
-            incoming_packages = {_key(requirement) for requirement in requirements}
+            keyed = [(_key(requirement), requirement) for requirement in requirements]
+            # Look up only the incoming packages rather than walking every
+            # requirement the resolver holds.
+            known = self.requirements
             direct_packages = {
                 package
-                for package, requirement in self.requirements.items()
-                if package in incoming_packages and requirement.url is not None
-            }
-            direct_packages.update(
-                _key(requirement)
-                for requirement in requirements
+                for package, requirement in keyed
                 if requirement.url is not None
-            )
+                or (
+                    (current := known.get(package)) is not None
+                    and current.url is not None
+                )
+            }
             catalog_requirements = tuple(
                 requirement
-                for requirement in requirements
+                for package, requirement in keyed
                 if requirement.url is None
-                and _key(requirement) not in direct_packages
+                and package not in direct_packages
                 and not any(
                     constraint.url is not None
-                    for constraint in self._constraint_for(_key(requirement))
+                    for constraint in self._constraint_for(package)
                 )
             )
             if catalog_requirements and (
@@ -440,17 +442,20 @@ class NabProvider:
                 version for version in matching if version in constrained_versions
             ]
         if constraints:
-            matching = [
-                version
-                for version in matching
-                if all(
-                    constraint.specifier.contains(
-                        version,
-                        allow_prereleases=self.allow_prereleases,
-                    )
-                    for constraint in constraints
-                )
+            allow_prereleases = self.allow_prereleases
+            constraint_contains = [
+                constraint.specifier.contains for constraint in constraints
             ]
+            constrained = []
+            for version in matching:
+                for constraint_contain in constraint_contains:
+                    if not constraint_contain(
+                        version, allow_prereleases=allow_prereleases
+                    ):
+                        break
+                else:
+                    constrained.append(version)
+            matching = constrained
         if not matching:
             return None
         installed = self._installed_candidate(package)
@@ -1534,12 +1539,11 @@ class NabProvider:
             self._dependency_cache[cache_key] = result
             return result
         while True:
+            # The requirement changes only between passes of this loop.
+            extras = self.requirements[package].extras
             normalized_dependencies = []
             for dependency in record_dependencies:
-                if not marker_applies(
-                    dependency.marker,
-                    extras=self.requirements[package].extras,
-                ):
+                if not marker_applies(dependency.marker, extras=extras):
                     continue
                 if dependency.name.startswith(("file://", "http://", "https://")):
                     name = urlsplit(dependency.name).path.rstrip("/").rsplit("/", 1)[-1]
@@ -1751,21 +1755,27 @@ class NabProvider:
         ):
             return memo[2]
         window = self._bounded_versions(dependency_key, allowed, dependency.specifier)
+        contains = dependency.specifier.contains
         if dependency_constraints:
-            selected = [
-                candidate
-                for candidate in window
-                if dependency.specifier.contains(candidate, allow_prereleases=True)
-                and all(
-                    constraint.specifier.contains(candidate, allow_prereleases=True)
-                    for constraint in dependency_constraints
-                )
+            # A loop rather than ``all()`` over a generator, which would build
+            # a generator for every release in the window.
+            constraint_contains = [
+                constraint.specifier.contains for constraint in dependency_constraints
             ]
+            selected = []
+            for candidate in window:
+                if not contains(candidate, allow_prereleases=True):
+                    continue
+                for constraint_contain in constraint_contains:
+                    if not constraint_contain(candidate, allow_prereleases=True):
+                        break
+                else:
+                    selected.append(candidate)
         else:
             selected = [
                 candidate
                 for candidate in window
-                if dependency.specifier.contains(candidate, allow_prereleases=True)
+                if contains(candidate, allow_prereleases=True)
             ]
         dependency_range = self._finite_range(selected)
         self._dependency_range_memo[memo_key] = (

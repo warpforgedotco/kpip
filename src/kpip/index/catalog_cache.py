@@ -531,12 +531,17 @@ def encode_checked_payload(header: bytes, payload: object) -> bytes:
     return header + hashlib.sha256(body).digest() + body
 
 
+_SHA256_SIZE = 32
+
+
 def decode_checked_payload(raw: bytes, header: bytes) -> object | None:
     digest_start = len(header)
-    body_start = digest_start + hashlib.sha256().digest_size
+    body_start = digest_start + _SHA256_SIZE
     if len(raw) < body_start:
         return None
-    body = raw[body_start:]
+    # A view, not a copy: hashing and unmarshalling both read buffers, and a
+    # catalog summary runs to hundreds of kilobytes.
+    body = memoryview(raw)[body_start:]
     if raw[digest_start:body_start] != hashlib.sha256(body).digest():
         return None
     try:
