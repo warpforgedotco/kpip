@@ -70,6 +70,22 @@ def test_windows_ships_the_launchers() -> None:
     )
 
 
+@pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
+def test_lto_does_not_depend_on_the_module_count(platform: str) -> None:
+    command = nuitka_command(BuildOptions(platform=platform), "1")
+
+    assert "--lto=yes" in command
+
+
+def test_extra_arguments_can_override_lto() -> None:
+    """Nuitka takes the last value, so ``-- --lto=no`` still works."""
+    command = nuitka_command(
+        BuildOptions(platform="linux", extra_args=("--lto=no",)), "1"
+    )
+
+    assert command.index("--lto=no") > command.index("--lto=yes")
+
+
 def test_extra_arguments_precede_the_target() -> None:
     command = nuitka_command(
         BuildOptions(platform="linux", extra_args=("--report=r.xml",)), "1"
