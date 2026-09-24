@@ -331,6 +331,30 @@ class SimpleIndexSource:
 
         return None
 
+    def refresh_page(self, project_url: str) -> None:
+        """Bring one cached project page up to date.
+
+        A conditional request, so an unchanged page costs a 304; a changed
+        one is compiled again exactly as a fetch during resolution would, so
+        no summary or link list outlives the page it came from.
+        """
+
+        if self.session is None or not project_url.startswith(("http://", "https://")):
+            return
+
+        parser = IndexPageParser(
+            trusted_hosts=self.trusted_hosts,
+            session=self.session,
+        )
+
+        content = parser.read(project_url)
+
+        if content.from_cache:
+            return
+
+        if parser.summary_from_content(content, project_url) is None:
+            parser.links_from_content(content, project_url)
+
     def has_fresh_cached_page(self, requirement: Requirement) -> bool:
         """Return whether catalog discovery can avoid remote I/O."""
 
@@ -364,3 +388,31 @@ def looks_like_path_requirement(value: str) -> bool:
         or (os.altsep is not None and os.altsep in value)
         or bool(ntpath.splitdrive(value)[0])
     )
+
+
+REFRESH_WORKERS = 32
+"""Pages revalidated at once; the same width the catalog prefetch uses."""
+
+
+def refresh_pages(source: SimpleIndexSource, project_urls: list[str]) -> None:
+    """Revalidate every page together rather than one dependency level at a time.
+
+    Failures are left for resolution to meet again, where they are reported
+    in context.
+    """
+
+    if not project_urls:
+        return
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def refresh(project_url: str) -> None:
+        try:
+            source.refresh_page(project_url)
+        except Exception:  # noqa: BLE001 -- resolution reports it properly
+            pass
+
+    with ThreadPoolExecutor(
+        max_workers=min(REFRESH_WORKERS, len(project_urls))
+    ) as pool:
+        list(pool.map(refresh, project_urls))

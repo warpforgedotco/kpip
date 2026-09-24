@@ -314,5 +314,22 @@ def page_state(http_cache: MetadataCache, pages: Iterable[PageValidators]) -> st
     return state
 
 
+def stale_pages(
+    http_cache: MetadataCache, pages: Iterable[PageValidators]
+) -> list[str]:
+    """The recorded pages that must be asked about again before a replay."""
+
+    now = time.time()
+    stale = []
+
+    for url, _, _ in pages:
+        values = _page_metadata(http_cache, url)
+
+        if values is None or not metadata_is_fresh(values, now):
+            stale.append(url)
+
+    return stale
+
+
 def open_http_cache(cache_dir: str) -> CacheMetadataReader:
     return CacheMetadataReader(http_cache_path(cache_dir))
