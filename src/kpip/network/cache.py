@@ -278,6 +278,21 @@ class SafeFileCache:
         """Write a self-contained entry that needs no companion body file."""
         self.write_internal(self.get_cache_path(key) + ".atomic", value)
 
+    def patch_atomic(self, key: str, prefix: bytes, offset: int, data: bytes) -> None:
+        """Overwrite ``data`` at ``offset`` of an atomic entry starting with ``prefix``.
+
+        In place, without the rewrite and rename of ``set_atomic``: for a
+        few bytes the entry keeps outside its checksum and validates on its
+        own. An entry that is absent, or is not ``prefix``'s kind, is left
+        alone.
+        """
+        path = self.get_cache_path(key) + ".atomic"
+        with suppressed_cache_errors():
+            with open(path, "r+b", buffering=0) as file:
+                if file.read(len(prefix)) == prefix:
+                    file.seek(offset)
+                    file.write(data)
+
     def delete(self, key: str) -> None:
         path = self.get_cache_path(key)
         with suppressed_cache_errors():

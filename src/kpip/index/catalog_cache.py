@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from kpip.core.utils import versioned_bucket
 
+import binascii
 import hashlib
 import marshal
+import struct
 import threading
 import urllib.parse
 
+from kpip.core.expiry import expiry_is_fresh
 from kpip.core.versions import Version
 from kpip.core.wheel import WheelFile, WheelTag, parse_wheel_file, wheel_tag
 from kpip.index.dates import parse_iso_datetime
@@ -26,11 +29,24 @@ if TYPE_CHECKING:
 # puts every catalog blob behind a digest, so a store written by an earlier
 # kpip is a different bucket rather than a payload this one would misread.
 PREFIX = f"{versioned_bucket('kpip-index-catalog', 3)}:"
-SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 3)}:"
+# Version 4 records the freshness of the page a summary came from.
+SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 4)}:"
 CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 3)}:"
 CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 3).encode() + b"\0"
-SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 3).encode() + b"\0"
+SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 4).encode() + b"\0"
 CHOICE_HEADER = versioned_bucket("kpip-index-choice", 3).encode() + b"\0"
+
+_SUMMARY_FRESHNESS = struct.Struct("<ddI")
+"""When the summary's page expires and was stored, and a CRC-32 of the two.
+
+It follows the header, outside the payload's digest, so a revalidation can
+update it in place.  The CRC tells a block written whole from one that is
+torn or was never written, which reads as unknown.
+"""
+
+_SUMMARY_FRESHNESS_END = len(SUMMARY_HEADER) + _SUMMARY_FRESHNESS.size
+
+_UNKNOWN_FRESHNESS = bytes(_SUMMARY_FRESHNESS.size)
 
 WHEEL_RECORD = 1
 SDIST_RECORD = 2
@@ -273,7 +289,25 @@ def load_summary(cache: Any, url: str) -> CatalogSummary | None:
     """Load the release-only resolver view, compiling it locally if needed."""
     if cache is None:
         return None
-    raw = cache.get_atomic(summary_key(url))
+    return load_summary_from(cache, url, read_summary(cache, url))
+
+
+def read_summary(cache: Any, url: str) -> bytes | None:
+    """The stored summary for ``url``, undecoded."""
+    return cache.get_atomic(summary_key(url))
+
+
+def load_summary_from(
+    cache: Any,
+    url: str,
+    raw: bytes | None,
+    freshness: tuple[float, float] | None = None,
+) -> CatalogSummary | None:
+    """:func:`load_summary` from the entry ``raw`` already read.
+
+    A summary compiled here because ``raw`` is missing or unusable records
+    ``freshness``, the page's, when the caller knows it.
+    """
     if raw is not None:
         summary = decode_summary(raw)
         if summary is not None:
@@ -293,14 +327,55 @@ def load_summary(cache: Any, url: str) -> CatalogSummary | None:
     if catalog_raw is None:
         return None
     generation = catalog_generation(catalog_raw)
-    save_summary(cache, url, catalog, generation)
+    save_summary(cache, url, catalog, generation, freshness)
     return summary_from_catalog(catalog, generation)
+
+
+def summary_freshness(raw: bytes) -> tuple[float, float] | None:
+    """The page freshness a stored summary records, or None if unknown."""
+    if not raw.startswith(SUMMARY_HEADER) or len(raw) < _SUMMARY_FRESHNESS_END:
+        return None
+    expires_at, stored_at, check = _SUMMARY_FRESHNESS.unpack_from(
+        raw, len(SUMMARY_HEADER)
+    )
+    if check != binascii.crc32(raw[len(SUMMARY_HEADER) : _SUMMARY_FRESHNESS_END - 4]):
+        return None
+    return expires_at, stored_at
+
+
+def summary_is_fresh(raw: bytes, now: float) -> bool:
+    """Whether the page behind a stored summary is still fresh at ``now``.
+
+    Recorded in the summary, so a resolve whose pages are all fresh reads one
+    file per project rather than the page's metadata and then the summary.
+    """
+    freshness = summary_freshness(raw)
+    return freshness is not None and expiry_is_fresh(*freshness, now)
+
+
+def record_summary_freshness(
+    cache: Any, url: str, freshness: tuple[float, float]
+) -> None:
+    """Record the page's freshness in its stored summary, in place."""
+    cache.patch_atomic(
+        summary_key(url),
+        SUMMARY_HEADER,
+        len(SUMMARY_HEADER),
+        _freshness_block(freshness),
+    )
+
+
+def _freshness_block(freshness: tuple[float, float] | None) -> bytes:
+    if freshness is None:
+        return _UNKNOWN_FRESHNESS
+    values = struct.pack("<dd", *freshness)
+    return values + binascii.crc32(values).to_bytes(4, "little")
 
 
 def decode_summary(raw: bytes) -> CatalogSummary | None:
     if not raw.startswith(SUMMARY_HEADER):
         return None
-    payload = decode_checked_payload(raw, SUMMARY_HEADER)
+    payload = _decode_checked(raw, _SUMMARY_FRESHNESS_END)
     if (
         not isinstance(payload, tuple)
         or len(payload) != 4
@@ -384,7 +459,8 @@ def embed_summary_choices(
     choices: CatalogChoices,
 ) -> None:
     """Co-locate the hot target profile with its generation-scoped summary."""
-    summary = load_summary(cache, url)
+    raw = read_summary(cache, url)
+    summary = load_summary_from(cache, url, raw)
     if summary is None or summary[0] != generation:
         return
     profile_key = target_key, allow_binary, allow_source
@@ -396,6 +472,7 @@ def embed_summary_choices(
         cache,
         url,
         (summary[0], summary[1], summary[2], profiles),
+        None if raw is None else summary_freshness(raw),
     )
 
 
@@ -509,18 +586,22 @@ def save_summary(
     url: str,
     catalog: CatalogData,
     generation: str,
+    freshness: tuple[float, float] | None = None,
 ) -> None:
     summary = summary_from_catalog(catalog, generation)
-    save_summary_value(cache, url, summary)
+    save_summary_value(cache, url, summary, freshness)
 
 
 def save_summary_value(
     cache: Any,
     url: str,
     summary: CatalogSummary,
+    freshness: tuple[float, float] | None = None,
 ) -> None:
     try:
-        payload = encode_checked_payload(SUMMARY_HEADER, summary)
+        payload = encode_checked_payload(
+            SUMMARY_HEADER + _freshness_block(freshness), summary
+        )
     except (TypeError, ValueError):
         return
     cache.set_atomic(summary_key(url), payload)
@@ -535,7 +616,10 @@ _SHA256_SIZE = 32
 
 
 def decode_checked_payload(raw: bytes, header: bytes) -> object | None:
-    digest_start = len(header)
+    return _decode_checked(raw, len(header))
+
+
+def _decode_checked(raw: bytes, digest_start: int) -> object | None:
     body_start = digest_start + _SHA256_SIZE
     if len(raw) < body_start:
         return None

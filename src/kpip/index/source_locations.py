@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import ntpath
 import os
+import time
 import urllib.parse
 from functools import lru_cache
 
 from kpip.core.packaging import Requirement, canonicalize_name
 from kpip.core.urls import WINDOWS, path_to_url, url_to_path
-from kpip.index.catalog_cache import load_summary
+from kpip.index.catalog_cache import (
+    load_summary,
+    load_summary_from,
+    read_summary,
+    record_summary_freshness,
+    summary_is_fresh,
+)
 from kpip.index.directory_index import (
     LocalSourceSnapshot,
     local_source_snapshot,
@@ -222,6 +229,7 @@ class SimpleIndexSource:
         "page_fetch_outcomes",
         "pages_read",
         "session",
+        "summaries_read",
         "trusted_hosts",
     )
 
@@ -243,6 +251,11 @@ class SimpleIndexSource:
         # of them changed (``cli/lock_replay.py``).  Recording a page the
         # resolve did not need only makes a replay less likely.
         self.pages_read: set[str] = set()
+
+        # Summaries read to answer whether their page is fresh, kept for the
+        # catalog load that follows so each is read from disk once; a missing
+        # summary is kept too, as ``(None,)``.
+        self.summaries_read: dict[str, tuple[bytes | None]] = {}
 
     def collect_links(self, requirement: Requirement) -> list[Link]:
         project_url = self.project_page_url(self.index_url, requirement.canonical_name)
@@ -283,7 +296,22 @@ class SimpleIndexSource:
         cache = getattr(self.session, "cache", None)
 
         if self.has_fresh_cached_page(requirement):
-            return load_summary(cache, project_url)
+            kept = self.summaries_read.pop(project_url, None)
+            if kept is not None:
+                raw = kept[0]
+            else:
+                raw = None if cache is None else read_summary(cache, project_url)
+
+            # The page's metadata vouched for it rather than the summary: note
+            # what it said in the summary, so the next run reads one file.
+            freshness = None
+            if raw is None or not summary_is_fresh(raw, time.time()):
+                freshness = self.fresh_page_expiry(project_url)
+
+            summary = load_summary_from(cache, project_url, raw, freshness)
+            if freshness is not None and raw is not None:
+                record_summary_freshness(cache, project_url, freshness)
+            return summary
 
         if not allow_fetch or not project_url.startswith(("http://", "https://")):
             return None
@@ -315,6 +343,8 @@ class SimpleIndexSource:
             summary = load_summary(cache, project_url)
 
             if summary is not None:
+                self.record_revalidation(project_url)
+
                 return summary
 
         # A JSON page compiles straight into the catalog and its summary, so
@@ -350,13 +380,21 @@ class SimpleIndexSource:
         content = parser.read(project_url)
 
         if content.from_cache:
+            self.record_revalidation(project_url)
+
             return
 
         if parser.summary_from_content(content, project_url) is None:
             parser.links_from_content(content, project_url)
 
     def has_fresh_cached_page(self, requirement: Requirement) -> bool:
-        """Return whether catalog discovery can avoid remote I/O."""
+        """Return whether catalog discovery can avoid remote I/O.
+
+        A summary records the freshness of the page it came from, so reading
+        it answers this and supplies the catalog load after it with one file
+        per project; the page's own metadata is consulted only when the
+        summary cannot vouch for it.
+        """
 
         if self.session is None:
             return False
@@ -365,11 +403,47 @@ class SimpleIndexSource:
 
         self.pages_read.add(project_url)
 
+        cache = getattr(self.session, "cache", None)
+
+        if cache is not None:
+            kept = self.summaries_read.get(project_url)
+            if kept is None:
+                kept = self.summaries_read[project_url] = (
+                    read_summary(cache, project_url),
+                )
+            raw = kept[0]
+            if raw is not None and summary_is_fresh(raw, time.time()):
+                return True
+
         return bool(
             getattr(self.session, "has_fresh_cached_response", lambda _: False)(
                 project_url,
             ),
         )
+
+    def fresh_page_expiry(self, project_url: str) -> tuple[float, float] | None:
+        """When a page the session has found fresh expires and was stored."""
+
+        expiry = getattr(self.session, "fresh_cached_expiry", None)
+
+        return None if expiry is None else expiry(project_url)
+
+    def record_revalidation(self, project_url: str) -> None:
+        """Carry a revalidated page's new freshness over to its summary."""
+
+        self.summaries_read.pop(project_url, None)
+
+        cache = getattr(self.session, "cache", None)
+
+        if cache is None or not getattr(
+            self.session, "has_fresh_cached_response", lambda _: False
+        )(project_url):
+            return
+
+        freshness = self.fresh_page_expiry(project_url)
+
+        if freshness is not None:
+            record_summary_freshness(cache, project_url, freshness)
 
     @staticmethod
     @lru_cache(maxsize=16384)

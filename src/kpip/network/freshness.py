@@ -6,6 +6,8 @@ import json
 import os
 import time
 
+from kpip.core.expiry import expiry_is_fresh
+
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
@@ -76,11 +78,6 @@ class CacheMetadataReader:
 
     def get(self, key: str) -> bytes | None:
         return read_cache_metadata(self.directory, key)
-
-
-# A stored entry claiming to come from further in the future than this has
-# seen the clock go backwards, and its expiry cannot be trusted either.
-_CLOCK_SKEW_TOLERANCE = 60.0
 
 
 def _cache_control_directives(headers: Any) -> dict[str, str | None]:
@@ -190,14 +187,13 @@ def metadata_is_fresh(values: Any, now: float) -> bool:
 
     stored_at = values.get("stored_at")
 
-    if stored_at is not None:
-        try:
-            if now < float(stored_at) - _CLOCK_SKEW_TOLERANCE:
-                return False
-        except (TypeError, ValueError):
-            return False
+    if stored_at is None:
+        return expires_at > now
 
-    return expires_at > now
+    try:
+        return expiry_is_fresh(expires_at, float(stored_at), now)
+    except (TypeError, ValueError):
+        return False
 
 
 def cached_response_is_fresh(
@@ -227,7 +223,7 @@ def cached_response_is_fresh(
     if remembered_entry is not None:
         expires_at, stored_at = remembered_entry
 
-        if expires_at > now and now >= stored_at - _CLOCK_SKEW_TOLERANCE:
+        if expiry_is_fresh(expires_at, stored_at, now):
             return True
 
         remembered.pop(url, None)
