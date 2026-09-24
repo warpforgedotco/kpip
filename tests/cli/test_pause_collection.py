@@ -49,6 +49,16 @@ def test_a_lock_runs_uncollected_and_gets_collection_back(seen: list[bool]) -> N
     assert gc.isenabled(), "main is importable; collection is interpreter-wide"
 
 
+def test_a_process_about_to_exit_keeps_collection_off(seen: list[bool]) -> None:
+    """Turning it back on would collect the whole heap just before the exit."""
+    gc.enable()
+
+    assert entrypoint.main(["lock"], keep_collection_paused=True) == 0
+
+    assert seen == [False]
+    assert not gc.isenabled()
+
+
 def test_other_commands_stay_collected(seen: list[bool]) -> None:
     gc.enable()
 
