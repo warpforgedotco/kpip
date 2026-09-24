@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import logging
 import os
 from pathlib import Path
@@ -40,6 +42,11 @@ from kpip.index.vcs import is_immutable_vcs_link, vcs_reference
 from kpip.network.cache import SafeFileCache
 from kpip_test_support.transport_mocks import make_response
 from ..wheel_helpers import make_sdist, make_wheel
+
+
+# What a stubbed catalog load hands the prefetch worker: a catalog listing
+# no releases.
+EMPTY_CATALOG = SimpleNamespace(summary_versions=())
 
 
 def test_yanked_policy_view_does_not_mutate_provider() -> None:
@@ -411,8 +418,8 @@ def test_exact_catalog_prefetch_starts_wheel_metadata(
     )
     monkeypatch.setattr(
         provider,
-        "load_available_versions",
-        lambda requirement, cache_key: (),
+        "load_catalog",
+        lambda requirement, cache_key: EMPTY_CATALOG,
     )
     monkeypatch.setattr(
         provider,
@@ -458,7 +465,7 @@ def test_catalog_prefetch_warms_the_preferred_release_rather_than_the_newest(
     )
     provider.preferred_versions = {"demo": Version("1.0")}
     monkeypatch.setattr(
-        provider, "load_available_versions", lambda requirement, cache_key: ()
+        provider, "load_catalog", lambda requirement, cache_key: EMPTY_CATALOG
     )
     monkeypatch.setattr(
         provider,
@@ -1523,8 +1530,8 @@ def test_catalog_prefetch_chains_to_the_dependencies_of_the_top_candidate(
     loaded: list[str] = []
     monkeypatch.setattr(
         provider,
-        "load_available_versions",
-        lambda requirement, cache_key: loaded.append(requirement.name) or (),
+        "load_catalog",
+        lambda requirement, cache_key: loaded.append(requirement.name) or EMPTY_CATALOG,
     )
     monkeypatch.setattr(
         provider,
@@ -2009,7 +2016,7 @@ def test_catalog_prefetch_evaluates_every_release_only_without_the_pinned_one(
     )
     evaluated: list[str] = []
     monkeypatch.setattr(
-        provider, "load_available_versions", lambda requirement, cache_key: ()
+        provider, "load_catalog", lambda requirement, cache_key: EMPTY_CATALOG
     )
     monkeypatch.setattr(
         provider,
