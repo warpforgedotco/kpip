@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import struct
 import threading
 from contextlib import contextmanager
 
 from kpip.core.utils import ensure_dir
+from kpip.network.freshness import (
+    COMBINED_MAGIC,
+    cache_entry_path,
+    read_cache_metadata,
+)
 from kpip.host.filesystem import replace, set_descriptor_permissions
 
 PRIVATE_MODE = 0o600
@@ -52,8 +56,6 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from typing import Any, BinaryIO
-
-COMBINED_MAGIC = b"kpip-http-cache:1\n"
 
 COMBINED_HEADER = struct.Struct(f"<{len(COMBINED_MAGIC)}sQ")
 
@@ -117,8 +119,7 @@ class SafeFileCache:
         HTTP cache bucket's version was bumped with this change, so an older
         cache is left where it is rather than mixed with.
         """
-        hashed = hashlib.sha224(name.encode()).hexdigest()
-        return os.path.join(self.directory, hashed[:2], hashed)
+        return cache_entry_path(self.directory, name)
 
     @staticmethod
     def read_combined_header(file: BinaryIO) -> int | None:
@@ -132,18 +133,7 @@ class SafeFileCache:
         return metadata_length
 
     def get(self, key: str) -> bytes | None:
-        metadata_path = self.get_cache_path(key)
-        with suppressed_cache_errors():
-            with open(metadata_path, "rb", buffering=0) as file:
-                head = file.read(COMBINED_HEADER.size)
-                if len(head) == COMBINED_HEADER.size:
-                    magic, metadata_length = COMBINED_HEADER.unpack(head)
-                    if magic == COMBINED_MAGIC:
-                        return file.read(metadata_length)
-                metadata = head + file.read()
-            os.stat(metadata_path + ".body")
-            return metadata
-        return None
+        return read_cache_metadata(self.directory, key)
 
     def get_atomic(self, key: str) -> bytes | None:
         """Read a self-contained entry written with one atomic replacement."""

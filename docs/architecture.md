@@ -188,6 +188,7 @@ has never written; the old one is inert until a purge.
 | `index/candidate_metadata_cache.py` | `candidate-metadata-v1.sqlite` | dependency metadata reused during resolution |
 | `index/release_facts_cache.py` | `release-facts-v1-<interp>.marshal` | deterministic release rejection reasons |
 | `cli/fast.py` | `fast-lock-plan-v2/` | rendered lock output, keyed on `core/code_identity.py` so an upgraded kpip never replays it |
+| `cli/lock_replay.py` | `lock-replay-v1/` | an index lock of hashed wheels, keyed on its inputs, interpreter and `code_identity`, with the ETag/Last-Modified of every project page it read; replayed only while each is unchanged and fresh |
 | `cli/fast_install.py` | `fast-install-v1-<interp>.marshal`, `fast-install-trees-v1-<interp>/` | fast-path plans, metadata, cloneable completed targets |
 | `install/wheel_archive_cache.py` | `archive-v1-<interp>/` | validated unpacked wheel trees by digest, and their byte-compiled `pyc/` sibling |
 | `install/wheel_install_plan_cache.py` | `resolution-v1-<interp>/` | short-lived exact-pin receipts over archive entries |

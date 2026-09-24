@@ -598,10 +598,16 @@ def run_freeze(args: list[str]) -> int | None:
 class LockOptions:
     __slots__ = (
         "cache_dir",
+        "constraint_files",
         "find_links",
+        "no_binary",
+        "no_build_isolation",
         "no_cache_dir",
         "no_index",
         "output",
+        "python_version",
+        "requirement_args",
+        "requirement_files",
         "requirements",
     )
 
@@ -614,34 +620,41 @@ class LockOptions:
         cache_dir: str | None = None,
         no_cache_dir: bool = False,
     ) -> None:
+        # Every requirement, with requirement files expanded in place.
         self.requirements = requirements
         self.find_links = find_links
         self.no_index = no_index
         self.output = output
         self.cache_dir = cache_dir
         self.no_cache_dir = no_cache_dir
+        # The command line as given, which is what a replayed lock keys on.
+        self.requirement_args: list[str] = []
+        self.requirement_files: list[str] = []
+        self.constraint_files: list[str] = []
+        self.no_binary: list[str] = []
+        self.no_build_isolation = False
+        self.python_version: str | None = None
 
 
 PlanCacheKey = tuple[object, ...]
 
 
 def parse_lock_arguments(args: list[str]) -> LockOptions | None:
-    requirements: list[str] = []
-    find_links: list[str] = []
-    no_index = False
-    output = "pylock.toml"
-    cache_dir: str | None = None
-    no_cache_dir = False
+    options = LockOptions([], [], False, "pylock.toml")
 
     index = 0
     while index < len(args):
         token = args[index]
         if token == "--no-index":
-            no_index = True
+            options.no_index = True
             index += 1
             continue
         if token == "--no-cache-dir":
-            no_cache_dir = True
+            options.no_cache_dir = True
+            index += 1
+            continue
+        if token == "--no-build-isolation":
+            options.no_build_isolation = True
             index += 1
             continue
         if token == "--quiet":
@@ -651,41 +664,61 @@ def parse_lock_arguments(args: list[str]) -> LockOptions | None:
         option = consume_option(
             args,
             index,
-            ("-f", "--find-links", "-r", "--requirement", "--output", "--cache-dir"),
+            (
+                "-f",
+                "--find-links",
+                "-r",
+                "--requirement",
+                "-c",
+                "--constraint",
+                "--output",
+                "--cache-dir",
+                "--no-binary",
+                "--python-version",
+            ),
         )
         if option is not None:
             name, value, index = option
             if name == "--cache-dir":
-                cache_dir = value
+                options.cache_dir = value
             elif name in ("-f", "--find-links"):
-                find_links.append(value)
+                options.find_links.append(value)
             elif name in ("-r", "--requirement"):
+                options.requirement_files.append(value)
                 if not extend_requirements(
-                    requirements,
+                    options.requirements,
                     value,
                     reject_pylock=True,
                 ):
                     return None
+            elif name in ("-c", "--constraint"):
+                options.constraint_files.append(value)
+            elif name == "--no-binary":
+                options.no_binary.append(value)
+            elif name == "--python-version":
+                options.python_version = value
             else:
-                output = value
+                options.output = value
             continue
 
         if token.startswith("-"):
             return None
         else:
-            requirements.append(token)
+            options.requirement_args.append(token)
+            options.requirements.append(token)
         index += 1
 
-    if any(";" in requirement for requirement in requirements):
+    if options.no_index and any(
+        ";" in requirement for requirement in options.requirements
+    ):
         # A marker means the answer depends on which interpreter the lock is
-        # for, which is a question this path has no machinery to ask. Handing
-        # it back costs one scan of the lines already in memory and gets the
-        # full command, which evaluates markers against the lock's target.
+        # for, which is a question the wheelhouse path has no machinery to
+        # ask. Handing it back costs one scan of the lines already in memory
+        # and gets the full command, which evaluates markers against the
+        # lock's target. A replayed index lock keys on that target instead.
         return None
 
-    return LockOptions(
-        requirements, find_links, no_index, output, cache_dir, no_cache_dir
-    )
+    return options
 
 
 def cache_digest(value: bytes) -> str:
@@ -779,9 +812,55 @@ def save_plan_cache(path: str | None, key: bytes | None, rendered: str) -> None:
         pass
 
 
+def replay_lock(options: LockOptions) -> int | None:
+    """Write the lock recorded last time, if nothing it depended on changed."""
+    root = command_cache_dir(options.cache_dir, options.no_cache_dir)
+    if root is None or options.find_links:
+        return None
+
+    from kpip.cli import lock_replay
+    from kpip.index.config import DEFAULT_INDEX_URL
+
+    key = lock_replay.replay_key(
+        requirements=options.requirement_args,
+        requirement_files=options.requirement_files,
+        constraint_files=options.constraint_files,
+        index_urls=(DEFAULT_INDEX_URL,),
+        no_binary=options.no_binary,
+        no_build_isolation=options.no_build_isolation,
+        python_version=options.python_version,
+    )
+    if key is None:
+        return None
+
+    record = lock_replay.load_record(root, key)
+    if record is None:
+        return None
+
+    http_cache = lock_replay.open_http_cache(root)
+    if lock_replay.page_state(http_cache, record.pages) != lock_replay.FRESH:
+        return None
+
+    write_lock_output(options.output, record.rendered)
+    return 0
+
+
 def run_lock(args: list[str]) -> int | None:
     options = parse_lock_arguments(args)
-    if options is None or not options.no_index or not options.requirements:
+    if options is None:
+        return None
+
+    if not options.no_index:
+        return replay_lock(options)
+
+    if (
+        not options.requirements
+        or options.constraint_files
+        or options.no_binary
+        or options.no_build_isolation
+        or options.python_version
+    ):
+        # The wheelhouse path answers none of these.
         return None
 
     cache_file = cache_path(options)
