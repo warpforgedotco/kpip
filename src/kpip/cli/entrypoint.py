@@ -589,10 +589,11 @@ def exit_without_teardown(status: int) -> NoReturn:
         sys.exit(status)
 
     import atexit
-    import threading
 
     # Private, but it is what interpreter shutdown calls: it joins non-daemon
-    # threads and runs the callbacks concurrent.futures registers there.
+    # threads and runs the callbacks concurrent.futures registers there. A
+    # command that never imported ``threading`` started no thread to wait for.
+    threading = sys.modules.get("threading")
     shutdown = getattr(threading, "_shutdown", None)
     if shutdown is not None:
         shutdown()

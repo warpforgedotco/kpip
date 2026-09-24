@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from types import ModuleType
-
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from types import ModuleType
 
     from kpip.cli.parser import ArgumentParser
 
