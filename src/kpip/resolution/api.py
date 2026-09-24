@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 
 from kpip.core import errors
 from kpip.core.metadata import installed_index
@@ -180,6 +180,59 @@ class ResolutionEngine:
             )
 
         return result
+
+    @staticmethod
+    def resolve_serving_stale_pages(
+        build: Callable[[], ResolutionEngine],
+        requirements: RequirementSet[InstallRequirement]
+        | Iterable[InstallRequirement]
+        | list[str],
+        *,
+        engines: list[ResolutionEngine] | None = None,
+    ) -> ResolutionResult:
+        """Resolve from stale index pages while they revalidate.
+
+        A stale page is otherwise revalidated only when the resolve reaches
+        it, a dependency level at a time: locking jupyter an hour after the
+        last lock waited on 35 rounds of 304s. Served from the cache, every
+        revalidation is in flight at once while the resolve runs ahead.
+
+        The answer is kept only if every page served stale comes back 304:
+        those are the pages a fresh resolve would have read. If one changed
+        or could not be checked, ``build`` makes a second engine and the
+        requirements are resolved again from fresh pages -- a failure too,
+        since a new release can make possible what stale pages did not.
+
+        The engine whose answer is returned, or whose error is raised, is
+        appended to ``engines`` for the caller to close.
+        """
+
+        for serve_stale in (True, False):
+            engine = build()
+            provider = engine.provider
+            serving = serve_stale and isinstance(provider, CandidateProvider)
+
+            if serving:
+                provider.serve_stale_pages()
+
+            try:
+                result = engine.resolve(requirements)
+
+            except Exception:
+                if not serving or provider.stale_pages_unchanged():
+                    if engines is not None:
+                        engines.append(engine)
+                    raise
+
+            else:
+                if not serving or provider.stale_pages_unchanged():
+                    if engines is not None:
+                        engines.append(engine)
+                    return result
+
+            engine.close()
+
+        raise AssertionError("the fresh resolve always answers")
 
     @staticmethod
     def resolve_wheelhouse(

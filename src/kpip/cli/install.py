@@ -1314,27 +1314,30 @@ def run_install(args: list[str]) -> int:
             try:
                 if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
                     print("Reporter.starting()")
-                plan = ResolutionEngine(
-                    provider=get_provider(),
-                    no_deps=execution.options.no_deps,
-                    upgrade=execution.options.upgrade,
-                    upgrade_strategy=execution.options.upgrade_strategy,
-                    ignore_installed=reinstall,
-                    constraints=execution.bundle.constraints,
-                    allow_prereleases=execution.options.pre,
-                    require_hashes=execution.bundle.require_hashes,
-                    compute_source_hashes=(
-                        bool(execution.options.report)
-                        or execution.bundle.require_hashes
-                        or bool(execution.bundle.requirement_hashes)
+                plan = ResolutionEngine.resolve_serving_stale_pages(
+                    lambda: ResolutionEngine(
+                        provider=get_provider(),
+                        no_deps=execution.options.no_deps,
+                        upgrade=execution.options.upgrade,
+                        upgrade_strategy=execution.options.upgrade_strategy,
+                        ignore_installed=reinstall,
+                        constraints=execution.bundle.constraints,
+                        allow_prereleases=execution.options.pre,
+                        require_hashes=execution.bundle.require_hashes,
+                        compute_source_hashes=(
+                            bool(execution.options.report)
+                            or execution.bundle.require_hashes
+                            or bool(execution.bundle.requirement_hashes)
+                        ),
+                        ignore_requires_python=execution.options.ignore_requires_python,
+                        python_version=(
+                            execution.python_version
+                            if execution.options.python_version
+                            else None
+                        ),
                     ),
-                    ignore_requires_python=execution.options.ignore_requires_python,
-                    python_version=(
-                        execution.python_version
-                        if execution.options.python_version
-                        else None
-                    ),
-                ).resolve(execution.requirements)
+                    execution.requirements,
+                )
 
             except (DistributionNotFound, ResolutionError) as exc:
                 if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
