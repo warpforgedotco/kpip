@@ -121,10 +121,14 @@ def test_declines_what_needs_the_normal_path(
     for args in (["-r", "req.txt"], ["--user"], ["-v"], ["--format=json"]):
         assert _fast(args) is None, args
 
+    # A version spelled as the parser renders it, pre-release or not, is
+    # answered; one the parser would respell is not.
     _dist(site / "first", "pre-1.0rc1.dist-info", "pre", "1.0rc1")
+    assert _fast([]) == _normal([])
+    _dist(site / "first", "respelled-1.0-rc2.dist-info", "respelled", "1.0-rc2")
     assert _fast([]) is None
-    (site / "first" / "pre-1.0rc1.dist-info" / "METADATA").unlink()
-    (site / "first" / "pre-1.0rc1.dist-info").rmdir()
+    (site / "first" / "respelled-1.0-rc2.dist-info" / "METADATA").unlink()
+    (site / "first" / "respelled-1.0-rc2.dist-info").rmdir()
     assert _fast([]) is not None
 
     _dist(site / "first", "bad_name-1.0.dist-info", "bad-name-", "1.0")

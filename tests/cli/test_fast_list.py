@@ -72,14 +72,18 @@ def test_json_string_matches_json_dumps(value: str) -> None:
         ("0", True),
         ("1.00", False),
         ("01.0", False),
-        ("1.0rc1", False),
-        ("1.0.post1", False),
-        ("1!1.0", False),
-        ("1.0+local", False),
+        ("1.0rc1", True),
+        ("1.0.post1", True),
+        ("2.9.0.post0", True),
+        ("1!1.0", True),
+        ("1.0+local", True),
+        ("1.0RC1", False),
+        ("1.0-post1", False),
+        ("not a version", False),
     ],
 )
-def test_canonical_release(value: str, canonical: bool) -> None:
-    assert fast.canonical_release(value) is canonical
+def test_canonical_version(value: str, canonical: bool) -> None:
+    assert fast.canonical_version(value) is canonical
 
 
 def test_every_format_matches_the_normal_path(
@@ -149,7 +153,12 @@ def test_declines_what_it_cannot_render_identically(
     ):
         assert _fast(args) is None, args
 
+    # A version spelled as the parser renders it, pre-release or not, is
+    # answered; one the parser would respell is not.
     _dist(site, "pre-1.0rc1.dist-info", "pre", "1.0rc1")
+    assert _fast(["--format=json"]) == _normal(["--format=json"])
+    assert _fast(["--format=freeze"]) == _normal(["--format=freeze"])
+    _dist(site, "respelled-1.0-rc2.dist-info", "respelled", "1.0-rc2")
     assert _fast([]) is not None
     assert _fast(["--format=json"]) is None
     assert _fast(["--format=freeze"]) is None
