@@ -102,9 +102,33 @@ class TestReplayKey:
         assert base == key_for(requirements)
         assert len({base, *variants}) == len(variants) + 1
 
-    def test_a_requirement_file_is_keyed_on_its_bytes(self, requirements: Path) -> None:
+    def test_a_requirement_file_is_keyed_on_its_requirements(
+        self, requirements: Path
+    ) -> None:
         before = key_for(requirements)
         requirements.write_text("demo>=2\n", encoding="utf-8")
+
+        assert key_for(requirements) != before
+
+    def test_comments_and_blank_lines_do_not_change_the_key(
+        self, requirements: Path
+    ) -> None:
+        before = key_for(requirements)
+        requirements.write_text(
+            "# regenerated\n\n  demo>=1\n# a comment\n\nother; python_version >= '3'\n",
+            encoding="utf-8",
+        )
+
+        assert key_for(requirements) == before
+
+    def test_the_order_of_requirements_changes_the_key(
+        self, requirements: Path
+    ) -> None:
+        """Root order breaks ties in the resolve, so it is part of the answer."""
+        before = key_for(requirements)
+        requirements.write_text(
+            "other; python_version >= '3'\ndemo>=1\n", encoding="utf-8"
+        )
 
         assert key_for(requirements) != before
 

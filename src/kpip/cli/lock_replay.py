@@ -76,7 +76,12 @@ def _plain_requirement(value: str) -> bool:
 
 
 def _simple_requirement_file(path: str) -> bytes | None:
-    """The file's bytes, if it only lists requirements; options mean no replay."""
+    """The file's requirement lines, if it only lists requirements.
+
+    Options mean no replay. Comments and blank lines are left out, so a
+    lock whose file changed only in those still replays; the requirements
+    keep their order, which breaks ties in the resolve.
+    """
 
     if os.path.basename(path).startswith("pylock") and path.endswith(".toml"):
         return None
@@ -92,22 +97,25 @@ def _simple_requirement_file(path: str) -> bytes | None:
     except UnicodeDecodeError:
         return None
 
+    requirements = []
+
     for line in lines:
         text = line.strip()
 
         # Options (-r, -c, -e, --index-url...) and continuations change what
-        # the file means beyond its own bytes.
+        # the file means beyond its own lines.
         if text.startswith("-") or text.endswith("\\"):
             return None
 
-        if (
-            text
-            and not text.startswith("#")
-            and not _plain_requirement(text.split(";")[0].strip())
-        ):
+        if not text or text.startswith("#"):
+            continue
+
+        if not _plain_requirement(text.split(";")[0].strip()):
             return None
 
-    return content
+        requirements.append(text)
+
+    return "\n".join(requirements).encode("utf-8")
 
 
 def _environment() -> tuple[object, ...]:
