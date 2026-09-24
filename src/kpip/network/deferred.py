@@ -72,7 +72,7 @@ class DeferredNetworkSession:
 
         self.page_cache_internal: Any = None
 
-        self.page_expiry_internal: dict[str, float | None] = {}
+        self.page_expiry_internal: dict[str, float] = {}
 
         self.lock = threading.Lock()
 

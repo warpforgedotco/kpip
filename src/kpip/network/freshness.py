@@ -20,10 +20,106 @@ class _MissingCacheExpiry(enum.Enum):
 
 MISSING_CACHE_EXPIRY = _MissingCacheExpiry.TOKEN
 
+# A stored entry claiming to come from further in the future than this has
+# seen the clock go backwards, and its expiry cannot be trusted either.
+_CLOCK_SKEW_TOLERANCE = 60.0
+
+
+def _cache_control_directives(headers: Any) -> dict[str, str | None]:
+    directives: dict[str, str | None] = {}
+
+    for part in (headers.get("Cache-Control") or "").split(","):
+        name, _, value = part.strip().partition("=")
+
+        if name:
+            directives[name.lower()] = value.strip().strip('"') if value else None
+
+    return directives
+
+
+def _age(headers: Any) -> int:
+    try:
+        return max(0, int(headers.get("Age") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def freshness_deadline(headers: Any, now: float) -> float | None:
+    """When a response received at ``now`` stops being fresh; None if it must not be stored.
+
+    RFC 9111 for a private cache: ``max-age``, else ``Expires`` measured
+    against the response's own ``Date`` so a skewed clock on either side
+    cancels out, both less the time the response already spent in shared
+    caches (``Age``). Without either, or with ``no-cache``, the response is
+    stored but stale at once: the next use revalidates it, which costs a 304
+    when it has a validator. There is no heuristic freshness, so an index
+    that sends no caching headers is never answered from a stale page.
+    """
+
+    directives = _cache_control_directives(headers)
+
+    if "no-store" in directives:
+        return None
+
+    if "no-cache" in directives and directives["no-cache"] is None:
+        return now
+
+    if "max-age" in directives:
+        try:
+            max_age = int(directives["max-age"] or "")
+        except ValueError:
+            return now
+
+        return now + max(0, max_age - _age(headers))
+
+    expires = headers.get("Expires")
+
+    if expires:
+        import email.utils
+
+        try:
+            expires_at = email.utils.parsedate_to_datetime(expires).timestamp()
+        except (TypeError, ValueError, OverflowError, IndexError):
+            return now
+
+        reference = now
+        date = headers.get("Date")
+
+        if date:
+            try:
+                reference = email.utils.parsedate_to_datetime(date).timestamp()
+            except (TypeError, ValueError, OverflowError, IndexError):
+                pass
+
+        return now + max(0.0, expires_at - reference - _age(headers))
+
+    return now
+
+
+def metadata_is_fresh(values: Any, now: float) -> bool:
+    """Whether stored cache metadata may still be served without asking the server."""
+
+    try:
+        expires_at = float(values["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        # Entries written before every response got a deadline have none.
+        return False
+
+    stored_at = values.get("stored_at")
+
+    if stored_at is not None:
+        try:
+            if now < float(stored_at) - _CLOCK_SKEW_TOLERANCE:
+                return False
+        except (TypeError, ValueError):
+            return False
+
+    return expires_at > now
+
 
 def cached_response_is_fresh(
     cache: Any,
-    remembered: dict[str, float | None],
+    remembered: dict[str, float],
     url: str,
 ) -> bool:
     """Check cache freshness without reading the cached response body.
@@ -39,10 +135,12 @@ def cached_response_is_fresh(
     if cache is None:
         return False
 
+    now = time.time()
+
     cached_expiry = remembered.get(url, MISSING_CACHE_EXPIRY)
 
     if cached_expiry is not MISSING_CACHE_EXPIRY:
-        if cached_expiry is None or cached_expiry > time.time():
+        if cached_expiry > now:
             return True
 
         remembered.pop(url, None)
@@ -54,17 +152,12 @@ def cached_response_is_fresh(
 
     try:
         values = json.loads(metadata)
-
-        expires_at = values.get("expires_at")
-
-        expires_at_value = None if expires_at is None else float(expires_at)
-
-        if expires_at_value is not None and expires_at_value <= time.time():
-            return False
-
-    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError):
         return False
 
-    remembered[url] = expires_at_value
+    if not isinstance(values, dict) or not metadata_is_fresh(values, now):
+        return False
+
+    remembered[url] = float(values["expires_at"])
 
     return True

@@ -27,7 +27,11 @@ from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.core.utils import current_version
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
-from kpip.network.freshness import cached_response_is_fresh
+from kpip.network.freshness import (
+    cached_response_is_fresh,
+    freshness_deadline,
+    metadata_is_fresh,
+)
 from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
@@ -338,7 +342,7 @@ class NetworkSession:
 
         self.no_range_requests_lock = threading.Lock()
 
-        self.fresh_cached_response_cache: dict[str, float | None] = {}
+        self.fresh_cached_response_cache: dict[str, float] = {}
 
         self.environ_proxies_cache: dict[tuple[str, int | None], dict[str, str]] = {}
 
@@ -430,7 +434,8 @@ class NetworkSession:
 
         cached_body: bytes | None = None
 
-        cacheable = method == "GET" and not stream
+        # Local files are read directly; a cached copy could only go stale.
+        cacheable = method == "GET" and not stream and not url.startswith("file:")
         if cacheable and headers is not None:
             cacheable = not any(str(name).lower() == "range" for name in headers)
 
@@ -548,7 +553,7 @@ class NetworkSession:
                 cached_body,
             )
 
-        if method == "GET" and not stream and response.status == 200:
+        if cacheable and response.status == 200:
             self.cache_response(response)
 
         return response
@@ -695,9 +700,7 @@ class NetworkSession:
         try:
             values = json.loads(metadata)
 
-            expires_at = values.get("expires_at")
-
-            if expires_at is not None and float(expires_at) <= time.time():
+            if not metadata_is_fresh(values, time.time()):
                 if not values.get("etag") and not values.get("last_modified"):
                     if body is not None:
                         body.close()
@@ -824,6 +827,8 @@ class NetworkSession:
 
             updated["expires_at"] = expires_at
 
+            updated["stored_at"] = time.time()
+
             updated["etag"] = etag
 
             updated["last_modified"] = last_modified
@@ -858,30 +863,7 @@ class NetworkSession:
     def cache_expiry(
         headers: Mapping[str, str] | email.message.Message | HTTPHeaderDict,
     ) -> float | None:
-        import email.utils
-
-        cache_control = headers.get("Cache-Control", "")
-
-        for directive in cache_control.split(","):
-            directive = directive.strip().lower()
-
-            if directive.startswith("max-age="):
-                try:
-                    return time.time() + max(0, int(directive[8:]))
-
-                except ValueError:
-                    break
-
-        expires = headers.get("Expires")
-
-        if expires:
-            try:
-                return email.utils.parsedate_to_datetime(expires).timestamp()
-
-            except (TypeError, ValueError, OverflowError):
-                pass
-
-        return None
+        return freshness_deadline(headers, time.time())
 
     def cache_response(self, response: HttpResponseProtocol) -> None:
         if self.cache is None:
@@ -900,7 +882,9 @@ class NetworkSession:
 
         body = response.data
 
-        expires_at = self.cache_expiry(response.headers)
+        stored_at = time.time()
+
+        expires_at = freshness_deadline(response.headers, stored_at)
 
         cached_headers = HTTPHeaderDict(response.headers)
         cached_headers.discard("Transfer-Encoding")
@@ -915,6 +899,7 @@ class NetworkSession:
                 "url": response.url,
                 "headers": dict(cached_headers.items()),
                 "expires_at": expires_at,
+                "stored_at": stored_at,
                 "etag": response.headers.get("ETag"),
                 "last_modified": response.headers.get("Last-Modified"),
             },
