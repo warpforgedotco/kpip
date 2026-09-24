@@ -50,6 +50,22 @@ console-script style launcher, pass `--kpip-launcher direct`:
 uv run kpip-bench --kpip-launcher direct --benchmark startup-help
 ```
 
+To measure a compiled kpip as well, build it with `scripts/compile` and pass
+the binary. It runs as its own `kpip-compiled` command beside `kpip` and `uv`:
+
+```console
+(cd ../compile && uv run kpip-compile build --mode standalone)
+uv run kpip-bench --kpip-compiled ../compile/build/kpip.dist/kpip.bin \
+  --benchmark lock-warm
+```
+
+A onefile build (`../compile/build/kpip`) works too. Its first run unpacks the
+payload, which hyperfine's warm-up runs absorb. `--compiled-only` leaves out
+the kpip launched from source, so the compiled binary is compared with uv
+alone. With `--json`, `meta.json` records the compiled build's version and
+embedded Python as `kpip_compiled_version`, and `kpip-bench-compare` warns
+when two runs used different builds.
+
 Startup-focused cases:
 
 ```console

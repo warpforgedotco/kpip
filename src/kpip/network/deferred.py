@@ -174,3 +174,9 @@ class DeferredNetworkSession:
             self.page_expiry_internal,
             url,
         )
+
+    def fresh_cached_expiry(self, url: str) -> tuple[float, float] | None:
+        """When ``url``'s cached response expires and was stored, once
+        :meth:`has_fresh_cached_response` has found it fresh."""
+
+        return self.page_expiry_internal.get(url)

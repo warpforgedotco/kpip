@@ -516,3 +516,75 @@ def test_the_setup_log_records_the_free_space(tmp_path: Path) -> None:
 
     assert run_chain(json.dumps(steps)) == 1
     assert "free space on" in log.read_text(encoding="utf-8")
+
+
+def test_a_compiled_kpip_is_measured_beside_kpip_and_uv(tmp_path: Path) -> None:
+    binary = str(tmp_path / "kpip-compiled-binary")
+    for benchmark in BENCHMARKS:
+        commands = build_commands(
+            benchmark,
+            workload="offline",
+            workspace=tmp_path / benchmark,
+            kpip_python=sys.executable,
+            kpip_console=None,
+            kpip_launcher="module",
+            uv_path="uv",
+            python=sys.executable,
+            kpip_compiled=binary,
+        )
+        tools = [command.name.split()[0] for command in commands]
+        assert tools == ["kpip", "kpip-compiled", "uv"], benchmark
+        compiled = commands[1]
+        assert compiled.command[0] == binary
+        assert compiled.command[1:] == commands[0].command[3:], benchmark
+        # One environment for the whole benchmark: they must agree on it.
+        example_run(*commands).environment()
+
+
+def test_compiled_only_leaves_out_the_source_kpip(tmp_path: Path) -> None:
+    commands = build_commands(
+        "lock-warm",
+        workload="offline",
+        workspace=tmp_path,
+        kpip_python=sys.executable,
+        kpip_console=None,
+        kpip_launcher="module",
+        uv_path="uv",
+        python=sys.executable,
+        kpip_compiled="kpip-binary",
+        compiled_only=True,
+    )
+
+    assert [command.name.split()[0] for command in commands] == [
+        "kpip-compiled",
+        "uv",
+    ]
+
+
+def test_compiled_only_needs_a_compiled_kpip(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="kpip_compiled"):
+        build_commands(
+            "lock-warm",
+            workload="offline",
+            workspace=tmp_path,
+            kpip_python=sys.executable,
+            kpip_console=None,
+            kpip_launcher="module",
+            uv_path="uv",
+            python=sys.executable,
+            compiled_only=True,
+        )
+
+
+def test_a_compiled_version_leaves_out_where_it_was_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kpip_benchmark import cli
+
+    monkeypatch.setattr(
+        cli,
+        "_version_of",
+        lambda binary: "kpip 0.0.1 from /tmp/build/kpip.dist/__init__.py (python 3.14)",
+    )
+
+    assert cli.compiled_version("kpip") == "kpip 0.0.1 (python 3.14)"

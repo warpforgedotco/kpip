@@ -758,6 +758,12 @@ class NetworkSession:
             url,
         )
 
+    def fresh_cached_expiry(self, url: str) -> tuple[float, float] | None:
+        """When ``url``'s cached response expires and was stored, once
+        :meth:`has_fresh_cached_response` has found it fresh."""
+
+        return self.fresh_cached_response_cache.get(url)
+
     def revalidated_response(
         self,
         url: str,

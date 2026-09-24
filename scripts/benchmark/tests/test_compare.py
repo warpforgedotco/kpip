@@ -111,3 +111,39 @@ def test_compare_reports_names_present_in_only_one_run(
 
     out = capsys.readouterr().out
     assert "install-cold" in out.rsplit("Skipped", 1)[-1]
+
+
+def test_compare_labels_a_compiled_kpip_and_checks_its_build(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    before, after = tmp_path / "before", tmp_path / "after"
+    for directory, mean, build in (
+        (before, 0.100, "kpip 0.0.1 (python 3.14)"),
+        (after, 0.090, "kpip 0.0.1 (python 3.13)"),
+    ):
+        directory.mkdir()
+        (directory / "lock-warm.json").write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "command": "kpip-compiled (offline/lock-warm)",
+                            "mean": mean,
+                            "stddev": 0.001,
+                        },
+                    ],
+                },
+            ),
+            encoding="utf-8",
+        )
+        write_meta(directory, python_version="Python 3.14.7")
+        meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+        meta["kpip_compiled_version"] = build
+        (directory / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert compare(before, after) == 0
+
+    captured = capsys.readouterr()
+    assert "kpip-compiled" in captured.out
+    assert "-10.0%" in captured.out
+    assert "kpip_compiled_version differs" in captured.err

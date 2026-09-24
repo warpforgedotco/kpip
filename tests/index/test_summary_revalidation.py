@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 from kpip.core.http_contracts import HttpResponse
 from kpip.core.packaging import parse_requirement
-from kpip.index.catalog_cache import cache_key, catalog_generation
+from kpip.core.expiry import expiry_is_fresh
+from kpip.index.catalog_cache import (
+    cache_key,
+    catalog_generation,
+    decode_summary,
+    embed_summary_choices,
+    save_summary_value,
+    summary_freshness,
+    summary_is_fresh,
+    summary_key,
+)
 from kpip.index.source_locations import SimpleIndexSource
 from kpip.network.exceptions import ConnectionFailedError
 from kpip.network.session import NetworkSession
@@ -222,3 +233,119 @@ def test_provider_stays_in_record_world_after_revalidation(tmp_path: Path) -> No
     assert constructed == ["https://files.invalid/demo-2.0-py3-none-any.whl"]
     assert session.transport_calls == 2
     provider.close()
+
+
+def _counting_reads(session: FakeIndexSession) -> list[str]:
+    """Record every atomic entry the session's cache reads."""
+    reads: list[str] = []
+    get_atomic = session.cache.get_atomic
+
+    def counted(key: str) -> bytes | None:
+        reads.append(key)
+        return get_atomic(key)
+
+    session.cache.get_atomic = counted
+    return reads
+
+
+def _page_metadata_forbidden(session: FakeIndexSession) -> None:
+    def forbidden(url: str) -> bool:
+        raise AssertionError(f"read the page metadata of {url}")
+
+    session.has_fresh_cached_response = forbidden
+
+
+def test_a_revalidated_summary_answers_alone_in_the_next_process(
+    tmp_path: Path,
+) -> None:
+    """One file per fresh page: the summary vouches for it and is the catalog."""
+    source, _session = primed_source(tmp_path)
+    assert source.collect_cached_catalog_summary(
+        parse_requirement("demo"), allow_fetch=True
+    )
+
+    later = FakeIndexSession(str(tmp_path / "http-cache"))
+    reads = _counting_reads(later)
+    _page_metadata_forbidden(later)
+    fresh_source = SimpleIndexSource(INDEX_URL, session=later)
+    requirement = parse_requirement("demo")
+
+    assert fresh_source.has_fresh_cached_page(requirement)
+    summary = fresh_source.collect_cached_catalog_summary(requirement)
+
+    assert summary is not None
+    assert [group[1] for group in summary[1]] == ["1.0", "2.0"]
+    assert reads == [summary_key(PROJECT_URL)]
+    assert later.transport_calls == 0
+
+
+def test_a_summary_learns_its_freshness_from_the_page(tmp_path: Path) -> None:
+    source, session = primed_source(tmp_path)
+    requirement = parse_requirement("demo")
+    summary = source.collect_cached_catalog_summary(requirement, allow_fetch=True)
+    assert summary is not None
+    # A summary written without it, as one compiled from its catalog is.
+    save_summary_value(session.cache, PROJECT_URL, summary)
+    raw = session.cache.get_atomic(summary_key(PROJECT_URL))
+    assert raw is not None
+    assert summary_freshness(raw) is None
+
+    second = SimpleIndexSource(
+        INDEX_URL, session=FakeIndexSession(str(tmp_path / "http-cache"))
+    )
+    assert second.has_fresh_cached_page(requirement)
+    assert second.collect_cached_catalog_summary(requirement) == summary
+
+    third_session = FakeIndexSession(str(tmp_path / "http-cache"))
+    _page_metadata_forbidden(third_session)
+    third = SimpleIndexSource(INDEX_URL, session=third_session)
+    assert third.has_fresh_cached_page(requirement)
+    assert third.collect_cached_catalog_summary(requirement) == summary
+
+
+def test_a_torn_freshness_block_reads_as_unknown(tmp_path: Path) -> None:
+    source, session = primed_source(tmp_path)
+    assert source.collect_cached_catalog_summary(
+        parse_requirement("demo"), allow_fetch=True
+    )
+    raw = session.cache.get_atomic(summary_key(PROJECT_URL))
+    assert raw is not None
+    assert summary_freshness(raw) is not None
+
+    offset = raw.index(b"\0") + 1
+    torn = raw[:offset] + bytes([raw[offset] ^ 0xFF]) + raw[offset + 1 :]
+
+    assert summary_freshness(torn) is None
+    assert not summary_is_fresh(torn, time.time())
+    assert decode_summary(torn) == decode_summary(raw)
+
+
+def test_embedding_choices_keeps_the_recorded_freshness(tmp_path: Path) -> None:
+    source, session = primed_source(tmp_path)
+    summary = source.collect_cached_catalog_summary(
+        parse_requirement("demo"), allow_fetch=True
+    )
+    assert summary is not None
+    before = session.cache.get_atomic(summary_key(PROJECT_URL))
+    assert before is not None
+
+    embed_summary_choices(
+        session.cache, PROJECT_URL, summary[0], "cp314", True, True, {}
+    )
+
+    after = session.cache.get_atomic(summary_key(PROJECT_URL))
+    assert after is not None
+    assert after != before
+    assert summary_freshness(after) == summary_freshness(before)
+
+
+@pytest.mark.parametrize(
+    "expires_in,stored_in,fresh",
+    [(600, 0, True), (-1, 0, False), (600, 30, True), (600, 3600, False)],
+)
+def test_freshness_distrusts_an_entry_from_the_future(
+    expires_in: float, stored_in: float, fresh: bool
+) -> None:
+    now = 1_000_000.0
+
+    assert expiry_is_fresh(now + expires_in, now + stored_in, now) is fresh
