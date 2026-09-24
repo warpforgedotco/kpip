@@ -1470,6 +1470,7 @@ def run_local_fallback(args: list[str]) -> int | None:
                 archive = prepare_cached_wheel(
                     candidate,
                     options.cache_dir,
+                    pycompile=False,
                 )
 
                 candidate.wheel_layout = archive

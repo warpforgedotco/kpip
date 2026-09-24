@@ -359,12 +359,24 @@ def copy_member_with_metadata(
     destination: str,
     *,
     metadata: tuple[str, str] | None = None,
+    creation_mode: int | None = None,
 ) -> tuple[str, str]:
+    """Write ``member`` to ``destination``; its RECORD hash and size.
+
+    ``creation_mode`` is the mode a new ``destination`` is created with,
+    before the umask, instead of ``open``'s 0o666.
+    """
     import hashlib
+
+    opener = (
+        None
+        if creation_mode is None
+        else lambda path, flags: os.open(path, flags, creation_mode)
+    )
 
     if member.file_size <= 1024 * 1024:
         contents = archive.read(member)
-        with open(destination, "wb") as target:
+        with open(destination, "wb", opener=opener) as target:
             target.write(contents)
         if metadata is not None:
             return metadata
@@ -374,7 +386,10 @@ def copy_member_with_metadata(
 
     digest = hashlib.sha256()
     size = 0
-    with archive.open(member) as source, open(destination, "wb") as target:
+    with (
+        archive.open(member) as source,
+        open(destination, "wb", opener=opener) as target,
+    ):
         while chunk := source.read(64 * 1024):
             target.write(chunk)
             if metadata is None:

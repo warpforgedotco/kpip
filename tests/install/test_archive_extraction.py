@@ -161,3 +161,52 @@ def test_default_worker_count_scales_and_can_be_overridden(
     for bad in ("0", "-2", "many", ""):
         monkeypatch.setenv("KPIP_CONCURRENCY", bad)
         assert default_worker_count() >= 1, f"{bad!r} should be ignored, not fatal"
+
+
+def test_byte_code_is_compiled_only_for_an_install_that_compiles(
+    tmp_path: Path,
+) -> None:
+    """A --no-compile fill skips byte code; the first compiling install adds it."""
+    wheel = _wheel_with(tmp_path, "demo", {"demo/__init__.py": "VALUE = 1\n"})
+    cache = tmp_path / "cache"
+
+    (archive,) = prepare_cached_wheels(
+        (_candidate(wheel),), str(cache), pycompile=False
+    )
+    pyc = Path(cache_module.pyc_root(os.path.dirname(archive.tree)))
+    assert not pyc.exists()
+
+    (again,) = prepare_cached_wheels((_candidate(wheel),), str(cache), pycompile=True)
+    assert again.tree == archive.tree
+    assert list(pyc.rglob("*.pyc"))
+
+
+def test_extracted_files_take_the_umask_and_keep_executable_bits(
+    tmp_path: Path,
+) -> None:
+    """As pip and uv install them: 0o666 or 0o777, under the umask."""
+    wheel = tmp_path / "modes-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, mode in (("modes/plain.py", 0o664), ("modes/tool.sh", 0o755)):
+            info = zipfile.ZipInfo(name)
+            info.external_attr = (0o100000 | mode) << 16
+            archive.writestr(info, "x\n")
+        archive.writestr(
+            "modes-1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: modes\nVersion: 1.0\n",
+        )
+        archive.writestr(
+            "modes-1.0.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr("modes-1.0.dist-info/RECORD", "")
+    umask = os.umask(0)
+    os.umask(umask)
+
+    (archive,) = prepare_cached_wheels(
+        (_candidate(wheel),), str(tmp_path / "cache"), pycompile=False
+    )
+    tree = Path(archive.tree)
+
+    assert (tree / "modes/plain.py").stat().st_mode & 0o777 == 0o666 & ~umask
+    assert (tree / "modes/tool.sh").stat().st_mode & 0o777 == 0o777 & ~umask
