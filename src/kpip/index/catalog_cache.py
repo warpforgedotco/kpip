@@ -29,11 +29,12 @@ if TYPE_CHECKING:
 # puts every catalog blob behind a digest, so a store written by an earlier
 # kpip is a different bucket rather than a payload this one would misread.
 PREFIX = f"{versioned_bucket('kpip-index-catalog', 3)}:"
-# Version 4 records the freshness of the page a summary came from.
-SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 4)}:"
+# Version 4 records the freshness of the page a summary came from, and 5
+# stores each version's key as the bytes a Version is.
+SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 5)}:"
 CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 3)}:"
 CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 3).encode() + b"\0"
-SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 4).encode() + b"\0"
+SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 5).encode() + b"\0"
 CHOICE_HEADER = versioned_bucket("kpip-index-choice", 3).encode() + b"\0"
 SUMMARY_SNAPSHOT = f"{versioned_bucket('kpip-index-summary', 4)}.snapshot"
 """The one file a lock's summaries are also stored in, beside the entries."""
