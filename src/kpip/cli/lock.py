@@ -679,46 +679,68 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         )
 
     if plan is None and requirements:
-        provider = CandidateProvider.from_options(
-            find_links=options.find_links,
-            no_index=options.no_index,
-            format_control=format_control,
-            build_isolation=not options.no_build_isolation,
-            wheel_cache_dir=cache_dir,
-            session=resolution_session,
-            dry_run=True,
-            target=(
-                TargetContext(
-                    python_version=tag_python_version(str(options.python_version)),
-                )
-                if options.python_version
-                else None
-            ),
-        )
+        # First from the cache as it stands, stale index pages included while
+        # they revalidate in the background; again from fresh pages only if
+        # one of them turns out to have changed.
+        for serve_stale in (True, False):
+            provider = CandidateProvider.from_options(
+                find_links=options.find_links,
+                no_index=options.no_index,
+                format_control=format_control,
+                build_isolation=not options.no_build_isolation,
+                wheel_cache_dir=cache_dir,
+                session=resolution_session,
+                dry_run=True,
+                target=(
+                    TargetContext(
+                        python_version=tag_python_version(str(options.python_version)),
+                    )
+                    if options.python_version
+                    else None
+                ),
+            )
 
-        install_requirements = [
-            item if not isinstance(item, str) else install_req_from_line(item)
-            for item in requirements
-        ]
+            if serve_stale:
+                provider.serve_stale_pages()
 
-        resolver = ResolutionEngine(
-            provider=provider,
-            no_deps=False,
-            ignore_installed=True,
-            constraints=constraints,
-            preferences=preferences,
-            python_version=(
-                normalize_python_version(str(options.python_version))
-                if options.python_version
-                else None
-            ),
-        )
+            install_requirements = [
+                item if not isinstance(item, str) else install_req_from_line(item)
+                for item in requirements
+            ]
 
-        # Closed by the caller rather than here: the candidates it produced
-        # are read below, and closing takes the prepared sources with it.
-        resolvers.append(resolver)
+            resolver = ResolutionEngine(
+                provider=provider,
+                no_deps=False,
+                ignore_installed=True,
+                constraints=constraints,
+                preferences=preferences,
+                python_version=(
+                    normalize_python_version(str(options.python_version))
+                    if options.python_version
+                    else None
+                ),
+            )
 
-        plan = resolver.resolve(install_requirements)
+            # Closed by the caller rather than here: the candidates it
+            # produced are read below, and closing takes the prepared sources
+            # with it.
+            resolvers.append(resolver)
+
+            try:
+                plan = resolver.resolve(install_requirements)
+
+            except Exception:
+                # A stale page can make a lock look impossible that a new
+                # release has since made possible.
+                if not serve_stale or provider.stale_pages_unchanged():
+                    raise
+
+            else:
+                if not serve_stale or provider.stale_pages_unchanged():
+                    break
+
+            resolvers.remove(resolver)
+            resolver.close()
 
     packages: list[dict] = [
         *editable_packages,
