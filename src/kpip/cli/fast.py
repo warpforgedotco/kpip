@@ -12,9 +12,8 @@ heavier CLI dependencies are imported only once their shape matches.
 
 from __future__ import annotations
 
-from kpip.core.utils import versioned_bucket
+from kpip.core.utils import key_bytes, versioned_bucket
 
-import marshal
 import os
 import sys
 
@@ -799,8 +798,7 @@ def cache_path(options: LockOptions, started_from: str) -> str | None:
         started_from,
     )
     try:
-        serialized = marshal.dumps(key)
-        digest = cache_digest(serialized)
+        digest = cache_digest(key_bytes(key))
     except (OSError, TypeError, ValueError):
         return None
     return os.path.join(root, FAST_LOCK_PLAN_BUCKET, f"{digest}.cache")
@@ -904,7 +902,7 @@ def run_lock(args: list[str]) -> int | None:
 
     started_from = previous_lock_digest(previous, options.upgrade_packages)
     cached_output = load_plan_cache(
-        cache_path(options, started_from), marshal.dumps(plan_key)
+        cache_path(options, started_from), key_bytes(plan_key)
     )
     if cached_output is not None:
         write_lock_output(options.output, cached_output)
@@ -954,7 +952,7 @@ def run_lock(args: list[str]) -> int | None:
     for start in starts:
         save_plan_cache(
             cache_path(options, start),
-            marshal.dumps((*plan_key[:-1], start)),
+            key_bytes((*plan_key[:-1], start)),
             rendered,
         )
     write_lock_output(options.output, rendered)
