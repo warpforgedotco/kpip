@@ -444,3 +444,28 @@ def test_bounds_are_never_compared_with_a_sentinel(seed: int) -> None:
         assert strict_left.relation(strict_right) == left.relation(right)
         for probe in range(-1, 10):
             assert (Strict(probe) in strict_left) == (probe in left)
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_select_sorted_matches_membership(seed: int) -> None:
+    """Bisected slices hold exactly the members a scan would find."""
+    rng = random.Random(seed)
+    values = sorted({rng.randint(0, 60) for _ in range(40)})
+    # A catalog repeats a release it lists both yanked and not.
+    ordered = sorted(values + rng.sample(values, 5))
+    candidates = [
+        Range.at_least(rng.choice(values)),
+        Range.less_than(rng.choice(values)),
+        Range.between(rng.choice(values), rng.choice(values)),
+        Range.from_versions(rng.sample(values, 12)),
+        Range.full(),
+        Range.empty(),
+    ]
+    for _ in range(20):
+        left, right = rng.sample(candidates, 2)
+        candidates.append(left | right if rng.random() < 0.5 else left & ~right)
+
+    for version_range in candidates:
+        assert version_range.select_sorted(ordered) == [
+            value for value in ordered if value in version_range
+        ]

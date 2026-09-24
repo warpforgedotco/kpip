@@ -232,13 +232,13 @@ def test_choose_version_only_checks_prerelease_policy_for_prereleases(
     provider.versions["dep"] = (stable, prerelease)
     adapter = NabProvider(provider, ResolutionConfig(ignore_installed=True))
     package, version_range = adapter.add_root(parse_requirement("dep"))
-    calls: list[tuple[str, Version]] = []
+    calls: list[str] = []
 
-    def deny(package: str, version: Version) -> bool:
-        calls.append((package, version))
+    def deny(package: str) -> bool:
+        calls.append(package)
         return False
 
-    monkeypatch.setattr(adapter, "_allows", deny)
+    monkeypatch.setattr(adapter, "_allows_prereleases", deny)
     monkeypatch.setattr(
         adapter,
         "_constraint_for",
@@ -246,7 +246,8 @@ def test_choose_version_only_checks_prerelease_policy_for_prereleases(
     )
 
     assert adapter.choose_version(package, version_range) == stable
-    assert calls == [("dep", prerelease)]
+    # Asked once for the package, because its catalog has a pre-release.
+    assert calls == ["dep"]
 
 
 def test_forward_check_only_checks_prerelease_policy_for_prereleases(

@@ -13,13 +13,14 @@ provider uses int; the Python provider uses packaging.version.Version.
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast
 
 from ._compat import override
 from .types import RangeRelation, VersionType
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
 # Bound once so the hot return paths load a module global instead of a class
 # attribute.
@@ -391,6 +392,40 @@ class Range(Generic[VersionType]):
         return not (
             version > upper or (not upper_inclusive and _same_bound(version, upper))
         )
+
+    def select_sorted(self, ordered: Sequence[VersionType]) -> list[VersionType]:
+        """The members of ``ordered``, in its order, which must be ascending.
+
+        Equal to ``[version for version in ordered if version in self]``,
+        but an interval is two bisections and a slice rather than a
+        membership test per version: a resolver asks this of a package's
+        whole catalog each time it chooses a version for it.
+        """
+        intervals = self._intervals
+        if not intervals:
+            return []
+        if len(intervals) >= _POINT_SET_MIN_INTERVALS:
+            points = self._as_points()
+            if points is not None:
+                return list(filter(points.__contains__, ordered))
+        selected: list[VersionType] = []
+        count = len(ordered)
+        for lower, lower_inclusive, upper, upper_inclusive in intervals:
+            if lower is NEGATIVE_INFINITY:
+                start = 0
+            elif lower_inclusive:
+                start = bisect_left(ordered, lower)
+            else:
+                start = bisect_right(ordered, lower)
+            if upper is POSITIVE_INFINITY:
+                stop = count
+            elif upper_inclusive:
+                stop = bisect_right(ordered, upper)
+            else:
+                stop = bisect_left(ordered, upper)
+            if start < stop:
+                selected.extend(ordered[start:stop])
+        return selected
 
     def __and__(self, other: object) -> Range[VersionType]:
         """Compute the intersection of two ranges (versions in both)."""

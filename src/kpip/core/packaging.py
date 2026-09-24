@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from bisect import bisect_left, bisect_right
 
 from kpip.core.caches import bounded_put, clear_all, memoized, register_table
 from kpip.core.names import canonicalize_name
@@ -11,7 +12,7 @@ from kpip.core.versions import FINAL_SUFFIX, InvalidVersion, Version, version_of
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
     from typing import Any
 
 
@@ -381,6 +382,90 @@ def _bounds_of(
     return lower, upper
 
 
+# Below every suffix a Version can have (its first element is at least -1),
+# so ``(epoch, release, _LOWEST_SUFFIX)`` sorts before each version of that
+# release.
+_LOWEST_SUFFIX = (-2,)
+
+
+def _clause_window(specifier: Specifier, ordered: Sequence[Version]) -> tuple[int, int]:
+    """A window of ``ordered`` holding every release ``specifier`` admits.
+
+    Conservative: it may hold a few the clause rejects at either edge, and
+    ``==V``/``<=V`` may admit V's local versions just past it, which
+    :func:`_clause_block` settles with the clause's own ``contains``.
+    """
+    parsed = specifier.parsed_version
+    assert parsed is not None
+    if specifier.is_wildcard:
+        epoch, _release, _suffix, _local = parsed
+        release = parsed.release
+        after = (*release[:-1], release[-1] + 1)
+        return (
+            bisect_left(ordered, (epoch, _trimmed(release), _LOWEST_SUFFIX)),
+            bisect_left(ordered, (epoch, _trimmed(after), _LOWEST_SUFFIX)),
+        )
+    lower, upper = _bounds_of((specifier,))
+    start = 0
+    stop = len(ordered)
+    if lower is not None:
+        bound, inclusive = lower
+        start = (bisect_left if inclusive else bisect_right)(ordered, bound)
+    if upper is not None:
+        bound, inclusive = upper
+        stop = (bisect_right if inclusive else bisect_left)(ordered, bound)
+    return start, max(start, stop)
+
+
+def _trimmed(release: tuple[int, ...]) -> tuple[int, ...]:
+    """A release without trailing zeros, as a Version stores it for sorting."""
+    while len(release) > 1 and release[-1] == 0:
+        release = release[:-1]
+    return release
+
+
+def _clause_block(specifier: Specifier, ordered: Sequence[Version]) -> tuple[int, int]:
+    """The one run of ``ordered`` an ``==``, ``~=``, ``<``, ``<=``, ``>``
+    or ``>=`` clause admits, as ``(start, stop)``.
+
+    Each admits a contiguous run of a sorted catalog: what ``>V`` excludes
+    beyond plain order are V's post-releases and local versions, which sort
+    right after V; what ``<V`` excludes are V's pre-releases, right before
+    it; ``==V`` is V and its local versions; a wildcard or ``~=`` is a
+    release prefix. So the window's edges are settled by asking ``contains``
+    of the few releases there, not of every release in it.
+    """
+    contains = specifier.contains
+    start, stop = _clause_window(specifier, ordered)
+    count = len(ordered)
+    while stop < count and contains(ordered[stop]):
+        stop += 1
+    while start > 0 and contains(ordered[start - 1]):
+        start -= 1
+    while start < stop and not contains(ordered[start]):
+        start += 1
+    while stop > start and not contains(ordered[stop - 1]):
+        stop -= 1
+    return start, stop
+
+
+def intersect_runs(
+    left: list[tuple[int, int]], right: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    result: list[tuple[int, int]] = []
+    index = other = 0
+    while index < len(left) and other < len(right):
+        start = max(left[index][0], right[other][0])
+        stop = min(left[index][1], right[other][1])
+        if start < stop:
+            result.append((start, stop))
+        if left[index][1] < right[other][1]:
+            index += 1
+        else:
+            other += 1
+    return result
+
+
 _CONTAINS_CACHE_SIZE = 4096
 
 _SPECIFIER_SET_CACHE_SIZE = 4096
@@ -613,6 +698,34 @@ class SpecifierSet:
 
         bounded_put(cache, key, result, _CONTAINS_CACHE_SIZE)
         return result
+
+    def select_indices(
+        self, ordered: Sequence[Version]
+    ) -> list[tuple[int, int]] | None:
+        """The runs of sorted ``ordered`` this set admits, pre-releases
+        included, as ``(start, stop)`` index pairs; ``None`` for a set with
+        an ``===`` clause, which compares spellings rather than order.
+
+        ``contains`` asked of every release in a window cost a resolve tens
+        of thousands of calls; each clause admits one run of a sorted
+        catalog (``!=`` all but one), found by bisection and settled at its
+        edges, so a set costs a few calls however many releases it spans.
+        Equal releases may repeat in ``ordered``; they stay together.
+        """
+        runs = [(0, len(ordered))]
+        for specifier in self.specifiers:
+            if specifier.parsed_version is None:
+                return None
+            if specifier.operator == "!=":
+                equal = Specifier("==", specifier.version)
+                start, stop = _clause_block(equal, ordered)
+                clause = [(0, start), (stop, len(ordered))]
+            else:
+                clause = [_clause_block(specifier, ordered)]
+            runs = intersect_runs(runs, clause)
+            if not runs:
+                break
+        return runs
 
     def __bool__(self) -> bool:
         return bool(self.specifiers)
