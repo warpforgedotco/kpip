@@ -8,6 +8,8 @@ on:
       - "src/**"
       - "scripts/compile/**"
       - "tools/vendoring/patches/nuitka/**"
+      # Decides the line endings the patches are checked out with.
+      - ".gitattributes"
       - ".github/workflows/compile.yml"
   schedule:
     # kpip-compile follows Nuitka's develop, which moves on its own; this

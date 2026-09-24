@@ -18,11 +18,11 @@ directory is private to the process.
 Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- nuitka/build/static_src/OnefileBootstrap.c | 92 ++++++++++++++++------
- 1 file changed, 66 insertions(+), 26 deletions(-)
+ nuitka/build/static_src/OnefileBootstrap.c | 98 ++++++++++++++++------
+ 1 file changed, 72 insertions(+), 26 deletions(-)
 
 diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
-index cef4be5ee..0bc12350d 100644
+index cef4be5ee..379b311a9 100644
 --- a/nuitka/build/static_src/OnefileBootstrap.c
 +++ b/nuitka/build/static_src/OnefileBootstrap.c
 @@ -455,6 +455,37 @@ static bool payload_created = false;
@@ -157,7 +157,7 @@ index cef4be5ee..0bc12350d 100644
              }
  
              writeContainedFile(target_file, file_size);
-@@ -1680,6 +1713,13 @@ int main(int argc, char **argv) {
+@@ -1680,6 +1713,19 @@ int main(int argc, char **argv) {
                  if (closeFile(target_file) == false) {
                      fatalErrorTempFiles();
                  }
@@ -165,7 +165,13 @@ index cef4be5ee..0bc12350d 100644
 +#if _NUITKA_ONEFILE_TEMP_BOOL == 0
 +                if (replaceFileAtomically(target_path_tmp, target_path) == false) {
 +                    deleteFile(target_path_tmp);
-+                    fatalErrorTempFileCreate(target_path);
++
++                    // A concurrent start may have put the same file in place and
++                    // already be running it, which on Windows prevents replacing
++                    // it. That is only an error if what is there is not the file.
++                    if (getFileCRC32(target_path) != contained_file_checksum) {
++                        fatalErrorTempFileCreate(target_path);
++                    }
 +                }
 +#endif
              }

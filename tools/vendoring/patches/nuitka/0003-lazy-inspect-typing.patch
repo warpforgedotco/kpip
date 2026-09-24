@@ -23,9 +23,9 @@ Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.githu
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
  nuitka/build/include/nuitka/helpers.h         |   3 +
- nuitka/build/static_src/InspectPatcher.c      | 281 +++++++++++-------
+ nuitka/build/static_src/InspectPatcher.c      | 284 +++++++++++-------
  nuitka/build/static_src/MetaPathBasedLoader.c |   4 +
- 3 files changed, 180 insertions(+), 108 deletions(-)
+ 3 files changed, 185 insertions(+), 106 deletions(-)
 
 diff --git a/nuitka/build/include/nuitka/helpers.h b/nuitka/build/include/nuitka/helpers.h
 index aeebbd78c..eb25d9517 100644
@@ -42,7 +42,7 @@ index aeebbd78c..eb25d9517 100644
  
  // Replace type comparison with one that accepts compiled types too, will work
 diff --git a/nuitka/build/static_src/InspectPatcher.c b/nuitka/build/static_src/InspectPatcher.c
-index cd37ac355..a5c2755eb 100644
+index cd37ac355..6c7f15cde 100644
 --- a/nuitka/build/static_src/InspectPatcher.c
 +++ b/nuitka/build/static_src/InspectPatcher.c
 @@ -253,9 +253,7 @@ static PyObject *Nuitka_typing_type_new(PyTypeObject *type, PyObject *args, PyOb
@@ -56,7 +56,7 @@ index cd37ac355..a5c2755eb 100644
      PyObject *typing_type = PyObject_GetAttrString(typing_module, attribute_name);
  
      CHECK_OBJECT(typing_type);
-@@ -277,45 +275,52 @@ static void patchTypingType(char const *attribute_name) {
+@@ -277,45 +275,55 @@ static void patchTypingType(char const *attribute_name) {
  }
  
  static void patchTypingModule(void) {
@@ -123,15 +123,17 @@ index cd37ac355..a5c2755eb 100644
 -    if (module_inspect == NULL) {
 -        PyErr_PrintEx(0);
 -        Py_Exit(1);
--    }
--    CHECK_OBJECT(module_inspect);
 +    return result;
 +}
 +
 +static bool inspect_module_patched = false;
 +
 +static void patchInspectModuleObject(PyThreadState *tstate, PyObject *module) {
-+    assert(inspect_module_patched == false);
++    // The loader may have patched it already, before startup asked for it.
++    if (inspect_module_patched) {
++        return;
+     }
+-    CHECK_OBJECT(module_inspect);
 +    inspect_module_patched = true;
 +
 +    module_inspect = module;
@@ -139,13 +141,12 @@ index cd37ac355..a5c2755eb 100644
  
      // Patch "inspect.getgeneratorstate" unless it is already patched.
      old_getgeneratorstate = PyObject_GetAttrString(module_inspect, "getgeneratorstate");
-@@ -339,107 +344,167 @@ void patchInspectModule(PyThreadState *tstate) {
+@@ -339,107 +347,171 @@ void patchInspectModule(PyThreadState *tstate) {
  
          PyObject_SetAttrString(module_inspect, "getcoroutinestate", inspect_getcoroutinestate_replacement);
      }
 +#endif
- 
--    module_types = IMPORT_MODULE5(tstate, const_str_plain_types, Py_None, Py_None, const_tuple_empty, const_int_0);
++
 +#if PYTHON_VERSION >= 0x3b0
 +    static char const *inspect_enhancement_code = "\n\
 +def patch(inspect):\n\
@@ -163,32 +164,36 @@ index cd37ac355..a5c2755eb 100644
 +#endif
 +}
  
--    if (module_types == NULL) {
--        PyErr_PrintEx(0);
--        Py_Exit(1);
--    }
--    CHECK_OBJECT(module_types);
+-    module_types = IMPORT_MODULE5(tstate, const_str_plain_types, Py_None, Py_None, const_tuple_empty, const_int_0);
 +#if PYTHON_VERSION >= 0x350
 +static bool types_module_patched = false;
  
--    // Patch "types.coroutine" unless it is already patched.
--    old_types_coroutine = PyObject_GetAttrString(module_types, "coroutine");
--    CHECK_OBJECT(old_types_coroutine);
+-    if (module_types == NULL) {
+-        PyErr_PrintEx(0);
+-        Py_Exit(1);
 +static void patchTypesModuleObject(PyThreadState *tstate, PyObject *module) {
-+    assert(types_module_patched == false);
++    // The loader may have patched it already, before startup asked for it,
++    // and patching twice would wrap "types.coroutine" around itself.
++    if (types_module_patched) {
++        return;
+     }
+-    CHECK_OBJECT(module_types);
 +    types_module_patched = true;
++
++    module_types = module;
++    Py_INCREF(module_types);
+ 
+-    // Patch "types.coroutine" unless it is already patched.
+     old_types_coroutine = PyObject_GetAttrString(module_types, "coroutine");
+     CHECK_OBJECT(old_types_coroutine);
  
 -    if (PyFunction_Check(old_types_coroutine)) {
 -        PyObject *types_coroutine_replacement = PyCFunction_New(&_method_def_types_coroutine_replacement, NULL);
 -        CHECK_OBJECT(types_coroutine_replacement);
-+    module_types = module;
-+    Py_INCREF(module_types);
- 
+-
 -        PyObject_SetAttrString(module_types, "coroutine", types_coroutine_replacement);
 -    }
-+    old_types_coroutine = PyObject_GetAttrString(module_types, "coroutine");
-+    CHECK_OBJECT(old_types_coroutine);
- 
+-
 -    static char const *wrapper_enhancement_code = "\n\
 -import types\n\
 -_old_GeneratorWrapper = types._GeneratorWrapper\n\
