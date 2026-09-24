@@ -148,7 +148,7 @@ class Term(Generic[PackageType, VersionType]):
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#term
     """
 
-    __slots__ = ("_positive", "constraint", "package")
+    __slots__ = ("_memo_range", "_memo_relation", "_positive", "constraint", "package")
 
     def __init__(
         self,
@@ -161,6 +161,10 @@ class Term(Generic[PackageType, VersionType]):
         self.package = package
         self.constraint = constraint
         self._positive = positive
+        # The range unit propagation last checked this term against, and the
+        # relation it found, before the positive-constraint adjustment.
+        self._memo_range: object = None
+        self._memo_relation: SetRelation | None = None
 
     def is_positive(self) -> bool:
         """Return True if this is a positive (required) term."""

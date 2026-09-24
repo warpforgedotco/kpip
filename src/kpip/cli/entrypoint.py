@@ -382,6 +382,7 @@ def main(
     *,
     version: str | None = None,
     location: str | None = None,
+    keep_collection_paused: bool = False,
 ) -> int:
     verbosity = 0
 
@@ -557,7 +558,9 @@ def main(
 
             gc.set_threshold(*restore_thresholds)
 
-        if collection_paused:
+        # Turning collection back on schedules one over everything the command
+        # allocated, which a process that exits next would only throw away.
+        if collection_paused and not keep_collection_paused:
             import gc
 
             gc.enable()
@@ -613,4 +616,6 @@ def console_main(
     location: str | None = None,
 ) -> NoReturn:
     """The ``kpip`` command: run :func:`main`, then end the process."""
-    exit_without_teardown(main(version=version, location=location))
+    exit_without_teardown(
+        main(version=version, location=location, keep_collection_paused=True)
+    )

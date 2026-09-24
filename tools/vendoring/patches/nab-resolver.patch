@@ -407,7 +407,7 @@ index e5af1f7..74ee4a1 100644
          return term.satisfies(effective)
  
 diff --git a/src/kpip/_vendor/nab_resolver/propagate.py b/src/kpip/_vendor/nab_resolver/propagate.py
-index fba4d17..a79bdd1 100644
+index fba4d17..ff46dcd 100644
 --- a/src/kpip/_vendor/nab_resolver/propagate.py
 +++ b/src/kpip/_vendor/nab_resolver/propagate.py
 @@ -11,6 +11,9 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propa
@@ -453,7 +453,7 @@ index fba4d17..a79bdd1 100644
  def unit_propagation(
      resolver: Resolver[Any, Any], changed_package: Any
  ) -> Incompatibility[Any, Any] | None:
-@@ -64,58 +87,245 @@ def unit_propagation(
+@@ -64,58 +87,254 @@ def unit_propagation(
      contradiction epoch.  Each clause records the epoch it was last settled in,
      and is skipped while that stamp is current.
  
@@ -586,74 +586,83 @@ index fba4d17..a79bdd1 100644
 +            undetermined_assignment: RangeProtocol[Any] | None = None
 +            conflict = True
 +            for term in incompatibility.terms:
-+                assignment = effective_get(term.package, _MISSING)
++                package = term.package
++                assignment = effective_get(package, _MISSING)
 +                if assignment is _MISSING:
-+                    assignment = solution_get(term.package)
++                    assignment = solution_get(package)
 +                if assignment is None:
 +                    relation = None
 +                else:
 +                    positive = term._positive  # noqa: SLF001
-+                    constraint = term.constraint
-+
-+                    key = None
-+                    relation = None
-+                    if cache_on:
-+                        assignment_token = id_tokens_get(id(assignment))
-+                        if assignment_token is None:
-+                            assignment_token = _intern_range(resolver, assignment)
-+                        constraint_token = id_tokens_get(id(constraint))
-+                        if constraint_token is None:
-+                            constraint_token = _intern_range(resolver, constraint)
-+                        # Packed int key; see resolver.relation_cache.  Tokens
-+                        # stay far below 2**32, so the fields cannot collide.
-+                        key = (
-+                            (assignment_token << 33)
-+                            | (constraint_token << 1)
-+                            | positive
-+                        )
-+                        relation = cache_get(key)
-+
-+                    if relation is None:
-+                        range_relation = assignment.relation(constraint)
-+                        subset = range_relation.is_subset
-+                        disjoint = range_relation.is_disjoint
-+                        if positive:
-+                            relation = (
-+                                satisfied
-+                                if subset
-+                                else (
-+                                    contradicted
-+                                    if disjoint
-+                                    else undetermined
-+                                )
-+                            )
-+                        else:
-+                            relation = (
-+                                satisfied
-+                                if disjoint
-+                                else (
-+                                    contradicted if subset else undetermined
-+                                )
-+                            )
-+                        probes_left -= 1
-+                        if key is not None:
-+                            if len(cache) >= RELATION_CACHE_MAX:
-+                                cache.clear()
-+                            cache[key] = relation
-+                        if probes_left <= gate_hits:
-+                            resolver.relation_gate_hits = gate_hits
-+                            resolver.relation_gate_probes_left = probes_left
-+                            _resample_relation_gate(resolver)
-+                            cache_on = resolver.relation_cache_on
-+                            gate_hits = resolver.relation_gate_hits
-+                            probes_left = resolver.relation_gate_probes_left
++                    # Ranges are immutable, so a term met again with the range
++                    # it was last checked against relates to it the same way;
++                    # over half the checks of a resolve are such repeats.
++                    if term._memo_range is assignment:  # noqa: SLF001
++                        relation = term._memo_relation  # noqa: SLF001
 +                    else:
-+                        gate_hits += 1
++                        constraint = term.constraint
++
++                        key = None
++                        relation = None
++                        if cache_on:
++                            assignment_token = id_tokens_get(id(assignment))
++                            if assignment_token is None:
++                                assignment_token = _intern_range(resolver, assignment)
++                            constraint_token = id_tokens_get(id(constraint))
++                            if constraint_token is None:
++                                constraint_token = _intern_range(resolver, constraint)
++                            # Packed int key; see resolver.relation_cache.  Tokens
++                            # stay far below 2**32, so the fields cannot collide.
++                            key = (
++                                (assignment_token << 33)
++                                | (constraint_token << 1)
++                                | positive
++                            )
++                            relation = cache_get(key)
++
++                        if relation is None:
++                            range_relation = assignment.relation(constraint)
++                            subset = range_relation.is_subset
++                            disjoint = range_relation.is_disjoint
++                            if positive:
++                                relation = (
++                                    satisfied
++                                    if subset
++                                    else (
++                                        contradicted
++                                        if disjoint
++                                        else undetermined
++                                    )
++                                )
++                            else:
++                                relation = (
++                                    satisfied
++                                    if disjoint
++                                    else (
++                                        contradicted if subset else undetermined
++                                    )
++                                )
++                            probes_left -= 1
++                            if key is not None:
++                                if len(cache) >= RELATION_CACHE_MAX:
++                                    cache.clear()
++                                cache[key] = relation
++                            if probes_left <= gate_hits:
++                                resolver.relation_gate_hits = gate_hits
++                                resolver.relation_gate_probes_left = probes_left
++                                _resample_relation_gate(resolver)
++                                cache_on = resolver.relation_cache_on
++                                gate_hits = resolver.relation_gate_hits
++                                probes_left = resolver.relation_gate_probes_left
++                        else:
++                            gate_hits += 1
++                        term._memo_range = assignment  # noqa: SLF001
++                        term._memo_relation = relation  # noqa: SLF001
 +
 +                    if (
 +                        (positive and relation is satisfied)
 +                        or (not positive and relation is contradicted)
-+                    ) and not has_positive_constraint(term.package):
++                    ) and not has_positive_constraint(package):
 +                        relation = None
 +
 +                if relation is satisfied:
@@ -732,7 +741,7 @@ index fba4d17..a79bdd1 100644
      return None
  
  
-@@ -158,6 +368,8 @@ def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> i
+@@ -158,6 +377,8 @@ def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> i
      tokens = resolver.range_tokens
      token = tokens.get(range_)
      if token is None:
@@ -741,7 +750,7 @@ index fba4d17..a79bdd1 100644
          token = resolver.next_range_token
          resolver.next_range_token = token + 1
          tokens[range_] = token
-@@ -221,7 +433,8 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
+@@ -221,7 +442,8 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
          if constraint_token is None:
              constraint_token = _intern_range(resolver, constraint)
  
@@ -1868,3 +1877,27 @@ index 2369c55..94d6f31 100644
              if (
                  key_inputs_arrived is not None
                  and package in unready
+diff --git a/src/kpip/_vendor/nab_resolver/types.py b/src/kpip/_vendor/nab_resolver/types.py
+index 773ecbc..db883b1 100644
+--- a/src/kpip/_vendor/nab_resolver/types.py
++++ b/src/kpip/_vendor/nab_resolver/types.py
+@@ -148,7 +148,7 @@ class Term(Generic[PackageType, VersionType]):
+     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#term
+     """
+ 
+-    __slots__ = ("_positive", "constraint", "package")
++    __slots__ = ("_memo_range", "_memo_relation", "_positive", "constraint", "package")
+ 
+     def __init__(
+         self,
+@@ -161,6 +161,10 @@ class Term(Generic[PackageType, VersionType]):
+         self.package = package
+         self.constraint = constraint
+         self._positive = positive
++        # The range unit propagation last checked this term against, and the
++        # relation it found, before the positive-constraint adjustment.
++        self._memo_range: object = None
++        self._memo_relation: SetRelation | None = None
+ 
+     def is_positive(self) -> bool:
+         """Return True if this is a positive (required) term."""
