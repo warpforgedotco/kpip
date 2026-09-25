@@ -160,6 +160,12 @@ class NabProvider:
         self._active_positive_ranges: Mapping[str, RangeProtocol[Version]] = {}
         self._root_packages: set[str] = set()
         self._constrained_root_packages: set[str] = set()
+        # A release's dependencies as the forward check reads them; see
+        # ``_forward_dependencies``.
+        self._forward_dependencies_cache: dict[
+            tuple[str, Version, frozenset[str]],
+            tuple[tuple[Requirement, str, Range[Version]], ...] | None,
+        ] = {}
         self._partial_preflight_cache: dict[
             tuple[str, Version, frozenset[str]], bool
         ] = {}
@@ -928,17 +934,10 @@ class NabProvider:
         positive_ranges = self._active_positive_ranges
         if not decisions and not positive_ranges:
             return False
-        candidate = self._catalog_candidate(package, version)
-        dependencies = None if candidate is None else _dependencies_or_none(candidate)
-        if dependencies is None or getattr(candidate, "source_kind", None) != "wheel":
+        dependencies = self._forward_dependencies(package, version)
+        if dependencies is None:
             return False
-        extras = self.requirements[package].extras
-        for dependency in dependencies:
-            if not marker_applies(dependency.marker, extras=extras):
-                continue
-            if dependency.url is not None:
-                continue
-            dependency_name = _key(dependency)
+        for dependency, dependency_name, implied in dependencies:
             selected = decisions.get(dependency_name)
             if selected is not None:
                 if not dependency.specifier.contains(
@@ -949,12 +948,47 @@ class NabProvider:
                     return True
                 continue
             active = positive_ranges.get(dependency_name)
-            if active is not None and active.is_disjoint(
-                _implied_range(dependency.specifier)
-            ):
+            if active is not None and active.is_disjoint(implied):
                 self._queue_rejection_clause(package, version, dependency)
                 return True
         return False
+
+    def _forward_dependencies(
+        self,
+        package: str,
+        version: Version,
+    ) -> tuple[tuple[Requirement, str, Range[Version]], ...] | None:
+        """A wheel's dependencies the forward check can test, each with its
+        package key and implied range; None when there is nothing to test.
+
+        The check asks again about the same release every time the solution
+        moves -- two times in three on airflow's graph -- and the markers,
+        keys and ranges it reads are facts about the release.  Kept only once
+        the answer is final: a release whose metadata has not arrived yet is
+        asked again when it has.
+        """
+        extras = self.requirements[package].extras
+        key = (package, version, extras)
+        cache = self._forward_dependencies_cache
+        if key in cache:
+            return cache[key]
+        candidate = self._catalog_candidate(package, version)
+        if candidate is None:
+            return None
+        if getattr(candidate, "source_kind", None) != "wheel":
+            cache[key] = None
+            return None
+        dependencies = _dependencies_or_none(candidate)
+        if dependencies is None:
+            return None
+        prepared = tuple(
+            (dependency, _key(dependency), _implied_range(dependency.specifier))
+            for dependency in dependencies
+            if marker_applies(dependency.marker, extras=extras)
+            and dependency.url is None
+        )
+        cache[key] = prepared
+        return prepared
 
     def _partial_solution_rejects(self, package: str, version: Version) -> bool:
         """Whether active constraints make a candidate transitively impossible.
