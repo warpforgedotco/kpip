@@ -83,6 +83,7 @@ class IndexedFakeProvider(CandidateProvider):
             source_kind="wheel",
         )
         self.release_calls = 0
+        self.uploaded_prior_to = None
 
     def available_versions(self, requirement):
         return (SimpleNamespace(version=Version("1")),)
@@ -148,6 +149,64 @@ def test_empty_constraint_lookup_skips_name_normalization(
     )
 
     assert adapter._constraint_for("Dep_Pkg[extra]") == ()
+
+
+class CutoffFakeProvider(IndexedFakeProvider):
+    """app 1, 2 and 3, of which an upload cutoff admits only 1 and 2 -- and
+    2's only file is yanked. 3 is the newest release, and the one a resolve
+    that looked past the cutoff would have chosen first."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.uploaded_prior_to = object()
+        self.allow_yanked = False
+
+    def candidate_for(self, version: Version, yanked_reason: str | None):
+        return SimpleNamespace(
+            **{
+                **vars(self.candidate),
+                "version": version,
+                "yanked_reason": yanked_reason,
+            }
+        )
+
+    def catalog_versions(self, requirement):
+        return (Version("1"), Version("2"), Version("3")), frozenset({Version("2")})
+
+    def releases_after_cutoff(self, requirement):
+        return frozenset({Version("3")})
+
+    def release_candidates(self, requirement, version):
+        self.release_calls += 1
+        if version == Version("1"):
+            return (self.candidate_for(version, None),)
+        if version == Version("2"):
+            return (self.candidate_for(version, "broken"),)
+        return ()
+
+    def find_candidates(self, requirement, *, allowed_versions=None):
+        return ()
+
+    def with_yanked_policy(self, allow_yanked):
+        raise AssertionError("a release past the cutoff needs no yanked rescan")
+
+    def get_materializer_internal(self):
+        return SimpleNamespace(
+            materialize=lambda requirement, records: records,
+            materialize_one=lambda requirement, record: record,
+        )
+
+
+def test_a_release_past_the_cutoff_is_not_chosen_from() -> None:
+    """A release an upload cutoff admits nothing of is left out of the
+    choice, as if the index had not published it yet: the newest release
+    with an unyanked file is chosen, and nothing searches the package again
+    with yanked files admitted."""
+    adapter = NabProvider(CutoffFakeProvider(), ResolutionConfig())
+
+    package, version_range = adapter.add_root(parse_requirement("app"))
+
+    assert adapter.choose_version(package, version_range) == Version("1")
 
 
 def test_selected_release_materializes_without_catalog_rescan() -> None:

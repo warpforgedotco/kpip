@@ -161,7 +161,51 @@ def load(name: str) -> Recording:
     return recording
 
 
-def save(name: str, recording: Recording) -> None:
+Digests = dict[str, list[object]]
+
+_DIGESTS = "sdist-digests.json"
+
+
+def load_digests(name: str) -> Digests:
+    """The digest and size of each sdist stored in place of the downloaded
+    one, by URL; see :func:`_replace_sdists`."""
+    path = CORPUS / name / "files.zip"
+    if not path.exists():
+        return {}
+    with zipfile.ZipFile(path) as archive:
+        if _DIGESTS not in archive.namelist():
+            return {}
+        return json.loads(archive.read(_DIGESTS))
+
+
+def served(recording: Recording, digests: Digests) -> Recording:
+    """``recording`` with each page naming a replaced sdist by its digest.
+
+    Pages are stored as the index sent them, so filling in one more sdist
+    rewrites a small file rather than the archive of every page.
+    """
+    if not digests:
+        return recording
+    needles = [(url, url.encode("utf-8")) for url in digests]
+    result = dict(recording)
+    for key, (status, reason, headers, data) in recording.items():
+        if _archive_for(key) != "pages":
+            continue
+        named = [url for url, needle in needles if needle in data]
+        if not named:
+            continue
+        page = json.loads(data)
+        for entry in page.get("files", ()):
+            replacement = digests.get(entry.get("url"))
+            if replacement is not None:
+                entry["hashes"] = {"sha256": replacement[0]}
+                entry["size"] = replacement[1]
+        body = json.dumps(page, separators=(",", ":")).encode("utf-8")
+        result[key] = (status, reason, headers, body)
+    return result
+
+
+def save(name: str, recording: Recording, digests: Digests) -> None:
     """Write a workload's responses, the same bytes for the same content."""
     directory = CORPUS / name
     directory.mkdir(parents=True, exist_ok=True)
@@ -184,6 +228,32 @@ def save(name: str, recording: Recording) -> None:
                 add(archive, member, data)
                 entries.append([key, status, reason, headers, member])
             add(archive, "index.json", json.dumps(entries, indent=0).encode())
+            if archive_name == "files" and digests:
+                add(
+                    archive,
+                    _DIGESTS,
+                    json.dumps(dict(sorted(digests.items())), indent=0).encode(),
+                )
+
+
+def _page_as_of(
+    headers: dict[str, str], data: bytes, as_of: datetime.datetime
+) -> bytes:
+    """A project page without the files uploaded at or after ``as_of``."""
+    from kpip.index.dates import parse_iso_datetime
+
+    content_type = {name.lower(): value for name, value in headers.items()}.get(
+        "content-type"
+    )
+    if content_type != "application/vnd.pypi.simple.v1+json":
+        return data
+    page = json.loads(data)
+    page["files"] = [
+        entry
+        for entry in page.get("files", ())
+        if entry.get("upload-time") and parse_iso_datetime(entry["upload-time"]) < as_of
+    ]
+    return json.dumps(page, separators=(",", ":")).encode("utf-8")
 
 
 def _key(method: str, url: str, headers: dict[str, str]) -> str:
@@ -212,12 +282,26 @@ def _response(
 
 
 class RecordingSession(NetworkSession):
-    """A live session that keeps a copy of every response it hands back."""
+    """A live session that keeps a copy of every response it hands back.
 
-    def __init__(self, replay: Recording | None = None, **kwargs: Any) -> None:
+    ``as_of`` hands pages back as :class:`ReplaySession` does, as they stood
+    then; what it keeps is the response as the index sent it.
+    """
+
+    def __init__(
+        self,
+        replay: Recording | None = None,
+        *,
+        as_of: datetime.datetime | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.replay: Recording = replay or {}
+        self.as_of = as_of
         self.recorded: Recording = {}
+
+    def _served(self, headers: dict[str, str], data: bytes) -> bytes:
+        return data if self.as_of is None else _page_as_of(headers, data, self.as_of)
 
     def open_internal(
         self,
@@ -232,7 +316,9 @@ class RecordingSession(NetworkSession):
         replayed = self.replay.get(_key(method, url, headers))
         if replayed is not None:
             status, reason, kept, data = replayed
-            return _response(url, status, reason, kept, data, stream=stream)
+            return _response(
+                url, status, reason, kept, self._served(kept, data), stream=stream
+            )
         live = super().open_internal(method, url, headers, body, timeout)
         data = live.data
         kept = {
@@ -246,17 +332,41 @@ class RecordingSession(NetworkSession):
             kept,
             data,
         )
-        return _response(url, live.status, live.reason or "", kept, data, stream=stream)
+        return _response(
+            url,
+            live.status,
+            live.reason or "",
+            kept,
+            self._served(kept, data),
+            stream=stream,
+        )
 
 
 class ReplaySession(NetworkSession):
-    """A session that answers from a recorded corpus and nothing else."""
+    """A session that answers from a recorded corpus and nothing else.
 
-    def __init__(self, name: str, **kwargs: Any) -> None:
+    ``as_of`` serves each project page as it stood then: without the files
+    uploaded since, or that do not say when they were.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        as_of: datetime.datetime | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.responses: Recording = {
-            key: (status, reason, {**headers, "Cache-Control": _FRESH}, data)
-            for key, (status, reason, headers, data) in load(name).items()
+            key: (
+                status,
+                reason,
+                {**headers, "Cache-Control": _FRESH},
+                data if as_of is None else _page_as_of(headers, data, as_of),
+            )
+            for key, (status, reason, headers, data) in served(
+                load(name), load_digests(name)
+            ).items()
         }
         self.requests = 0
 
@@ -323,25 +433,25 @@ def _replace_sdists(
     recorded: Recording,
     built: dict[tuple[str, str], str],
     new: set[str],
-) -> list[str]:
+) -> tuple[Digests, list[str]]:
     """Swap each built sdist for a static one carrying what its build said.
 
     A warm resolve reads a built sdist's metadata from the cache and never
     opens the archive, so the archive matters only to the priming resolve --
     which would otherwise run every build backend again, and whose corpus
-    would carry every archive (pyspark's alone is 320 MB). The page entry
-    naming the artifact gets the replacement's digest and size; nothing else
-    on the page changes. Only ``new`` responses are replaced: one already in
-    the corpus was replaced when it was recorded. Returns the sdists left as
-    downloaded, because no build of them was seen.
+    would carry every archive (pyspark's alone is 320 MB). Returns the
+    replacements' digests and sizes by URL, which the page naming each one is
+    served with (see :func:`served`), and the sdists left as downloaded,
+    because no build of them was seen. Only ``new`` responses are replaced:
+    one already in the corpus was replaced when it was recorded.
     """
     import hashlib
 
     from kpip.core.versions import Version
 
-    replaced: dict[str, tuple[str, int]] = {}
+    replaced: Digests = {}
     kept = []
-    for key, (status, reason, headers, data) in list(recorded.items()):
+    for key, (status, reason, headers, _data) in list(recorded.items()):
         if key not in new:
             continue
         method, url = key.split()[:2]
@@ -357,51 +467,43 @@ def _replace_sdists(
             continue
         body = _static_sdist(filename, pkg_info)
         recorded[key] = (status, reason, headers, body)
-        replaced[url] = (hashlib.sha256(body).hexdigest(), len(body))
-
-    for key, (status, reason, headers, data) in list(recorded.items()):
-        content_type = {k.lower(): v for k, v in headers.items()}.get("content-type")
-        if not replaced or content_type != "application/vnd.pypi.simple.v1+json":
-            continue
-        page = json.loads(data)
-        changed = False
-        for entry in page.get("files", ()):
-            replacement = replaced.get(entry.get("url"))
-            if replacement is not None:
-                entry["hashes"] = {"sha256": replacement[0]}
-                entry["size"] = replacement[1]
-                changed = True
-        if changed:
-            body = json.dumps(page, separators=(",", ":")).encode("utf-8")
-            recorded[key] = (status, reason, headers, body)
-    return kept
+        replaced[url] = [hashlib.sha256(body).hexdigest(), len(body)]
+    return replaced, kept
 
 
 def record(names: list[str], *, fill: bool) -> None:
     """Resolve each workload against PyPI and store what it fetched.
 
     ``fill`` answers from the existing corpus first, so only what it lacks
-    is fetched and added; otherwise the corpus is recorded afresh.
+    is fetched and added; otherwise the corpus is recorded afresh. Either
+    way a second resolve reads the pages as they stood at the cutoff, which
+    ``tests/resolution/test_uploaded_prior_to_reproducible.py`` replays too.
     """
     import tempfile
 
     for name in names:
-        existing = load(name) if fill else {}
-        with (
-            tempfile.TemporaryDirectory() as root,
-            uv_environment(),
-            recording_builds() as built,
-        ):
-            session = RecordingSession(existing, cache=f"{root}/http")
-            result = resolve(name, session, f"{root}/cache")
-            merged = {**existing, **session.recorded}
-            kept = _replace_sdists(merged, built, set(session.recorded))
-            save(name, merged)
-            print(
-                f"{name}: {len(result.candidates)} packages, "
-                f"{len(session.recorded)} responses fetched, {len(merged)} kept, "
-                f"sdists kept as downloaded: {kept or 'none'}",
-            )
+        merged = load(name) if fill else {}
+        digests = load_digests(name) if fill else {}
+        for as_of in (None, UPLOADED_PRIOR_TO):
+            with (
+                tempfile.TemporaryDirectory() as root,
+                uv_environment(),
+                recording_builds() as built,
+            ):
+                session = RecordingSession(
+                    served(merged, digests), as_of=as_of, cache=f"{root}/http"
+                )
+                result = resolve(name, session, f"{root}/cache")
+                merged = {**merged, **session.recorded}
+                replaced, kept = _replace_sdists(merged, built, set(session.recorded))
+                digests.update(replaced)
+                print(
+                    f"{name}{'' if as_of is None else ' as of the cutoff'}: "
+                    f"{len(result.candidates)} packages, "
+                    f"{len(session.recorded)} responses fetched, "
+                    f"{len(merged)} kept, sdists kept as downloaded: {kept or 'none'}",
+                )
+        save(name, merged, digests)
 
 
 if __name__ == "__main__":

@@ -54,14 +54,15 @@ def test_catalog_cache_roundtrip(tmp_path: Path) -> None:
     ]
     assert catalog[1] == []
     assert [
-        (name, version, str(Version.from_wire(version_state)), facts)
-        for name, version, version_state, facts in summary[1]
+        (name, version, str(Version.from_wire(version_state)), facts, uploaded)
+        for name, version, version_state, facts, uploaded in summary[1]
     ] == [
         (
             "demo",
             "1.2.3",
             "1.2.3",
             [(WHEEL_RECORD, ">=3.9", "broken release")],
+            None,
         ),
     ]
     assert loaded[0].url == original.url
@@ -265,7 +266,7 @@ def test_a_stored_summary_shares_what_releases_have_in_common(tmp_path: Path) ->
     summary = (
         "generation",
         [
-            ("demo", text, Version(text).to_wire(), list(facts))
+            ("demo", text, Version(text).to_wire(), list(facts), None)
             for text in ("1.0", "1.1", "2.0")
         ],
         False,

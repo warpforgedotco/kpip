@@ -5,6 +5,7 @@ from __future__ import annotations
 from kpip.core.utils import versioned_bucket
 
 import binascii
+import datetime
 import marshal
 import struct
 import threading
@@ -31,12 +32,12 @@ if TYPE_CHECKING:
 PREFIX = f"{versioned_bucket('kpip-index-catalog', 4)}:"
 # Version 4 records the freshness of the page a summary came from, and 5
 # stores each version's key as the bytes a Version is, checked with a CRC-32.
-SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 5)}:"
+SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 6)}:"
 CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 4)}:"
 CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 4).encode() + b"\0"
-SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 5).encode() + b"\0"
+SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 6).encode() + b"\0"
 CHOICE_HEADER = versioned_bucket("kpip-index-choice", 4).encode() + b"\0"
-SUMMARY_SNAPSHOT = f"{versioned_bucket('kpip-index-summary', 5)}.snapshot"
+SUMMARY_SNAPSHOT = f"{versioned_bucket('kpip-index-summary', 6)}.snapshot"
 """The one file a lock's summaries are also stored in, beside the entries."""
 
 _SUMMARY_FRESHNESS = struct.Struct("<ddI")
@@ -55,6 +56,7 @@ WHEEL_RECORD = 1
 SDIST_RECORD = 2
 RECORD_REQUIRES_PYTHON = 3
 RECORD_YANKED = 4
+RECORD_UPLOAD_TIME = 6
 RECORD_WHEEL_IDENTITY = 7
 RECORD_SIZE = 8
 WHEEL_IDENTITY_NAME = 0
@@ -67,7 +69,9 @@ CatalogArtifact = tuple[int, CatalogRecord]
 CatalogFact = tuple[int, str | None, str | None]
 CatalogGroup = tuple[str, str, list[CatalogArtifact], list[CatalogFact]]
 CatalogData = tuple[list[CatalogGroup], list[CatalogRecord]]
-CatalogSummaryGroup = tuple[str, str, tuple[object, ...], list[CatalogFact]]
+CatalogSummaryGroup = tuple[
+    str, str, tuple[object, ...], list[CatalogFact], float | None
+]
 CatalogChoice = tuple[CatalogRecord, int, int | None]
 CatalogChoices = dict[str, CatalogChoice | None]
 CatalogChoiceProfiles = dict[tuple[str, bool, bool], CatalogChoices]
@@ -587,11 +591,38 @@ def summary_from_catalog(
             version,
             Version(version).to_wire(),
             facts,
+            earliest_upload(artifacts),
         )
-        for name, version, _artifacts, facts in groups
+        for name, version, artifacts, facts in groups
     ]
     summary_groups.sort(key=summary_group_sort_key)
     return generation, summary_groups, bool(unparsed), {}  # ty:ignore[invalid-return-type]
+
+
+def earliest_upload(artifacts: list[CatalogArtifact]) -> float | None:
+    """When a release's first artifact was uploaded, as a POSIX timestamp.
+
+    An upload cutoff admits an artifact only if the index says when it was
+    uploaded and that was before the cutoff, so a release whose earliest
+    artifact is not before it has nothing a cutoff admits; ``None`` means no
+    artifact says. A time without a zone is read as UTC, as the cutoff
+    check reads it.
+    """
+    earliest: float | None = None
+    for _kind, record in artifacts:
+        uploaded = record[RECORD_UPLOAD_TIME]
+        if not isinstance(uploaded, str):
+            continue
+        try:
+            moment = parse_iso_datetime(uploaded)
+        except ValueError:
+            continue
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=datetime.timezone.utc)
+        stamp = moment.timestamp()
+        if earliest is None or stamp < earliest:
+            earliest = stamp
+    return earliest
 
 
 def summary_group_sort_key(group: CatalogSummaryGroup) -> Any:
@@ -647,14 +678,14 @@ def _shared_summary(summary: CatalogSummary) -> CatalogSummary:
         return value
 
     groups = []
-    for name, version_text, wire, facts in summary[1]:
+    for name, version_text, wire, facts, uploaded in summary[1]:
         shared_facts = [share(fact) for fact in facts]
         facts_key = ("facts", tuple(shared_facts))
         try:
             shared_facts = memo.setdefault(facts_key, shared_facts)
         except TypeError:
             pass
-        groups.append((name, version_text, share(wire), shared_facts))
+        groups.append((name, version_text, share(wire), shared_facts, uploaded))
     return summary[0], groups, summary[2], summary[3]
 
 
