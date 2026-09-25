@@ -66,7 +66,7 @@ def test_the_record_layout_is_pinned_to_the_bucket_version() -> None:
     found at all, because the catalog, summary and choice buckets are
     versioned and were bumped alongside the record layout. That is what a
     record's shape rests on now: reading a catalog no longer re-proves the
-    type of every field it contains, because the digest over the blob says
+    type of every field it contains, because the check over the blob says
     the bytes are the ones this kpip wrote.
     """
     from kpip.index.catalog_cache import PREFIX
@@ -77,7 +77,8 @@ def test_the_record_layout_is_pinned_to_the_bucket_version() -> None:
     record = link_record(link)
 
     assert len(record) == 9
-    assert "3" in PREFIX, "the bucket version carries the layout change"
+    version = int(PREFIX.removeprefix("kpip-index-catalog-v").rstrip(":"))
+    assert version >= 3, "the bucket version carries the layout change"
 
     restored = link_from_record(record)
     assert restored.size == 4096
