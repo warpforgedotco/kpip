@@ -41,6 +41,7 @@ from kpip.core.urls import path_to_url, url_to_path
 from kpip.core.versions import InvalidVersion, Version
 from kpip.core.wheel import TargetContext
 from kpip.index.artifacts import ArtifactLocator
+from kpip.index.catalog_cache import serve_summaries_from_snapshot
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.index.provider import CandidateProvider
 from kpip.index.vcs_urls import vcs_reference
@@ -478,6 +479,10 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     if replay_after_revalidation(options, cache_dir, resolution_session, previous):
         return 0
 
+    page_cache = resolution_session.page_cache()
+
+    serve_summaries_from_snapshot(page_cache)
+
     preferences = lock_preferences(previous, options.upgrade_packages)
 
     artifact_locator = ArtifactLocator(resolution_session, cache_dir=cache_dir)
@@ -896,6 +901,9 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     rendered = render_lock(packages)
 
     write_lock_output(options.output, rendered)
+
+    if page_cache is not None:
+        page_cache.save_snapshot()
 
     if every_package_is_an_index_wheel and provider is not None:
         record_replayable_lock(

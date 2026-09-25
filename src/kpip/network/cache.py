@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import marshal
 import os
 import struct
 import threading
@@ -59,6 +60,9 @@ if TYPE_CHECKING:
 
 COMBINED_HEADER = struct.Struct(f"<{len(COMBINED_MAGIC)}sQ")
 
+SNAPSHOT_FORMAT = "kpip-cache-snapshot-v1"
+"""Marks a snapshot file; a new layout changes it, and old snapshots are ignored."""
+
 
 @contextmanager
 def suppressed_cache_errors() -> Generator[None, None, None]:
@@ -104,6 +108,13 @@ class SafeFileCache:
 
         self._creation_mode: int | None = None
         self._temporary_serial = 0
+        # Entries under ``_snapshot_prefix`` served from one file; see
+        # :meth:`use_snapshot`.
+        self._snapshot_path: str | None = None
+        self._snapshot_prefix = ""
+        self._snapshot: dict[str, tuple[tuple[int, int, int], bytes]] = {}
+        self._snapshot_read: dict[str, tuple[tuple[int, int, int], bytes]] = {}
+        self._snapshot_stale = False
 
     def get_cache_path(self, name: str) -> str:
         """Where the entry for ``name`` lives: one fan-out level, 256 wide.
@@ -138,9 +149,84 @@ class SafeFileCache:
     def get_atomic(self, key: str) -> bytes | None:
         """Read a self-contained entry written with one atomic replacement."""
         path = self.get_cache_path(key) + ".atomic"
+        if self._snapshot_path is not None and key.startswith(self._snapshot_prefix):
+            return self._get_through_snapshot(key, path)
         with suppressed_cache_errors():
             with open(path, "rb") as file:
                 return file.read()
+        return None
+
+    def use_snapshot(self, name: str, prefix: str) -> None:
+        """Serve the atomic entries under ``prefix`` from the snapshot ``name``.
+
+        A resolve reads the summary of every project it touches, one small
+        file each, and on macOS the ``open`` alone costs about 16 us, whatever
+        the path: an airflow resolve spends 20 ms opening its 700 summaries.
+        The snapshot holds the entries the last :meth:`save_snapshot` saw, in
+        one file, each with the inode, size and modification time of the file
+        it was read from.  An entry is served from it only while its file
+        still has those, which a ``stat`` answers for an eighth of the cost,
+        so a file rewritten or patched by any process since is read afresh.
+        """
+        path = os.path.join(self.directory, name)
+        self._snapshot_prefix = prefix
+        self._snapshot = {}
+        with suppressed_cache_errors():
+            with open(path, "rb") as file:
+                raw = file.read()
+            try:
+                loaded = marshal.loads(raw)
+            except (EOFError, TypeError, ValueError):
+                loaded = None
+            if (
+                isinstance(loaded, tuple)
+                and len(loaded) == 2
+                and loaded[0] == SNAPSHOT_FORMAT
+                and isinstance(loaded[1], dict)
+            ):
+                self._snapshot = loaded[1]
+        self._snapshot_read = {}
+        self._snapshot_stale = False
+        self._snapshot_path = path
+
+    def save_snapshot(self) -> None:
+        """Store the entries read through the snapshot since :meth:`use_snapshot`.
+
+        Only when one was not served from it, or it held entries nobody read,
+        so a repeated command writes nothing.
+        """
+        path = self._snapshot_path
+        if path is None:
+            return
+        read = self._snapshot_read
+        if not self._snapshot_stale and len(read) == len(self._snapshot):
+            return
+        payload = marshal.dumps((SNAPSHOT_FORMAT, dict(read)))
+        self.write_internal(path, payload)
+        self._snapshot = read
+        self._snapshot_read = dict(read)
+        self._snapshot_stale = False
+
+    def _get_through_snapshot(self, key: str, path: str) -> bytes | None:
+        kept = self._snapshot.get(key)
+        if kept is not None:
+            with suppressed_cache_errors():
+                status = os.stat(path)
+                if (status.st_ino, status.st_size, status.st_mtime_ns) == kept[0]:
+                    self._snapshot_read[key] = kept
+                    return kept[1]
+        self._snapshot_stale = True
+        with suppressed_cache_errors():
+            with open(path, "rb") as file:
+                # The identity of the file read, taken before reading it, so
+                # a later change always shows as a different one.
+                status = os.fstat(file.fileno())
+                value = file.read()
+            self._snapshot_read[key] = (
+                (status.st_ino, status.st_size, status.st_mtime_ns),
+                value,
+            )
+            return value
         return None
 
     def entry_mode(self) -> int:
@@ -276,7 +362,19 @@ class SafeFileCache:
 
     def set_atomic(self, key: str, value: bytes) -> None:
         """Write a self-contained entry that needs no companion body file."""
+        self.forget_snapshot_entry(key)
         self.write_internal(self.get_cache_path(key) + ".atomic", value)
+
+    def forget_snapshot_entry(self, key: str) -> None:
+        """Leave ``key`` out of the next snapshot, which reads it afresh.
+
+        For an entry this process changes: its file's modification time may
+        not move, on a filesystem that keeps it coarsely, when the change
+        comes within the same tick as the read.
+        """
+        if self._snapshot_path is not None and key.startswith(self._snapshot_prefix):
+            self._snapshot_read.pop(key, None)
+            self._snapshot_stale = True
 
     def patch_atomic(self, key: str, prefix: bytes, offset: int, data: bytes) -> None:
         """Overwrite ``data`` at ``offset`` of an atomic entry starting with ``prefix``.
@@ -287,6 +385,7 @@ class SafeFileCache:
         alone.
         """
         path = self.get_cache_path(key) + ".atomic"
+        self.forget_snapshot_entry(key)
         with suppressed_cache_errors():
             with open(path, "r+b", buffering=0) as file:
                 if file.read(len(prefix)) == prefix:
