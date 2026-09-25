@@ -14,12 +14,19 @@ environment, so uv's universal variant has no counterpart.)
 
 Nothing here touches the network while benchmarking. ``python uv_graphs.py
 capture`` resolves each graph once against real PyPI through a
-:class:`RecordingSession` and writes every response it received -- project
-pages, ``.metadata`` files, ranged wheel reads -- into
-``corpus/uv_graphs/<name>.zip``. The benchmarks replay that archive through
-a :class:`ReplaySession`, which answers only requests it has a recording for
-and fails on anything else, so a graph that drifts from its corpus is an
-error rather than a silent network fetch.
+:class:`RecordingSession` and writes every response it received into
+``corpus/uv_graphs/<name>/``: project pages in ``pages.zip``, everything
+else -- ``.metadata`` files, JSON API reads, source distributions -- in
+``files.zip``. The benchmarks replay them through a :class:`ReplaySession`,
+which answers only requests it has a recording for and fails on anything
+else, so a graph that drifts from its corpus is an error rather than a
+silent network fetch.
+
+A change to kpip can make a resolve read something the corpus does not
+hold -- a prefetch reaching one release further, say. ``python uv_graphs.py
+fill`` resolves from the corpus, fetches only what is missing, and adds it.
+The archives are written byte-for-byte reproducibly, so one that gained
+nothing is left as it was.
 """
 
 from __future__ import annotations
@@ -130,6 +137,55 @@ def resolve(name: str, session: NetworkSession, cache_dir: str) -> Any:
     ).resolve(list(WORKLOADS[name]))
 
 
+Recording = dict[str, tuple[int, str, dict[str, str], bytes]]
+
+_ARCHIVES = ("pages", "files")
+
+
+def _archive_for(key: str) -> str:
+    return "pages" if "/simple/" in key else "files"
+
+
+def load(name: str) -> Recording:
+    """Every recorded response of a workload, keyed as requests are."""
+    recording: Recording = {}
+    for archive_name in _ARCHIVES:
+        path = CORPUS / name / f"{archive_name}.zip"
+        if not path.exists():
+            continue
+        with zipfile.ZipFile(path) as archive:
+            for key, status, reason, headers, member in json.loads(
+                archive.read("index.json")
+            ):
+                recording[key] = (status, reason, headers, archive.read(member))
+    return recording
+
+
+def save(name: str, recording: Recording) -> None:
+    """Write a workload's responses, the same bytes for the same content."""
+    directory = CORPUS / name
+    directory.mkdir(parents=True, exist_ok=True)
+
+    def add(archive: zipfile.ZipFile, member: str, data: bytes) -> None:
+        info = zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_LZMA
+        archive.writestr(info, data)
+
+    for archive_name in _ARCHIVES:
+        entries = []
+        with zipfile.ZipFile(directory / f"{archive_name}.zip", "w") as archive:
+            members = sorted(
+                (key, response)
+                for key, response in recording.items()
+                if _archive_for(key) == archive_name
+            )
+            for index, (key, (status, reason, headers, data)) in enumerate(members):
+                member = f"bodies/{index}"
+                add(archive, member, data)
+                entries.append([key, status, reason, headers, member])
+            add(archive, "index.json", json.dumps(entries, indent=0).encode())
+
+
 def _key(method: str, url: str, headers: dict[str, str]) -> str:
     ranges = {name.lower(): value for name, value in headers.items()}.get("range")
     return f"{method} {url}" if ranges is None else f"{method} {url} {ranges}"
@@ -158,9 +214,10 @@ def _response(
 class RecordingSession(NetworkSession):
     """A live session that keeps a copy of every response it hands back."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, replay: Recording | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.recorded: dict[str, tuple[int, str, dict[str, str], bytes]] = {}
+        self.replay: Recording = replay or {}
+        self.recorded: Recording = {}
 
     def open_internal(
         self,
@@ -172,6 +229,10 @@ class RecordingSession(NetworkSession):
         *,
         stream: bool = False,
     ) -> HTTPResponse:
+        replayed = self.replay.get(_key(method, url, headers))
+        if replayed is not None:
+            status, reason, kept, data = replayed
+            return _response(url, status, reason, kept, data, stream=stream)
         live = super().open_internal(method, url, headers, body, timeout)
         data = live.data
         kept = {
@@ -187,35 +248,17 @@ class RecordingSession(NetworkSession):
         )
         return _response(url, live.status, live.reason or "", kept, data, stream=stream)
 
-    def save(self, path: Path) -> None:
-        entries = []
-        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_LZMA) as archive:
-            for index, (key, (status, reason, headers, data)) in enumerate(
-                sorted(self.recorded.items())
-            ):
-                member = f"bodies/{index}"
-                archive.writestr(member, data)
-                entries.append([key, status, reason, headers, member])
-            archive.writestr("index.json", json.dumps(entries, indent=0))
-
 
 class ReplaySession(NetworkSession):
     """A session that answers from a recorded corpus and nothing else."""
 
-    def __init__(self, corpus: Path, **kwargs: Any) -> None:
+    def __init__(self, name: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.responses: dict[str, tuple[int, str, dict[str, str], bytes]] = {}
+        self.responses: Recording = {
+            key: (status, reason, {**headers, "Cache-Control": _FRESH}, data)
+            for key, (status, reason, headers, data) in load(name).items()
+        }
         self.requests = 0
-        with zipfile.ZipFile(corpus) as archive:
-            for key, status, reason, headers, member in json.loads(
-                archive.read("index.json")
-            ):
-                self.responses[key] = (
-                    status,
-                    reason,
-                    {**headers, "Cache-Control": _FRESH},
-                    archive.read(member),
-                )
 
     def open_internal(
         self,
@@ -277,8 +320,9 @@ def _static_sdist(filename: str, pkg_info: str) -> bytes:
 
 
 def _replace_sdists(
-    recorded: dict[str, tuple[int, str, dict[str, str], bytes]],
+    recorded: Recording,
     built: dict[tuple[str, str], str],
+    new: set[str],
 ) -> list[str]:
     """Swap each built sdist for a static one carrying what its build said.
 
@@ -287,8 +331,9 @@ def _replace_sdists(
     which would otherwise run every build backend again, and whose corpus
     would carry every archive (pyspark's alone is 320 MB). The page entry
     naming the artifact gets the replacement's digest and size; nothing else
-    on the page changes. Returns the sdists left as downloaded, because no
-    build of them was seen.
+    on the page changes. Only ``new`` responses are replaced: one already in
+    the corpus was replaced when it was recorded. Returns the sdists left as
+    downloaded, because no build of them was seen.
     """
     import hashlib
 
@@ -297,6 +342,8 @@ def _replace_sdists(
     replaced: dict[str, tuple[str, int]] = {}
     kept = []
     for key, (status, reason, headers, data) in list(recorded.items()):
+        if key not in new:
+            continue
         method, url = key.split()[:2]
         filename = url.rsplit("/", 1)[-1]
         if method != "GET" or not filename.endswith(".tar.gz"):
@@ -330,31 +377,35 @@ def _replace_sdists(
     return kept
 
 
-def capture(names: list[str]) -> None:
-    """Resolve each workload once against PyPI and store what it fetched."""
+def record(names: list[str], *, fill: bool) -> None:
+    """Resolve each workload against PyPI and store what it fetched.
+
+    ``fill`` answers from the existing corpus first, so only what it lacks
+    is fetched and added; otherwise the corpus is recorded afresh.
+    """
     import tempfile
 
-    CORPUS.mkdir(parents=True, exist_ok=True)
     for name in names:
+        existing = load(name) if fill else {}
         with (
             tempfile.TemporaryDirectory() as root,
             uv_environment(),
             recording_builds() as built,
         ):
-            session = RecordingSession(cache=f"{root}/http")
+            session = RecordingSession(existing, cache=f"{root}/http")
             result = resolve(name, session, f"{root}/cache")
-            kept = _replace_sdists(session.recorded, built)
-            path = CORPUS / f"{name}.zip"
-            session.save(path)
+            merged = {**existing, **session.recorded}
+            kept = _replace_sdists(merged, built, set(session.recorded))
+            save(name, merged)
             print(
                 f"{name}: {len(result.candidates)} packages, "
-                f"{len(session.recorded)} responses, "
-                f"{len(built)} sdists built, kept as downloaded: {kept or 'none'}, "
-                f"{path.stat().st_size / 1e6:.1f} MB",
+                f"{len(session.recorded)} responses fetched, {len(merged)} kept, "
+                f"sdists kept as downloaded: {kept or 'none'}",
             )
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] != ["capture"]:
-        raise SystemExit("usage: python uv_graphs.py capture [workload ...]")
-    capture(sys.argv[2:] or list(WORKLOADS))
+    command = sys.argv[1:2]
+    if command not in (["capture"], ["fill"]):
+        raise SystemExit("usage: python uv_graphs.py capture|fill [workload ...]")
+    record(sys.argv[2:] or list(WORKLOADS), fill=command == ["fill"])

@@ -35,7 +35,7 @@ def warm(name: str, root: Path) -> tuple[uv_graphs.ReplaySession, str]:
     writes.
     """
     session = uv_graphs.ReplaySession(
-        uv_graphs.CORPUS / f"{name}.zip",
+        name,
         cache=str(root / "http"),
     )
     cache_dir = str(root / "cache")

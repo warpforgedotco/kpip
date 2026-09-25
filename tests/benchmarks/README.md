@@ -20,12 +20,17 @@ the one upstream case (`prepare_wheel_many_files`) left unported and why.
 the same 2024-09-01 upload cutoff, and the same CPython 3.11 arm64 macOS
 environment. uv's `resolve_warm_jupyter_universal` has no counterpart
 because kpip resolves for one environment. The graphs replay offline from
-`corpus/uv_graphs/*.zip`, which records every response a resolve received
-from PyPI -- full project pages, `.metadata` files and JSON API reads. The
-one change is that each sdist the resolve built is stored as a static
-`PKG-INFO` of what its build produced, with its page entry's digest and size
-to match, so priming never runs a build backend. Re-record them with
-`python tests/benchmarks/uv_graphs.py capture [jupyter|airflow]`.
+`corpus/uv_graphs/<name>/`, which records every response a resolve received
+from PyPI: full project pages in `pages.zip`, and `.metadata` files, JSON
+API reads and sdists in `files.zip`. The one change is that each sdist the
+resolve built is stored as a static `PKG-INFO` of what its build produced,
+with its page entry's digest and size to match, so priming never runs a
+build backend.
+
+A kpip change can make a resolve read something the corpus lacks; the
+replay then fails naming the request. `python tests/benchmarks/uv_graphs.py
+fill [jupyter|airflow]` fetches only what is missing and adds it, leaving
+unchanged archives byte-for-byte as they were. `capture` records afresh.
 
 The live PyPI benchmarks are intentionally skipped by default. Enable them
 explicitly when network variability is acceptable:
