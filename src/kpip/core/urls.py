@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ntpath
 import os
 import string
 import sys
@@ -66,6 +65,8 @@ def normalize_windows_path(path: str, *, strip_drive_separator: bool = False) ->
         and path[2] == ":"
     ):
         path = path[1:]
+    import ntpath
+
     drive, tail = ntpath.splitdrive(path)
     while (
         drive

@@ -1987,9 +1987,9 @@ class NabProvider:
             )
             # ``==V`` and ``<=V`` admit V's local versions, which sort just
             # past V; ``bounds`` reads V itself as the edge, so take them in.
-            public = version[:3]  # epoch, release, suffix: everything but local
+            public = version.public_key  # the start of V's local versions' keys
             count = len(ordered)
-            while stop < count and ordered[stop][:3] == public:
+            while stop < count and ordered[stop].startswith(public):
                 stop += 1
         return ordered[start:stop]
 

@@ -6,6 +6,7 @@ import marshal
 import os
 import time
 
+from kpip.core.digests import sha224_hexdigest
 from kpip.core.expiry import expiry_is_fresh
 
 TYPE_CHECKING = False
@@ -18,21 +19,6 @@ COMBINED_MAGIC = b"kpip-http-cache:1\n"
 """Starts an entry holding its metadata and body in one file."""
 
 _COMBINED_HEADER_SIZE = len(COMBINED_MAGIC) + 8
-
-
-def sha224_hexdigest(data: bytes) -> str:
-    # The interpreter's own SHA-2, not ``hashlib``: that loads OpenSSL, and a
-    # lock replayed from the cache would spend more on that import than on
-    # every page it checks.  The digests are the same.
-    try:
-        from _sha2 import sha224  # ty: ignore[unresolved-import]
-    except ImportError:
-        try:
-            from _sha256 import sha224  # ty: ignore[unresolved-import]
-        except ImportError:
-            from hashlib import sha224
-
-    return sha224(data).hexdigest()
 
 
 def cache_entry_path(directory: str, key: str) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from kpip.core.packaging import parse_requirement
 from kpip.core.versions import Version
@@ -66,11 +67,12 @@ def test_candidate_metadata_cache_defers_database_creation(tmp_path: Path) -> No
 
 
 def test_candidate_metadata_cache_validates_entries_lazily(tmp_path: Path) -> None:
-    """A stored row of the wrong shape is a miss when it is read, not an
-    error when the database is opened."""
-    import json
+    """A stored entry of the wrong shape is a miss when it is read, not an
+    error when the snapshot is loaded."""
     import marshal
-    import sqlite3
+
+    from kpip.core.utils import save_snapshot
+    from kpip.index.candidate_metadata_cache import FORMAT
 
     valid_key = ("https://example.test/valid.whl", "1", (), "sha256:valid")
     invalid_key = ("https://example.test/invalid.whl", "1", (), "sha256:bad")
@@ -78,16 +80,10 @@ def test_candidate_metadata_cache_validates_entries_lazily(tmp_path: Path) -> No
         valid_key: ("valid", "1", (), (), None),
         invalid_key: ("invalid", "1", (42,), (), None),
     }
-    connection = sqlite3.connect(tmp_path / NAME)
-    connection.execute(
-        "CREATE TABLE candidate_metadata (key TEXT PRIMARY KEY, value BLOB)",
+    save_snapshot(
+        tmp_path / NAME,
+        (FORMAT, {key: marshal.dumps(value) for key, value in entries.items()}),
     )
-    connection.executemany(
-        "INSERT INTO candidate_metadata (key, value) VALUES (?, ?)",
-        [(json.dumps(key), marshal.dumps(value)) for key, value in entries.items()],
-    )
-    connection.commit()
-    connection.close()
 
     cache = CandidateMetadataCache(tmp_path)
 
@@ -96,3 +92,56 @@ def test_candidate_metadata_cache_validates_entries_lazily(tmp_path: Path) -> No
     assert invalid_key not in cache.entries
     cache.flush()
     assert not cache.contains(invalid_key)
+
+
+def metadata(name: str) -> CandidateMetadata:
+    return CandidateMetadata(
+        name=name,
+        version=Version("1"),
+        dependencies=(parse_requirement("requests>=2"),),
+        provided_extras=frozenset(),
+        requires_python=None,
+    )
+
+
+def test_concurrent_runs_keep_each_others_entries(tmp_path: Path) -> None:
+    first = CandidateMetadataCache(tmp_path)
+    second = CandidateMetadataCache(tmp_path)
+    one = ("https://example.test/one.whl", "1", (), "sha256:one")
+    two = ("https://example.test/two.whl", "1", (), "sha256:two")
+
+    first.put(one, metadata("one"))
+    second.put(two, metadata("two"))
+    first.flush()
+    second.flush()
+
+    later = CandidateMetadataCache(tmp_path)
+    assert later.get(one) is not None
+    assert later.get(two) is not None
+
+
+def test_a_flush_keeps_the_newest_entries_up_to_the_cap(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from kpip.index import candidate_metadata_cache
+
+    monkeypatch.setattr(candidate_metadata_cache, "MAX_ENTRIES", 2)
+    cache = CandidateMetadataCache(tmp_path)
+    keys = [(f"https://example.test/{n}.whl", "1", (), f"sha256:{n}") for n in range(3)]
+    for key in keys:
+        cache.put(key, metadata("demo"))
+    cache.flush()
+
+    later = CandidateMetadataCache(tmp_path)
+    assert [later.contains(key) for key in keys] == [False, True, True]
+
+
+def test_an_unreadable_snapshot_reads_as_empty(tmp_path: Path) -> None:
+    (tmp_path / NAME).write_bytes(b"not marshal")
+    key = ("https://example.test/x.whl", "1", (), "sha256:x")
+
+    cache = CandidateMetadataCache(tmp_path)
+    assert not cache.contains(key)
+    cache.put(key, metadata("x"))
+    cache.flush()
+    assert CandidateMetadataCache(tmp_path).get(key) is not None

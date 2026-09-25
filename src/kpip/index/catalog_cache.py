@@ -5,7 +5,6 @@ from __future__ import annotations
 from kpip.core.utils import versioned_bucket
 
 import binascii
-import hashlib
 import marshal
 import struct
 import threading
@@ -28,20 +27,22 @@ if TYPE_CHECKING:
 # Version 3 drops the release tuple from a summary's stored version and
 # puts every catalog blob behind a digest, so a store written by an earlier
 # kpip is a different bucket rather than a payload this one would misread.
-PREFIX = f"{versioned_bucket('kpip-index-catalog', 3)}:"
-# Version 4 records the freshness of the page a summary came from.
-SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 4)}:"
-CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 3)}:"
-CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 3).encode() + b"\0"
-SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 4).encode() + b"\0"
-CHOICE_HEADER = versioned_bucket("kpip-index-choice", 3).encode() + b"\0"
-SUMMARY_SNAPSHOT = f"{versioned_bucket('kpip-index-summary', 4)}.snapshot"
+# Version 4 checks the blob with a CRC-32 rather than a SHA-256.
+PREFIX = f"{versioned_bucket('kpip-index-catalog', 4)}:"
+# Version 4 records the freshness of the page a summary came from, and 5
+# stores each version's key as the bytes a Version is, checked with a CRC-32.
+SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 5)}:"
+CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 4)}:"
+CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 4).encode() + b"\0"
+SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 5).encode() + b"\0"
+CHOICE_HEADER = versioned_bucket("kpip-index-choice", 4).encode() + b"\0"
+SUMMARY_SNAPSHOT = f"{versioned_bucket('kpip-index-summary', 5)}.snapshot"
 """The one file a lock's summaries are also stored in, beside the entries."""
 
 _SUMMARY_FRESHNESS = struct.Struct("<ddI")
 """When the summary's page expires and was stored, and a CRC-32 of the two.
 
-It follows the header, outside the payload's digest, so a revalidation can
+It follows the header, outside the payload's check, so a revalidation can
 update it in place.  The CRC tells a block written whole from one that is
 torn or was never written, which reads as unknown.
 """
@@ -231,7 +232,7 @@ def _load_catalog_uncached(
             return known[1], raw
     try:
         payload = decode_checked_payload(raw, CATALOG_HEADER)
-        # The digest says these bytes are the ones this kpip wrote, and the
+        # The check says these bytes are the ones this kpip wrote, and the
         # bucket version says this kpip wrote them in this shape, so what is
         # left to check is that the blob is a catalog at all. Walking every
         # group and record to re-prove their types was the single largest
@@ -244,7 +245,7 @@ def _load_catalog_uncached(
             or not isinstance(payload[2], list)
         ):
             return None
-        # Declared rather than proven: the digest and the bucket version are
+        # Declared rather than proven: the check and the bucket version are
         # what establish this, and walking the lists to convince a checker
         # is the cost this read is trying not to pay.
         catalog: CatalogData = (payload[1], payload[2])  # ty:ignore[invalid-assignment]
@@ -563,6 +564,15 @@ def save_catalog(cache: Any, url: str, catalog: CatalogData) -> CatalogSummary |
 
 
 def catalog_generation(payload: bytes) -> str:
+    """What the choices and summary derived from a stored catalog name it by.
+
+    A content hash, unlike the check each stored blob carries: a derived
+    entry is trusted to belong to whichever catalog has this name. Only a
+    catalog being stored or a summary being compiled asks for it, so
+    ``hashlib`` and the OpenSSL it loads wait until then.
+    """
+    import hashlib
+
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -649,11 +659,19 @@ def _shared_summary(summary: CatalogSummary) -> CatalogSummary:
 
 
 def encode_checked_payload(header: bytes, payload: object) -> bytes:
+    """``payload`` marshalled behind ``header`` and a CRC-32 of the body.
+
+    The check is for a blob damaged on disk, not a forged one: whoever can
+    write the cache can write any digest beside it. Writes replace entries
+    atomically, so what it guards against is corruption, which CRC-32
+    catches at a thirteenth of SHA-256's cost -- an airflow resolve checks
+    4 MB of summaries on every run.
+    """
     body = marshal.dumps(payload)  # ty: ignore[invalid-argument-type]
-    return header + hashlib.sha256(body).digest() + body
+    return header + binascii.crc32(body).to_bytes(4, "little") + body
 
 
-_SHA256_SIZE = 32
+_CHECK_SIZE = 4
 
 
 def decode_checked_payload(raw: bytes, header: bytes) -> object | None:
@@ -661,13 +679,13 @@ def decode_checked_payload(raw: bytes, header: bytes) -> object | None:
 
 
 def _decode_checked(raw: bytes, digest_start: int) -> object | None:
-    body_start = digest_start + _SHA256_SIZE
+    body_start = digest_start + _CHECK_SIZE
     if len(raw) < body_start:
         return None
-    # A view, not a copy: hashing and unmarshalling both read buffers, and a
+    # A view, not a copy: checking and unmarshalling both read buffers, and a
     # catalog summary runs to hundreds of kilobytes.
     body = memoryview(raw)[body_start:]
-    if raw[digest_start:body_start] != hashlib.sha256(body).digest():
+    if raw[digest_start:body_start] != binascii.crc32(body).to_bytes(4, "little"):
         return None
     try:
         return marshal.loads(body)

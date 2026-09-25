@@ -11,7 +11,7 @@ from kpip.core.packaging import (
     marker_applies,
     parse_requirement,
 )
-from kpip.core.versions import InvalidVersion, Version
+from kpip.core.versions import InvalidVersion, Version, _versions, release_key
 
 
 def test_canonicalize_name() -> None:
@@ -108,7 +108,8 @@ def test_version_wire_roundtrip_is_interned(raw: str) -> None:
     state = original.to_wire()
     # Text and key, and nothing else: the release used to sit between them
     # and was read by nothing.
-    assert state == (original.public, tuple(original))
+    assert state == (original.public, bytes(original))
+    assert type(state[1]) is bytes
 
     restored = Version.from_wire(state)
     assert restored == original
@@ -234,8 +235,8 @@ def test_marker_applies_respects_parenthesized_extra_marker() -> None:
 
 
 class TestVersionIsItsOwnKey:
-    """Version is a tuple whose elements are its PEP 440 ordering key: it
-    compares only with other Versions, in C, and is immutable and interned.
+    """Version is bytes whose order is PEP 440 order: it compares only with
+    other Versions, in C, and is immutable and interned.
     """
 
     def test_sentinel_comparisons_defer_to_the_sentinel(self) -> None:
@@ -331,14 +332,95 @@ class TestVersionIsItsOwnKey:
         assert str(Version("1.0a")) == "1.0a0"
         assert str(Version("1.0.post")) == "1.0.post0"
 
-    def test_wire_key_is_the_four_element_tuple(self) -> None:
-        assert Version("1.2").to_wire()[1] == (0, (1, 2), (3, 0, 0, 0, 1, 0), ())
-        assert Version("1.2+a").to_wire()[1] == (
-            0,
-            (1, 2),
-            (3, 0, 0, 0, 1, 0),
-            ((0, "a"),),
-        )
+    def test_parts_are_the_fields_the_key_is_written_from(self) -> None:
+        assert Version("1.2.0").parts == (0, (1, 2), (3, 0, 0, 0, 1, 0), ())
+        assert Version("1.2+a").parts == (0, (1, 2), (3, 0, 0, 0, 1, 0), ((0, "a"),))
+        assert Version("1.2.0").release == (1, 2, 0)
+
+    def test_a_version_from_its_wire_record_reads_its_parts_from_its_text(
+        self,
+    ) -> None:
+        state = ("7!3.4.0rc2+x.1", Version("7!3.4.0rc2+x.1").to_wire()[1])
+        _versions.clear()
+        restored = Version.from_wire(state)
+        assert "parts" not in restored.__dict__
+        assert restored.parts == (7, (3, 4), (2, 2, 0, 0, 1, 0), ((0, "x"), (1, 1)))
+        assert restored.release == (3, 4, 0)
+
+    def test_key_order_is_pep440_order(self) -> None:
+        from packaging.version import Version as Reference
+
+        chooser = random.Random(440)
+        segments = [0, 1, 2, 9, 10, 255, 256, 1000, 70000]
+
+        def text() -> str:
+            value = f"{chooser.choice([1, 300])}!" if chooser.random() < 0.1 else ""
+            value += ".".join(
+                str(chooser.choice(segments)) for _ in range(chooser.randint(1, 4))
+            )
+            if chooser.random() < 0.2:
+                value += chooser.choice(["a", "b", "rc"]) + str(
+                    chooser.choice([0, 300])
+                )
+            if chooser.random() < 0.15:
+                value += f".post{chooser.choice([0, 256])}"
+            if chooser.random() < 0.15:
+                value += f".dev{chooser.choice([0, 256])}"
+            if chooser.random() < 0.15:
+                value += "+" + ".".join(
+                    chooser.choice(["abc", "ab", "5", "05x", "0", "300"])
+                    for _ in range(chooser.randint(1, 3))
+                )
+            return value
+
+        versions = sorted({Version(text()) for _ in range(3000)})
+        assert versions == sorted(versions, key=lambda version: version.parts)
+        for lower, upper in zip(versions, versions[1:]):
+            assert Reference(lower.public) < Reference(upper.public)
+            assert lower.parts < upper.parts
+        states = [version.to_wire() for version in versions]
+        _versions.clear()
+        for version, state in zip(versions, states):
+            assert Version.from_wire(state).is_prerelease is version.is_prerelease
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "1.0",
+            "1!2.0",
+            "1.0a1",
+            "1.0b2",
+            "1.0rc1",
+            "1.0.dev3",
+            "1.0.post1",
+            "1.0.post1.dev0",
+            "1.0rc1.post2",
+            "1.0+abc.dev.rc",
+            "1.0a1+local",
+            "2!1.0.post4+ubuntu",
+        ],
+    )
+    def test_a_rebuilt_version_knows_it_is_a_prerelease_without_parsing(
+        self, text: str
+    ) -> None:
+        parsed = Version(text)
+        _versions.clear()
+        restored = Version.from_wire(parsed.to_wire())
+        assert restored.is_prerelease is parsed.is_prerelease
+        assert "parts" not in restored.__dict__
+
+    def test_public_key_starts_every_local_version_of_it(self) -> None:
+        public = Version("1.2rc1")
+        for local in ("1.2rc1+a", "1.2rc1+0", "1.2rc1+a.b.9"):
+            assert Version(local).startswith(public.public_key)
+            assert Version(local).public_key == public.public_key
+        assert not Version("1.2rc1.post1").startswith(public.public_key)
+
+    def test_release_key_sorts_before_every_version_of_its_release(self) -> None:
+        probe = release_key(0, (1, 2, 0))
+        assert Version("1.1.99+z") < probe < Version("1.2.dev0")
+        assert probe < Version("1.2") < Version("1.2.0.1")
+        assert Version("1!0.1") > release_key(0, (9,))
 
 
 class TestSplitMarker:

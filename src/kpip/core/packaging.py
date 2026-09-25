@@ -7,7 +7,13 @@ from bisect import bisect_left, bisect_right
 
 from kpip.core.caches import bounded_put, clear_all, memoized, register_table
 from kpip.core.names import canonicalize_name
-from kpip.core.versions import FINAL_SUFFIX, InvalidVersion, Version, version_of
+from kpip.core.versions import (
+    FINAL_SUFFIX,
+    InvalidVersion,
+    Version,
+    release_key,
+    version_of,
+)
 
 TYPE_CHECKING = False
 
@@ -196,12 +202,12 @@ class Specifier:
                 f"invalid version in specifier: {operator}{version}",
             ) from error
         if wildcard:
-            if parsed[2] != FINAL_SUFFIX or parsed[3]:
+            if parsed.parts[2] != FINAL_SUFFIX or parsed.parts[3]:
                 raise InvalidSpecifier(
                     f"prefix matching cannot follow a pre, post, dev or local "
                     f"segment: {operator}{version}",
                 )
-        elif parsed[3] and operator in _PUBLIC_ONLY_OPERATORS:
+        elif parsed.parts[3] and operator in _PUBLIC_ONLY_OPERATORS:
             raise InvalidSpecifier(
                 f"a local version label is not permitted with {operator}: "
                 f"{operator}{version}",
@@ -246,14 +252,18 @@ class Specifier:
             if self.is_wildcard:
                 return _prefix_matches(version, other)
             return version == other or (
-                bool(version[3]) and not other[3] and version[:3] == other[:3]
+                bool(version.parts[3])
+                and not other.parts[3]
+                and version.public_key == other.public_key
             )
 
         if operator == "!=":
             if self.is_wildcard:
                 return not _prefix_matches(version, other)
             return version != other and not (
-                bool(version[3]) and not other[3] and version[:3] == other[:3]
+                bool(version.parts[3])
+                and not other.parts[3]
+                and version.public_key == other.public_key
             )
 
         if operator == ">=":
@@ -264,36 +274,38 @@ class Specifier:
             return version >= other
 
         if operator == "<=":
-            if version[3]:
-                return version[:3] <= other[:3]
+            if version.parts[3]:
+                return version.public_key <= other.public_key
             return version <= other
 
         if operator == ">":
             if not version > other:
                 return False
-            suffix = version[2]
-            if suffix[2] == 1 and other[2][2] == 0:
+            epoch, release, suffix, local = version.parts
+            if suffix[2] == 1 and other.parts[2][2] == 0:
                 pre_rank, pre_number = suffix[0], suffix[1]
                 base_suffix = (
                     FINAL_SUFFIX
                     if pre_rank == 3
                     else (pre_rank, pre_number, 0, 0, 1, 0)
                 )
-                if other == (version[0], version[1], base_suffix, ()):
+                if other.parts == (epoch, release, base_suffix, ()):
                     return False
-            return not (version[3] and not other[3] and version[:3] == other[:3])
+            return not (
+                local and not other.parts[3] and version.public_key == other.public_key
+            )
 
         if operator == "<":
             if not version < other:
                 return False
             if version.is_prerelease and not other.is_prerelease:
-                other_suffix = other[2]
+                other_epoch, other_release, other_suffix, _local = other.parts
                 earliest_suffix = (
                     (-1, 0, 0, 0, 0, 0)
                     if other_suffix == FINAL_SUFFIX
                     else (3, 0, other_suffix[2], other_suffix[3], 0, 0)
                 )
-                if version >= (other[0], other[1], earliest_suffix, ()):
+                if version.parts >= (other_epoch, other_release, earliest_suffix, ()):
                     return False
             return True
 
@@ -319,12 +331,12 @@ def _prefix_matches(
     the ``==X.Y.*`` half of the compatible-release clause. A single-segment
     operand (which the reference grammar rejects) reads as ``==X.*``.
     """
-    if version[0] != prefix[0]:
+    if version.parts[0] != prefix.parts[0]:
         return False
     release = prefix.release
     if compatible:
         release = release[:-1] or release
-    elif prefix[2] != FINAL_SUFFIX and version[2] != prefix[2]:
+    elif prefix.parts[2] != FINAL_SUFFIX and version.parts[2] != prefix.parts[2]:
         return False
     width = len(release)
     candidate = version.release
@@ -342,7 +354,8 @@ def compatible_upper_bound_internal(version: Version) -> Version:
         release[-2] += 1
         release = release[:-1]
     text = ".".join(str(part) for part in release)
-    return Version(f"{version[0]}!{text}" if version[0] else text)
+    epoch = version.parts[0]
+    return Version(f"{epoch}!{text}" if epoch else text)
 
 
 def _bounds_of(
@@ -382,12 +395,6 @@ def _bounds_of(
     return lower, upper
 
 
-# Below every suffix a Version can have (its first element is at least -1),
-# so ``(epoch, release, _LOWEST_SUFFIX)`` sorts before each version of that
-# release.
-_LOWEST_SUFFIX = (-2,)
-
-
 def _clause_window(specifier: Specifier, ordered: Sequence[Version]) -> tuple[int, int]:
     """A window of ``ordered`` holding every release ``specifier`` admits.
 
@@ -398,12 +405,12 @@ def _clause_window(specifier: Specifier, ordered: Sequence[Version]) -> tuple[in
     parsed = specifier.parsed_version
     assert parsed is not None
     if specifier.is_wildcard:
-        epoch, _release, _suffix, _local = parsed
+        epoch = parsed.parts[0]
         release = parsed.release
         after = (*release[:-1], release[-1] + 1)
         return (
-            bisect_left(ordered, (epoch, _trimmed(release), _LOWEST_SUFFIX)),
-            bisect_left(ordered, (epoch, _trimmed(after), _LOWEST_SUFFIX)),
+            bisect_left(ordered, release_key(epoch, release)),
+            bisect_left(ordered, release_key(epoch, after)),
         )
     lower, upper = _bounds_of((specifier,))
     start = 0
@@ -415,13 +422,6 @@ def _clause_window(specifier: Specifier, ordered: Sequence[Version]) -> tuple[in
         bound, inclusive = upper
         stop = (bisect_right if inclusive else bisect_left)(ordered, bound)
     return start, max(start, stop)
-
-
-def _trimmed(release: tuple[int, ...]) -> tuple[int, ...]:
-    """A release without trailing zeros, as a Version stores it for sorting."""
-    while len(release) > 1 and release[-1] == 0:
-        release = release[:-1]
-    return release
 
 
 def _clause_block(specifier: Specifier, ordered: Sequence[Version]) -> tuple[int, int]:

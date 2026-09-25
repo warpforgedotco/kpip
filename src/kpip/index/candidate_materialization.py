@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
-import json
 import os
 import re
 import sys
@@ -1913,6 +1911,8 @@ class CandidateMaterializer:
 
             raise_for_status(response)
 
+            import json
+
             data = json.loads(response_text(response))
 
             info = data["info"]
@@ -2101,6 +2101,8 @@ class CandidateMaterializer:
                 and local_path is not None
             ):
                 try:
+                    import hashlib
+
                     with open(local_path, "rb") as file:
                         source_hashes["sha256"] = hashlib.sha256(
                             file.read(),

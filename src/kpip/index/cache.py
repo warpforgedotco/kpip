@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 
+from kpip.core.digests import sha256_hexdigest
 from kpip.core.logger import get_logger
 from kpip.core.appdirs import WHEEL_CACHE_BUCKET
 
@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 def wheel_cache_path(root: str, url: str) -> str:
     """The entry directory for ``url``'s built wheel under cache directory ``root``."""
-    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    digest = sha256_hexdigest(url.encode("utf-8"))
     return os.path.join(root, WHEEL_CACHE_BUCKET, digest[:2], digest[2:4], digest)
 
 
@@ -37,13 +37,9 @@ def origin_hashes(
     if not isinstance(data, dict):
         logger.warning("Ignoring invalid cache entry origin file %s", path)
         return None
-    if (
-        expected_cache_key is not None
-        and data.get("cache_key_hash")
-        != hashlib.sha256(
-            expected_cache_key.encode(),
-        ).hexdigest()
-    ):
+    if expected_cache_key is not None and data.get(
+        "cache_key_hash"
+    ) != sha256_hexdigest(expected_cache_key.encode()):
         logger.warning("Ignoring mismatched cache entry origin file %s", path)
         return None
     archive_info = data.get("archive_info")
