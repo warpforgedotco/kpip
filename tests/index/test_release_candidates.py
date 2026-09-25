@@ -134,3 +134,88 @@ def test_release_candidates_keep_distinct_builds_in_preferred_order(
     )
     assert records is not None
     assert len(records) == 2
+
+
+def _cutoff_provider(tmp_path: Path) -> tuple[CandidateProvider, dict[str, object]]:
+    """An index page of demo 1.0, 2.0 and 3.0, uploaded a year apart, with
+    a cutoff between 2.0 and 3.0. 2.0's sdist came a year after its wheel,
+    past the cutoff, and 4.0 says nothing of when it was uploaded."""
+    import datetime
+    from types import SimpleNamespace
+
+    from kpip.index.catalog_cache import save_links
+    from kpip.index.links import Link
+    from kpip.index.source_locations import SimpleIndexSource
+    from kpip.network.cache import SafeFileCache
+
+    index_url = "https://index.test/simple/"
+    page_url = SimpleIndexSource.project_page_url(index_url, "demo")
+
+    def uploaded(year: int) -> datetime.datetime:
+        return datetime.datetime(year, 1, 1, tzinfo=datetime.timezone.utc)
+
+    files = [
+        ("demo-1.0-py3-none-any.whl", uploaded(2020)),
+        ("demo-2.0-py3-none-any.whl", uploaded(2021)),
+        ("demo-2.0.tar.gz", uploaded(2023)),
+        ("demo-3.0-py3-none-any.whl", uploaded(2023)),
+        ("demo-4.0-py3-none-any.whl", None),
+    ]
+    cache = SafeFileCache(str(tmp_path / "http"))
+    save_links(
+        cache,
+        page_url,
+        [
+            Link.from_url(
+                f"https://files.test/{filename}",
+                source_url=page_url,
+                text=filename,
+                upload_time=when,
+            )
+            for filename, when in files
+        ],
+    )
+    reset_caches()
+    provider = CandidateProvider.from_options(
+        index_url=index_url,
+        session=SimpleNamespace(
+            cache=cache, has_fresh_cached_response=lambda url: True
+        ),
+        uploaded_prior_to=uploaded(2022),
+    )
+    versions = {
+        text: parse_requirement(f"demo=={text}").specifier.exact_version
+        for text in ("1.0", "2.0", "3.0", "4.0")
+    }
+    return provider, versions
+
+
+def test_an_upload_cutoff_names_the_releases_it_admits_nothing_of(
+    tmp_path: Path,
+) -> None:
+    """Every release stays in the catalog -- how many a package has orders
+    the resolve -- and the ones with no file uploaded before the cutoff, or
+    none that says when, are named for the resolver to leave out."""
+    provider, versions = _cutoff_provider(tmp_path)
+    requirement = parse_requirement("demo")
+
+    offered, _yanked = provider.catalog_versions(requirement)
+
+    assert list(offered) == [versions[text] for text in ("1.0", "2.0", "3.0", "4.0")]
+    assert provider.releases_after_cutoff(requirement) == {
+        versions["3.0"],
+        versions["4.0"],
+    }
+
+
+def test_release_candidates_apply_an_upload_cutoff(tmp_path: Path) -> None:
+    """Under a cutoff a release is still read on its own, and holds only
+    the files uploaded before it."""
+    provider, versions = _cutoff_provider(tmp_path)
+    requirement = parse_requirement("demo")
+
+    two = provider.release_candidates(requirement, versions["2.0"])
+    assert two is not None
+    assert [record.link.filename for record in two] == ["demo-2.0-py3-none-any.whl"]
+    assert provider.release_candidates(requirement, versions["3.0"]) == ()
+    assert provider.release_candidates(requirement, versions["4.0"]) == ()

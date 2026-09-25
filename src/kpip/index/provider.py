@@ -85,6 +85,7 @@ CatalogSummaryGroup = tuple[
     str,
     tuple[object, ...],
     list[tuple[int, str | None, str | None]],
+    float | None,
 ]
 
 CatalogSourceSummary = tuple[list[CatalogSummaryGroup], str, str]
@@ -206,6 +207,10 @@ class CandidateProvider:
         self.matching_versions_cache = {}
 
         self.package_catalog_cache = {}
+
+        self.releases_after_cutoff_cache: dict[
+            tuple[str, bool, bool], frozenset[Version]
+        ] = {}
 
         self.warm_catalog_cache: dict[tuple[str, bool, bool], bool] = {}
 
@@ -1439,7 +1444,9 @@ class CandidateProvider:
             ):
                 continue
 
-            if not self.uploaded_before_cutoff(link):
+            if self.uploaded_prior_to is not None and not self.uploaded_before_cutoff(
+                link
+            ):
                 host = urllib.parse.urlparse(link.source_url or "").hostname
 
                 if (
@@ -1622,7 +1629,10 @@ class CandidateProvider:
                 (version,),
                 primary_only=True,
             ):
-                if not self.uploaded_before_cutoff(item.link):
+                if (
+                    self.uploaded_prior_to is not None
+                    and not self.uploaded_before_cutoff(item.link)
+                ):
                     continue
 
                 result = self.evaluate_catalog_candidate(
@@ -1638,7 +1648,10 @@ class CandidateProvider:
 
         else:
             for item in catalog.candidates_by_version.get(version, ()):
-                if not self.uploaded_before_cutoff(item.link):
+                if (
+                    self.uploaded_prior_to is not None
+                    and not self.uploaded_before_cutoff(item.link)
+                ):
                     continue
 
                 result = CandidateEvaluator.evaluate_parsed_link(
@@ -2511,6 +2524,19 @@ class CandidateProvider:
         catalog = self._catalog(requirement)
         return catalog.summary_versions, catalog.yanked_versions
 
+    def releases_after_cutoff(self, requirement: Requirement) -> frozenset[Version]:
+        """The releases in :meth:`catalog_versions` an upload cutoff admits
+        no artifact of: none was uploaded before it, or none says when."""
+        if self.uploaded_prior_to is None:
+            return frozenset()
+        self._catalog(requirement)
+        allow_binary, allow_source = self.allowed_formats_internal(requirement)
+        with self.cache_lock:
+            return self.releases_after_cutoff_cache.get(
+                (requirement.canonical_name, allow_binary, allow_source),
+                frozenset(),
+            )
+
     def _catalog(self, requirement: Requirement) -> PackageCatalog:
         allow_binary, allow_source = self.allowed_formats_internal(requirement)
 
@@ -2607,6 +2633,13 @@ class CandidateProvider:
 
         group_records: tuple[object, ...] = ()
 
+        # Releases an upload cutoff admits nothing of. They stay in the
+        # catalog -- how many releases a package has orders the resolve --
+        # and the resolver leaves them out of what it chooses from.
+        after_cutoff: set[Version] = set()
+
+        admitted_by_cutoff: set[Version] = set()
+
         catalog_links = (
             () if cached_groups is not None else self.catalog_links(requirement)
         )
@@ -2628,12 +2661,18 @@ class CandidateProvider:
             # cannot change within one call.
             python_verdicts: dict[str, bool] = {}
 
+            cutoff = (
+                None
+                if self.uploaded_prior_to is None
+                else self._upload_cutoff().timestamp()
+            )
+
             for groups, source_url, generation in cached_groups:
                 # Every release of a group has the same record, so they share
                 # one tuple rather than each building a list of it.
                 group_records = ((source_url, generation),)
 
-                for name, version_text, version_state, facts in groups:
+                for name, version_text, version_state, facts, uploaded in groups:
                     if not unnamed_direct and name != canonical_name:
                         continue
 
@@ -2698,6 +2737,11 @@ class CandidateProvider:
 
                         else:
                             ordered_has_unyanked = True
+
+                    if has_eligible_artifact and (
+                        cutoff is not None and (uploaded is None or uploaded >= cutoff)
+                    ):
+                        after_cutoff.add(version)
 
                     if has_eligible_artifact:
                         if single_source:
@@ -2782,6 +2826,9 @@ class CandidateProvider:
                 links_by_version[parsed.version] = version_links
             version_links.append(link)
 
+            if self.uploaded_prior_to is not None and self.uploaded_before_cutoff(link):
+                admitted_by_cutoff.add(parsed.version)
+
             candidate = self.candidate_record_cache.get(link)
 
             if candidate is None:
@@ -2842,8 +2889,16 @@ class CandidateProvider:
             yanked=yanked_positions if single_source else None,
         )
 
+        if self.uploaded_prior_to is not None and catalog_links:
+            after_cutoff.update(
+                version
+                for version in links_by_version
+                if version not in admitted_by_cutoff
+            )
+
         with self.cache_lock:
             self.package_catalog_cache[cache_key] = catalog
+            self.releases_after_cutoff_cache[cache_key] = frozenset(after_cutoff)
 
         return catalog
 

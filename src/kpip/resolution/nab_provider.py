@@ -171,6 +171,7 @@ class NabProvider:
         self._descent_attempts: dict[str, int] = {}
         self._descent_last: dict[str, Version] = {}
         self._yanked_versions: dict[str, frozenset[Version]] = {}
+        self._after_cutoff: dict[str, frozenset[Version]] = {}
         self._sorted_versions_memo: dict[
             str, tuple[tuple[Version, ...], list[Version]]
         ] = {}
@@ -388,6 +389,18 @@ class NabProvider:
                 # The versions and which are yanked, without a summary built
                 # for each of a catalog's releases.
                 versions, yanked = catalog_versions(requirement)
+                releases_after_cutoff = getattr(
+                    self.provider, "releases_after_cutoff", None
+                )
+                after_cutoff = (
+                    releases_after_cutoff(requirement)
+                    if releases_after_cutoff is not None
+                    else frozenset()
+                )
+                if after_cutoff:
+                    self._after_cutoff[package] = after_cutoff
+                else:
+                    self._after_cutoff.pop(package, None)
             else:
                 summaries = self.provider.available_versions(requirement)
                 versions = tuple(summary.version for summary in summaries)
@@ -616,6 +629,21 @@ class NabProvider:
                 matching = [
                     version for version in matching if not version.is_prerelease
                 ]
+            # A release none of whose files an upload cutoff admits is one the
+            # index had not published yet, so it is not chosen from: resolving
+            # under a cutoff answers as the index stood then, whatever it has
+            # published since. Chosen, such a release came back empty, and the
+            # choice fell to the newest usable one without the forward check,
+            # which is how releases past the cutoff moved the result. When
+            # nothing else matches the choice goes ahead, so the error it ends
+            # in is the one that explains the cutoff.
+            after_cutoff = self._after_cutoff.get(package)
+            if after_cutoff:
+                admitted = [
+                    version for version in matching if version not in after_cutoff
+                ]
+                if admitted:
+                    matching = admitted
             self._matching_memo[package] = (versions, version_range, matching)
         control = getattr(self.provider, "release_control", None)
         if (
