@@ -1439,42 +1439,26 @@ class CandidateProvider:
             ):
                 continue
 
-            if self.uploaded_prior_to is not None:
-                if link.is_file or link.is_existing_dir or link.is_vcs:
-                    pass
+            if not self.uploaded_before_cutoff(link):
+                host = urllib.parse.urlparse(link.source_url or "").hostname
 
-                elif link.upload_time is None or (
-                    link.upload_time.replace(tzinfo=datetime.timezone.utc)
-                    if link.upload_time.tzinfo is None
-                    else link.upload_time
-                ) >= (
-                    self.uploaded_prior_to.replace(tzinfo=datetime.timezone.utc)
-                    if self.uploaded_prior_to.tzinfo is None
-                    else self.uploaded_prior_to
+                if (
+                    link.upload_time is None
+                    and host in PYPI_HOSTS
+                    and self._upload_cutoff()
+                    > datetime.datetime.now(datetime.timezone.utc)
                 ):
-                    host = urllib.parse.urlparse(link.source_url or "").hostname
-
-                    cutoff = self.uploaded_prior_to
-
-                    if cutoff.tzinfo is None:
-                        cutoff = cutoff.replace(tzinfo=datetime.timezone.utc)
-
-                    if (
-                        link.upload_time is None
-                        and host in PYPI_HOSTS
-                        and cutoff > datetime.datetime.now(datetime.timezone.utc)
-                    ):
-                        continue
-
-                    rejected.append(
-                        RejectedCandidate(
-                            link,
-                            RejectionReason.MISSING_ARTIFACT,
-                            "does not provide upload-time metadata before the cutoff",
-                        ),
-                    )
-
                     continue
+
+                rejected.append(
+                    RejectedCandidate(
+                        link,
+                        RejectionReason.MISSING_ARTIFACT,
+                        "does not provide upload-time metadata before the cutoff",
+                    ),
+                )
+
+                continue
 
             if parsed is None:
                 try:
@@ -1555,6 +1539,40 @@ class CandidateProvider:
 
         return selection
 
+    def _upload_cutoff(self) -> datetime.datetime:
+        cutoff = self.uploaded_prior_to
+
+        assert cutoff is not None
+
+        return (
+            cutoff.replace(tzinfo=datetime.timezone.utc)
+            if cutoff.tzinfo is None
+            else cutoff
+        )
+
+    def uploaded_before_cutoff(self, link: Link) -> bool:
+        """Whether an upload cutoff, if one is set, admits this artifact.
+
+        Local files, directories and VCS checkouts have no upload time and
+        are always admitted; an index artifact is admitted only if it says
+        when it was uploaded and that was before the cutoff.
+        """
+        if self.uploaded_prior_to is None:
+            return True
+
+        if link.is_file or link.is_existing_dir or link.is_vcs:
+            return True
+
+        uploaded = link.upload_time
+
+        if uploaded is None:
+            return False
+
+        if uploaded.tzinfo is None:
+            uploaded = uploaded.replace(tzinfo=datetime.timezone.utc)
+
+        return uploaded < self._upload_cutoff()
+
     def release_candidates(
         self,
         requirement: Requirement,
@@ -1567,16 +1585,13 @@ class CandidateProvider:
         releases one at a time -- the resolver's forward check -- would pay
         that whole scan once per release. This reads the release straight
         out of the package catalog and evaluates only its artifacts, under
-        the policy ``applicable_candidate_records`` applies. ``None`` means
-        the package has no catalog or needs a filter only the full query
-        implements (an upload cutoff, required hashes), so the caller falls
-        back to it.
+        the policy ``applicable_candidate_records`` applies, an upload
+        cutoff included. ``None`` means the package has no catalog or needs
+        a filter only the full query implements (required hashes), so the
+        caller falls back to it.
         """
 
         if requirement.url is not None or requirement.is_unnamed_direct:
-            return None
-
-        if self.uploaded_prior_to is not None:
             return None
 
         hashes = self.hashes_by_name.get(requirement.canonical_name)
@@ -1607,6 +1622,9 @@ class CandidateProvider:
                 (version,),
                 primary_only=True,
             ):
+                if not self.uploaded_before_cutoff(item.link):
+                    continue
+
                 result = self.evaluate_catalog_candidate(
                     item,
                     requirement,
@@ -1620,6 +1638,9 @@ class CandidateProvider:
 
         else:
             for item in catalog.candidates_by_version.get(version, ()):
+                if not self.uploaded_before_cutoff(item.link):
+                    continue
+
                 result = CandidateEvaluator.evaluate_parsed_link(
                     item.link,
                     item,
