@@ -19,8 +19,12 @@ from __future__ import annotations
 
 import atexit
 import os
-import sqlite3
 import threading
+
+TYPE_CHECKING = False
+
+if TYPE_CHECKING:
+    import sqlite3
 
 
 class SqliteBackedCache:
@@ -60,6 +64,8 @@ class SqliteBackedCache:
 
     def _writer(self) -> sqlite3.Connection:
         """Return the connection, opening the database on first real use."""
+        import sqlite3
+
         if self.conn is not None:
             return self.conn
 
@@ -79,6 +85,8 @@ class SqliteBackedCache:
 
     def _open(self) -> sqlite3.Connection:
         """Open a WAL-mode connection and ensure this cache's schema exists."""
+        import sqlite3
+
         conn = sqlite3.connect(self.path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
@@ -88,6 +96,10 @@ class SqliteBackedCache:
     def flush(self) -> None:
         if not self.dirty:
             return
+
+        # Imported here, not with the module: a run that finds nothing to
+        # write or read never pays for ``sqlite3``.
+        import sqlite3
 
         with self.lock:
             try:

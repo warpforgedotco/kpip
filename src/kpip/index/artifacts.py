@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import atexit
-import hashlib
 import os
 import posixpath
 import urllib.parse
 
+from kpip.core.digests import sha256_hexdigest
 from kpip.core.logger import get_logger
 from kpip.core.errors import InstallationError
 from kpip.core.urls import url_to_path
@@ -120,7 +120,7 @@ class ArtifactLocator:
 
         target = os.path.join(
             download_dir_internal(),
-            hashlib.sha256(url_or_path.encode()).hexdigest(),
+            sha256_hexdigest(url_or_path.encode()),
             filename,
         )
 

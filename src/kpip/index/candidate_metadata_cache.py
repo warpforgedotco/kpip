@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from kpip.core.utils import versioned_bucket
+from kpip.core.utils import load_snapshot, save_snapshot, versioned_bucket
 
-import json
+import atexit
 import marshal
 import os
-import sqlite3
-from typing import cast
+import threading
 
 from kpip.core.packaging import Requirement, parse_requirement
 from kpip.core.versions import Version
 from kpip.index.source_models import CandidateMetadata
-from kpip.index.sqlite_cache import SqliteBackedCache
 
-NAME = f"{versioned_bucket('candidate-metadata', 1)}.sqlite"
+# Version 2 is one marshal file rather than an SQLite database.
+NAME = f"{versioned_bucket('candidate-metadata', 2)}.snapshot"
+FORMAT = "kpip-candidate-metadata"
 MAX_ENTRIES = 16_384
 INSTANCES: dict[str, CandidateMetadataCache] = {}
 # The trailing element is the interpreter the metadata was filtered for:
@@ -26,22 +26,33 @@ CacheKey = tuple[str, str, tuple[str, ...], str, str]
 CacheValue = tuple[str, str, tuple[str, ...], tuple[str, ...], str | None]
 
 
-class CandidateMetadataCache(SqliteBackedCache):
-    """Process-local metadata cache backed by an incremental SQLite database."""
+class CandidateMetadataCache:
+    """Process-local metadata cache backed by one marshal snapshot.
+
+    The file maps each key to its value, itself marshalled, so reading it
+    builds the keys and one bytes object per entry, and only the entries a
+    run asks for are decoded and validated. It used to be an SQLite table,
+    read whole on first use for the same reason; the snapshot keeps that and
+    drops the ``sqlite3`` import, the connection, and a ``json.dumps`` of
+    the key per lookup. A flush merges this run's changes into what is on
+    disk then, so concurrent runs keep each other's entries.
+    """
 
     __slots__ = (
-        "_bulk",
-        "_bulk_read_done",
         "_pending_deletes",
         "_pending_puts",
+        "_stored",
         "decoded",
+        "dirty",
         "entries",
+        "lock",
+        "path",
     )
 
-    SCHEMA = "CREATE TABLE IF NOT EXISTS candidate_metadata (key TEXT PRIMARY KEY, value BLOB);"
-
     def __init__(self, cache_dir: str | os.PathLike[str]) -> None:
-        super().__init__(os.path.join(os.fspath(cache_dir), NAME))
+        self.path = os.path.join(os.fspath(cache_dir), NAME)
+        self.lock = threading.RLock()
+        self.dirty = False
 
         self.entries: dict[CacheKey, CacheValue] = {}
         self.decoded: dict[CacheKey, CandidateMetadata] = {}
@@ -49,10 +60,20 @@ class CandidateMetadataCache(SqliteBackedCache):
         self._pending_puts: dict[CacheKey, CacheValue] = {}
         self._pending_deletes: set[CacheKey] = set()
 
-        # Undecoded rows from the one bulk read, keyed as stored. ``None``
-        # once a bulk read declined, which leaves lookups reading per key.
-        self._bulk: dict[str, bytes] | None = None
-        self._bulk_read_done = False
+        # Undecoded values as stored, read on first use.
+        self._stored: dict[CacheKey, bytes] | None = None
+        atexit.register(self.flush)
+
+    def _read_stored(self) -> dict[CacheKey, bytes]:
+        loaded = load_snapshot(self.path)
+        if (
+            isinstance(loaded, tuple)
+            and len(loaded) == 2
+            and loaded[0] == FORMAT
+            and isinstance(loaded[1], dict)
+        ):
+            return loaded[1]  # ty: ignore[invalid-return-type]
+        return {}
 
     @staticmethod
     def valid_value(value: object) -> bool:
@@ -68,62 +89,23 @@ class CandidateMetadataCache(SqliteBackedCache):
             and (value[4] is None or isinstance(value[4], str))
         )
 
-    def _bulk_read(self, conn: sqlite3.Connection) -> None:
-        """Read every row once, so later lookups cost a dict probe.
-
-        A resolve probes this cache once per candidate release, and a
-        backtracking one probes thousands -- each a prepared statement, an
-        index descent and a row fetch.  Reading the table whole amortises
-        that into a single scan.  ``MAX_ENTRIES`` already caps what this
-        cache will hold in memory, so a database above it keeps the
-        per-key reads rather than loading more than that budget allows.
-        """
-        self._bulk_read_done = True
-        try:
-            count = conn.execute(
-                "SELECT count(*) FROM candidate_metadata",
-            ).fetchone()
-            if count is not None and count[0] <= MAX_ENTRIES:
-                self._bulk = dict(
-                    conn.execute("SELECT key, value FROM candidate_metadata"),
-                )
-        except sqlite3.Error:
-            self._bulk = None
-
     def _load(self, key: CacheKey) -> CacheValue | None:
-        """Read one row out of the database, validate it and memoize it."""
-        encoded = json.dumps(key)
+        """Decode one stored value, validate it and memoize it."""
         with self.lock:
-            try:
-                conn = self._reader()
-                if conn is None:
-                    return None
-                if not self._bulk_read_done:
-                    self._bulk_read(conn)
-                bulk = self._bulk
-                if bulk is not None:
-                    # The bulk read holds every row, so absence is a miss.
-                    # It keeps them rather than handing each out once: an
-                    # entry ``_evict`` drops has to be readable again.
-                    blob = bulk.get(encoded)
-                    row = None if blob is None else (blob,)
-                else:
-                    row = conn.execute(
-                        "SELECT value FROM candidate_metadata WHERE key = ?",
-                        (encoded,),
-                    ).fetchone()
-            except sqlite3.Error:
-                return None
-        if row is None:
+            stored = self._stored
+            if stored is None:
+                stored = self._stored = self._read_stored()
+            blob = stored.get(key)
+        if blob is None or key in self._pending_deletes:
             return None
         try:
-            loaded = marshal.loads(row[0])
+            loaded = marshal.loads(blob)
         except Exception:  # noqa: BLE001
             loaded = None
         if not self.valid_value(loaded):
             self._discard(key)
             return None
-        value = cast("CacheValue", loaded)
+        value: CacheValue = loaded  # ty: ignore[invalid-assignment]
         self._evict()
         self.entries[key] = value
         return value
@@ -212,25 +194,27 @@ class CandidateMetadataCache(SqliteBackedCache):
         self._pending_deletes.discard(key)
         self.dirty = True
 
-    def _flush_pending(self, conn: sqlite3.Connection) -> None:
-        if self._pending_deletes:
-            conn.executemany(
-                "DELETE FROM candidate_metadata WHERE key = ?",
-                [(json.dumps(key),) for key in self._pending_deletes],
-            )
-        items = [
-            (json.dumps(key), marshal.dumps(value))
-            for key, value in self._pending_puts.items()
-        ]
-        if items:
-            conn.executemany(
-                "INSERT OR REPLACE INTO candidate_metadata (key, value) VALUES (?, ?)",
-                items,
-            )
-
-    def _clear_pending(self) -> None:
-        self._pending_puts.clear()
-        self._pending_deletes.clear()
+    def flush(self) -> None:
+        """Merge this run's changes into the snapshot on disk."""
+        if not self.dirty:
+            return
+        with self.lock:
+            stored = self._read_stored()
+            for key in self._pending_deletes:
+                stored.pop(key, None)
+            for key, value in self._pending_puts.items():
+                stored.pop(key, None)
+                stored[key] = marshal.dumps(value)
+            # The newest entries are last; beyond the cap, the oldest go.
+            excess = len(stored) - MAX_ENTRIES
+            if excess > 0:
+                for key in list(stored)[:excess]:
+                    del stored[key]
+            if save_snapshot(self.path, (FORMAT, stored)):
+                self._stored = stored
+                self._pending_puts.clear()
+                self._pending_deletes.clear()
+                self.dirty = False
 
 
 def get_candidate_metadata_cache(

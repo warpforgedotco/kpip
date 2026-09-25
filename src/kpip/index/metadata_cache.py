@@ -7,14 +7,17 @@ from kpip.core.utils import versioned_bucket
 
 import marshal
 import os
-import sqlite3
 from collections.abc import Iterable
-from typing import TypeAlias
 
 from kpip.index.sqlite_cache import SqliteBackedCache
 
-MetadataHeaders: TypeAlias = dict[str, list[str]]
-MetadataIdentity: TypeAlias = tuple[str, int, int]
+TYPE_CHECKING = False
+
+if TYPE_CHECKING:
+    import sqlite3
+
+MetadataHeaders = dict[str, list[str]]
+MetadataIdentity = tuple[str, int, int]
 
 _HEX_DIGITS = "0123456789abcdefABCDEF"
 
@@ -79,6 +82,8 @@ class WheelMetadataCache(SqliteBackedCache):
 
     def _load(self, identity: MetadataIdentity) -> MetadataHeaders | None:
         """Read one row out of the database and memoize it."""
+        import sqlite3
+
         with self.lock:
             try:
                 conn = self._reader()
@@ -109,6 +114,8 @@ class WheelMetadataCache(SqliteBackedCache):
     def prefetch(self, identities: Iterable[MetadataIdentity]) -> None:
         """Load the headers of many files in one query, so that the per-file
         ``get_reference`` that follows reads memory, not the database."""
+        import sqlite3
+
         wanted = {identity for identity in identities if identity not in self.entries}
         if not wanted:
             return
@@ -154,6 +161,8 @@ class WheelMetadataCache(SqliteBackedCache):
 
     def get_digest(self, identity: MetadataIdentity) -> str | None:
         """The SHA-256 recorded for a file, or ``None`` when it was never hashed."""
+        import sqlite3
+
         digest = self.digests.get(identity)
         if digest is not None:
             return digest
@@ -179,6 +188,8 @@ class WheelMetadataCache(SqliteBackedCache):
     def prefetch_digests(self, identities: Iterable[MetadataIdentity]) -> None:
         """Load the recorded digests of many files in one query, so that the
         per-file ``get_digest`` that follows reads memory, not the database."""
+        import sqlite3
+
         wanted = {identity for identity in identities if identity not in self.digests}
         if not wanted:
             return

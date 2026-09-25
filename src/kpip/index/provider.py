@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import datetime
-import hashlib
 import operator
 import os
 import stat
@@ -14,6 +13,7 @@ from itertools import chain
 from threading import RLock
 from types import MappingProxyType
 
+from kpip.core.digests import sha256_hexdigest
 from kpip.core.errors import InstallationError
 from kpip.core.hashes import Hashes
 from kpip.core.packaging import Requirement
@@ -53,7 +53,6 @@ from kpip.index.source_models import (
     CandidateSelection,
     CandidateSummary,
     PackageCatalog,
-    PackageSource,
     RejectedCandidate,
     RejectionReason,
     UniformRecords,
@@ -62,6 +61,7 @@ from kpip.index.source_models import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from kpip.index.source_models import PackageSource
     from concurrent.futures import Future, ThreadPoolExecutor
     from typing import Any
 
@@ -539,9 +539,9 @@ class CandidateProvider:
         if supported_tags is None or target_key is None:
             supported_tags = tuple(supported_wheel_tags(self.target))
 
-            target_key = hashlib.sha256(
+            target_key = sha256_hexdigest(
                 "\0".join(str(tag) for tag in supported_tags).encode(),
-            ).hexdigest()
+            )
 
             self.catalog_supported_tags = supported_tags
 
@@ -2206,9 +2206,9 @@ class CandidateProvider:
         target_key = self.catalog_target_key
 
         if target_key is None:
-            target_key = hashlib.sha256(
+            target_key = sha256_hexdigest(
                 "\0".join(str(tag) for tag in supported_tags).encode(),
-            ).hexdigest()
+            )
 
             self.catalog_target_key = target_key
 

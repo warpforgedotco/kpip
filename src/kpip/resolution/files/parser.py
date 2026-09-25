@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import codecs
-import locale
 import os
 import re
 import shlex
@@ -294,6 +293,8 @@ def _read_requirement_content(
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
+        import locale
+
         getencoding = getattr(locale, "getencoding", None)
         encoding = (
             getencoding()

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sysconfig
 
+from kpip.core.digests import sha256_hexdigest
 from kpip.core.logger import get_logger
 from kpip.core.hashes import file_hashes
 from kpip.core.utils import CACHE_INTERPRETER_TAG
@@ -297,7 +297,7 @@ def cache_built_wheel(
 
         origin = {
             "archive_info": {"hashes": dict(source_hashes or {})},
-            "cache_key_hash": hashlib.sha256(cache_key.encode()).hexdigest(),
+            "cache_key_hash": sha256_hexdigest(cache_key.encode()),
         }
 
         with open(

@@ -24,7 +24,7 @@ from kpip.cli.lock_replay import (
     save_record,
     stale_pages,
 )
-from kpip.cli.parsers.lock import create_parser
+from kpip.cli.parsers.lock import parse_lock_options
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.expiry import refresh_since
 from kpip.core.errors import CommandError, KpipError
@@ -414,7 +414,7 @@ def record_replayable_lock(
 
 
 def run_lock(args: list[str]) -> int:
-    options = create_parser().parse_args(args)
+    options = parse_lock_options(args)
 
     resolvers: list[ResolutionEngine] = []
 

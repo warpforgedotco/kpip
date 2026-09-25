@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from kpip.core.digests import sha256_hexdigest
 from kpip.core.utils import versioned_bucket
 
-import hashlib
 import marshal
 import os
 from collections.abc import Iterable, Mapping
@@ -44,7 +44,7 @@ class ArtifactCache:
 
     @staticmethod
     def _url_key(url: str) -> str:
-        return hashlib.sha256(url.encode("utf-8")).hexdigest()
+        return sha256_hexdigest(url.encode("utf-8"))
 
     def _receipt_path(self, url: str) -> str:
         key = self._url_key(url)
@@ -100,6 +100,8 @@ class ArtifactCache:
     def _digests(
         expected_hashes: Mapping[str, str] | None,
     ) -> dict[str, HashDigest]:
+        import hashlib
+
         result: dict[str, HashDigest] = {"sha256": hashlib.sha256()}
         for algorithm in expected_hashes or ():
             if algorithm in result:

@@ -27,11 +27,11 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import hashlib
 import os
 import sys
 from collections.abc import Iterator
 
+from kpip.core.digests import sha256_hexdigest
 from kpip.core.logger import get_logger
 from kpip.core.appdirs import user_cache_dir
 
@@ -55,12 +55,12 @@ def lock_path_for(directory: str) -> str:
     would take two locks and interleave.
     """
 
-    digest = hashlib.sha256(
+    digest = sha256_hexdigest(
         os.path.normcase(os.path.realpath(directory)).encode(
             "utf-8",
             "surrogatepass",
         ),
-    ).hexdigest()[:16]
+    )[:16]
 
     return os.path.join(lock_dir(), f"kpip-install-{digest}.lock")
 
