@@ -1422,6 +1422,19 @@ def run_install(args: list[str]) -> int:
                     retained.append(candidate)
             plan = plan.replace(candidates=tuple(retained))
 
+        for candidate in plan.candidates:
+            yanked_reason = getattr(candidate, "yanked_reason", None)
+            if yanked_reason is not None:
+                # PEP 592: installing a yanked release should warn, with the
+                # reason the index gave.
+                print(
+                    "WARNING: The candidate selected for download or install is "
+                    f"a yanked version: {candidate.name!r} candidate (version "
+                    f"{candidate.version} at {getattr(candidate, 'source_url', '')})"
+                    f"\nReason for being yanked: {yanked_reason or '<none given>'}",
+                    file=sys.stderr,
+                )
+
         if execution.bundle.require_hashes:
             from kpip.resolution.hash_checking import enforce_dependency_hashes
 
