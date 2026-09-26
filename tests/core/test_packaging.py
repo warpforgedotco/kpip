@@ -94,6 +94,23 @@ def test_version_accepts_pep440_separator_forms(raw: str, normalized: str) -> No
     assert str(Version(raw)) == normalized
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "1.0prev\u0130ew1",  # dotted capital I, lowercases to "i\u0307"
+        "1.0.po\u017ft1",  # long s, which IGNORECASE matches as "s"
+        "1.0+\u017f",
+        "1.0+\u0131",  # dotless i
+        "\u0661.\u0660",  # Arabic-Indic digits
+        "\uff11.0",  # fullwidth one
+    ],
+)
+def test_version_rejects_non_ascii_spellings(raw: str) -> None:
+    """PEP 440 numbers are ASCII digits and its labels ASCII letters."""
+    with pytest.raises(InvalidVersion):
+        Version(raw)
+
+
 def test_version_orders_epoch_and_dev_releases() -> None:
     assert Version("1!1.0") > Version("2.0")
     assert Version("1.0.dev1") < Version("1.0a1.dev1") < Version("1.0a1")
