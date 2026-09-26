@@ -58,3 +58,31 @@ def test_a_lock_alone_resolves_nothing(tmp_path: Path) -> None:
 def test_anything_beside_the_lock_is_resolved(tmp_path: Path) -> None:
     assert not collect(tmp_path, "other").only_locked
     assert not collect(tmp_path, constraints=True).only_locked
+
+
+def test_the_wheel_this_interpreter_supports_is_chosen(tmp_path: Path) -> None:
+    """A lock lists wheels for every platform; the first need not fit this one."""
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(
+        """\
+lock-version = "1.0"
+created-by = "test"
+
+[[packages]]
+name = "demo"
+version = "1.0"
+[[packages.wheels]]
+name = "demo-1.0-cp312-cp312-no_such_platform.whl"
+url = "https://files.invalid/demo-1.0-cp312-cp312-no_such_platform.whl"
+hashes = {sha256 = "00"}
+[[packages.wheels]]
+name = "demo-1.0-py3-none-any.whl"
+url = "https://files.invalid/demo-1.0-py3-none-any.whl"
+hashes = {sha256 = "11"}
+""",
+        encoding="utf-8",
+    )
+
+    bundle = collect_requirements(requirements=[], requirement_files=[str(lock)])
+
+    assert bundle.locked_links["demo"].endswith("demo-1.0-py3-none-any.whl")
