@@ -179,6 +179,16 @@ def test_extras_are_or_ed_not_intersected() -> None:
     assert marker_applies('extra == "gpu"', extras=()) is False
 
 
+def test_arbitrary_equality_compares_text() -> None:
+    """``===`` is string equality, so a value that is not a version still
+    matches -- and a failed clause no longer sinks the ``or`` around it."""
+    environment = {"platform_release": "5.15.0-1034-Azure", "os_name": "posix"}
+    tree = parse_marker('platform_release === "5.15.0-1034-azure"')
+    assert evaluate_marker(tree, environment) is True
+    tree = parse_marker('platform_release === "6.0" or os_name == "posix"')
+    assert evaluate_marker(tree, environment) is True
+
+
 def test_extra_literal_is_normalised() -> None:
     assert marker_applies('extra == "Test.Dev"', extras=("test-dev",)) is True
     assert marker_applies('extra == "test_dev"', extras=("test-dev",)) is True

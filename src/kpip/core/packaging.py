@@ -246,7 +246,9 @@ class Specifier:
         other = self.parsed_version
 
         if other is None:
-            return version.public == self.version
+            # ``===`` is string equality, which PEP 440 says MUST treat ASCII
+            # letters case-insensitively.
+            return version.public.lower() == self.version.lower()
 
         if operator == "==":
             if self.is_wildcard:

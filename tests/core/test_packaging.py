@@ -111,6 +111,14 @@ def test_version_rejects_non_ascii_spellings(raw: str) -> None:
         Version(raw)
 
 
+@pytest.mark.parametrize(
+    "specifier, version",
+    [("===1.0RC1", "1.0rc1"), ("===1.0+Abc", "1.0+abc"), ("===1.0rc1", "1.0RC1")],
+)
+def test_arbitrary_equality_ignores_ascii_case(specifier: str, version: str) -> None:
+    assert SpecifierSet(specifier).contains(Version(version), allow_prereleases=True)
+
+
 def test_version_orders_epoch_and_dev_releases() -> None:
     assert Version("1!1.0") > Version("2.0")
     assert Version("1.0.dev1") < Version("1.0a1.dev1") < Version("1.0a1")

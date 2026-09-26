@@ -346,6 +346,10 @@ def _version_compare(left: str, operator: str, right: Any) -> bool:
     """
     if operator in ("in", "not in") or not isinstance(right, str):
         return _text_compare(left, operator, right)
+    if operator == "===":
+        # Arbitrary equality compares text, whether or not either side is a
+        # version: ``platform_release === "5.15.0-1034-azure"`` must hold.
+        return left.lower() == right.lower()
     specifier = _specifier_for(operator, right)
     if specifier is None:
         return _text_compare(left, operator, right)
