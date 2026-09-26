@@ -144,3 +144,26 @@ def test_remote_requirement_includes_are_prefetched(tmp_path) -> None:
         "https://example.test/constraints.txt",
     }
     assert session.maximum == 2
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "--hash=sha256:" + "a" * 64,
+        "--hash sha256:" + "a" * 64,
+        "--config-settings=key=value",
+    ],
+)
+def test_options_do_not_unquote_the_marker(tmp_path: Path, options: str) -> None:
+    """``pip-compile --generate-hashes`` output: a marker keeps its quotes."""
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text(
+        f'demo==1.0 ; python_version >= "3.8" \\\n    {options}\n',
+        encoding="utf-8",
+    )
+
+    results = parse_requirements(str(requirements), object())
+
+    assert [item.requirement for item in results] == [
+        'demo==1.0 ; python_version >= "3.8"',
+    ]

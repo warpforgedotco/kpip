@@ -509,11 +509,22 @@ def parse_requirement_line(
     ):
         requirement_text, parsed_options = requirement_line.strip(), {}
     else:
+        # As pip's ``break_args_options``: the requirement runs up to the
+        # first word that starts with "-", and only the options after it are
+        # shell-split. Splitting the requirement too would strip the quotes
+        # its marker needs, turning ``python_version >= "3.8"`` into a
+        # comparison that never holds.
+        words = requirement_line.split(" ")
+        split_at = next(
+            (index for index, word in enumerate(words) if word.startswith("-")),
+            len(words),
+        )
+        requirement_head = " ".join(words[:split_at]).strip()
         try:
-            tokens = shlex.split(requirement_line, posix=os.name != "nt")
+            tokens = shlex.split(" ".join(words[split_at:]), posix=os.name != "nt")
         except ValueError as exc:
             raise RequirementsFileParseError(str(exc)) from exc
-        requirement_tokens: list[str] = []
+        requirement_tokens: list[str] = [requirement_head] if requirement_head else []
         config_settings: dict[str, object] = {}
         hash_options: dict[str, list[str]] = {}
         index = 0
