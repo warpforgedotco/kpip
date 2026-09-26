@@ -1,0 +1,46 @@
+name: CrossHair
+
+# The property tests in tests/properties run with Hypothesis's own backend on
+# every pull request, as part of Checks. Here CrossHair searches the same
+# properties symbolically, for the inputs random generation rarely reaches.
+# That search is far slower per example, so it runs nightly rather than
+# holding up a pull request. A path that times out or behaves
+# nondeterministically is discarded rather than reported, so a red run is a
+# real counterexample.
+on:
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTEST_ADDOPTS: "--color=yes -q --tb=short"
+
+jobs:
+  crosshair:
+    name: Symbolic properties / Python 3.14
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+      # 3.14 rather than the newest pre-release: CrossHair's 3.15 support is
+      # still landing, and a symbolic engine tracks interpreter internals.
+      - run: uv python install 3.14
+      - run: uv sync --locked --group test --group crosshair --python 3.14
+      - name: Property tests under CrossHair
+        run: >
+          uv run --python 3.14 pytest tests/properties
+          --hypothesis-profile=crosshair
+          -p no:randomly
+          -n auto

@@ -193,6 +193,16 @@ Functional tests exercise the real CLI in subprocesses:
 uv run pytest tests/cli/functional -n auto
 ```
 
+The property tests in `tests/properties` run with the unit tests. The
+[CrossHair workflow](.github/workflows/crosshair.yml) also runs them nightly
+with [CrossHair](https://github.com/pschanely/CrossHair)'s symbolic search.
+To run that search locally:
+
+```console
+uv sync --locked --group test --group crosshair
+uv run pytest tests/properties --hypothesis-profile=crosshair
+```
+
 The [checks workflow](.github/workflows/checks.yml) is the source of truth for
 the supported CI matrix. Before proposing a performance change, record a
 comparable before-and-after benchmark; a locally faster microbenchmark is not

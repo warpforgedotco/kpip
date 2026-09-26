@@ -22,6 +22,13 @@ from kpip._vendor.nab_resolver.ranges import (
     Range,
 )
 
+from tests.range_oracles import (
+    build,
+    contains_by_linear_scan,
+    disjoint_by_set_algebra,
+    subset_by_set_algebra,
+)
+
 _HAS_EXTENDED_BETWEEN = "lower_inclusive" in inspect.signature(Range.between).parameters
 _HAS_POINT_SET_CACHE = "_points" in Range.__slots__
 _HAS_SAFE_INFINITY_COMPARISONS = hasattr(ranges_module, "_same_bound")
@@ -29,45 +36,8 @@ _HAS_SAFE_INFINITY_COMPARISONS = hasattr(ranges_module, "_same_bound")
 PROBES = [value * 0.5 for value in range(-2, 20)]
 
 
-def subset_by_set_algebra(left: Range, right: Range) -> bool:
-    """The definition the walk replaced."""
-
-    return (left - right).is_empty
-
-
-def disjoint_by_set_algebra(left: Range, right: Range) -> bool:
-    """The definition the walk replaced."""
-
-    return (left & right).is_empty
-
-
-def contains_by_linear_scan(candidate: Range, version: object) -> bool:
-    """The scan the binary search in ``__contains__`` replaced."""
-
-    for lower, lower_inclusive, upper, upper_inclusive in candidate._intervals:
-        if lower is not NEGATIVE_INFINITY and (
-            version < lower or (version == lower and not lower_inclusive)
-        ):
-            continue
-        if upper is not POSITIVE_INFINITY and (
-            version > upper or (version == upper and not upper_inclusive)
-        ):
-            continue
-        return True
-    return False
-
-
 def members(candidate: Range) -> set[float]:
     return {probe for probe in PROBES if contains_by_linear_scan(candidate, probe)}
-
-
-def build(intervals: list[tuple]) -> Range:
-    """Normalize intervals the way the resolver does, through union."""
-
-    result: Range = Range.empty()
-    for interval in intervals:
-        result = result | Range((interval,))
-    return result
 
 
 def random_range(rng: random.Random) -> Range:

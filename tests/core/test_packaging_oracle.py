@@ -23,45 +23,19 @@ have been removed rather than recorded.
 from __future__ import annotations
 
 import random
-import re
-from collections.abc import Callable
 from typing import Any
 
 from kpip.core.packaging import SpecifierSet
 from kpip.core.versions import InvalidVersion, Version
 from packaging import specifiers, version
 
+from tests.packaging_oracles import KNOWN_DIVERGENCES, Divergence, classify
+
 SEED = 20260820
 VERSION_SAMPLES = 6000
 PAIRWISE_SAMPLE = 300
 SPECIFIER_SAMPLES = 3000
 CONTAINS_PER_SPECIFIER = 6
-
-
-class Divergence:
-    """One observable on which kpip's packaging and the oracle disagree."""
-
-    __slots__ = ("observable", "ours", "specifier", "theirs", "version")
-
-    def __init__(
-        self,
-        observable: str,
-        specifier: str | None,
-        version: str,
-        ours: object,
-        theirs: object,
-    ) -> None:
-        self.observable = observable
-        self.specifier = specifier
-        self.version = version
-        self.ours = ours
-        self.theirs = theirs
-
-    def __repr__(self) -> str:
-        return (
-            f"Divergence(observable={self.observable!r}, specifier={self.specifier!r}, "
-            f"version={self.version!r}, ours={self.ours!r}, theirs={self.theirs!r})"
-        )
 
 
 PRE_LABELS = ("a", "b", "rc", "c", "alpha", "beta", "pre", "preview")
@@ -137,20 +111,6 @@ def _order(a: Any, b: Any) -> tuple[bool, bool, bool]:
     return (a < b, a == b, a > b)
 
 
-def _normalized_specifier(text: str) -> str | None:
-    """The same specifier with every operand in packaging's canonical form,
-    or None when an operand cannot be normalised (wildcards, ``===``)."""
-    clauses = []
-    for clause in text.split(","):
-        match = re.match(r"(===|==|!=|<=|>=|<|>|~=)(.*)", clause)
-        assert match is not None
-        operator, operand = match.groups()
-        if operator == "===" or operand.endswith(".*"):
-            return None
-        clauses.append(operator + str(version.Version(operand)))
-    return ",".join(clauses)
-
-
 def collect_divergences() -> list[Divergence]:
     rng = random.Random(SEED)
     divergences: list[Divergence] = []
@@ -222,35 +182,6 @@ def collect_divergences() -> list[Divergence]:
                         )
                     )
     return divergences
-
-
-def _packaging_disagrees_with_its_normalised_self(d: Divergence) -> bool:
-    if d.specifier is None or not d.observable.startswith("contains"):
-        return False
-    normalised = _normalized_specifier(d.specifier)
-    if normalised is None:
-        return False
-    allow = d.observable.endswith("True)")
-    theirs_set = specifiers.SpecifierSet(normalised)
-    prereleases = True if allow else bool(theirs_set.prereleases)
-    return (
-        theirs_set.contains(version.Version(d.version), prereleases=prereleases)
-        == d.ours
-    )
-
-
-KNOWN_DIVERGENCES: dict[str, Callable[[Divergence], bool]] = {
-    "packaging's ~= prefix is taken from the unnormalised operand": (
-        _packaging_disagrees_with_its_normalised_self
-    ),
-}
-
-
-def classify(divergence: Divergence) -> str | None:
-    for cause, matches in KNOWN_DIVERGENCES.items():
-        if matches(divergence):
-            return cause
-    return None
 
 
 def test_every_divergence_from_packaging_has_a_known_cause() -> None:
