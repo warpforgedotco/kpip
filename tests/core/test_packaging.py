@@ -63,6 +63,26 @@ def test_parse_requirement_reuses_immutable_result() -> None:
         first.specifier.specifiers = ()  # type: ignore[misc]
 
 
+@pytest.mark.parametrize(
+    "raw, url, marker",
+    [
+        ("depy @ file:///tmp/a;b/depy-1.0.whl", "file:///tmp/a;b/depy-1.0.whl", None),
+        ("depy @ https://h/p.whl;os_name=='nt'", "https://h/p.whl;os_name=='nt'", None),
+        ("depy @ https://h/p.whl ; os_name=='nt'", "https://h/p.whl", "os_name=='nt'"),
+        ("depy[x] @ https://h/p.whl\t;extra=='y'", "https://h/p.whl", "extra=='y'"),
+    ],
+)
+def test_url_requirement_marker_needs_whitespace(
+    raw: str, url: str, marker: str | None
+) -> None:
+    """PEP 508 ends a url at whitespace; a ";" inside it is the url's own."""
+    requirement = parse_requirement(raw)
+
+    assert requirement.url == url
+    assert requirement.marker == marker
+    assert parse_requirement(str(requirement)) == requirement
+
+
 def test_canonicalize_requirement() -> None:
     assert (
         canonicalize_requirement('Demo_Pkg[SSL,PDF] >= 1.0; python_version >= "3.11"')
