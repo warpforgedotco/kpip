@@ -1533,6 +1533,22 @@ def interpreter_matches(runtime: str, wheel: str, abi: str) -> bool:
     if wheel == "py3" and runtime.startswith(("cp", "py")):
         return True
 
+    # A pure wheel for an older minor of the same major -- py38-none-any on
+    # 3.12 -- is compatible, as packaging's compatible_tags lists it.
+    if (
+        abi == "none"
+        and runtime.startswith("py")
+        and wheel.startswith("py")
+        and len(runtime) > 3
+        and len(wheel) > 3
+        and runtime[2] == wheel[2]
+    ):
+        try:
+            return int(wheel[3:]) <= int(runtime[3:])
+
+        except ValueError:
+            return False
+
     return False
 
 

@@ -472,3 +472,27 @@ def test_build_tag_keeps_its_number_and_suffix() -> None:
     assert legacy_build_tag(None) == ()
     assert legacy_build_tag("1") == (1, "")
     assert legacy_build_tag("12rc1") == (12, "rc1")
+
+
+@pytest.mark.parametrize(
+    "filename, compatible",
+    [
+        ("demo-1.0-py311-none-any.whl", True),
+        ("demo-1.0-py38-none-any.whl", True),
+        ("demo-1.0-py310-none-linux_x86_64.whl", True),
+        ("demo-1.0-py313-none-any.whl", False),
+        ("demo-1.0-py27-none-any.whl", False),
+        ("demo-1.0-py311-abi3-any.whl", False),
+    ],
+)
+def test_pure_wheel_for_an_older_minor_is_compatible(
+    filename: str, compatible: bool
+) -> None:
+    """packaging's compatible_tags: py3X-none-* for every X up to the running one."""
+
+    supported = supported_wheel_tags(
+        TargetContext(platforms=("linux_x86_64",), python_version="3.12")
+    )
+    wheel = parse_wheel_file(filename)
+    assert wheel is not None
+    assert (wheel_tag_rank(wheel.tags, supported) is not None) is compatible
