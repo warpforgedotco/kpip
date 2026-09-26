@@ -91,4 +91,6 @@ def expand_env_variables(value: str) -> str:
         replacement = os.getenv(name)
         return match.group(0) if replacement in {None, ""} else str(replacement)
 
-    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", replace, value)
+    # pip's ENV_VAR_RE, as its requirements file format page documents:
+    # POSIX names, uppercase only. ``${lower}`` stays as written.
+    return re.sub(r"\$\{([A-Z0-9_]+)\}", replace, value)

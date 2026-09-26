@@ -56,6 +56,11 @@ CASES = [
     ),
     pytest.param("\n\n  \nx==1\n\n", [(4, "x==1")], id="blank-lines-are-dropped"),
     pytest.param("", [], id="empty-file"),
+    pytest.param(
+        "\\a==1 \\\n  --hash=sha256:x\n",
+        [(1, "a==1   --hash=sha256:x")],
+        id="continuation-strips-a-leading-backslash",
+    ),
 ]
 
 
@@ -83,3 +88,17 @@ def test_reported_line_number_is_where_the_entry_starts() -> None:
         (2, "b==2   --hash=sha256:x"),
         (4, "c==3"),
     ]
+
+
+def test_only_uppercase_environment_variables_expand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pip's requirements file format: ``${NAME}``, POSIX and uppercase."""
+    from kpip.resolution.files.options import expand_env_variables
+
+    monkeypatch.setenv("TOKEN_1", "secret")
+    monkeypatch.setenv("lower", "nope")
+
+    assert expand_env_variables("https://${TOKEN_1}@h/${lower}") == (
+        "https://secret@h/${lower}"
+    )

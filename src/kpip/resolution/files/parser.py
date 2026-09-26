@@ -233,7 +233,9 @@ def preprocess_requirement_lines(content: str) -> list[tuple[int, str]]:
         if line.endswith("\\") and not is_comment:
             if not pieces:
                 first_line_number = line_number
-            pieces.append(line.rstrip("\\"))
+            # Both ends, as pip's join_lines strips: a continuation line
+            # that begins with a backslash loses it too.
+            pieces.append(line.strip("\\"))
             continue
         if is_comment:
             # Keep it separated, so the stripping pass still sees a comment.
