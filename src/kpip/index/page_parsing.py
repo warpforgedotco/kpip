@@ -43,12 +43,24 @@ if TYPE_CHECKING:
 
 
 class IndexContent:
-    __slots__ = ("body", "content_type", "from_cache")
+    """One page's body, and ``base_url``: what its relative links resolve
+    against. That is the URL the body came from, after redirects, as pip
+    and the Simple API spec have it; None takes the requested URL as a
+    directory."""
 
-    def __init__(self, body: str, content_type: str, from_cache: bool = False) -> None:
+    __slots__ = ("base_url", "body", "content_type", "from_cache")
+
+    def __init__(
+        self,
+        body: str,
+        content_type: str,
+        from_cache: bool = False,
+        base_url: str | None = None,
+    ) -> None:
         self.body = body
         self.content_type = content_type
         self.from_cache = from_cache
+        self.base_url = base_url
 
 
 class IndexPageParser:
@@ -83,9 +95,9 @@ class IndexPageParser:
             if cached is not None:
                 return cached
         if content.content_type.endswith("+json") or "json" in content.content_type:
-            links = self.links_from_json(content.body, url)
+            links = self.links_from_json(content.body, url, content.base_url)
         else:
-            links = self.links_from_html(content.body, url)
+            links = self.links_from_html(content.body, url, content.base_url)
         if self.session is not None:
             save_links(getattr(self.session, "cache", None), url, links)
         return links
@@ -94,7 +106,12 @@ class IndexPageParser:
         local = self.artifacts.local_path(url)
         if local is not None:
             local_text = os.fspath(local)
+            # A find-links HTML file's links are relative to the file, not
+            # to a directory named after it; a directory's resolve against
+            # the directory, the default.
+            page_base: str | None = url
             if os.path.isdir(local_text):
+                page_base = None
                 json_path = os.path.join(local_text, "index.json")
                 try:
                     with open(json_path, encoding="utf-8") as file:
@@ -106,7 +123,7 @@ class IndexPageParser:
                     pass
                 local_text = os.path.join(local_text, "index.html")
             with open(local_text, encoding="utf-8") as file:
-                return IndexContent(file.read(), "text/html")
+                return IndexContent(file.read(), "text/html", base_url=page_base)
 
         headers = {
             "Accept": (
@@ -120,17 +137,21 @@ class IndexPageParser:
             )
         response = self.session.get(url, headers=headers)
         raise_for_status(response)
+        final_url = getattr(response, "url", None)
         return IndexContent(
             response_text(response),
             response.headers.get("Content-Type", "text/html").split(";", 1)[0],
             getattr(response, "from_cache", False),
+            base_url=final_url if isinstance(final_url, str) and final_url else None,
         )
 
-    def links_from_html(self, body: str, url: str) -> list[Link]:
+    def links_from_html(
+        self, body: str, url: str, base_url: str | None = None
+    ) -> list[Link]:
         link_factory = self.link_factory
         if getattr(link_factory, "__func__", None) is _FROM_URL_FUNCTION:
             link_factory = Link.from_index_page
-        parser = link_parser_class()(url, link_factory)
+        parser = link_parser_class()(url, link_factory, base_url)
         parser.feed(body)
         return parser.links
 
@@ -150,13 +171,14 @@ class IndexPageParser:
         cache = getattr(self.session, "cache", None)
         if cache is None:
             return None
-        groups, unparsed = self.catalog_from_json(content.body, url)
+        groups, unparsed = self.catalog_from_json(content.body, url, content.base_url)
         return save_catalog(cache, url, (groups, unparsed))
 
     def catalog_from_json(
         self,
         body: str,
         url: str,
+        base_url: str | None = None,
     ) -> tuple[list[Any], list[Any]]:
         """Compile a Simple API JSON page straight into catalog records.
 
@@ -172,7 +194,7 @@ class IndexPageParser:
         than by re-derivation here.
         """
         data = json.loads(body)
-        base_url = ensure_trailing_slash(url)
+        base_url = base_url or ensure_trailing_slash(url)
         grouped: dict[tuple[str, str], list[Any]] = {}
         unparsed: list[Any] = []
         for file_data in data.get("files", []):
@@ -266,14 +288,16 @@ class IndexPageParser:
             identity_for(kind, str(name), parsed_wheel=parsed_wheel),
         )
 
-    def links_from_json(self, body: str, url: str) -> list[Link]:
+    def links_from_json(
+        self, body: str, url: str, base_url: str | None = None
+    ) -> list[Link]:
         data = json.loads(body)
         links: list[Link] = []
         append = links.append
         link_factory = self.link_factory
         if getattr(link_factory, "__func__", None) is _FROM_URL_FUNCTION:
             link_factory = Link.from_index_page
-        base_url = ensure_trailing_slash(url)
+        base_url = base_url or ensure_trailing_slash(url)
         for file_data in data.get("files", []):
             if not isinstance(file_data, dict):
                 continue
@@ -329,10 +353,15 @@ def link_parser_class() -> type:
     from html.parser import HTMLParser
 
     class LinkParser(HTMLParser):
-        def __init__(self, page_url: str, link_factory: LinkFactory) -> None:
+        def __init__(
+            self,
+            page_url: str,
+            link_factory: LinkFactory,
+            base_url: str | None = None,
+        ) -> None:
             super().__init__(convert_charrefs=True)
             self.page_url = page_url
-            self.base_url_internal = ensure_trailing_slash(page_url)
+            self.base_url_internal = base_url or ensure_trailing_slash(page_url)
             self.saw_base_internal = False
             self.link_factory = link_factory
             self.links: list[Link] = []

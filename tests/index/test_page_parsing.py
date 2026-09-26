@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import urllib.parse
+from pathlib import Path
 
 import pytest
 from kpip.index.page_parsing import IndexPageParser, join_index_url
@@ -412,3 +413,50 @@ def test_base_without_an_href_attribute_does_not_consume_the_slot() -> None:
     )
     links = IndexPageParser().links_from_html(body, PAGE_URL)
     assert [link.url for link in links] == ["https://second.invalid/pkg-1.0.tar.gz"]
+
+
+def test_find_links_html_file_resolves_against_the_file(tmp_path: Path) -> None:
+    """``--find-links /dir/links.html``: "x.whl" is /dir/x.whl, not a file
+    inside a directory named links.html."""
+    page = tmp_path / "links.html"
+    page.write_text('<a href="pkg-1.0-py3-none-any.whl">pkg</a>', encoding="utf-8")
+
+    links = IndexPageParser().links_from_url(page.as_uri())
+
+    assert [link.url for link in links] == [
+        (tmp_path / "pkg-1.0-py3-none-any.whl").as_uri(),
+    ]
+
+
+def test_local_directory_index_resolves_against_the_directory(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text(
+        '<a href="pkg-1.0-py3-none-any.whl">pkg</a>', encoding="utf-8"
+    )
+
+    links = IndexPageParser().links_from_url(tmp_path.as_uri())
+
+    assert [link.url for link in links] == [
+        (tmp_path / "pkg-1.0-py3-none-any.whl").as_uri(),
+    ]
+
+
+def test_links_resolve_against_the_url_after_redirects() -> None:
+    """A redirect to ``/simple/pkg/`` moves the base with it, as pip's
+    ``urljoin(response.url, href)`` does; the requested URL is not it."""
+
+    class Response:
+        status = 200
+        url = "https://mirror.invalid/simple/pkg/"
+        headers = {"Content-Type": "text/html"}
+        data = b'<a href="../../files/pkg-1.0.tar.gz">pkg</a>'
+
+    class Session:
+        def get(self, url: str, **kwargs: object) -> Response:
+            return Response()
+
+    parser = IndexPageParser(session=Session())  # type: ignore[arg-type]
+    links = parser.links_from_url("https://example.invalid/simple/pkg")
+
+    assert [link.url for link in links] == [
+        "https://mirror.invalid/files/pkg-1.0.tar.gz",
+    ]
