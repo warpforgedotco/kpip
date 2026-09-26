@@ -978,7 +978,9 @@ def test_html_requires_python_oracle(
     "anchor_html, expected",
     [
         ('<a href="/pkg1-1.0.tar.gz"></a>', None),
-        ('<a href="/pkg2-1.0.tar.gz" data-yanked></a>', None),
+        # PEP 592: a data-yanked with no value still yanks. pip reads it as
+        # not yanked; kpip follows the spec.
+        ('<a href="/pkg2-1.0.tar.gz" data-yanked></a>', ""),
         ('<a href="/pkg3-1.0.tar.gz" data-yanked=""></a>', ""),
         ('<a href="/pkg4-1.0.tar.gz" data-yanked="error"></a>', "error"),
         ('<a href="/pkg4-1.0.tar.gz" data-yanked="version &lt 1"></a>', "version < 1"),

@@ -460,3 +460,14 @@ def test_links_resolve_against_the_url_after_redirects() -> None:
     assert [link.url for link in links] == [
         "https://mirror.invalid/files/pkg-1.0.tar.gz",
     ]
+
+
+def test_bare_data_yanked_yanks() -> None:
+    """PEP 592: the attribute may have no value; its presence yanks."""
+    body = (
+        '<a href="pkg-1.0.tar.gz" data-yanked>pkg</a>'
+        '<a href="pkg-1.1.tar.gz" data-yanked="broken">pkg</a>'
+        '<a href="pkg-1.2.tar.gz">pkg</a>'
+    )
+    links = IndexPageParser().links_from_html(body, PAGE_URL)
+    assert [link.yanked_reason for link in links] == ["", "broken", None]

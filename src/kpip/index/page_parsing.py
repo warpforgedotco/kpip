@@ -410,7 +410,13 @@ def link_parser_class() -> type:
                         requires_python=self.current_internal.get(
                             "data-requires-python"
                         ),
-                        yanked_reason=self.current_internal.get("data-yanked"),
+                        # A bare ``data-yanked`` (PEP 592 lets it have no
+                        # value) still yanks; the parser reads it as None.
+                        yanked_reason=(
+                            self.current_internal.get("data-yanked") or ""
+                            if "data-yanked" in self.current_internal
+                            else None
+                        ),
                         metadata_file=metadata_file_from_attrs(self.current_internal),
                     ),
                 )
