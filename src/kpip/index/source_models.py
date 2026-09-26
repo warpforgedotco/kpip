@@ -5,7 +5,7 @@ from enum import Enum
 
 from kpip.core.packaging import Requirement, canonicalize_name
 from kpip.core.versions import Version
-from kpip.core.wheel import CandidateMetadata
+from kpip.core.wheel import CandidateMetadata, legacy_build_tag
 
 TYPE_CHECKING = False
 
@@ -233,7 +233,9 @@ class CandidateRecord:
     def canonical_name(self) -> str:
         return self._canonical_name
 
-    def sort_key(self, *, prefer_binary: bool) -> tuple[object, object, object, int]:
+    def sort_key(
+        self, *, prefer_binary: bool
+    ) -> tuple[object, object, object, int, tuple[int, str] | tuple[()]]:
         wheel_rank = 1 if self.link.kind is ArtifactKind.WHEEL else 0
 
         tag_rank = -(self.tag_rank if self.tag_rank is not None else 1_000_000)
@@ -242,10 +244,14 @@ class CandidateRecord:
 
         version_key = self.version
 
-        if prefer_binary:
-            return (yanked_rank, wheel_rank, version_key, tag_rank)
+        # The wheel spec's tie-breaker between otherwise equal wheels, sorted
+        # as ``(int, str)``: build 10 is newer than build 2.
+        build_tag = legacy_build_tag(self.wheel.build_tag) if self.wheel else ()
 
-        return (yanked_rank, version_key, wheel_rank, tag_rank)
+        if prefer_binary:
+            return (yanked_rank, wheel_rank, version_key, tag_rank, build_tag)
+
+        return (yanked_rank, version_key, wheel_rank, tag_rank, build_tag)
 
     def metadata(self) -> CandidateMetadata:
         loader = self.metadata_loader

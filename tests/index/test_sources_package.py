@@ -2046,3 +2046,22 @@ def test_catalog_prefetch_evaluates_every_release_only_without_the_pinned_one(
         assert evaluated == ["demo"]
     finally:
         provider.close()
+
+
+def test_build_tag_breaks_ties_between_equal_wheels(tmp_path: Path) -> None:
+    """The wheel spec: a build tag breaks the tie, sorted as ``(int, str)``."""
+    wheelhouse = tmp_path / "packages"
+    wheelhouse.mkdir()
+    built = make_wheel(wheelhouse, "demo", "demo", "1.0")
+    for build in ("1", "2", "10"):
+        built.with_name(f"demo-1.0-{build}-py3-none-any.whl").write_bytes(
+            built.read_bytes()
+        )
+    built.unlink()
+    provider = CandidateProvider.from_options(
+        find_links=[str(wheelhouse)], no_index=True
+    )
+
+    candidates = provider.find_candidates(parse_requirement("demo"))
+
+    assert candidates[0].source_url.endswith("/demo-1.0-10-py3-none-any.whl")
