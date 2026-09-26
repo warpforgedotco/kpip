@@ -389,3 +389,32 @@ def test_new_resolver_hash_with_extras(script: KpipTestEnvironment) -> None:
         child="0.1.0",
         extra="0.1.0",
     )
+
+
+def test_new_resolver_hash_requires_dependency_hashes(
+    script: KpipTestEnvironment,
+) -> None:
+    """A dependency nobody hashed stops the install before it is fetched."""
+    parent_path = create_basic_wheel_for_package(
+        script, "parent", "0.1.0", depends=["child"]
+    )
+    parent_hash = hashlib.sha256(parent_path.read_bytes()).hexdigest()
+    create_basic_wheel_for_package(script, "child", "0.1.0")
+
+    requirements_txt = script.scratch_path / "requirements.txt"
+    requirements_txt.write_text(f"parent==0.1.0 --hash=sha256:{parent_hash}\n")
+
+    result = script.kpip(
+        "install",
+        "--no-cache-dir",
+        "--no-index",
+        "--find-links",
+        script.scratch_path,
+        "--requirement",
+        requirements_txt,
+        expect_error=True,
+    )
+
+    assert "Hashes are required in --require-hashes mode" in result.stderr
+    assert "child==0.1.0" in result.stderr
+    script.assert_not_installed("parent", "child")

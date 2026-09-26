@@ -12,6 +12,7 @@ TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from collections.abc import Container, Iterable
+    from typing import Any
 
     from kpip.resolution.req_install import InstallRequirement
 
@@ -132,5 +133,36 @@ def enforce_hash_checking(
     errors = HashErrors()
     for requirement in requirements:
         check_requirement(requirement, errors, pinned_by_constraint)
+    if errors:
+        raise errors
+
+
+def enforce_dependency_hashes(
+    candidates: Iterable[Any],
+    hashed_names: Container[str],
+    checked_names: Container[str],
+) -> None:
+    """Raise unless every resolved candidate carries a hash the user gave.
+
+    :func:`enforce_hash_checking` can only see the requirements the user
+    wrote; the dependencies they pull in are known once resolution is done.
+    Hash-checking mode covers those too -- a dependency nobody hashed would
+    otherwise install unverified -- so each must be hashed by a requirement
+    or a constraint. ``checked_names`` are the user's own requirements,
+    already held to the rules above.
+
+    Call this before anything is fetched. Where the index published a digest
+    it is shown, as a line to add.
+    """
+    errors = HashErrors()
+    for candidate in candidates:
+        name = candidate.canonical_name
+        if name in hashed_names or name in checked_names:
+            continue
+        subject = f"{candidate.name}=={candidate.version}"
+        digest = (getattr(candidate, "source_hashes", None) or {}).get("sha256")
+        if digest:
+            subject += f" --hash=sha256:{digest}"
+        errors.append(HashMissing(subject), subject)
     if errors:
         raise errors

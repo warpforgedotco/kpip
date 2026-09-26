@@ -1422,6 +1422,28 @@ def run_install(args: list[str]) -> int:
                     retained.append(candidate)
             plan = plan.replace(candidates=tuple(retained))
 
+        if execution.bundle.require_hashes:
+            from kpip.resolution.hash_checking import enforce_dependency_hashes
+
+            enforce_dependency_hashes(
+                plan.candidates,
+                hashed_names={
+                    *(
+                        item.req.canonical_name
+                        for item in execution.requirements
+                        if item.req is not None and item.hash_options
+                    ),
+                    *(
+                        parse_requirement(raw).canonical_name
+                        for raw in (
+                            *execution.bundle.requirement_hashes,
+                            *execution.bundle.constraint_hashes,
+                        )
+                    ),
+                },
+                checked_names=requested_roots,
+            )
+
         if plan.candidates and (
             not execution.options.dry_run or bool(execution.bundle.requirement_hashes)
         ):
