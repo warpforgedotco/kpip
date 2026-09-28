@@ -125,7 +125,7 @@ def config_locations() -> list[ConfigLocation]:
     env_path = os.path.expanduser(env_config) if env_config else None
     locations = [ConfigLocation("global", global_path)]
     if not (env_path and os.path.exists(env_path)):
-        locations.append(ConfigLocation("user", user_config_path()))
+        locations.extend(ConfigLocation("user", path) for path in user_config_paths())
     prefix = os.environ.get("VIRTUAL_ENV") or sys.prefix
     executable_prefix = os.path.dirname(os.path.dirname(sys.executable))
     if os.path.isfile(os.path.join(executable_prefix, "pyvenv.cfg")):
@@ -160,11 +160,26 @@ def new_parser() -> configparser.RawConfigParser:
     return raw_config_parser_class()()
 
 
-def user_config_path() -> str:
+def user_config_paths() -> list[str]:
+    """The user configuration files, the later overriding the earlier.
+
+    The file lives in the platform's user config directory, as pip's does:
+    ``$XDG_CONFIG_HOME/kpip`` or ``~/.config/kpip`` on Linux, the
+    Application Support directory on macOS, ``%APPDATA%`` on Windows. It
+    used to be ``~/.config/kpip.conf`` unless XDG_CONFIG_HOME was set, and
+    ``$XDG_CONFIG_HOME/kpip/kpip.conf`` when it was -- two files for one
+    home directory -- so both are still read, first.
+    """
+    from kpip.core.appdirs import user_config_dir
+
+    paths = [os.path.join(os.path.expanduser("~"), ".config", CONFIG_BASENAME)]
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
-        return os.path.join(xdg, "kpip", CONFIG_BASENAME)
-    return os.path.join(os.path.expanduser("~"), ".config", CONFIG_BASENAME)
+        # Where it was read from with XDG_CONFIG_HOME set, on every platform;
+        # macOS's own directory ignores the variable.
+        paths.append(os.path.join(xdg, "kpip", CONFIG_BASENAME))
+    paths.append(os.path.join(user_config_dir("kpip"), CONFIG_BASENAME))
+    return list(dict.fromkeys(paths))
 
 
 class SourceConfig:

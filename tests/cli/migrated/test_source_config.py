@@ -148,3 +148,33 @@ def test_existing_config_file_replaces_the_user_file(
 
     assert config.no_index is False
     assert config.find_links == ["/wheels"]
+
+
+def test_user_file_is_the_same_with_or_without_xdg_config_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``~/.config/kpip/kpip.conf`` is read whether or not XDG_CONFIG_HOME
+    names ``~/.config``; it used to be a different file in each case."""
+    from kpip.cli.config import user_config_paths
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "linux")
+    without = user_config_paths()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    assert user_config_paths() == without
+    assert without[-1] == str(tmp_path / ".config" / "kpip" / "kpip.conf")
+
+
+def test_legacy_user_file_is_still_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".config").mkdir()
+    (tmp_path / ".config" / "kpip.conf").write_text(
+        "[global]\nno-index = true\n", encoding="utf-8"
+    )
+
+    assert load_source_config("install").no_index is True
