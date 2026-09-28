@@ -298,6 +298,19 @@ def _open_resolver_wheel_archive(
     return _ResolverWheelArchive(archive)
 
 
+def provides_extras(metadata: object, requested: frozenset[str]) -> bool:
+    """Whether ``metadata`` declares every one of ``requested``.
+
+    Requested extras are normalized; a ``Provides-Extra`` header is stored
+    as written, and core metadata says the two are compared normalized, so
+    ``Foo_Bar`` provides ``foo-bar``.
+    """
+    provided = getattr(metadata, "provided_extras", ())
+    if requested <= provided:
+        return True
+    return requested <= {canonicalize_name(extra) for extra in provided}
+
+
 def project_provided_extras(project: object) -> frozenset[str]:
     optional_dependencies = getattr(project, "optional_dependencies", {})
 
@@ -1362,19 +1375,14 @@ class CandidateMaterializer:
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
                 metadata = self.pypi_metadata(candidate, requested_extras)
 
-                if metadata is None or not (
-                    requested_extras <= metadata.provided_extras
-                ):
+                if metadata is None or not provides_extras(metadata, requested_extras):
                     metadata = self.sibling_wheel_metadata(
                         candidate,
                         requirement,
                         requested_extras,
                     )
 
-                if (
-                    metadata is not None
-                    and requested_extras <= metadata.provided_extras
-                ):
+                if metadata is not None and provides_extras(metadata, requested_extras):
                     self.metadata_cache[key] = metadata
 
                     if persistent_cache is not None:

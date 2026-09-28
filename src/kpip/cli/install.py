@@ -1520,7 +1520,12 @@ def run_install(args: list[str]) -> int:
 
         for candidate in plan.candidates:
             requested = requested_extras_by_name.get(candidate.canonical_name, set())
-            provided = set(getattr(candidate, "provided_extras", ()))
+            # Compared normalized, as core metadata requires: a header of
+            # ``Foo_Bar`` provides the requested ``foo-bar``.
+            provided = {
+                canonicalize_name(extra)
+                for extra in getattr(candidate, "provided_extras", ())
+            }
             for extra in sorted(requested - provided):
                 print(
                     f"WARNING: {candidate.name} {candidate.version} does not provide the extra '{extra}'",

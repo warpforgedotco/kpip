@@ -1253,6 +1253,26 @@ def test_new_resolver_check_wheel_version_normalized(
     script.assert_installed(simple="0.1.0+local.1")
 
 
+def test_new_resolver_extra_names_compare_normalized(
+    script: KpipTestEnvironment,
+) -> None:
+    """``Provides-Extra: Foo_Bar`` provides the requested ``foo-bar``."""
+    create_basic_wheel_for_package(script, "dep", "1.0")
+    create_basic_wheel_for_package(script, "pkg", "1.0", extras={"Foo_Bar": ["dep"]})
+
+    result = script.kpip(
+        "install",
+        "--no-cache-dir",
+        "--no-index",
+        "--find-links",
+        script.scratch_path,
+        "pkg[foo-bar]",
+    )
+
+    assert "does not provide the extra" not in result.stderr
+    script.assert_installed(pkg="1.0", dep="1.0")
+
+
 def test_new_resolver_does_reinstall_local_sdists(script: KpipTestEnvironment) -> None:
     archive_path = create_basic_sdist_for_package(
         script,
