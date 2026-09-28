@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import pytest
 from kpip.cli.config import SourceConfig, load_source_config, resolve_sources
+from kpip.core.errors import ConfigurationError
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +17,7 @@ def clean_source_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "KPIP_EXTRA_INDEX_URL",
         "KPIP_NO_INDEX",
         "KPIP_CONFIG_FILE",
+        "XDG_CONFIG_HOME",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -97,3 +100,51 @@ def test_resolve_sources_without_find_links_option() -> None:
     options = argparse.Namespace(index_url=None, extra_index_url=[], no_index=False)
 
     assert resolve_sources(options, config).find_links == ["/configured"]
+
+
+def test_unparseable_configuration_is_an_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Falling back to defaults dropped the file's valid settings with it:
+    ``no-index = true`` beside one bad line meant an install from PyPI."""
+    write_config(
+        tmp_path,
+        "[global]\nno-index = true\nthis line is not an option\n",
+        monkeypatch,
+    )
+
+    with pytest.raises(ConfigurationError, match="could not be loaded"):
+        load_source_config("install")
+
+
+def write_user_config(
+    tmp_path: Path, body: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "xdg"
+    (home / "kpip").mkdir(parents=True)
+    (home / "kpip" / "kpip.conf").write_text(body, encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+
+
+def test_config_file_devnull_loads_no_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_user_config(tmp_path, "[global]\nno-index = true\n", monkeypatch)
+    monkeypatch.setenv("KPIP_CONFIG_FILE", os.devnull)
+
+    assert load_source_config("install").no_index is False
+
+
+def test_existing_config_file_replaces_the_user_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_user_config(tmp_path, "[global]\nno-index = true\n", monkeypatch)
+    write_config(tmp_path, "[global]\nfind-links = /wheels\n", monkeypatch)
+
+    config = load_source_config("install")
+
+    assert config.no_index is False
+    assert config.find_links == ["/wheels"]
