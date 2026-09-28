@@ -471,3 +471,34 @@ def test_bare_data_yanked_yanks() -> None:
     )
     links = IndexPageParser().links_from_html(body, PAGE_URL)
     assert [link.yanked_reason for link in links] == ["", "broken", None]
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.4", " 1.99 "])
+def test_simple_api_version_1_is_read(version: str) -> None:
+    html = (
+        f'<meta name="pypi:repository-version" content="{version}">'
+        '<a href="pkg-1.0.tar.gz">pkg</a>'
+    )
+    json_page = (
+        f'{{"meta": {{"api-version": "{version}"}}, "files": '
+        '[{"filename": "pkg-1.0.tar.gz", "url": "pkg-1.0.tar.gz", "hashes": {}}]}'
+    )
+    parser = IndexPageParser()
+
+    assert len(parser.links_from_html(html, PAGE_URL)) == 1
+    assert len(parser.links_from_json(json_page, PAGE_URL)) == 1
+
+
+def test_simple_api_major_version_2_is_refused() -> None:
+    """The spec: a client MUST fail on a major version it does not support."""
+    from kpip.core.errors import InstallationError
+
+    parser = IndexPageParser()
+    with pytest.raises(InstallationError, match="API version 2.0"):
+        parser.links_from_html(
+            '<meta name="pypi:repository-version" content="2.0">', PAGE_URL
+        )
+    with pytest.raises(InstallationError, match="API version 2.1"):
+        parser.links_from_json(
+            '{"meta": {"api-version": "2.1"}, "files": []}', PAGE_URL
+        )

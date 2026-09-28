@@ -194,6 +194,7 @@ class IndexPageParser:
         than by re-derivation here.
         """
         data = json.loads(body)
+        check_api_version(_json_api_version(data), url)
         base_url = base_url or ensure_trailing_slash(url)
         grouped: dict[tuple[str, str], list[Any]] = {}
         unparsed: list[Any] = []
@@ -292,6 +293,7 @@ class IndexPageParser:
         self, body: str, url: str, base_url: str | None = None
     ) -> list[Link]:
         data = json.loads(body)
+        check_api_version(_json_api_version(data), url)
         links: list[Link] = []
         append = links.append
         link_factory = self.link_factory
@@ -371,6 +373,11 @@ def link_parser_class() -> type:
         def handle_starttag(
             self, tag: str, attrs: list[tuple[str, str | None]]
         ) -> None:
+            if tag == "meta":
+                values = dict(attrs)
+                if values.get("name") == "pypi:repository-version":
+                    check_api_version(values.get("content"), self.page_url)
+                return
             if tag == "base":
                 # The first <base> that carries an href wins, even an empty
                 # one -- which selects the page URL and still rules out a
@@ -592,6 +599,29 @@ def _join_relative_reference(base_url: str, href: str) -> str | None:
     if fragment:
         return f"{origin}{joined}#{fragment}"
     return origin + joined
+
+
+def _json_api_version(data: object) -> object:
+    meta = data.get("meta") if isinstance(data, dict) else None
+    return meta.get("api-version") if isinstance(meta, dict) else None
+
+
+def check_api_version(version: object, url: str) -> None:
+    """Refuse a page from a Simple API major version this client predates.
+
+    The Simple Repository API spec: a client MUST fail on a major version
+    it does not support, since a new major version may change what the
+    page means. A newer minor version is compatible by the same rule, and
+    a page without a version is version 1.0.
+    """
+    if not isinstance(version, str):
+        return
+    major = version.strip().split(".", 1)[0]
+    if major.isdigit() and int(major) > 1:
+        raise InstallationError(
+            f"{url} uses Simple Repository API version {version.strip()}; "
+            "this installer supports only version 1",
+        )
 
 
 def ensure_trailing_slash(url: str) -> str:
