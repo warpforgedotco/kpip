@@ -91,3 +91,11 @@ def test_unnamed_direct_archive_uses_materializable_record() -> None:
 
     assert type(candidate) is CandidateRecord
     assert candidate.version == Version("0")
+
+
+def test_unparseable_requires_python_is_ignored() -> None:
+    """pip ignores ``>=3.6.*`` rather than the release that declares it."""
+    CandidateEvaluator.requires_python_matches.cache_clear()
+    assert CandidateEvaluator.requires_python_matches(">=3.6.*") is True
+    assert CandidateEvaluator.requires_python_matches("not a specifier") is True
+    assert CandidateEvaluator.requires_python_matches("<2") is False

@@ -318,7 +318,16 @@ class CandidateEvaluator:
         if python is None:
             python = target_python_version()
 
-        return SpecifierSet(requires_python).contains(
+        try:
+            specifier = SpecifierSet(requires_python)
+        except ValueError:
+            # A declaration that does not parse -- ``>=3.6.*`` is common on
+            # old releases -- says nothing, and pip ignores it rather than
+            # the release: rejecting it made the two choose different
+            # versions.
+            return True
+
+        return specifier.contains(
             _RUNNING_PYTHON if python is None else Version(python),
         )
 
