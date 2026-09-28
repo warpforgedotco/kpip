@@ -1,5 +1,7 @@
 import collections
 import hashlib
+from collections.abc import Callable
+from itertools import repeat
 
 import pytest
 from kpip_test_support import (
@@ -7,6 +9,7 @@ from kpip_test_support import (
     create_basic_sdist_for_package,
     create_basic_wheel_for_package,
 )
+from kpip_test_support.server import MockServer, file_response, package_page
 
 FindLinks = collections.namedtuple(
     "FindLinks",
@@ -418,3 +421,65 @@ def test_new_resolver_hash_requires_dependency_hashes(
     assert "Hashes are required in --require-hashes mode" in result.stderr
     assert "child==0.1.0" in result.stderr
     script.assert_not_installed("parent", "child")
+
+
+def test_new_resolver_hash_checks_a_download_its_link_does_not_hash(
+    script: KpipTestEnvironment,
+    mock_server: MockServer,
+) -> None:
+    """A find-links page publishes no digest, so nothing filtered the link;
+    the downloaded file must still carry a hash the user allowed."""
+    wheel = create_basic_wheel_for_package(script, "demo", "1.0")
+    page = package_page({wheel.name: f"/files/{wheel.name}"})
+    archive = file_response(wheel)
+
+    def response(environ: dict[str, object], start_response: Callable[..., object]):
+        if environ["PATH_INFO"] == "/links/":
+            return page(environ, start_response)
+        return archive(environ, start_response)
+
+    mock_server.set_responses(repeat(response))
+    mock_server.start()
+    requirements_txt = script.scratch_path / "requirements.txt"
+    requirements_txt.write_text(f"demo==1.0 --hash=sha256:{'0' * 64}\n")
+    try:
+        result = script.kpip(
+            "install",
+            "--no-cache-dir",
+            "--no-index",
+            "--find-links",
+            f"http://{mock_server.host}:{mock_server.port}/links/",
+            "--requirement",
+            requirements_txt,
+            "--trusted-host",
+            mock_server.host,
+            expect_error=True,
+        )
+    finally:
+        mock_server.stop()
+
+    assert "THESE PACKAGES DO NOT MATCH THE HASHES" in result.stderr
+    script.assert_not_installed("demo")
+
+
+def test_new_resolver_hash_from_a_constraint_is_checked(
+    script: KpipTestEnvironment,
+) -> None:
+    create_basic_wheel_for_package(script, "demo", "1.0")
+    constraints_txt = script.scratch_path / "constraints.txt"
+    constraints_txt.write_text(f"demo==1.0 --hash=sha256:{'0' * 64}\n")
+
+    result = script.kpip(
+        "install",
+        "--no-cache-dir",
+        "--no-index",
+        "--find-links",
+        script.scratch_path,
+        "--constraint",
+        constraints_txt,
+        "demo",
+        expect_error=True,
+    )
+
+    assert "THESE PACKAGES DO NOT MATCH THE HASHES" in result.stderr
+    script.assert_not_installed("demo")

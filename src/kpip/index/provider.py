@@ -2504,6 +2504,9 @@ class CandidateProvider:
                     dry_run=self.dry_run,
                     compute_source_hashes=self.compute_source_hashes,
                     session=self.session,
+                    # Read at check time: the install assigns hashes_by_name
+                    # after the provider is built.
+                    user_hashes=lambda name: self.hashes_by_name.get(name),
                 )
 
                 self.materializer_internal = materializer

@@ -26,6 +26,7 @@ from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import (
     CommandError,
     DistributionNotFound,
+    HashMismatch,
     InstallationError,
     ResolutionError,
 )
@@ -1458,34 +1459,45 @@ def run_install(args: list[str]) -> int:
             )
 
         if plan.candidates and (
-            not execution.options.dry_run or bool(execution.bundle.requirement_hashes)
+            not execution.options.dry_run
+            or bool(execution.bundle.requirement_hashes)
+            or bool(execution.bundle.constraint_hashes)
         ):
-            if execution.bundle.requirement_hashes:
+            user_hashes = [
+                *execution.bundle.requirement_hashes.items(),
+                *execution.bundle.constraint_hashes.items(),
+            ]
+            if user_hashes:
+                # A local archive is used where it lies, not downloaded, so
+                # it is checked here -- against every requirement and
+                # constraint that hashes it; each must allow its digest.
                 for candidate in plan.candidates:
-                    expected = {}
-                    for raw, hashes in execution.bundle.requirement_hashes.items():
-                        if (
-                            canonicalize_name(raw.split("==", 1)[0].strip())
-                            == candidate.canonical_name
-                        ):
-                            expected = hashes
-                            break
-                    if (
-                        expected
-                        and candidate.source_url
+                    if not (
+                        candidate.source_url
                         and candidate.source_url.startswith("file:")
                     ):
-                        path = url_to_path(candidate.source_url)
-                        actual = file_hashes(path)["sha256"]
-                        allowed = expected.get("sha256", [])
-                        if expected and not allowed:
-                            raise InstallationError(
-                                "THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.",
-                            )
-                        if allowed and actual not in allowed:
-                            raise InstallationError(
-                                "THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.\n"
-                                f"Expected sha256 {allowed[0]}\nGot        {actual}",
+                        continue
+                    expected = [
+                        hashes
+                        for raw, hashes in user_hashes
+                        if parse_requirement(raw).canonical_name
+                        == candidate.canonical_name
+                    ]
+                    if not expected:
+                        continue
+                    actual = file_hashes(url_to_path(candidate.source_url))["sha256"]
+                    for hashes in expected:
+                        allowed = hashes.get("sha256", [])
+                        if actual not in allowed:
+                            raise HashMismatch(
+                                f"{HashMismatch.head}\n"
+                                f"    {candidate.name}=={candidate.version} "
+                                f"from {candidate.source_url}:\n"
+                                + "".join(
+                                    f"        Expected sha256 {value}\n"
+                                    for value in allowed
+                                )
+                                + f"             Got        {actual}",
                             )
             pycompile = not execution.options.no_compile
             materialized_candidates = prepare_install_candidates(

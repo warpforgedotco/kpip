@@ -14,6 +14,7 @@ from kpip.build.build import build_wheel_from_source, unpack_source_internal
 from kpip.core.logger import get_logger
 from kpip.core.errors import (
     BuildError,
+    HashMismatch,
     InstallationError,
     KpipError,
     UnsupportedWheel,
@@ -70,6 +71,8 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     import tempfile
     import zipfile
+
+    from kpip.core.hashes import Hashes
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -605,8 +608,14 @@ class CandidateMaterializer:
             Sequence[Link],
         ]
         | None = None,
+        user_hashes: Callable[[str], Hashes | None] | None = None,
     ) -> None:
         self.release_metadata_links = release_metadata_links
+
+        # The hashes the user gave for a project, from a requirement or a
+        # constraint; every archive of it is checked against them once it
+        # is on disk.
+        self.user_hashes = user_hashes
 
         self.sibling_metadata_cache: dict[
             tuple[str, str],
@@ -729,6 +738,68 @@ class CandidateMaterializer:
             if cached is not None:
                 return cached
 
+        path = self._ensure_local_text(candidate, local_path=local_path)
+
+        if not candidate.link.is_vcs:
+            self._check_user_hashes(candidate, path)
+
+        return path
+
+    def _check_user_hashes(self, candidate: CandidateRecord, path: str) -> None:
+        """Raise unless the archive at ``path`` has a hash the user allowed.
+
+        The user's hashes also filter an index's links by the digests the
+        index publishes, but a link that publishes none -- a find-links page,
+        a mirror -- passed that filter unchecked, and its download was
+        installed whatever it held. pip checks every archive it fetches.
+        """
+        if self.user_hashes is None or os.path.isdir(path):
+            return
+
+        hashes = self.user_hashes(candidate.canonical_name)
+
+        if hashes is None or not hashes.allowed_internal:
+            return
+
+        import hashlib
+
+        gots = {}
+        for name in hashes.allowed_internal:
+            try:
+                gots[name] = hashlib.new(name)
+            except (TypeError, ValueError):
+                continue
+
+        with open(path, "rb") as file:
+            while chunk := file.read(1024 * 1024):
+                for digest in gots.values():
+                    digest.update(chunk)
+
+        if any(
+            hashes.is_hash_allowed(name, digest.hexdigest())
+            for name, digest in gots.items()
+        ):
+            return
+
+        expected = "\n".join(
+            f"        Expected {name} {value}"
+            for name, values in sorted(hashes.allowed_internal.items())
+            for value in values
+        )
+        got = gots.get("sha256") or next(iter(gots.values()), None)
+        raise HashMismatch(
+            f"{HashMismatch.head}\n"
+            f"    {candidate.name}=={candidate.version} from {candidate.link.url}:\n"
+            f"{expected}\n"
+            f"             Got        {got.hexdigest() if got is not None else '?'}"
+        )
+
+    def _ensure_local_text(
+        self,
+        candidate: CandidateRecord,
+        *,
+        local_path: str | None = None,
+    ) -> str:
         if candidate.link.is_file:
             path = (
                 os.fspath(local_path)
