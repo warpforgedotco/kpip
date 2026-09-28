@@ -329,7 +329,7 @@ class NetworkSession:
             SafeFileCache(cache) if isinstance(cache, str) else cache
         )
 
-        self.trusted_hosts = {host.lower().split(":", 1)[0] for host in trusted_hosts}
+        self.trusted_hosts = {trusted_host_key(host) for host in trusted_hosts}
 
         self.inflight_requests: dict[tuple[Any, ...], InFlightRequest] = {}
 
@@ -1228,7 +1228,7 @@ class NetworkSession:
         while True:
             parsed = urllib.parse.urlsplit(current_url)
             verify: bool | str = self.verify
-            if parsed.hostname and parsed.hostname.lower() in self.trusted_hosts:
+            if parsed.hostname and is_trusted_host(self.trusted_hosts, parsed):
                 verify = False
             elif verify is True and self.environ_ca_bundle is not None:
                 verify = self.environ_ca_bundle
@@ -1398,3 +1398,34 @@ class NetworkSession:
                 logger.exception("Failed to save credentials")
 
         return retry
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def trusted_host_key(value: str) -> tuple[str, int | None]:
+    """``--trusted-host`` as ``(host, port)``: a port only if one is given.
+
+    pip marks "this host or host:port pair as trusted", so ``h:8080``
+    trusts that port alone; cutting at the first ":" also trusted every
+    other port on ``h``, and broke on an IPv6 literal.
+    """
+    parsed = urllib.parse.urlsplit("//" + value.strip())
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return (parsed.hostname or value.strip()).lower(), port
+
+
+def is_trusted_host(
+    trusted: set[tuple[str, int | None]], url: urllib.parse.SplitResult
+) -> bool:
+    host = (url.hostname or "").lower()
+    if (host, None) in trusted:
+        return True
+    try:
+        port = url.port
+    except ValueError:
+        return False
+    return (host, port or _DEFAULT_PORTS.get(url.scheme)) in trusted

@@ -427,7 +427,9 @@ def parse_line(
                 if auth is not None:
                     auth.index_urls = []
             elif option == "--trusted-host":
-                session.trusted_hosts.add(value.lower().split(":", 1)[0])
+                from kpip.network.session import trusted_host_key
+
+                session.trusted_hosts.add(trusted_host_key(value))
                 logger.info(
                     "adding trusted host: %r (from line %d of %s)",
                     value,

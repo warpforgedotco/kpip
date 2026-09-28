@@ -1030,3 +1030,29 @@ def test_file_urls_are_never_cached(tmp_path) -> None:
 
     assert session.get(page.as_uri()).data == b"second"
     assert session.cache.get(page.as_uri()) is None
+
+
+@pytest.mark.parametrize(
+    "trusted, url, expected",
+    [
+        ("h", "https://h/simple/", True),
+        ("h", "https://h:8443/simple/", True),
+        ("h:8080", "https://h:8080/simple/", True),
+        ("h:8080", "https://h:8443/simple/", False),
+        ("h:8080", "https://h/simple/", False),
+        ("h:443", "https://h/simple/", True),
+        ("[::1]:8080", "https://[::1]:8080/simple/", True),
+        ("[::1]:8080", "https://[::1]:9090/simple/", False),
+        ("H", "https://h/simple/", True),
+    ],
+)
+def test_trusted_host_with_a_port_trusts_that_port(
+    trusted: str, url: str, expected: bool
+) -> None:
+    """pip: "Mark this host or host:port pair as trusted"."""
+    import urllib.parse
+
+    from kpip.network.session import is_trusted_host, trusted_host_key
+
+    parsed = urllib.parse.urlsplit(url)
+    assert is_trusted_host({trusted_host_key(trusted)}, parsed) is expected
