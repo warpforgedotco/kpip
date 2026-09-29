@@ -7,6 +7,7 @@ an installation target with copy-on-write semantics.
 
 from __future__ import annotations
 
+import base64
 import csv
 import errno
 import hashlib
@@ -92,6 +93,14 @@ _LOCK_WAIT_SECONDS = 30.0
 _STALE_LOCK_SECONDS = 300.0
 
 INSTALL_WORKERS = default_worker_count()
+
+EXTRACT_WORKERS = min(INSTALL_WORKERS, 4)
+"""Threads unpacking wheels into the archive cache, across and within wheels.
+
+Decompression releases the interpreter lock, but everything around it -- a
+member's header, its write, its record row -- takes it back, and more
+threads trade it rather than unpack faster: a cold trio install unpacked in
+0.93 s with the machine's 20 and in 0.74 s with 4."""
 """Size of the install-side thread pools.
 
 Sized to the machine rather than fixed: cloning, extraction and hashing are
@@ -110,7 +119,7 @@ sends every batch smaller than the machine's core count down the serial path.
 PARALLEL_EXTRACT_MEMBERS = 64
 """Members a wheel needs before extracting it across threads is worth it."""
 
-_EXTRACT_PERMITS = threading.BoundedSemaphore(max(1, INSTALL_WORKERS - 1))
+_EXTRACT_PERMITS = threading.BoundedSemaphore(max(1, EXTRACT_WORKERS - 1))
 """Extraction threads this process may hand out *inside* a single wheel.
 
 Wheels are already extracted concurrently with one another, so within-wheel
@@ -401,10 +410,120 @@ def _return_extract_workers(count: int) -> None:
         _EXTRACT_PERMITS.release()
 
 
+_HAS_PREAD = hasattr(os, "pread")
+
+_LEAN_MEMBER_LIMIT = 16 * 1024 * 1024
+"""Members up to this size are read whole with one ``pread``."""
+
+_LOCAL_NAME_HEADROOM = 256
+"""Bytes read past the local header on a guess at its name and extra field."""
+
+
+def _extract_member_lean(fd: int, item: _MemberWork) -> ArchiveEntry | None:
+    """``_extract_member`` without ``zipfile``'s read path, or None.
+
+    ``archive.read`` opens a ``ZipExtFile``, seeks, re-parses the local
+    header, builds a decompressor and a CRC tracker, and ``open`` wraps the
+    destination in an ``io`` stack: thousands of bytecodes per member under
+    the interpreter lock, where a cold trio install extracts 3,359 members.
+    A stored or deflated member is one ``pread``, one ``zlib.decompress``
+    and one ``os.write`` instead, with ``zipfile``'s checks -- the local
+    header's signature and name, the size and the CRC. Anything else (an
+    encrypted, oversized or otherwise compressed member) returns None for the
+    ``zipfile`` path.
+    """
+    import struct
+    import zipfile
+    import zlib
+
+    member, relative, destination, hint = item
+
+    method = member.compress_type
+
+    if (
+        method not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+        or member.flag_bits & 0x1
+        or member.file_size > _LEAN_MEMBER_LIMIT
+        or member.compress_size > _LEAN_MEMBER_LIMIT
+    ):
+        return None
+
+    offset = member.header_offset
+
+    blob = os.pread(fd, 30 + _LOCAL_NAME_HEADROOM + member.compress_size, offset)
+
+    if len(blob) < 30 or blob[:4] != b"PK\x03\x04":
+        raise zipfile.BadZipFile("Bad magic number for file header")
+
+    name_size, extra_size = struct.unpack_from("<HH", blob, 26)
+
+    start = 30 + name_size + extra_size
+
+    end = start + member.compress_size
+
+    if end > len(blob):
+        blob = os.pread(fd, end, offset)
+
+        if len(blob) < end:
+            raise zipfile.BadZipFile("Truncated file data")
+
+    local_name = blob[30 : 30 + name_size].decode(
+        "utf-8" if member.flag_bits & 0x800 else "cp437"
+    )
+
+    if local_name != member.orig_filename:
+        raise zipfile.BadZipFile(
+            f"File name in directory {member.orig_filename!r} and header "
+            f"{local_name!r} differ."
+        )
+
+    data = blob[start:end]
+
+    if method == zipfile.ZIP_DEFLATED:
+        try:
+            data = zlib.decompress(data, -15, member.file_size or 1)
+        except zlib.error as exc:
+            raise zipfile.BadZipFile(f"Bad compressed data for {relative!r}") from exc
+
+    if len(data) != member.file_size or zlib.crc32(data) != member.CRC:
+        raise zipfile.BadZipFile(f"Bad CRC-32 for file {member.filename!r}")
+
+    mode = zip_mode(member)
+
+    out = os.open(
+        destination,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0),
+        0o777 if mode is not None and mode & 0o111 else 0o666,
+    )
+
+    try:
+        view = memoryview(data)
+
+        while view:
+            view = view[os.write(out, view) :]
+
+    finally:
+        os.close(out)
+
+    if hint is None:
+        encoded = base64.urlsafe_b64encode(hashlib.sha256(data).digest())
+
+        hint = (f"sha256={encoded.rstrip(b'=').decode('ascii')}", str(len(data)))
+
+    return (relative, hint[0], hint[1], mode or 0)
+
+
 def _extract_member(
     archive: zipfile.ZipFile,
     item: _MemberWork,
+    fd: int = -1,
 ) -> ArchiveEntry:
+    if fd >= 0:
+        entry = _extract_member_lean(fd, item)
+
+        if entry is not None:
+            return entry
+
     member, relative, destination, hint = item
 
     mode = zip_mode(member)
@@ -447,7 +566,17 @@ def _extract_members_threaded(
 
     lock = threading.Lock()
 
+    # ``pread`` needs no lock: the threads share one descriptor. Windows has
+    # no ``pread``, and keeps ``zipfile``.
+    fd = os.open(path, os.O_RDONLY) if _HAS_PREAD else -1
+
     def extract(item: _MemberWork) -> ArchiveEntry:
+        if fd >= 0:
+            entry = _extract_member_lean(fd, item)
+
+            if entry is not None:
+                return entry
+
         archive = getattr(local, "archive", None)
 
         if archive is None:
@@ -468,6 +597,9 @@ def _extract_members_threaded(
             return list(pool.map(extract, work))
 
     finally:
+        if fd >= 0:
+            os.close(fd)
+
         for archive in opened:
             archive.close()
 
@@ -630,17 +762,26 @@ def _extract_archive(
                 work.append((member, relative, destination, metadata))
 
             workers = (
-                _borrow_extract_workers(INSTALL_WORKERS - 1)
+                _borrow_extract_workers(EXTRACT_WORKERS - 1)
                 if len(work) >= PARALLEL_EXTRACT_MEMBERS
                 else 0
             )
 
             try:
-                entries: list[ArchiveEntry] = (
-                    _extract_members_threaded(candidate.path, work, workers + 1)
-                    if workers
-                    else [_extract_member(archive, item) for item in work]
-                )
+                if workers:
+                    entries: list[ArchiveEntry] = _extract_members_threaded(
+                        candidate.path, work, workers + 1
+                    )
+
+                else:
+                    fd = os.open(candidate.path, os.O_RDONLY) if _HAS_PREAD else -1
+
+                    try:
+                        entries = [_extract_member(archive, item, fd) for item in work]
+
+                    finally:
+                        if fd >= 0:
+                            os.close(fd)
 
             finally:
                 _return_extract_workers(workers)
@@ -810,7 +951,7 @@ def prepare_cached_wheels(
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(
-        max_workers=min(INSTALL_WORKERS, len(candidates)),
+        max_workers=min(EXTRACT_WORKERS, len(candidates)),
         thread_name_prefix="kpip-archive",
     ) as pool:
         return tuple(
