@@ -31,6 +31,11 @@ authors = [
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+# Decodes index pages into only the fields kpip reads (kpip.index.typed_pages);
+# kpip reads them with ``json`` without it.
+speedups = ["msgspec>=0.19; implementation_name == 'cpython'"]
+
 [project.scripts]
 kpip = "kpip.cli.entrypoint:console_main"
 
@@ -56,6 +61,7 @@ test = [
     "installer",
     "keyring",
     "msgpack",
+    "msgspec; implementation_name == 'cpython'",
     "packaging",
     "proxy.py",
     "pyproject-hooks",
