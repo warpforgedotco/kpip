@@ -613,3 +613,72 @@ def test_a_build_system_that_is_not_a_table_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(BuildError, match="build-system is not a table"):
         BackendSpec.from_project(project)
+
+
+def _counting_environments(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, fail_installs: int = 0
+) -> dict[str, int]:
+    """Fake venv creation and pip, counting each, with an empty cache."""
+    from kpip.build import build_backend
+    from kpip.install.build_env.isolated_venv import CreatedVenv
+
+    counts = {"venvs": 0, "installs": 0}
+
+    def create(env_path: str, **_: object) -> CreatedVenv:
+        counts["venvs"] += 1
+        return CreatedVenv([env_path], env_path, os.path.join(env_path, "python"))
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        counts["installs"] += 1
+        if counts["installs"] <= fail_installs:
+            raise subprocess.CalledProcessError(1, command, "", "network down")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(build_backend, "_prepared_environments", {})
+    monkeypatch.setattr(build_backend, "create_isolated_venv", create)
+    monkeypatch.setattr(build_backend.subprocess, "run", run)
+    return counts
+
+
+def test_builds_with_the_same_requirements_share_one_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A cold airflow lock reads 19 sdists' metadata, all asking for the same
+    setuptools: one environment serves them, each build with its own
+    scratch directory for what it writes."""
+    from kpip.build.build_backend import BackendRunner, BackendSpec
+
+    counts = _counting_environments(monkeypatch, tmp_path)
+    spec = BackendSpec("setuptools.build_meta", ("setuptools>=40.8.0",), ())
+    seen = []
+    for _ in range(3):
+        with BackendRunner(tmp_path, spec).caller() as (caller, scratch):
+            os.mkdir(os.path.join(scratch, "metadata"))
+            seen.append((caller.python_executable, scratch))
+
+    assert counts == {"venvs": 1, "installs": 1}
+    assert len({python for python, _ in seen}) == 1
+    assert len({scratch for _, scratch in seen}) == 3
+
+    other = BackendSpec("hatchling.build", ("hatchling",), ())
+    with BackendRunner(tmp_path, other).caller():
+        pass
+
+    assert counts == {"venvs": 2, "installs": 2}
+
+
+def test_a_failed_build_environment_is_not_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from kpip.build.build_backend import BackendRunner, BackendSpec
+
+    counts = _counting_environments(monkeypatch, tmp_path, fail_installs=1)
+    spec = BackendSpec("hatchling.build", ("hatchling",), ())
+
+    with pytest.raises(RuntimeError, match="network down"):
+        with BackendRunner(tmp_path, spec).caller():
+            pass
+    with BackendRunner(tmp_path, spec).caller():
+        pass
+
+    assert counts == {"venvs": 2, "installs": 2}
