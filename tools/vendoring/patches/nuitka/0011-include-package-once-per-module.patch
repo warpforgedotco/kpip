@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 29 Sep 2026 05:30:00 -0400
+Subject: [PATCH] Fix, "--include-package" included a module twice when present
+ as source and as an extension module
+
+Scanning a package directory, every ".py" file and every extension module
+file became a module of its own, so a module present as both, such as a
+Cython pure Python mode source beside the extension compiled from it, was
+included twice under one name. The two define the module's loader entry
+twice, and linking failed with a duplicate symbol. Such a module is now
+scanned once, as the file the import resolution picks, which honors
+"--prefer-source-code".
+
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+ nuitka/importing/Recursion.py | 60 +++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 52 insertions(+), 8 deletions(-)
+
+diff --git a/nuitka/importing/Recursion.py b/nuitka/importing/Recursion.py
+index 8b8800c..eb371d8 100644
+--- a/nuitka/importing/Recursion.py
++++ b/nuitka/importing/Recursion.py
+@@ -455,6 +455,8 @@ def _addIncludedModule(module, package_only):
+             recursion_logger.info("Package directory '%s'." % package_dir)
+ 
+         if not package_only:
++            scanned_names = set()
++
+             for sub_path, sub_filename in listDir(package_dir):
+                 if sub_filename == "__pycache__" or isPackageDirFilenameCandidate(
+                     sub_filename
+@@ -472,10 +474,12 @@ def _addIncludedModule(module, package_only):
+                         if hasPackageDirFilename(sub_path[:-3]):
+                             continue
+ 
+-                    scanPluginSinglePath(
+-                        sub_path,
+-                        module_package=module.getFullName(),
+-                        package_only=False,
++                    _scanPackageModuleFile(
++                        package=module,
++                        package_dir=package_dir,
++                        name=sub_filename[:-3],
++                        sub_path=sub_path,
++                        scanned_names=scanned_names,
+                     )
+                 else:
+                     for suffix in getExtensionModuleSuffixes():
+@@ -483,10 +487,12 @@ def _addIncludedModule(module, package_only):
+                             sub_filename.endswith(suffix)
+                             and "." not in sub_filename[: -len(suffix)]
+                         ):
+-                            scanPluginSinglePath(
+-                                sub_path,
+-                                module_package=module.getFullName(),
+-                                package_only=False,
++                            _scanPackageModuleFile(
++                                package=module,
++                                package_dir=package_dir,
++                                name=sub_filename[: -len(suffix)],
++                                sub_path=sub_path,
++                                scanned_names=scanned_names,
+                             )
+ 
+     elif module.isCompiledPythonModule() or module.isUncompiledPythonModule():
+@@ -498,6 +504,44 @@ def _addIncludedModule(module, package_only):
+         assert False, module
+ 
+ 
++def _scanPackageModuleFile(package, package_dir, name, sub_path, scanned_names):
++    """Scan one module file found in a package directory, once per module.
++
++    A module can be there as source code and as an extension module at the
++    same time. The import picks one of them, honoring '--prefer-source-code',
++    and only that one may be included, as both of them compiled under the
++    same name define its loader entry twice and fail to link.
++    """
++    if name in scanned_names:
++        return
++
++    scanned_names.add(name)
++
++    has_source = os.path.isfile(os.path.join(package_dir, name + ".py"))
++    has_extension = any(
++        os.path.isfile(os.path.join(package_dir, name + suffix))
++        for suffix in getExtensionModuleSuffixes()
++    )
++
++    if has_source and has_extension:
++        _module_name, module_filename, _module_kind, _finding = locateModule(
++            module_name=ModuleName.makeModuleNameInPackage(
++                name, package.getFullName()
++            ),
++            parent_package=None,
++            level=0,
++        )
++
++        if module_filename is not None:
++            sub_path = module_filename
++
++    scanPluginSinglePath(
++        sub_path,
++        module_package=package.getFullName(),
++        package_only=False,
++    )
++
++
+ def scanPluginSinglePath(plugin_filename, module_package, package_only):
+     """Scan a single path passed via plugin or command line.
+ 

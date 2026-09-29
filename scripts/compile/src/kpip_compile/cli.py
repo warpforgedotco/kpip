@@ -5,7 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from kpip_compile.build import DEFAULT_OUTPUT_DIR, BuildOptions, build
+from kpip_compile.build import (
+    DEFAULT_OUTPUT_DIR,
+    BuildOptions,
+    ExtensionMismatchError,
+    build,
+)
 from kpip_compile.extensions import build_extensions
 from kpip_compile.pgo import PgoError
 from kpip_compile.vendor import (
@@ -85,6 +90,13 @@ def _parser() -> argparse.ArgumentParser:
         "build, a training run of real kpip commands (needs network), then the "
         "final build.",
     )
+    build_parser.add_argument(
+        "--no-extensions",
+        dest="extensions",
+        action="store_false",
+        help="Leave kpip's compiled modules out; the binary runs their "
+        "pure-Python fallbacks.",
+    )
     build_parser.add_argument("nuitka_args", nargs=argparse.REMAINDER)
     return parser
 
@@ -117,10 +129,11 @@ def main(argv: list[str] | None = None) -> int:
         cache_mode=args.cache_mode,
         extra_args=extra_args,
         pgo=args.pgo,
+        extensions=args.extensions,
     )
     try:
         return build(options, nuitka_dir)
-    except PgoError as error:
+    except (ExtensionMismatchError, PgoError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

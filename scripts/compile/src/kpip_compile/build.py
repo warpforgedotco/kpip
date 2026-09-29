@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from kpip_compile.extensions import EXTENSIONS, build_extensions
 from kpip_compile.vendor import PACKAGE_ROOT, REPO_ROOT
 
 KPIP_PACKAGE = REPO_ROOT / "src" / "kpip"
@@ -47,6 +48,11 @@ class BuildOptions:
     platform: str = sys.platform
     extra_args: tuple[str, ...] = field(default=())
     pgo: bool = False
+    extensions: bool = True
+
+
+class ExtensionMismatchError(RuntimeError):
+    """The compiled modules cannot be built for the interpreter Nuitka uses."""
 
 
 def kpip_version(package_dir: Path = KPIP_PACKAGE) -> str:
@@ -90,6 +96,16 @@ def nuitka_command(
         # even for PGO builds, and kpip is close to that.
         "--lto=yes",
     ]
+    if options.extensions:
+        # A compiled module sits beside the pure-Python-mode source it was
+        # built from; ship the extension, which Nuitka's own compilation of
+        # that source (an ImportError, by design) would only replace with the
+        # pure fallback.
+        command.append("--no-prefer-source-code")
+    else:
+        # Leave out any extension a previous build left in the tree, so the
+        # binary runs the pure-Python fallback it was asked for.
+        command.extend(f"--nofollow-import-to={name}" for name in EXTENSIONS)
     if is_windows:
         # Nuitka never treats ``.exe`` files as package data on its own.
         launchers = KPIP_PACKAGE / "_launchers"
@@ -118,10 +134,32 @@ def _run_nuitka(
     return subprocess.run(command, env=env, check=False).returncode
 
 
+def prepare_extensions(options: BuildOptions, interpreter: str) -> None:
+    """Build the compiled modules the binary ships, for its interpreter.
+
+    They are built here, by this interpreter, which has Cython; an extension
+    only loads into a Python with the same ``cache_tag``, so a binary for
+    another Python needs kpip-compile run under that one.
+    """
+    if not options.extensions:
+        return
+    if interpreter != sys.implementation.cache_tag:
+        raise ExtensionMismatchError(
+            f"the binary's Python ({interpreter}) is not the one kpip-compile "
+            f"runs under ({sys.implementation.cache_tag}), so its compiled "
+            f"modules cannot be built here; run kpip-compile with that Python "
+            f"(uv run --python {options.python} kpip-compile build), or pass "
+            f"--no-extensions for a binary without them"
+        )
+    for path in build_extensions():
+        print(f"built {path}", flush=True)
+
+
 def build(options: BuildOptions, nuitka_dir: Path) -> int:
     # The binary embeds this interpreter's version, so say which one it is.
     subprocess.run([options.python, "-VV"], check=True)
     interpreter = interpreter_tag(options.python)
+    prepare_extensions(options, interpreter)
 
     if not options.pgo:
         return _run_nuitka(options, nuitka_dir, dict(os.environ), interpreter)
