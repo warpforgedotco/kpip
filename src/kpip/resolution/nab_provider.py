@@ -159,6 +159,7 @@ class NabProvider:
                 pass
         self._descent_prefetched: set[tuple[str, Version]] = set()
         self._source_metadata_started: set[str] = set()
+        self._source_metadata_seen_ranges: dict[str, object] = {}
         self._release_records: dict[
             tuple[str, Version, frozenset[str]],
             tuple[CandidateRecord, ...] | None,
@@ -2300,11 +2301,17 @@ class NabProvider:
             if requirement is None:
                 continue
 
-            matching = [
-                version
-                for version in self._versions(package)
-                if version in positive_range
-            ]
+            seen = self._source_metadata_seen_ranges
+            if seen.get(package) is positive_range:
+                continue
+            seen[package] = positive_range
+
+            matching = []
+            for version in self._versions(package):
+                if version in positive_range:
+                    matching.append(version)
+                    if len(matching) > 1:
+                        break
 
             if len(matching) != 1:
                 continue
