@@ -7,13 +7,19 @@ from kpip.core.utils import versioned_bucket
 import binascii
 import datetime
 import marshal
+import os
 import struct
 import threading
 import urllib.parse
 
 from kpip.core.expiry import expiry_is_fresh
 from kpip.core.versions import Version
-from kpip.core.wheel import WheelFile, WheelTag, parse_wheel_file, wheel_tag
+from kpip.core.wheel import (
+    WheelFile,
+    WheelTag,
+    parse_wheel_file,
+    wheel_tag,
+)
 from kpip.index.dates import parse_iso_datetime
 from kpip.index.directory_index import project_version_from_filename
 from kpip.index.links import Link, split_plain_url
@@ -28,15 +34,18 @@ if TYPE_CHECKING:
 # Version 3 drops the release tuple from a summary's stored version and
 # puts every catalog blob behind a digest, so a store written by an earlier
 # kpip is a different bucket rather than a payload this one would misread.
-# Version 4 checks the blob with a CRC-32 rather than a SHA-256.
-PREFIX = f"{versioned_bucket('kpip-index-catalog', 4)}:"
+# Version 4 checks the blob with a CRC-32 rather than a SHA-256, and 5
+# leaves the parsed identity of a wheel read from a plain URL to be derived
+# when a release is used (``wheel_file_from_record``).
+PREFIX = f"{versioned_bucket('kpip-index-catalog', 5)}:"
 # Version 4 records the freshness of the page a summary came from, and 5
 # stores each version's key as the bytes a Version is, checked with a CRC-32.
 SUMMARY_PREFIX = f"{versioned_bucket('kpip-index-summary', 6)}:"
-CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 4)}:"
-CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 4).encode() + b"\0"
+# Version 5 holds records of the catalog's version 5.
+CHOICE_PREFIX = f"{versioned_bucket('kpip-index-choice', 5)}:"
+CATALOG_HEADER = versioned_bucket("kpip-index-catalog", 5).encode() + b"\0"
 SUMMARY_HEADER = versioned_bucket("kpip-index-summary", 6).encode() + b"\0"
-CHOICE_HEADER = versioned_bucket("kpip-index-choice", 4).encode() + b"\0"
+CHOICE_HEADER = versioned_bucket("kpip-index-choice", 5).encode() + b"\0"
 SUMMARY_SNAPSHOT = f"{versioned_bucket('kpip-index-summary', 6)}.snapshot"
 """The one file a lock's summaries are also stored in, beside the entries."""
 
@@ -608,6 +617,24 @@ def earliest_upload(artifacts: list[CatalogArtifact]) -> float | None:
     artifact says. A time without a zone is read as UTC, as the cutoff
     check reads it.
     """
+    texts = [
+        uploaded
+        for _kind, record in artifacts
+        if type(uploaded := record[RECORD_UPLOAD_TIME]) is str
+    ]
+    if not texts:
+        return None
+    # A page states its times one way, as fixed-width UTC ISO text, and in
+    # that form the least text is the earliest time: one parse per release
+    # rather than one per artifact. Any other mix takes the loop below.
+    width = len(texts[0])
+    if all(
+        len(text) == width and text[-1:] == "Z" and text[10:11] == "T" for text in texts
+    ):
+        try:
+            return parse_iso_datetime(min(texts)).timestamp()
+        except ValueError:
+            pass
     earliest: float | None = None
     for _kind, record in artifacts:
         uploaded = record[RECORD_UPLOAD_TIME]
@@ -832,11 +859,97 @@ def wheel_file_from_record(
     name: str,
     version: Version,
 ) -> WheelFile | None:
-    """Reconstruct a wheel from its catalog record's cached identity."""
-    return wheel_file_from_identity(
-        record[RECORD_WHEEL_IDENTITY],
-        name=name,
+    """Reconstruct a wheel from its catalog record's cached identity.
+
+    A wheel read from a plain URL leaves its identity out: the release it
+    belongs to is known, and parsing its tags for every wheel a page lists
+    served the few releases a resolve reads. Its name is derived from the
+    URL again, as the page was compiled, and checked the same way.
+    """
+    identity = record[RECORD_WHEEL_IDENTITY]
+    if identity is not None:
+        return wheel_file_from_identity(identity, name=name, version=version)
+    url = record[0]
+    parsed_url = split_plain_url(url) if type(url) is str else None
+    if parsed_url is None:
+        return None
+    parsed = parse_wheel_file(filename_from_tail(url_path_tail(parsed_url.path)))
+    if parsed is None or parsed.name != name or parsed.version.public != str(version):
+        return None
+    return WheelFile(
+        name=parsed.name,
         version=version,
+        build_tag=parsed.build_tag,
+        tags=parsed.tags,
+    )
+
+
+def url_path_tail(path: str) -> str:
+    """A plain index URL path's last segment: unquoted first, then split."""
+    if "%" in path:
+        path = urllib.parse.unquote(path)
+    stripped = path.rstrip("/")
+    return stripped[stripped.rfind("/") + 1 :]
+
+
+def filename_from_tail(tail: str) -> str:
+    """The artifact name ``url_path_tail`` gives, as ``PathComponent`` keeps it.
+
+    The one derivation both compiling a page and reading a record back use.
+    """
+    component = os.path.basename(tail)
+    return "" if component in ("", os.curdir, os.pardir) else component
+
+
+def json_record(
+    *,
+    url: str,
+    text: str,
+    hashes: object,
+    requires_python: object,
+    yanked_reason: str | None,
+    file_data: Mapping[str, object],
+    upload_time: object,
+    size: object,
+) -> tuple[object, ...]:
+    """``record_fields`` for a Simple API JSON entry with a plain URL.
+
+    The same stored shape, built from the entry's values rather than from
+    the objects ``record_fields`` takes: a lone sha256 and the core metadata
+    go straight to what is stored. The wheel identity is left out; see
+    ``wheel_file_from_record``.
+    """
+    if isinstance(hashes, dict):
+        digest = hashes.get("sha256") if len(hashes) == 1 else None
+        stored_hashes = (
+            digest
+            if type(digest) is str
+            else _stored_hashes({str(key): str(value) for key, value in hashes.items()})
+        )
+    else:
+        stored_hashes = {}
+    if "core-metadata" in file_data:
+        metadata = file_data["core-metadata"]
+    else:
+        metadata = file_data.get("dist-info-metadata")
+    if isinstance(metadata, dict):
+        stored_metadata = (
+            _stored_hashes({str(name): str(value) for name, value in metadata.items()})
+            if metadata
+            else True
+        )
+    else:
+        stored_metadata = True if metadata is True else None
+    return (
+        url,
+        text,
+        stored_hashes,
+        requires_python if isinstance(requires_python, str) else None,
+        yanked_reason,
+        stored_metadata,
+        upload_time if isinstance(upload_time, str) else None,
+        None,
+        size if type(size) is int and size >= 0 else None,
     )
 
 

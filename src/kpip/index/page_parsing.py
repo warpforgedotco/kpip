@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import posixpath
 import urllib.parse
 from collections.abc import Callable
 
@@ -12,20 +11,24 @@ from kpip.core.errors import InstallationError
 from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.catalog_cache import (
+    WHEEL_RECORD,
     artifact_identity,
     compile_groups,
+    filename_from_tail,
     identity_for,
+    json_record,
     link_record,
     load_links,
-    parsed_wheel_for,
     parsed_wheel_from_link,
-    record_fields,
     save_catalog,
     save_links,
+    url_path_tail,
 )
 from kpip.index.dates import parse_iso_datetime
 from kpip.index.hashes import SUPPORTED_RECORD_HASHES
-from kpip.index.links import Link, split_plain_url
+from kpip.core.wheel import parse_wheel_file_once
+from kpip.index.links import PLAIN_URL, Link
+from kpip.index.source_models import ArtifactKind
 from kpip.core.urls import split_auth_from_netloc
 from kpip.index.paths import PathComponent
 from kpip.index.source_models import MetadataFile
@@ -219,14 +222,20 @@ class IndexPageParser:
         file_data: Any,
         file_url: str,
     ) -> tuple[Any, tuple[int, str, str] | None]:
-        """One catalog record and its release identity, from one JSON entry."""
+        """One catalog record and its release identity, from one JSON entry.
+
+        A page lists every file of every release, and a cold airflow lock
+        compiles 265,000 of them to resolve with 3% of them, so a plain URL --
+        every file PyPI serves -- takes the least work that yields the same
+        record: its name is the URL's last segment, read once; its hashes and
+        core metadata go straight to their stored form; and a wheel's tags are
+        parsed only when a release is read (``wheel_file_from_record``).
+        Anything else goes through ``Link``, which owns those rules.
+        """
         url = join_index_url(base_url, file_url)
-        filename = file_data.get("filename")
-        hashes = file_data.get("hashes")
-        yanked = file_data.get("yanked")
-        requires_python = file_data.get("requires-python")
-        upload_time = file_data.get("upload-time")
-        size = file_data.get("size")
+        get = file_data.get
+        filename = get("filename")
+        yanked = get("yanked")
         text = str(filename or "")
         yanked_reason = (
             None
@@ -235,10 +244,13 @@ class IndexPageParser:
             if yanked is True
             else str(yanked)
         )
-        metadata_file = metadata_file_from_json(file_data)
-        parsed = split_plain_url(url)
+        plain = PLAIN_URL.match(url)
 
-        if parsed is None or "&" in url:
+        if plain is None or "&" in url:
+            hashes = get("hashes")
+            requires_python = get("requires-python")
+            upload_time = get("upload-time")
+            size = get("size")
             link = Link.from_index_page(
                 url,
                 source_url=source_url,
@@ -248,7 +260,7 @@ class IndexPageParser:
                     requires_python if isinstance(requires_python, str) else None
                 ),
                 yanked_reason=yanked_reason,
-                metadata_file=metadata_file,
+                metadata_file=metadata_file_from_json(file_data),
                 upload_time=parse_iso_datetime(upload_time) if upload_time else None,
             )
             if type(size) is int and size >= 0:
@@ -259,35 +271,33 @@ class IndexPageParser:
                 artifact_identity(link, parsed_wheel=parsed_wheel),
             )
 
-        path = urllib.parse.unquote(parsed.path)
-        stripped = path.rstrip("/")
-        kind = Link.artifact_kind_from_filename(posixpath.basename(stripped))
-        name = PathComponent.from_name(stripped[stripped.rfind("/") + 1 :])
+        tail = url_path_tail(plain.group(3) or "")
+        kind = Link.artifact_kind_from_filename(tail)
+        name = filename_from_tail(tail)
         if not name:
-            name = PathComponent.from_name(split_auth_from_netloc(parsed.netloc)[0])
-        parsed_wheel = parsed_wheel_for(kind, str(name))
-        return (
-            record_fields(
-                url=url,
-                text=text,
-                hashes=(
-                    {str(key): str(value) for key, value in hashes.items()}
-                    if isinstance(hashes, dict)
-                    else {}
-                ),
-                requires_python=(
-                    requires_python if isinstance(requires_python, str) else None
-                ),
-                yanked_reason=yanked_reason,
-                metadata_file=metadata_file,
-                # Kept as the index's own text; nothing parses it unless an
-                # upload cutoff asks, and a page lists thousands of files.
-                upload_time=upload_time if isinstance(upload_time, str) else None,
-                parsed_wheel=parsed_wheel,
-                size=size if type(size) is int and size >= 0 else None,
-            ),
-            identity_for(kind, str(name), parsed_wheel=parsed_wheel),
+            name = str(
+                PathComponent.from_name(split_auth_from_netloc(plain.group(2))[0])
+            )
+        record = json_record(
+            url=url,
+            text=text,
+            hashes=get("hashes"),
+            requires_python=get("requires-python"),
+            yanked_reason=yanked_reason,
+            file_data=file_data,
+            # Kept as the index's own text; nothing parses it unless an
+            # upload cutoff asks, and a page lists thousands of files.
+            upload_time=get("upload-time"),
+            size=get("size"),
         )
+        if kind is ArtifactKind.WHEEL:
+            parsed_wheel = parse_wheel_file_once(name)
+            return record, (
+                None
+                if parsed_wheel is None
+                else (WHEEL_RECORD, parsed_wheel.name, parsed_wheel.version.public)
+            )
+        return record, identity_for(kind, name)
 
     def links_from_json(
         self, body: str, url: str, base_url: str | None = None
