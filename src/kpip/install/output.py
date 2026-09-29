@@ -222,10 +222,20 @@ def prepare_install_candidates(
     return [candidate for candidate in prepared if candidate is not None]
 
 
+_PYTHON_NODE = "<Python from Requires-Python>"
+"""pip's graph node for the interpreter: a child of every distribution that
+declares a Requires-Python, which keeps those out of the first leaves."""
+
+_VISITS = 5
+"""pip weighs a distribution by at most this many paths to it."""
+
+
 def installation_order(
     candidates: Sequence[WheelCandidate],
     graph: Mapping[str, Collection[str]],
     roots: Collection[str],
+    *,
+    ignore_requires_python: bool = False,
 ) -> list[WheelCandidate]:
     """``candidates`` in the order pip installs them.
 
@@ -234,8 +244,20 @@ def installation_order(
     kpip keeps the same one. pip weighs each distribution by its place in
     the dependency graph (``get_topological_weights``): leaves pruned
     round by round weigh most, the first round most of all, and every
-    other distribution weighs its longest path from a requested one; it
-    installs the heaviest first, ties by name, both descending.
+    other distribution weighs its longest path from a requested one, over
+    at most five paths; it installs the heaviest first, ties by name, both
+    descending.
+
+    pip's graph has one more node, the interpreter, a dependency of every
+    distribution with a Requires-Python unless those are ignored: jupyter
+    1.0.0 declares none and jupyter-core does, so without dependencies
+    jupyter-core is the later of the two and its ``jupyter.py`` is left.
+
+    One difference remains: pip's graph also has a node for each set of
+    extras a distribution is asked for (``jsonschema[format-nongpl]``),
+    between the dependent and the distribution, which ``graph`` -- names
+    only -- does not. The order can differ where one is in play; jupyter's
+    98 releases then differ in three places, none of them sharing a file.
     """
 
     names = {candidate.canonical_name for candidate in candidates}
@@ -245,9 +267,19 @@ def installation_order(
         for name in names
     }
 
+    if not ignore_requires_python:
+        for candidate in candidates:
+            requires_python = getattr(candidate, "requires_python", None)
+
+            if requires_python and requires_python.strip():
+                remaining[candidate.canonical_name].add(_PYTHON_NODE)
+
+                # In pip's graph only once something depends on it.
+                remaining[_PYTHON_NODE] = set()
+
     remaining[None] = {name for name in roots if name in names}
 
-    weights: dict[str, int] = {}
+    weights: dict[str, list[int]] = {}
 
     while True:
         leaves = [
@@ -262,7 +294,8 @@ def installation_order(
         weight = len(remaining) - 1
 
         for leaf in leaves:
-            weights[leaf] = weight
+            if leaf in names:
+                weights[leaf] = [weight]
 
             del remaining[leaf]
 
@@ -275,6 +308,11 @@ def installation_order(
         if node in path:
             return
 
+        node_weights = weights.get(node, []) if node is not None else []
+
+        if len(node_weights) >= _VISITS:
+            return
+
         path.add(node)
 
         for child in sorted(remaining.get(node, ())):
@@ -282,15 +320,17 @@ def installation_order(
 
         path.remove(node)
 
-        if node is not None:
-            weights[node] = max(weights.get(node, 0), len(path))
+        if node in names:
+            node_weights.append(len(path))
+
+            weights[node] = node_weights
 
     visit(None)
 
     return sorted(
         candidates,
         key=lambda candidate: (
-            weights.get(candidate.canonical_name, 0),
+            max(weights.get(candidate.canonical_name, [0])),
             candidate.canonical_name,
         ),
         reverse=True,

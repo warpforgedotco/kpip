@@ -1631,7 +1631,10 @@ def run_install(args: list[str]) -> int:
 
                 if not hybrid_installed:
                     install_order = installation_order(
-                        plan.candidates, plan.graph, requested_roots
+                        plan.candidates,
+                        plan.graph,
+                        requested_roots,
+                        ignore_requires_python=execution.options.ignore_requires_python,
                     )
                     try:
                         install_wheels_transactionally(
