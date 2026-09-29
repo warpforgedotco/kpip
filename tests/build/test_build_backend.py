@@ -635,6 +635,7 @@ def _counting_environments(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(build_backend, "_prepared_environments", {})
+    monkeypatch.setattr(build_backend, "_installs_build_requirements", lambda: False)
     monkeypatch.setattr(build_backend, "create_isolated_venv", create)
     monkeypatch.setattr(build_backend.subprocess, "run", run)
     return counts
@@ -682,3 +683,38 @@ def test_a_failed_build_environment_is_not_kept(
         pass
 
     assert counts == {"venvs": 2, "installs": 2}
+
+
+def test_kpip_installs_a_build_environments_requirements(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The environment is made without pip and kpip installs the backend's
+    requirements into it, from kpip's own sources: here a local wheelhouse,
+    with no index."""
+    from kpip.build import build_backend
+    from kpip.build.build_backend import BackendRunner, BackendSpec
+    from tests.wheel_helpers import make_wheel
+
+    wheelhouse = tmp_path / "wheels"
+    wheelhouse.mkdir()
+    make_wheel(wheelhouse, "build-helper", "build_helper", "1.0")
+    monkeypatch.setattr(build_backend, "_prepared_environments", {})
+    monkeypatch.setenv("KPIP_FIND_LINKS", str(wheelhouse))
+    monkeypatch.setenv("KPIP_NO_INDEX", "1")
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+
+    spec = BackendSpec("build_helper", ("build-helper",), ())
+    with BackendRunner(tmp_path, spec).caller() as (caller, _):
+        python = caller.python_executable
+        imported = subprocess.run(
+            [python, "-c", "import build_helper; print(build_helper.NAME)"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        has_pip = subprocess.run(
+            [python, "-c", "import pip"], capture_output=True, check=False
+        )
+
+    assert imported.stdout.strip() == "build-helper"
+    assert has_pip.returncode != 0

@@ -13,7 +13,9 @@ import io
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -33,7 +35,8 @@ from kpip.core.errors import BuildError
 from kpip.core.packaging import canonicalize_name, parse_requirement
 from kpip.core.versions import InvalidVersion, Version
 from kpip.core.subprocesses import call_subprocess
-from kpip.core.interpreter import build_interpreter, is_own_interpreter
+from kpip.core.appdirs import command_cache_arguments
+from kpip.core.interpreter import build_interpreter, is_compiled, is_own_interpreter
 from kpip.install.build_env.isolated_venv import CreatedVenv, create_isolated_venv
 
 
@@ -368,6 +371,34 @@ def _environments_root() -> str:
         return _prepared_environments_root[0]
 
 
+def _installs_build_requirements() -> bool:
+    """Whether kpip installs a build environment's requirements itself.
+
+    A bare environment and a kpip subprocess take 0.4 s where a pip-seeded
+    one and pip take 4.2 s, and the requirements come from kpip's own index
+    settings and cache, as uv's do. That needs kpip to run as ``-m kpip``
+    under the build interpreter: not a compiled binary, whose
+    ``sys.executable`` is the binary, and not another interpreter, whose
+    wheels kpip would have to pick for it. Those keep pip.
+    """
+    return not is_compiled() and is_own_interpreter(build_interpreter())
+
+
+def _prefix_is_environment(env_path: str, venv: CreatedVenv) -> bool:
+    """Whether ``--prefix env_path`` installs where ``venv`` imports from."""
+    from kpip.host.locations.sysconfig_scheme import get_scheme
+
+    scheme = get_scheme("", prefix=env_path)
+
+    libraries = {os.path.realpath(path) for path in venv.lib_dirs}
+
+    return (
+        os.path.realpath(scheme.purelib) in libraries
+        and os.path.realpath(scheme.platlib) in libraries
+        and os.path.realpath(scheme.scripts) == os.path.realpath(venv.bin_path)
+    )
+
+
 def _prepared_environment(
     source_dir: str | os.PathLike[str],
     spec: BackendSpec,
@@ -394,6 +425,8 @@ def _prepared_environment(
 
     environment.pop("KPIP_CONSTRAINT", None)
 
+    installs_itself = bool(spec.requirements) and _installs_build_requirements()
+
     local_find_links = shlex.split(environment.get("KPIP_FIND_LINKS", ""))
 
     install_options = [
@@ -410,14 +443,22 @@ def _prepared_environment(
     else:
         environment.pop("KPIP_NO_INDEX", None)
 
-    if any(
-        requirement.split("[", 1)[0].split(" ", 1)[0].lower() == "setuptools"
-        for requirement in spec.requirements
-    ):
-        install_options.extend(("--only-binary", "setuptools"))
+    # setuptools is the backend most builds need; building it from source
+    # would need a backend of its own.
+    only_binary = (
+        ["--only-binary", "setuptools"]
+        if any(
+            requirement.split("[", 1)[0].split(" ", 1)[0].lower() == "setuptools"
+            for requirement in spec.requirements
+        )
+        else []
+    )
+
+    install_options.extend(only_binary)
 
     key = (
         build_interpreter(),
+        installs_itself,
         spec.requirements,
         tuple(install_options),
         tuple(constraint_args),
@@ -447,11 +488,44 @@ def _prepared_environment(
         try:
             venv = create_isolated_venv(
                 env_path,
-                with_pip=bool(spec.requirements),
+                with_pip=bool(spec.requirements) and not installs_itself,
                 python=build_interpreter(),
             )
 
-            if spec.requirements:
+            if installs_itself and not _prefix_is_environment(env_path, venv):
+                # A layout kpip's --prefix would not match: pip installs
+                # into the environment from inside it instead.
+                shutil.rmtree(env_path, ignore_errors=True)
+                venv = create_isolated_venv(
+                    env_path, with_pip=True, python=build_interpreter()
+                )
+                installs_itself = False
+
+            if installs_itself:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "kpip",
+                        "install",
+                        "--quiet",
+                        "--no-compile",
+                        "--ignore-installed",
+                        "--prefix",
+                        env_path,
+                        *command_cache_arguments(),
+                        *only_binary,
+                        *constraint_args,
+                        *spec.requirements,
+                    ],
+                    check=True,
+                    cwd=source_dir,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                )
+
+            elif spec.requirements:
                 subprocess.run(
                     [
                         venv.python_executable,
@@ -470,8 +544,6 @@ def _prepared_environment(
                 )
 
         except BaseException:
-            import shutil
-
             shutil.rmtree(env_path, ignore_errors=True)
 
             raise

@@ -73,13 +73,33 @@ def command_cache_dir(explicit: str | None, disabled: bool) -> str | None:
     here, so ``lock``, ``install`` and ``download`` agree on both.
     """
 
-    if disabled:
+    if disabled or (
+        os.environ.get("KPIP_NO_CACHE_DIR", "").strip().lower() in _TRUE_VALUES
+    ):
+        _command_cache[:] = [None]
         return None
 
-    if os.environ.get("KPIP_NO_CACHE_DIR", "").strip().lower() in _TRUE_VALUES:
-        return None
+    root = cache_root(explicit)
+    _command_cache[:] = [root]
+    return versioned_cache_dir(root)
 
-    return resolve_cache_dir(explicit)
+
+_command_cache: list[str | None] = []
+"""The cache root the running command chose, None when it turned caching off."""
+
+
+def command_cache_arguments() -> list[str]:
+    """Options giving a kpip subprocess the cache this command chose.
+
+    A build environment's requirements are installed by a kpip subprocess;
+    with these it reads and fills the same cache as the command it serves.
+    Empty when no command has chosen one, leaving the subprocess its default.
+    """
+
+    if not _command_cache:
+        return []
+    root = _command_cache[0]
+    return ["--no-cache-dir"] if root is None else ["--cache-dir", root]
 
 
 def site_config_dirs(appname: str) -> list[str]:
