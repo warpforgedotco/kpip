@@ -897,7 +897,7 @@ def json_record(
     hashes: object,
     requires_python: object,
     yanked_reason: str | None,
-    file_data: Mapping[str, object],
+    metadata: object,
     upload_time: object,
     size: object,
 ) -> tuple[object, ...]:
@@ -917,10 +917,6 @@ def json_record(
         )
     else:
         stored_hashes = {}
-    if "core-metadata" in file_data:
-        metadata = file_data["core-metadata"]
-    else:
-        metadata = file_data.get("dist-info-metadata")
     if isinstance(metadata, dict):
         stored_metadata = (
             _stored_hashes({str(name): str(value) for name, value in metadata.items()})

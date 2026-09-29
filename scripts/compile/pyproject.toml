@@ -8,6 +8,8 @@ dependencies = [
   # setuptools drives the C compiler.
   "cython>=3.3",
   "setuptools>=70",
+  # Shipped in the binary: kpip.index.typed_pages decodes index pages with it.
+  "msgspec>=0.19",
   # Onefile payload compression; 3.14 ships compression.zstd instead.
   "zstandard>=0.15; python_version < '3.14'",
 ]

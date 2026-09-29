@@ -24,6 +24,7 @@ from kpip.index.catalog_cache import (
     save_links,
     url_path_tail,
 )
+from kpip.index import typed_pages
 from kpip.index.dates import parse_iso_datetime
 from kpip.index.hashes import SUPPORTED_RECORD_HASHES
 from kpip.core.wheel import parse_wheel_file_once
@@ -196,11 +197,47 @@ class IndexPageParser:
         rules, so anything unusual stays identical by construction rather
         than by re-derivation here.
         """
+        grouped: dict[tuple[str, str], list[Any]] = {}
+        unparsed: list[Any] = []
+        page = typed_pages.decode_page(body)
+        if page is not None:
+            unset = typed_pages.UNSET
+            meta = page.meta
+            check_api_version(
+                meta.get("api-version") if isinstance(meta, dict) else None, url
+            )
+            base_url = base_url or ensure_trailing_slash(url)
+            record_from_fields = self.record_from_fields
+            for entry in page.files:
+                file_url = entry.url
+                if not isinstance(file_url, str):
+                    continue
+                metadata = entry.core_metadata
+                if metadata is unset:
+                    metadata = entry.dist_info_metadata
+                    if metadata is unset:
+                        metadata = None
+                record, identity = record_from_fields(
+                    base_url,
+                    url,
+                    file_url,
+                    entry.filename,
+                    entry.yanked,
+                    entry.hashes,
+                    entry.requires_python,
+                    entry.upload_time,
+                    entry.size,
+                    metadata,
+                )
+                if identity is None:
+                    unparsed.append(record)
+                    continue
+                kind, name, version = identity
+                grouped.setdefault((name, version), []).append((kind, record))
+            return compile_groups(grouped), unparsed
         data = json.loads(body)
         check_api_version(_json_api_version(data), url)
         base_url = base_url or ensure_trailing_slash(url)
-        grouped: dict[tuple[str, str], list[Any]] = {}
-        unparsed: list[Any] = []
         for file_data in data.get("files", []):
             if not isinstance(file_data, dict):
                 continue
@@ -222,20 +259,52 @@ class IndexPageParser:
         file_data: Any,
         file_url: str,
     ) -> tuple[Any, tuple[int, str, str] | None]:
-        """One catalog record and its release identity, from one JSON entry.
+        """One catalog record and its release identity, from one JSON entry."""
+        get = file_data.get
+        if "core-metadata" in file_data:
+            metadata = file_data["core-metadata"]
+        else:
+            metadata = get("dist-info-metadata")
+        return self.record_from_fields(
+            base_url,
+            source_url,
+            file_url,
+            get("filename"),
+            get("yanked"),
+            get("hashes"),
+            get("requires-python"),
+            get("upload-time"),
+            get("size"),
+            metadata,
+        )
 
-        A page lists every file of every release, and a cold airflow lock
-        compiles 265,000 of them to resolve with 3% of them, so a plain URL --
-        every file PyPI serves -- takes the least work that yields the same
-        record: its name is the URL's last segment, read once; its hashes and
-        core metadata go straight to their stored form; and a wheel's tags are
-        parsed only when a release is read (``wheel_file_from_record``).
-        Anything else goes through ``Link``, which owns those rules.
+    def record_from_fields(
+        self,
+        base_url: str,
+        source_url: str,
+        file_url: str,
+        filename: Any,
+        yanked: Any,
+        hashes: Any,
+        requires_python: Any,
+        upload_time: Any,
+        size: Any,
+        metadata: Any,
+    ) -> tuple[Any, tuple[int, str, str] | None]:
+        """One catalog record and its release identity, from an entry's fields.
+
+        ``metadata`` is the entry's ``core-metadata``, or its older
+        ``dist-info-metadata`` spelling when it has only that. A page lists
+        every file of every release, and a cold airflow lock compiles
+        265,000 of them to resolve with 3% of them, so a plain URL -- every
+        file PyPI serves -- takes the least work that yields the same
+        record: its name is the URL's last segment, read once; its hashes
+        and core metadata go straight to their stored form; and a wheel's
+        tags are parsed only when a release is read
+        (``wheel_file_from_record``). Anything else goes through ``Link``,
+        which owns those rules.
         """
         url = join_index_url(base_url, file_url)
-        get = file_data.get
-        filename = get("filename")
-        yanked = get("yanked")
         text = str(filename or "")
         yanked_reason = (
             None
@@ -247,10 +316,6 @@ class IndexPageParser:
         plain = PLAIN_URL.match(url)
 
         if plain is None or "&" in url:
-            hashes = get("hashes")
-            requires_python = get("requires-python")
-            upload_time = get("upload-time")
-            size = get("size")
             link = Link.from_index_page(
                 url,
                 source_url=source_url,
@@ -260,7 +325,7 @@ class IndexPageParser:
                     requires_python if isinstance(requires_python, str) else None
                 ),
                 yanked_reason=yanked_reason,
-                metadata_file=metadata_file_from_json(file_data),
+                metadata_file=metadata_file_from_json_value(metadata),
                 upload_time=parse_iso_datetime(upload_time) if upload_time else None,
             )
             if type(size) is int and size >= 0:
@@ -281,14 +346,14 @@ class IndexPageParser:
         record = json_record(
             url=url,
             text=text,
-            hashes=get("hashes"),
-            requires_python=get("requires-python"),
+            hashes=hashes,
+            requires_python=requires_python,
             yanked_reason=yanked_reason,
-            file_data=file_data,
+            metadata=metadata,
             # Kept as the index's own text; nothing parses it unless an
             # upload cutoff asks, and a page lists thousands of files.
-            upload_time=get("upload-time"),
-            size=get("size"),
+            upload_time=upload_time,
+            size=size,
         )
         if kind is ArtifactKind.WHEEL:
             parsed_wheel = parse_wheel_file_once(name)

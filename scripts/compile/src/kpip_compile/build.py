@@ -92,6 +92,9 @@ def nuitka_command(
         "--include-package=kpip",
         # certifi's cacert.pem and the vendored license texts.
         "--include-package-data=kpip",
+        # Imported only when an index page is read, and optional to kpip;
+        # the binary always has it (kpip.index.typed_pages).
+        "--include-package=msgspec",
         # Nuitka's automatic choice turns LTO off past 250 compiled modules,
         # even for PGO builds, and kpip is close to that.
         "--lto=yes",

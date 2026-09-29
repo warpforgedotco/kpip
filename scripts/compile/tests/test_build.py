@@ -45,6 +45,7 @@ def test_cached_onefile_uses_a_static_spec() -> None:
     assert "--product-version=1.2.3" in command
     assert "--include-package=kpip" in command
     assert "--include-package-data=kpip" in command
+    assert "--include-package=msgspec" in command
     assert command[-1] == str(KPIP_PACKAGE)
 
 
