@@ -1056,3 +1056,13 @@ def test_trusted_host_with_a_port_trusts_that_port(
 
     parsed = urllib.parse.urlsplit(url)
     assert is_trusted_host({trusted_host_key(trusted)}, parsed) is expected
+
+
+@pytest.mark.parametrize("trusted", ["h:70000", "h:port", "[::1]:99999"])
+def test_trusted_host_with_an_invalid_port_is_refused(trusted: str) -> None:
+    """Falling back to the bare host trusted every port on it."""
+    from kpip.core.errors import CommandError
+    from kpip.network.session import trusted_host_key
+
+    with pytest.raises(CommandError, match="Invalid --trusted-host"):
+        trusted_host_key(trusted)

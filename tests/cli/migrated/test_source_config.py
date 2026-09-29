@@ -5,7 +5,12 @@ import os
 from pathlib import Path
 
 import pytest
-from kpip.cli.config import SourceConfig, load_source_config, resolve_sources
+from kpip.cli.config import (
+    CONFIG_BASENAME,
+    SourceConfig,
+    load_source_config,
+    resolve_sources,
+)
 from kpip.core.errors import ConfigurationError
 
 
@@ -123,7 +128,7 @@ def write_user_config(
 ) -> None:
     home = tmp_path / "xdg"
     (home / "kpip").mkdir(parents=True)
-    (home / "kpip" / "kpip.conf").write_text(body, encoding="utf-8")
+    (home / "kpip" / CONFIG_BASENAME).write_text(body, encoding="utf-8")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
 
 
@@ -159,12 +164,13 @@ def test_user_file_is_the_same_with_or_without_xdg_config_home(
     from kpip.cli.config import user_config_paths
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr("sys.platform", "linux")
     without = user_config_paths()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
 
     assert user_config_paths() == without
-    assert without[-1] == str(tmp_path / ".config" / "kpip" / "kpip.conf")
+    assert without[-1] == str(tmp_path / ".config" / "kpip" / CONFIG_BASENAME)
 
 
 def test_legacy_user_file_is_still_read(
@@ -172,8 +178,9 @@ def test_legacy_user_file_is_still_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     (tmp_path / ".config").mkdir()
-    (tmp_path / ".config" / "kpip.conf").write_text(
+    (tmp_path / ".config" / CONFIG_BASENAME).write_text(
         "[global]\nno-index = true\n", encoding="utf-8"
     )
 

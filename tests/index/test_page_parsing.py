@@ -502,3 +502,18 @@ def test_simple_api_major_version_2_is_refused() -> None:
         parser.links_from_json(
             '{"meta": {"api-version": "2.1"}, "files": []}', PAGE_URL
         )
+
+
+def test_relative_base_href_resolves_against_the_url_after_redirects() -> None:
+    body = (
+        '<html><head><base href="../packages/"></head>'
+        '<body><a href="pkg-1.0.tar.gz">pkg</a></body></html>'
+    )
+    links = IndexPageParser().links_from_html(
+        body,
+        "https://example.invalid/simple/pkg",
+        "https://mirror.invalid/simple/pkg/",
+    )
+    assert [link.url for link in links] == [
+        "https://mirror.invalid/simple/packages/pkg-1.0.tar.gz",
+    ]

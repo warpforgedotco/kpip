@@ -705,6 +705,9 @@ class CandidateMaterializer:
 
         self.local_artifacts: dict[str, str] = {}
 
+        # URLs whose archive passed _check_user_hashes.
+        self.user_hashes_checked: set[str] = set()
+
         self.vcs_revisions: dict[str, str] = {}
 
         self.metadata_prefetcher: Prefetcher[Any, str] | None = None
@@ -732,16 +735,22 @@ class CandidateMaterializer:
         *,
         local_path: str | None = None,
     ) -> str:
-        if not candidate.link.is_vcs:
-            cached = self.local_artifacts.get(candidate.link.url)
+        url = candidate.link.url
 
-            if cached is not None:
-                return cached
+        if candidate.link.is_vcs:
+            return self._ensure_local_text(candidate, local_path=local_path)
 
-        path = self._ensure_local_text(candidate, local_path=local_path)
+        path = self.local_artifacts.get(url)
 
-        if not candidate.link.is_vcs:
+        if path is None:
+            path = self._ensure_local_text(candidate, local_path=local_path)
+
+        # Kept apart from the path cache, which other routes fill too: a
+        # path cached before its check -- or by a caller that caught the
+        # mismatch and went on -- must not be handed out unchecked.
+        if url not in self.user_hashes_checked:
             self._check_user_hashes(candidate, path)
+            self.user_hashes_checked.add(url)
 
         return path
 

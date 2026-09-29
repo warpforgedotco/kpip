@@ -1413,8 +1413,14 @@ def trusted_host_key(value: str) -> tuple[str, int | None]:
     parsed = urllib.parse.urlsplit("//" + value.strip())
     try:
         port = parsed.port
-    except ValueError:
-        port = None
+    except ValueError as error:
+        # Not host-wide trust: an unusable port must not turn certificate
+        # checks off for every port on the host.
+        from kpip.core.errors import CommandError
+
+        raise CommandError(
+            f"Invalid --trusted-host {value.strip()!r}: {error}"
+        ) from error
     return (parsed.hostname or value.strip()).lower(), port
 
 

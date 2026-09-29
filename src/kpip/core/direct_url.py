@@ -214,7 +214,9 @@ class DirectUrl:
             # The spec: a persisted url MUST be stripped of credentials, except
             # environment-variable placeholders and git's well-known ``git``
             # user, which name no secret. pip strips the same set.
-            auth, _, host = parsed.netloc.partition("@")
+            # The last "@", as urlsplit reads it: an unencoded "@" in the
+            # userinfo belongs to the credentials, not the host.
+            auth, _, host = parsed.netloc.rpartition("@")
             keep = _is_env_var_auth(auth) or (
                 auth == "git"
                 and self.vcs_info is not None

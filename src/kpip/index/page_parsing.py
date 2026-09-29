@@ -363,6 +363,9 @@ def link_parser_class() -> type:
         ) -> None:
             super().__init__(convert_charrefs=True)
             self.page_url = page_url
+            # The URL the body came from, after redirects: what a relative
+            # <base href> resolves against, as the page's own links do.
+            self.document_url = base_url or page_url
             self.base_url_internal = base_url or ensure_trailing_slash(page_url)
             self.saw_base_internal = False
             self.link_factory = link_factory
@@ -391,7 +394,7 @@ def link_parser_class() -> type:
                         self.saw_base_internal = True
                         if href:
                             self.base_url_internal = join_index_url(
-                                self.page_url,
+                                self.document_url,
                                 href,
                             )
                 return
