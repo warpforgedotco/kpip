@@ -681,7 +681,7 @@ index 9d66b146d..cef4be5ee 100644
      closePayloadData();
  #endif
 diff --git a/nuitka/freezer/Onefile.py b/nuitka/freezer/Onefile.py
-index f93820928..c08eab967 100644
+index 1886266ec..886cca1f3 100644
 --- a/nuitka/freezer/Onefile.py
 +++ b/nuitka/freezer/Onefile.py
 @@ -52,6 +52,7 @@ from nuitka.utils.Execution import withEnvironmentVarsOverridden
@@ -717,7 +717,7 @@ index f93820928..c08eab967 100644
  
      if not main_filename_in_payload:
 @@ -281,6 +290,7 @@ def packDistFolderToOnefileBootstrap(onefile_output_filename, dist_dir, start_bi
-     # We might not even have a payload due to commercial file embedding.
+     # The payload is optional, there might be none at all.
      has_payload = hasOnefilePayload()
      onefile_payload_size = 0
 +    onefile_payload_hash = None
