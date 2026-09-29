@@ -58,6 +58,35 @@ EDGE_PAGES = [
             }
         ]
     },
+    # URLs at every edge of what the compiled loop takes as plain.
+    {
+        "files": [
+            {"url": url, "filename": "a-1.0-py3-none-any.whl"}
+            for url in (
+                "https://x.org/p/a-1.0-py3-none-any.whl",
+                "HTTPS://x.org/p/a-1.0-py3-none-any.whl",
+                "https://x.org:8080/p/a-1.0-py3-none-any.whl",
+                "https://x.org",
+                "http://x",
+                "https://x.org/p/a%2D1.0-py3-none-any.whl",
+                "https://x.org/p/a-1.0-py3-none-any.whl&x",
+                "https://x.org/p/a-1.0-py3-none-any.whl;",
+                "https://x.org/p/a 1.0-py3-none-any.whl",
+                "https://x.org/p\\a-1.0-py3-none-any.whl",
+                "https://[::1]/p/a-1.0-py3-none-any.whl",
+                "https://x.org/p/a-1.0-py3-none-any.whl#sha256=00",
+                "https://x.org/p/a-1.0-py3-none-any.whl?x=1",
+                "https://x.org/p/a-1.0-py3-none-any.whl\x7f",
+                "https://x.org/p/\u00e9-1.0-py3-none-any.whl",
+                "https://x.org/p/",
+                "https://x.org/p/..",
+                "https://x.org/p/a__b-1.0-py3-none-any.whl",
+                "https://x.org/p/a-1.0-x-py3-none-any.whl",
+                "https://x.org/p/a-bad!-py3-none-any.whl",
+                "p/a-1.0-py3-none-any.whl",
+            )
+        ]
+    },
     # Relative URLs, a yanked wheel and a file with no URL.
     {
         "files": [
@@ -123,3 +152,20 @@ def test_recorded_pypi_pages_compile_the_same_either_way(workload: str) -> None:
 
     for key, body in pages:
         assert _compile(body, key, typed=True) == _compile(body, key, typed=False), key
+
+
+def test_the_compiled_loop_is_the_one_compiling_when_built() -> None:
+    """With the extension built (CI's compiled job builds it), pages go
+    through it; without, through the Python loop -- either way the tests
+    above compare it with ``json``."""
+    from kpip.index import page_parsing
+
+    compiled = page_parsing._compiled_page_catalog(
+        IndexPageParser.__new__(IndexPageParser)
+    )
+    try:
+        import kpip.index._page_catalog  # noqa: F401
+    except ImportError:
+        assert compiled is None
+    else:
+        assert compiled is not None

@@ -207,6 +207,9 @@ class IndexPageParser:
                 meta.get("api-version") if isinstance(meta, dict) else None, url
             )
             base_url = base_url or ensure_trailing_slash(url)
+            compiled = _compiled_page_catalog(self)
+            if compiled is not None:
+                return compiled.compile_files(page.files, base_url, url, unset)
             record_from_fields = self.record_from_fields
             for entry in page.files:
                 file_url = entry.url
@@ -516,6 +519,56 @@ def __getattr__(name: str) -> object:
     if name == "LinkParser":
         return link_parser_class()
     raise AttributeError(name)
+
+
+_page_catalog: Any = None
+"""The compiled page loop once installed, False when there is none."""
+
+
+def _compiled_page_catalog(parser: IndexPageParser) -> Any:
+    """``kpip.index._page_catalog``, given the rules it defers to, or None.
+
+    Only an extension: its source only runs compiled. ``record_from_fields``
+    does not read the parser, so any parser's serves every page.
+    """
+    global _page_catalog
+    if _page_catalog is None:
+        try:
+            from kpip.index import _page_catalog as module
+
+            from kpip.core.packaging import canonicalize_name
+            from kpip.core.versions import InvalidVersion, Version
+            from kpip.index.catalog_cache import (
+                RECORD_REQUIRES_PYTHON,
+                RECORD_YANKED,
+            )
+            from kpip.index.links import SOURCE_ARCHIVE_SUFFIXES
+
+            module._install(
+                join_index_url,
+                parser.record_from_fields,
+                identity_for,
+                Version,
+                InvalidVersion,
+                canonicalize_name,
+                PLAIN_URL,
+                (
+                    ArtifactKind.WHEEL,
+                    ArtifactKind.METADATA,
+                    ArtifactKind.ATTESTATION,
+                    ArtifactKind.SDIST,
+                    ArtifactKind.UNKNOWN,
+                ),
+                SOURCE_ARCHIVE_SUFFIXES,
+                (WHEEL_RECORD, RECORD_REQUIRES_PYTHON, RECORD_YANKED),
+            )
+        except (ImportError, TypeError):
+            # No extension, or one built from an older source whose
+            # _install takes other arguments: keep the Python loop.
+            _page_catalog = False
+        else:
+            _page_catalog = module
+    return _page_catalog or None
 
 
 def metadata_file_from_attrs(attrs: dict[str, str | None]) -> MetadataFile | None:

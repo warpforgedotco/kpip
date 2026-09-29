@@ -23,7 +23,8 @@ uv run kpip-compile build --python /opt/homebrew/bin/python3.14 -- --report=repo
 
 Some kpip modules have a compiled counterpart written in Cython's
 pure-Python mode, listed in `EXTENSIONS` in `src/kpip_compile/extensions.py`;
-today that is nab_resolver's `Range` (`_cranges.py`). kpip imports the
+today those are nab_resolver's `Range` (`_cranges.py`) and the loop that
+compiles an index page into a catalog (`kpip/index/_page_catalog.py`). kpip imports the
 extension when it is present and runs its pure-Python code otherwise, so
 building one only ever adds speed.
 
