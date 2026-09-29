@@ -1,7 +1,8 @@
-"""A lock runs with garbage collection off, and gets it back afterwards.
+"""A resolving command runs with garbage collection off, and gets it back.
 
-Collecting a lock's heap reclaims nothing -- it is the catalog and the clause
-set, alive until the command ends -- so it only costs time.
+Collecting a resolve's heap reclaims nothing -- it is the catalog and the
+clause set, alive until the command ends -- so it only costs time. That holds
+for a lock and for the commands that resolve to install, download or build.
 """
 
 from __future__ import annotations
@@ -40,10 +41,13 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     return states
 
 
-def test_a_lock_runs_uncollected_and_gets_collection_back(seen: list[bool]) -> None:
+@pytest.mark.parametrize("command", ["lock", "install", "download", "wheel"])
+def test_a_resolving_command_runs_uncollected_and_gets_collection_back(
+    seen: list[bool], command: str
+) -> None:
     gc.enable()
 
-    assert entrypoint.main(["lock"]) == 0
+    assert entrypoint.main([command]) == 0
 
     assert seen == [False]
     assert gc.isenabled(), "main is importable; collection is interpreter-wide"
