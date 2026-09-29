@@ -2926,7 +2926,7 @@ class CandidateProvider:
             accepted = self.release_candidates(requirement, preferred) or ()
 
         if not accepted:
-            accepted = self.evaluate_links(requirement).accepted
+            accepted = self.newest_accepted(requirement, _CATALOG_METADATA_PREFETCH)
 
         materializer = self.get_materializer_internal()
 
@@ -2947,6 +2947,71 @@ class CandidateProvider:
             )
 
         return catalog
+
+    def newest_accepted(
+        self,
+        requirement: Requirement,
+        count: int,
+    ) -> tuple[CandidateRecord, ...]:
+        """The first ``count`` of ``evaluate_links(requirement).accepted``.
+
+        The prefetch warms the metadata of the best candidates and chains off
+        the first, and found them by evaluating every artifact of every
+        matching release: on a cold airflow lock, half of all releases and
+        60% of all files, for two candidates each, where the resolve itself
+        examined 3% of the files. ``evaluate_links`` orders unyanked
+        candidates by release, newest first, so once ``count`` of them are in
+        hand at a release boundary no older release can precede them; the
+        same query restricted to one release evaluates exactly that release's
+        share of the full answer. Preferring binaries ranks a wheel of any
+        release above a newer sdist, and too few unyanked candidates leaves
+        yanked ones next, so those take the full query.
+        """
+
+        if self.prefer_binary:
+            return self.evaluate_links(requirement).accepted[:count]
+
+        allow_binary, allow_source = self.allowed_formats_internal(requirement)
+
+        catalog_key = (requirement.canonical_name, allow_binary, allow_source)
+
+        if catalog_key not in self.package_catalog_cache:
+            # Asking for its versions would wait on the prefetch loading the
+            # catalog, which can be this very call.
+            return self.evaluate_links(requirement).accepted[:count]
+
+        found: list[CandidateRecord] = []
+
+        # A release an upload cutoff admits nothing of evaluates to nothing,
+        # and a resolve under a cutoff walks past every release since.
+        seen: set[Version] = set(self.releases_after_cutoff_cache.get(catalog_key, ()))
+
+        for summary in reversed(
+            self.matching_versions(requirement, allow_prereleases=True)
+        ):
+            version = summary.version
+
+            if version in seen:
+                continue
+
+            seen.add(version)
+
+            records = self.evaluate_links(
+                requirement,
+                allowed_versions=frozenset((version,)),
+            ).accepted
+
+            found.extend(record for record in records if not record.link.is_yanked)
+
+            if len(found) >= count:
+                found.sort(
+                    key=lambda candidate: candidate.sort_key(prefer_binary=False),
+                    reverse=True,
+                )
+
+                return tuple(found[:count])
+
+        return self.evaluate_links(requirement).accepted[:count]
 
     def _chain_dependency_catalogs(
         self,

@@ -2003,9 +2003,11 @@ def test_an_artifact_kind_hashes_by_identity() -> None:
     assert type(sdist).__hash__ is object.__hash__
 
 
-def test_catalog_prefetch_evaluates_every_release_only_without_the_pinned_one(
+def test_catalog_prefetch_searches_the_newest_releases_only_without_the_pinned_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The pinned release is read alone; without it, the newest candidates are
+    found release by release rather than by evaluating every release."""
     link = Link.from_url(
         "https://packages.invalid/demo-1.0-py3-none-any.whl",
         source_url=None,
@@ -2016,15 +2018,14 @@ def test_catalog_prefetch_evaluates_every_release_only_without_the_pinned_one(
         index_url="https://index.invalid/simple",
         session=None,
     )
-    evaluated: list[str] = []
+    searched: list[tuple[str, int]] = []
     monkeypatch.setattr(
         provider, "load_catalog", lambda requirement, cache_key: EMPTY_CATALOG
     )
     monkeypatch.setattr(
         provider,
-        "evaluate_links",
-        lambda requirement: evaluated.append(requirement.name)
-        or CandidateSelection((), ()),
+        "newest_accepted",
+        lambda requirement, count: searched.append((requirement.name, count)) or (),
     )
     monkeypatch.setattr(
         provider,
@@ -2037,13 +2038,130 @@ def test_catalog_prefetch_evaluates_every_release_only_without_the_pinned_one(
         provider.load_prefetched_versions(
             (parse_requirement("demo"), ("demo", True, True))
         )
-        assert evaluated == []
+        assert searched == []
 
         provider.preferred_versions = {"demo": Version("9.9")}
         provider.load_prefetched_versions(
             (parse_requirement("demo"), ("demo", True, True))
         )
-        assert evaluated == ["demo"]
+        assert searched == [("demo", 2)]
+    finally:
+        provider.close()
+
+
+def _release_wheelhouse(tmp_path: Path) -> Path:
+    """Three releases, each a wheel and an sdist, and a prerelease on top."""
+    wheelhouse = tmp_path / "packages"
+    wheelhouse.mkdir(parents=True)
+    for version in ("1.0", "2.0", "3.0", "4.0rc1"):
+        make_wheel(wheelhouse, "demo", "demo", version)
+        make_sdist(wheelhouse, "demo", "demo", version)
+    return wheelhouse
+
+
+@pytest.mark.parametrize("specifier", ["", "<3", ">=2,<3", "<2", ">9"])
+@pytest.mark.parametrize("count", [1, 2, 3, 5])
+def test_newest_accepted_is_the_head_of_the_full_evaluation(
+    tmp_path: Path, specifier: str, count: int
+) -> None:
+    requirement = parse_requirement(f"demo{specifier}")
+
+    def urls(candidates: object) -> list[str]:
+        return [candidate.link.url for candidate in candidates]  # ty: ignore[not-iterable]
+
+    full = CandidateProvider.from_options(
+        find_links=[str(_release_wheelhouse(tmp_path / "full"))], no_index=True
+    )
+    walked = CandidateProvider.from_options(
+        find_links=[str(_release_wheelhouse(tmp_path / "walked"))], no_index=True
+    )
+    try:
+        # The prefetch loads the catalog before it searches.
+        walked.available_versions(requirement)
+        expected = [
+            url.replace("/full/", "/walked/")
+            for url in urls(full.evaluate_links(requirement).accepted[:count])
+        ]
+
+        assert urls(walked.newest_accepted(requirement, count)) == expected
+    finally:
+        full.close()
+        walked.close()
+
+
+def test_newest_accepted_evaluates_only_the_releases_it_needs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = CandidateProvider.from_options(
+        find_links=[str(_release_wheelhouse(tmp_path))], no_index=True
+    )
+    evaluated: list[object] = []
+    evaluate = provider.evaluate_links
+
+    def recording(requirement: Requirement, **kwargs: object) -> CandidateSelection:
+        evaluated.append(kwargs.get("allowed_versions"))
+        return evaluate(requirement, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(provider, "evaluate_links", recording)
+    try:
+        provider.available_versions(parse_requirement("demo<4"))
+        # The newest release holds two candidates, a wheel and an sdist.
+        accepted = provider.newest_accepted(parse_requirement("demo<4"), 2)
+    finally:
+        provider.close()
+
+    assert [candidate.version for candidate in accepted] == [Version("3.0")] * 2
+    assert evaluated == [frozenset({Version("3.0")})]
+
+
+def test_newest_accepted_takes_the_full_query_when_preferring_binaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wheel of any release outranks a newer sdist, so no walk can stop early."""
+    provider = CandidateProvider.from_options(
+        find_links=[str(_release_wheelhouse(tmp_path))], no_index=True
+    )
+    provider.prefer_binary = True
+    queries: list[object] = []
+    evaluate = provider.evaluate_links
+
+    def recording(requirement: Requirement, **kwargs: object) -> CandidateSelection:
+        queries.append(kwargs.get("allowed_versions"))
+        return evaluate(requirement, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(provider, "evaluate_links", recording)
+    try:
+        provider.available_versions(parse_requirement("demo"))
+        accepted = provider.newest_accepted(parse_requirement("demo"), 2)
+        assert queries == [None]
+        assert accepted == evaluate(parse_requirement("demo")).accepted[:2]
+    finally:
+        provider.close()
+
+
+def test_newest_accepted_does_not_wait_for_a_catalog_still_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without its catalog it takes the full query rather than ask for versions,
+    which would wait on the prefetch loading them -- possibly the caller."""
+    provider = CandidateProvider.from_options(
+        find_links=[str(_release_wheelhouse(tmp_path))], no_index=True
+    )
+    monkeypatch.setattr(
+        provider,
+        "available_versions",
+        lambda requirement: pytest.fail("asked for versions"),
+    )
+    monkeypatch.setattr(
+        provider,
+        "evaluate_links",
+        lambda requirement: CandidateSelection(("first", "second", "third"), ()),
+    )
+    try:
+        assert provider.newest_accepted(parse_requirement("demo"), 2) == (
+            "first",
+            "second",
+        )
     finally:
         provider.close()
 
