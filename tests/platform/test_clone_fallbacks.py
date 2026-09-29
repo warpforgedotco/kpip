@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import os
+import stat
 import sys
 import types
 from pathlib import Path
@@ -278,3 +279,28 @@ def test_clone_still_rejects_a_duplicate_it_was_not_told_about(tmp_path: Path) -
     clone_path(str(tmp_path / "a"), str(stage))
     with pytest.raises(FileExistsError):
         clone_path(str(tmp_path / "b"), str(stage))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
+def test_a_cloned_read_only_directory_keeps_its_mode_and_contents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read-only directory is created writable so its entries can be
+    linked in, then given its source mode."""
+    from kpip.host.clone import clone_path
+
+    monkeypatch.setenv("KPIP_LINK_MODE", "copy")
+    source = tmp_path / "source"
+    (source / "locked").mkdir(parents=True)
+    (source / "locked" / "module.py").write_text("x = 1\n")
+    (source / "locked").chmod(0o555)
+    destination = tmp_path / "destination"
+    try:
+        clone_path(str(source), str(destination))
+
+        assert (destination / "locked" / "module.py").read_text() == "x = 1\n"
+        assert stat.S_IMODE((destination / "locked").stat().st_mode) == 0o555
+    finally:
+        (source / "locked").chmod(0o755)
+        if (destination / "locked").exists():
+            (destination / "locked").chmod(0o755)
