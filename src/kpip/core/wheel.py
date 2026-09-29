@@ -871,14 +871,104 @@ def wheel_tag_rank(
     tags: tuple[WheelTag, ...],
     supported_tags: tuple[WheelTag, ...] | None = None,
 ) -> int | None:
+    """How good a fit ``tags`` are here: lower is better, None if none fits.
+
+    The index of the first supported tag any of them matches, scaled, plus
+    how far the match reaches within it. One supported tag stands for a
+    range -- a glibc and every older one, a macOS version and every older
+    one with each compatible architecture, an interpreter and every older
+    abi3 or pure-Python minor -- and pip ranks the newest and most specific
+    member of each range first: manylinux_2_28 over manylinux_2_17, arm64
+    over universal2, cp311-abi3 over cp39-abi3.
+    """
     supported = supported_wheel_tags() if supported_tags is None else supported_tags
 
     for index, supported_tag in enumerate(supported):
+        best = None
         for tag in tags:
             if tag_matches(supported_tag, tag):
-                return index
+                reach = _match_reach(supported_tag, tag)
+                if best is None or reach < best:
+                    best = reach
+        if best is not None:
+            return index * _RANK_SCALE + best
 
     return None
+
+
+_RANK_SCALE = 10_000
+"""Room within one supported tag's rank for how far a match reaches; the
+largest rank stays well below the 1,000,000 callers use for "no rank"."""
+
+_MACOS_ARCH_PREFERENCE = {
+    "x86_64": ("x86_64", "intel", "fat64", "fat32", "universal2", "universal"),
+    "i386": ("i386", "intel", "fat32", "fat", "universal"),
+    "intel": ("intel", "fat64", "fat32", "universal"),
+    "arm64": ("arm64", "universal2"),
+    "aarch64": ("aarch64", "universal2"),
+    "ppc": ("ppc", "fat32", "fat", "universal"),
+    "ppc64": ("ppc64", "fat64", "universal"),
+}
+"""pip's order for macOS architectures: the native one first."""
+
+
+def _minor_distance(runtime: str, wheel: str) -> int:
+    """How many minors older ``wheel``'s interpreter is (``cp311`` against
+    ``cp312`` is 1); 0 when they are the same or not comparable."""
+    if runtime == wheel or len(runtime) < 4 or len(wheel) < 4:
+        return 0
+    try:
+        return max(0, int(runtime[3:]) - int(wheel[3:]))
+    except ValueError:
+        return 0
+
+
+def _macos_steps(runtime: tuple[int, int], wheel: tuple[int, int]) -> int:
+    """How many macOS versions down from ``runtime`` ``wheel`` is, counting
+    as pip lists them: 14.0, 13.0, 12.0, 11.0, then 10.16 down to 10.0."""
+
+    def position(version: tuple[int, int]) -> int:
+        major, minor = version
+        return major - 11 + 17 if major >= 11 else minor
+
+    return max(0, position(runtime) - position(wheel))
+
+
+def _match_reach(supported: WheelTag, candidate: WheelTag) -> int:
+    """How far below the supported tag a matching ``candidate`` sits: 0 for
+    the tag itself, more for an older interpreter, libc or macOS version, or
+    a less specific architecture. Interpreter reach weighs most, as pip
+    lists every platform of one interpreter before the next older one."""
+    interpreter = _minor_distance(
+        supported._interpreter_lower, candidate._interpreter_lower
+    )
+    platform = 0
+    runtime_parts = supported._platform_parts
+    wheel_parts = candidate._platform_parts
+    if (
+        runtime_parts is not None
+        and wheel_parts is not None
+        and supported._platform_lower != candidate._platform_lower
+    ):
+        family = runtime_parts[0]
+        if family in ("manylinux", "musllinux"):
+            _, runtime_major, runtime_minor, _ = runtime_parts
+            _, wheel_major, wheel_minor, _ = wheel_parts
+            platform = (runtime_major - wheel_major) * 100 + (
+                runtime_minor - wheel_minor
+            )
+        elif family == "macosx" and len(runtime_parts) == 4 and len(wheel_parts) == 4:
+            try:
+                versions = _macos_steps(
+                    (int(runtime_parts[1]), int(runtime_parts[2])),
+                    (int(wheel_parts[1]), int(wheel_parts[2])),
+                )
+            except ValueError:
+                versions = 0
+            arches = _MACOS_ARCH_PREFERENCE.get(runtime_parts[3], ())
+            arch = arches.index(wheel_parts[3]) if wheel_parts[3] in arches else 0
+            platform = versions * 8 + arch
+    return min(interpreter * 1_000 + min(max(platform, 0), 999), _RANK_SCALE - 1)
 
 
 def wheel_archive_identity(
