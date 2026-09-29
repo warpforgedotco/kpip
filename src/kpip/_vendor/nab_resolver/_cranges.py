@@ -241,7 +241,7 @@ def buf_free(buf: cython.pointer(Buf)) -> cython.void:
 
 
 @cython.cfunc
-def adopt(cls: type, buf: cython.pointer(Buf)) -> "Range":
+def adopt(cls: type, buf: cython.pointer(Buf)) -> Range:
     """A new ``cls`` owning ``buf``'s intervals, with references to the bounds.
 
     Takes ``buf.data``; the caller frees it only if this raises first.
@@ -588,16 +588,16 @@ class Range:
             return NotImplemented
         return difference(self, other)
 
-    def is_subset(self, other: "Range") -> bool:
+    def is_subset(self, other: Range) -> bool:
         return is_subset(self, other)
 
     def is_superset(self, other):
         return other.is_subset(self)
 
-    def is_disjoint(self, other: "Range") -> bool:
+    def is_disjoint(self, other: Range) -> bool:
         return is_disjoint(self, other)
 
-    def relation(self, other: "Range"):
+    def relation(self, other: Range):
         return relation(self, other)
 
     # -- identity -------------------------------------------------------------

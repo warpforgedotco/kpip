@@ -16,6 +16,7 @@ from typing import Any
 from kpip._vendor.nab_resolver import decide
 from kpip._vendor.nab_resolver.ranges import Range
 from kpip.core.versions import Version
+from tests.range_oracles import requires_patchable_range
 
 V1, V2 = Version("1.0"), Version("2.0")
 
@@ -58,6 +59,7 @@ class Refining(Range[Version]):
         return Range.from_versions([V1, V2])  # "refined": differs from self
 
 
+@requires_patchable_range
 def test_a_plain_range_derives_nothing_and_never_intersects(monkeypatch: Any) -> None:
     positive = Range.from_versions([V1])
     calls: list[str] = []

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from kpip_compile.build import DEFAULT_OUTPUT_DIR, BuildOptions, build
+from kpip_compile.extensions import build_extensions
 from kpip_compile.pgo import PgoError
 from kpip_compile.vendor import (
     NUITKA_BRANCH,
@@ -47,6 +48,16 @@ def _parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="Refetch even if the checkout is current."
     )
 
+    extensions = commands.add_parser(
+        "extensions",
+        help="Build kpip's optional compiled modules in place, for this Python.",
+        description="kpip imports each when built and runs its pure-Python "
+        "counterpart otherwise.",
+    )
+    extensions.add_argument(
+        "--force", action="store_true", help="Rebuild even if nothing changed."
+    )
+
     build_parser = commands.add_parser(
         "build",
         help="Compile kpip, vendoring Nuitka first if needed.",
@@ -80,6 +91,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    if args.command == "extensions":
+        for path in build_extensions(force=args.force):
+            print(path)
+        return 0
 
     try:
         nuitka_dir = _vendor(force=args.command == "vendor" and args.force)
