@@ -46,11 +46,13 @@ backend-path = ["src"]
 
 [dependency-groups]
 benchmark = ["pytest-codspeed>=5.0.3", "pytest-benchmark>=5", "tomli>=2", "uv==0.12.1"]
+crosshair = ["crosshair-tool", "hypothesis-crosshair"]
 typing = ["ruff", "ty", "typing-extensions==4.16.0"]
 vendoring = ["vendoring==1.4.0; python_version >= '3.11'"]
 test = [
     "cryptography",
     "filelock",
+    "hypothesis",
     "installer",
     "keyring",
     "msgpack",

@@ -6,6 +6,7 @@ import errno
 import fnmatch
 import http.server
 import importlib.metadata
+import importlib.util
 import os
 import py_compile
 import shutil
@@ -55,6 +56,27 @@ from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
 
 from kpip.core.temp_dir import global_tempdir_manager
+from hypothesis import HealthCheck, settings
+
+# Property tests run derandomized by default, like the seeded oracle tests,
+# so a pull request sees the same examples on every run. The ``crosshair``
+# profile (``--hypothesis-profile=crosshair``, needs the ``crosshair``
+# dependency group) swaps random generation for CrossHair's symbolic
+# search; a path costs up to twice the deadline in CPU time before it is
+# discarded, which bounds how long one example can take.
+settings.register_profile("default", derandomize=True, database=None)
+# Hypothesis refuses a backend it cannot import as soon as the profile is
+# registered, so the profile exists only where the group is installed.
+if importlib.util.find_spec("hypothesis_crosshair_provider") is not None:
+    settings.register_profile(
+        "crosshair",
+        backend="crosshair",
+        max_examples=200,
+        deadline=500,
+        database=None,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
+    )
+settings.load_profile("default")
 
 ZIPAPP_PYC_BLOCKLIST = [
     "kpip/__kpip-runner__.py",
@@ -196,6 +218,7 @@ def pytest_collection_modifyitems(config: Config, items: list[pytest.Function]) 
                 "install",
                 "network",
                 "platform",
+                "properties",
                 "vcs",
             }
         ):
@@ -223,6 +246,7 @@ def pytest_collection_modifyitems(config: Config, items: list[pytest.Function]) 
             "install",
             "network",
             "platform",
+            "properties",
             "vcs",
             "cli",
         }:
