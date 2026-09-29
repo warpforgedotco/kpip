@@ -78,6 +78,11 @@ jobs:
           "$kpip" download certifi --no-cache-dir -d "$RUNNER_TEMP/download"
           ls "$RUNNER_TEMP"/download/certifi-*.whl
 
+          # With a cache, index pages are compiled into catalogs: msgspec's
+          # structs and the compiled page loop, which --no-cache-dir skips.
+          "$kpip" lock --cache-dir "$RUNNER_TEMP/cache" --output "$RUNNER_TEMP/cached.toml" requests
+          grep -q 'name = "urllib3"' "$RUNNER_TEMP/cached.toml"
+
           # A source-only package is built with a real Python, not the binary.
           "$kpip" lock --no-cache-dir --output "$RUNNER_TEMP/sdist.toml" atlasclient==1.0.0
           grep -q 'name = "atlasclient"' "$RUNNER_TEMP/sdist.toml"
