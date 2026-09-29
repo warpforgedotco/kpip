@@ -982,3 +982,18 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
             merged.append((lower, lower_inclusive, upper, upper_inclusive))
 
     return tuple(merged)
+
+try:
+    from . import _cranges
+except ImportError:
+    pass
+else:
+    _cranges._install(
+        NEGATIVE_INFINITY,
+        POSITIVE_INFINITY,
+        _EMPTY_REL,
+        _SUBSET_REL,
+        _DISJOINT_REL,
+        _OVERLAPPING_REL,
+    )
+    Range = _cranges.Range  # type: ignore[misc,assignment]
