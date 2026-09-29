@@ -5,56 +5,55 @@ from __future__ import annotations
 import hashlib
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from kpip.core.errors import InstallationError
 from kpip.core.wheel import wheel_candidate
 from kpip.install.target import InstallTarget
 from kpip.install.wheel_archive_cache import prepare_cached_wheels
-from kpip.install.wheel_archive_installer import (
-    _rewrite_metadata,
-    install_wheels_from_archive_cache,
-)
+from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
 
 
-def test_rewrite_metadata_normalizes_mismatched_name(tmp_path: Path) -> None:
-    """A wheel's on-disk METADATA Name is normalized to the resolved candidate
+@pytest.mark.parametrize("route", ["archive-cache", "staged", "direct"])
+def test_installed_metadata_is_the_wheels_own(tmp_path: Path, route: str) -> None:
+    """An installer copies METADATA as the wheel ships it, as pip does: its
+    Name keeps the project's own spelling, and RECORD holds the wheel's
+    hash for it."""
+    import base64
 
-    name, even when that name contains characters isalpha() rejects (a
-    hyphen, here) -- most real package names do.
-    """
-    path = tmp_path / "METADATA"
-    path.write_text("Metadata-Version: 2.1\nName: Owner_Demo\nVersion: 1.0\n")
-    candidate = SimpleNamespace(name="owner-demo")
+    from kpip.install.wheel_transaction import install_wheels_transactionally
 
-    rewritten = _rewrite_metadata(str(path), candidate)
+    wheel = tmp_path / "Owner_Demo-1.0-py3-none-any.whl"
+    metadata = "Metadata-Version: 2.1\nName: Owner_Demo\nVersion: 1.0\n"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("owner_demo/__init__.py", "")
+        archive.writestr("Owner_Demo-1.0.dist-info/METADATA", metadata)
+        archive.writestr(
+            "Owner_Demo-1.0.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr("Owner_Demo-1.0.dist-info/RECORD", "")
+    target = tmp_path / "target"
 
-    assert rewritten is not None
-    assert "Name: owner-demo\n" in path.read_text()
+    install_wheels_transactionally(
+        [(wheel, True, None)],
+        target=InstallTarget.from_options("owner-demo", target=str(target)),
+        pycompile=False,
+        force=route == "staged",
+        cache_dir=str(tmp_path / "cache") if route == "archive-cache" else None,
+    )
 
-
-def test_rewrite_metadata_normalizes_digit_containing_name(tmp_path: Path) -> None:
-    path = tmp_path / "METADATA"
-    path.write_text("Metadata-Version: 2.1\nName: Numpy2\nVersion: 1.0\n")
-    candidate = SimpleNamespace(name="numpy2")
-
-    rewritten = _rewrite_metadata(str(path), candidate)
-
-    assert rewritten is not None
-    assert "Name: numpy2\n" in path.read_text()
-
-
-def test_rewrite_metadata_is_noop_when_already_normalized(tmp_path: Path) -> None:
-    path = tmp_path / "METADATA"
-    original = "Metadata-Version: 2.1\nName: owner-demo\nVersion: 1.0\n"
-    path.write_text(original)
-    candidate = SimpleNamespace(name="owner-demo")
-
-    rewritten = _rewrite_metadata(str(path), candidate)
-
-    assert rewritten is None
-    assert path.read_text() == original
+    installed = target / "Owner_Demo-1.0.dist-info"
+    assert (installed / "METADATA").read_text() == metadata
+    digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(metadata.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
+    assert (
+        f"Owner_Demo-1.0.dist-info/METADATA,sha256={digest},{len(metadata)}"
+        in (installed / "RECORD").read_text()
+    )
 
 
 def _make_wheel(
