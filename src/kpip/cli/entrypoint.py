@@ -22,7 +22,7 @@ _OLD_GENERATION_RATIO = 100
 _YOUNG_GENERATION_THRESHOLD = 10_000
 """Allocations between generation-0 collections, at the least."""
 
-_UNCOLLECTED_COMMANDS = frozenset({"lock"})
+_UNCOLLECTED_COMMANDS = frozenset({"download", "install", "lock", "wheel"})
 """Commands that run with garbage collection off, see :func:`pause_collection`."""
 
 _FLUSH_FAILED = 120
@@ -313,13 +313,20 @@ def switch_threads_less_often() -> float | None:
 def pause_collection(command: str) -> bool:
     """Turn garbage collection off for a command that gains nothing from it.
 
-    A lock's heap is the catalog and the resolver's clause set, alive until
-    the command ends, and collecting it reclaims nothing: peak memory of the
-    airflow, bio-embeddings, pydantic and backtracking locks is the same to
-    the megabyte with collection off. Collecting only walks it, which with
-    the thresholds of :func:`collect_less_often` still cost a warm airflow
-    lock some 10% compiled. Commands that install stay collected: they run
-    build backends and hold on to archives, where cycles can matter.
+    A resolve's heap is the catalog and the resolver's clause set, alive
+    until the command ends, and collecting it reclaims nothing: peak memory
+    of the airflow, bio-embeddings, pydantic and backtracking locks is the
+    same to the megabyte with collection off. Collecting only walks it, which
+    with the thresholds of :func:`collect_less_often` still cost a warm
+    airflow resolve some 15%, and a collection landing mid-resolve could
+    double one.
+
+    Installing, downloading and building wheels resolve the same way and
+    reclaim no more: a 152-distribution install collects a few hundred
+    objects warm and some 9,000 cold, and peaks at the same memory with
+    collection off (176-180 MB warm, 500-503 MB cold), as does downloading
+    them. Build backends, whose cycles could matter, run in a subprocess of
+    their own (``build.pep517_hooks``) and are collected there.
 
     Returns whether it turned collection off, for ``main`` to turn it back
     on for an in-process caller. ``KPIP_GC=default`` leaves it on.

@@ -6,6 +6,9 @@ callables only measure pip's own work and not the cost of generating inputs.
 
 from __future__ import annotations
 
+import gc
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -28,6 +31,32 @@ from benchmark_support import (
     simple_index_html,
     simple_index_json,
 )
+
+
+@pytest.fixture(autouse=True)
+def collection_as_commands_run() -> Iterator[None]:
+    """Run each benchmark with garbage collection as kpip's commands run it.
+
+    The resolving commands -- lock, install, download, wheel -- run with
+    collection off (``cli.entrypoint.pause_collection``). Left on CPython's
+    collector, a benchmark measures traversals of the catalog and the clause
+    set that no command pays for: some 15% of a warm airflow resolve, and
+    most of its run-to-run spread. Collection comes back on, and the garbage
+    is collected, between benchmarks. ``KPIP_GC=default`` leaves CPython's
+    collector on, as it does for the commands.
+    """
+    if os.environ.get("KPIP_GC") == "default":
+        yield
+        return
+    enabled = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
+        gc.collect()
 
 
 @pytest.fixture(scope="session")
