@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Protocol, TypeVar
 
 from kpip.core.utils import default_worker_count
 from kpip.core.wheel import WheelCandidate
@@ -222,6 +222,35 @@ def prepare_install_candidates(
     return [candidate for candidate in prepared if candidate is not None]
 
 
+class _Named(Protocol):
+    @property
+    def canonical_name(self) -> str: ...
+
+
+class _WithDependencies(_Named, Protocol):
+    @property
+    def dependencies(self) -> Any: ...
+
+
+_Candidate = TypeVar("_Candidate", bound=_Named)
+
+
+def dependency_graph(candidates: Sequence[_WithDependencies]) -> dict[str, set[str]]:
+    """Each candidate's dependencies among ``candidates``, for
+    :func:`installation_order` where no resolution graph is at hand."""
+
+    names = {candidate.canonical_name for candidate in candidates}
+
+    return {
+        candidate.canonical_name: {
+            dependency.canonical_name
+            for dependency in candidate.dependencies or ()
+            if dependency.canonical_name in names
+        }
+        for candidate in candidates
+    }
+
+
 _PYTHON_NODE = "<Python from Requires-Python>"
 """pip's graph node for the interpreter: a child of every distribution that
 declares a Requires-Python, which keeps those out of the first leaves."""
@@ -231,12 +260,12 @@ _VISITS = 5
 
 
 def installation_order(
-    candidates: Sequence[WheelCandidate],
+    candidates: Sequence[_Candidate],
     graph: Mapping[str, Collection[str]],
     roots: Collection[str],
     *,
     ignore_requires_python: bool = False,
-) -> list[WheelCandidate]:
+) -> list[_Candidate]:
     """``candidates`` in the order pip installs them.
 
     The order only shows when two distributions ship the same file: each

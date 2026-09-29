@@ -355,19 +355,37 @@ def _hardlink(
     return True
 
 
-def clone_path(source: str, destination: str) -> None:
+Overlaps = tuple[frozenset[str], frozenset[str]]
+"""Destination files a clone leaves alone, and ones it replaces."""
+
+
+def clone_path(
+    source: str,
+    destination: str,
+    *,
+    skip: frozenset[str] = frozenset(),
+    replace: frozenset[str] = frozenset(),
+) -> None:
     """Copy a cache path using copy-on-write cloning whenever possible.
 
     Both paths must be absent from concurrent mutation. If ``destination`` is
     an existing directory, directory contents are merged while duplicate files
-    are rejected.
+    are rejected -- except the destination files named in ``skip``, which
+    this clone never writes, and those in ``replace``, whose existing copy
+    it replaces. Two wheels shipping one file clone into one tree that way,
+    in either order, and the one that replaces it is the one left.
 
     Regular files that cannot be cloned are hard linked on Linux and Windows,
     sharing their inode with ``source``, and copied when that fails or when
     ``KPIP_LINK_MODE`` is ``clone`` or ``copy``.
     """
 
-    _clone(os.fspath(source), os.fspath(destination), None)
+    _clone(
+        os.fspath(source),
+        os.fspath(destination),
+        None,
+        (skip, replace) if skip or replace else None,
+    )
 
 
 def _devices(source: str, destination: str, destination_exists: bool) -> Devices:
@@ -387,8 +405,26 @@ def _devices(source: str, destination: str, destination_exists: bool) -> Devices
     return os.lstat(source).st_dev, os.stat(parent).st_dev
 
 
-def _clone(source: str, destination: str, devices: Devices | None) -> None:
+def _clone(
+    source: str,
+    destination: str,
+    devices: Devices | None,
+    overlaps: Overlaps | None = None,
+) -> None:
+    if overlaps is not None and destination in overlaps[0]:
+        return
+
     destination_exists = os.path.lexists(destination)
+
+    if (
+        destination_exists
+        and overlaps is not None
+        and destination in overlaps[1]
+        and not os.path.isdir(destination)
+    ):
+        os.unlink(destination)
+
+        destination_exists = False
 
     if not destination_exists:
         try:
@@ -413,6 +449,7 @@ def _clone(source: str, destination: str, devices: Devices | None) -> None:
             os.path.isdir(source) and not source_is_link,
             source_is_link,
             devices,
+            overlaps,
         )
 
     if not (
@@ -433,6 +470,7 @@ def _clone(source: str, destination: str, devices: Devices | None) -> None:
                 os.path.join(source, entry.name),
                 os.path.join(destination, entry.name),
                 devices,
+                overlaps,
             )
 
 
@@ -442,6 +480,7 @@ def _clone_absent(
     is_directory: bool,
     is_symlink: bool,
     devices: Devices,
+    overlaps: Overlaps | None = None,
 ) -> None:
     """Clone ``source`` onto a ``destination`` known not to exist.
 
@@ -459,7 +498,7 @@ def _clone_absent(
             os.mkdir(destination, source_mode | stat.S_IWUSR | stat.S_IXUSR)
 
         except FileExistsError:
-            return _clone(source, destination, devices)
+            return _clone(source, destination, devices, overlaps)
 
         import shutil
 
@@ -472,6 +511,7 @@ def _clone_absent(
                         entry.is_dir(follow_symlinks=False),
                         entry.is_symlink(),
                         devices,
+                        overlaps,
                     )
 
             # Restores the source mode, including the owner write and search
@@ -486,6 +526,9 @@ def _clone_absent(
 
             raise
 
+        return
+
+    if overlaps is not None and destination in overlaps[0]:
         return
 
     if is_symlink:

@@ -62,6 +62,7 @@ def _make_wheel(
     *,
     shared_module: str | None = None,
     entry_points: str | None = None,
+    module_text: str | None = None,
 ) -> Path:
     """Build a minimal wheel, optionally with a file at ``shared_module`` or
 
@@ -72,7 +73,7 @@ def _make_wheel(
     wheel = directory / f"{name}-1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         if shared_module is not None:
-            archive.writestr(shared_module, f"# from {name}\n")
+            archive.writestr(shared_module, module_text or f"# from {name}\n")
         archive.writestr(
             f"{name}-1.0.dist-info/METADATA",
             f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n",
@@ -116,35 +117,59 @@ def _prevalidated_candidates(
     )
 
 
-def test_colliding_files_leave_the_batch_to_the_transactional_installer(
-    tmp_path: Path,
+@pytest.mark.parametrize("pycompile", [False, True])
+@pytest.mark.parametrize("wheels", [2, 3])
+def test_colliding_files_install_the_later_copy_from_the_archive_cache(
+    tmp_path: Path, pycompile: bool, wheels: int
 ) -> None:
-    """Two wheels shipping one file both install under pip, the later one's
-    copy last. This path clones every wheel's tree at once and cannot order
-    them, so it declines the batch and writes nothing."""
+    """Wheels shipping one file both install under pip, the later one's copy
+    last. The archive-cache route clones them in parallel all the same: the
+    earlier copies are skipped and the later one replaces whichever landed,
+    and bytecode is compiled from the copy left."""
+    import importlib.util
+    import marshal
+
     cache_dir = tmp_path / "cache"
-    wheel_a = _make_wheel(tmp_path, "pkg_a", shared_module="shared_thing.py")
-    wheel_b = _make_wheel(tmp_path, "pkg_b", shared_module="shared_thing.py")
-    candidate_a, candidate_b = _prevalidated_candidates(
-        tmp_path,
-        cache_dir,
-        wheel_a,
-        wheel_b,
+    names = [f"pkg_{letter}" for letter in "abc"[:wheels]]
+    built = [
+        _make_wheel(
+            tmp_path,
+            name,
+            shared_module="shared_thing.py",
+            module_text=f"ORIGIN = {name!r}\n",
+        )
+        for name in names
+    ]
+    requests = [(wheel, True, None) for wheel in built]
+    candidates = tuple(wheel_candidate(wheel) for wheel in built)
+    archives = prepare_cached_wheels(candidates, str(cache_dir), pycompile=pycompile)
+    candidates = tuple(
+        candidate.copy_with(wheel_layout=archive)
+        for candidate, archive in zip(candidates, archives, strict=True)
     )
 
     target = tmp_path / "target"
-    install_target = InstallTarget.from_options("pkg_a", target=str(target))
-
-    assert (
-        install_wheels_from_archive_cache(
-            [(wheel_a, True, None), (wheel_b, True, None)],
-            (candidate_a, candidate_b),
-            target=install_target,
-            cache_dir=str(cache_dir),
-        )
-        is None
+    installed = install_wheels_from_archive_cache(
+        requests,
+        candidates,
+        target=InstallTarget.from_options("pkg_a", target=str(target)),
+        cache_dir=str(cache_dir),
+        pycompile=pycompile,
     )
-    assert not target.exists()
+
+    assert installed is not None
+    assert (target / "shared_thing.py").read_text() == f"ORIGIN = {names[-1]!r}\n"
+    for name in names:
+        assert (target / f"{name}-1.0.dist-info" / "RECORD").exists()
+    if pycompile:
+        tag = importlib.util.cache_from_source("shared_thing.py")
+        pyc = (target / tag).read_bytes()
+        code = marshal.loads(pyc[16:])
+        assert code.co_filename.endswith("shared_thing.py")
+        assert names[-1] in code.co_consts
+        source_stat = (target / "shared_thing.py").stat()
+        assert int.from_bytes(pyc[8:12], "little") == int(source_stat.st_mtime)
+        assert int.from_bytes(pyc[12:16], "little") == source_stat.st_size
 
 
 def test_colliding_console_scripts_leave_the_batch_to_the_transactional_installer(

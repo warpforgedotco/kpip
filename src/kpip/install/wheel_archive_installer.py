@@ -13,9 +13,11 @@ import errno
 import io
 import os
 import shutil
+from collections.abc import Set as AbstractSet
 from typing import TYPE_CHECKING
 
 from kpip.core.errors import InstallationError
+from kpip.core.logger import get_logger
 from kpip.install.wheel_archive import (
     compiled_parts,
     mapped_parts,
@@ -34,6 +36,8 @@ from kpip.install.wheel_scripts import (
 )
 from kpip.host.clone import clone_path
 
+logger = get_logger(__name__)
+
 if TYPE_CHECKING:
     from types import CodeType
 
@@ -50,7 +54,15 @@ if TYPE_CHECKING:
 
 
 class _WheelInstallPlan:
-    __slots__ = ("archive", "candidate", "direct_url", "requested", "scripts")
+    __slots__ = (
+        "archive",
+        "candidate",
+        "direct_url",
+        "loses",
+        "requested",
+        "scripts",
+        "wins",
+    )
 
     def __init__(
         self,
@@ -71,16 +83,25 @@ class _WheelInstallPlan:
 
         self.scripts = scripts
 
+        # Archive members another wheel of the batch also installs: the ones
+        # a later wheel's copy replaces, and the ones this copy replaces.
+        self.loses: set[str] = set()
+
+        self.wins: set[str] = set()
+
 
 class _DestinationNode:
     """Typed prefix tree for detecting colliding wheel destinations."""
 
-    __slots__ = ("children", "owner")
+    __slots__ = ("children", "member", "owner")
 
     def __init__(self) -> None:
         self.children: dict[str, _DestinationNode] = {}
 
         self.owner: int | None = None
+
+        # The archive member the owner installs here, when it is one.
+        self.member: str | None = None
 
 
 def _normalized_path(path: str) -> str:
@@ -129,12 +150,10 @@ def _normalized_destination(parts: tuple[str, ...]) -> tuple[str, ...]:
 
 
 class _SharedDestination(Exception):
-    """Two wheels of a batch install the same file.
-
-    pip installs both, the later one's copy last; this path clones every
-    wheel's tree at once and cannot order them, so the batch goes to the
-    transactional installer, which does.
-    """
+    """Two wheels of a batch install the same file where this path cannot
+    leave the later one's copy: a console script, or a member of a wheel's
+    ``.data`` directory, which lands only after the trees are cloned. The
+    batch goes to the transactional installer, which orders them."""
 
 
 def _reserve_destination(
@@ -144,7 +163,14 @@ def _reserve_destination(
     candidate: WheelInstallCandidate,
     *,
     allow_same_owner: bool = False,
-) -> None:
+    member: str | None = None,
+) -> tuple[int, str | None] | None:
+    """Claim ``parts`` for ``owner``.
+
+    A regular file another wheel of the batch already claimed goes to this
+    one, as pip leaves the later wheel's copy: the earlier owner and the
+    member it would have installed are returned.
+    """
     node = trie
 
     normalized = _normalized_destination(parts)
@@ -170,7 +196,16 @@ def _reserve_destination(
     has_children = bool(node.children)
 
     if terminal is not None and terminal != owner and not has_children:
-        raise _SharedDestination
+        if member is None or node.member is None:
+            raise _SharedDestination
+
+        earlier = (terminal, node.member)
+
+        node.owner = owner
+
+        node.member = member
+
+        return earlier
 
     if (
         terminal is not None and not (allow_same_owner and terminal == owner)
@@ -181,6 +216,10 @@ def _reserve_destination(
         )
 
     node.owner = owner
+
+    node.member = member
+
+    return None
 
 
 def _build_plans(
@@ -194,16 +233,58 @@ def _build_plans(
 
     plans: list[_WheelInstallPlan] = []
 
+    # (earlier plan, later owner, member): the later owner's plan is made
+    # after its members are claimed.
+    shared: list[tuple[_WheelInstallPlan, int, str]] = []
+
     for owner, (request, candidate, archive) in enumerate(
         zip(requests, candidates, archives, strict=True),
     ):
         for entry in archive.entries:
-            mapped = mapped_parts(entry[0])
+            relative = entry[0]
 
-            _reserve_destination(trie, mapped, owner, candidate)
+            mapped = mapped_parts(relative)
+
+            # A .data member lands by a move after the trees are cloned, which
+            # cannot give way to another wheel's copy.
+            clonable = not relative.partition("/")[0].endswith(".data")
+
+            earlier = _reserve_destination(
+                trie,
+                mapped,
+                owner,
+                candidate,
+                member=relative if clonable else None,
+            )
+
+            if earlier is not None:
+                earlier_owner, earlier_member = earlier
+
+                assert earlier_member is not None
+
+                earlier_plan = plans[earlier_owner]
+
+                if earlier_plan.candidate.canonical_name == candidate.canonical_name:
+                    # One distribution twice over is not two sharing a file.
+                    raise InstallationError(
+                        f"Cannot install {candidate.canonical_name}: "
+                        f"duplicate installation destination: {'/'.join(mapped)}",
+                    )
+
+                earlier_plan.loses.add(earlier_member)
+
+                shared.append((earlier_plan, owner, relative))
 
             if pycompile and (compiled := compiled_parts(mapped)) is not None:
-                _reserve_destination(trie, compiled, owner, candidate)
+                # Bytecode for a shared module is compiled from the copy left,
+                # by the wheel that left it.
+                _reserve_destination(
+                    trie,
+                    compiled,
+                    owner,
+                    candidate,
+                    member=relative if clonable else None,
+                )
 
         scripts = entry_point_scripts(
             os.path.join(archive.tree, archive.dist_info, "entry_points.txt"),
@@ -234,7 +315,25 @@ def _build_plans(
             ),
         )
 
+    for earlier_plan, later_owner, member in shared:
+        later_plan = plans[later_owner]
+
+        later_plan.wins.add(member)
+
+        logger.warning(
+            "%s and %s both install %s; installing %s's copy",
+            earlier_plan.candidate.canonical_name,
+            later_plan.candidate.canonical_name,
+            member,
+            later_plan.candidate.canonical_name,
+        )
+
     return tuple(plans)
+
+
+def _stage_paths(stage: str, members: set[str]) -> frozenset[str]:
+    """Where archive ``members`` land in ``stage``, as the clone spells them."""
+    return frozenset(os.path.join(stage, *member.split("/")) for member in members)
 
 
 def _merge_move(source: str, destination: str) -> None:
@@ -370,9 +469,14 @@ def _materialize_pyc(
     stage: str,
     install_root: str,
     archive: CachedWheelArchive,
+    *,
+    skip: AbstractSet[str] = frozenset(),
 ) -> list[tuple[str, str, str]]:
     """Place the wheel's ``.pyc`` files in the staged tree and return their
     RECORD rows, the way the transactional route records them.
+
+    Members in ``skip`` are another wheel's copy in the stage, compiled by
+    that wheel: this one's cached bytecode is of its own copy.
 
     The archive cache compiled these once at fill time, so the work here is a
     marshal round trip that rebinds ``co_filename`` to where the module will
@@ -400,6 +504,9 @@ def _materialize_pyc(
     magic = importlib.util.MAGIC_NUMBER
 
     for relative, _, _, _ in archive.entries:
+        if relative in skip:
+            continue
+
         mapped = mapped_parts(relative)
 
         target = compiled_parts(mapped)
@@ -575,7 +682,11 @@ def _finalize_wheel(
 
                 generated_paths.append(destination)
 
-    compiled_rows = _materialize_pyc(stage, install_root, archive) if pycompile else ()
+    compiled_rows = (
+        _materialize_pyc(stage, install_root, archive, skip=plan.loses)
+        if pycompile
+        else ()
+    )
 
     managed = {
         f"{dist_info}/INSTALLER",
@@ -918,17 +1029,21 @@ def install_wheels_from_archive_cache(
             )
 
         try:
-            if len(active_archives) >= 4 and pool is not None:
-                tuple(
-                    pool.map(
-                        lambda archive: clone_path(archive.tree, stage),
-                        active_archives,
-                    )
+
+            def clone_plan(plan: _WheelInstallPlan) -> None:
+                clone_path(
+                    plan.archive.tree,
+                    stage,
+                    skip=_stage_paths(stage, plan.loses),
+                    replace=_stage_paths(stage, plan.wins - plan.loses),
                 )
 
+            if len(active_archives) >= 4 and pool is not None:
+                tuple(pool.map(clone_plan, active_plans))
+
             else:
-                for archive in active_archives:
-                    clone_path(archive.tree, stage)
+                for plan in active_plans:
+                    clone_plan(plan)
 
             for archive in active_archives:
                 _relocate_data(stage, archive)
