@@ -173,6 +173,13 @@ class CandidateMetadataCache:
         except ValueError:
             return None
 
+    def stored_value(self, key: CacheKey) -> CacheValue | None:
+        """The value ``key`` has, as the snapshot holds it once flushed."""
+        value = self.entries.get(key)
+        if value is None:
+            value = self._load(key)
+        return value
+
     def contains(self, key: CacheKey) -> bool:
         """Check for cached metadata without decoding its requirements."""
         return key in self.entries or self._load(key) is not None

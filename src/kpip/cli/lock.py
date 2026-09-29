@@ -16,6 +16,7 @@ from kpip.cli.lock_format import (
     write_lock_output,
 )
 from kpip.cli.lock_replay import (
+    builds_unchanged,
     FRESH,
     load_record,
     page_state,
@@ -347,7 +348,7 @@ def replay_after_revalidation(
 
     record = load_record(cache_dir, key)
 
-    if record is None:
+    if record is None or not builds_unchanged(record.builds):
         return False
 
     if page_state(http_cache, record.pages) != FRESH:
@@ -401,6 +402,11 @@ def record_replayable_lock(
 
     assert cache_dir is not None
 
+    builds = provider.get_materializer_internal().source_metadata_checks()
+
+    if builds is None:
+        return
+
     pages: set[str] = set()
 
     for source in provider.index_sources:
@@ -410,7 +416,7 @@ def record_replayable_lock(
 
     if validators is not None:
         for key in keys:
-            save_record(cache_dir, key, validators, rendered)
+            save_record(cache_dir, key, validators, rendered, builds)
 
 
 def run_lock(args: list[str]) -> int:
@@ -746,9 +752,11 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     editable_names = {str(package["name"]) for package in editable_packages}
 
-    # Only a lock of hashed index wheels is replayed: the dependencies of an
-    # sdist come from building it, which the index pages do not pin.
-    every_package_is_an_index_wheel = not packages and not locked_order
+    # Only a lock of hashed index artifacts is replayed. A wheel's
+    # dependencies are pinned by its hash; an sdist's come from building it,
+    # so its lock is replayed only while the metadata that build left in the
+    # cache is unchanged (lock_replay.builds_unchanged).
+    every_package_is_an_index_artifact = not packages and not locked_order
 
     for candidate in plan.candidates if plan is not None else []:
         source = candidate.source_url
@@ -758,11 +766,12 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
         remote_artifact = remote_hashed_wheel(candidate)
         if remote_artifact is None:
-            every_package_is_an_index_wheel = False
             remote_artifact = remote_hashed_sdist(candidate)
         if remote_artifact is not None:
             packages.append(remote_artifact)
             continue
+
+        every_package_is_an_index_artifact = False
 
         candidate_path = None
 
@@ -905,7 +914,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     if page_cache is not None:
         page_cache.save_snapshot()
 
-    if every_package_is_an_index_wheel and provider is not None:
+    if every_package_is_an_index_artifact and provider is not None:
         record_replayable_lock(
             options, cache_dir, provider, resolution_session, rendered, previous
         )
