@@ -34,7 +34,6 @@ from cython.cimports.cpython.object import (
     Py_LT,
     Py_TYPE,
     PyObject,
-    PyObject_Hash,
     PyObject_RichCompareBool,
     richcmpfunc,
 )
@@ -643,12 +642,12 @@ class Range:
                 if self.iv[i].lo.v == cython.NULL:
                     item = 0x2B
                 else:
-                    item = PyObject_Hash(cython.cast(object, self.iv[i].lo.v))
+                    item = hash(cython.cast(object, self.iv[i].lo.v))
                 mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
                 if self.iv[i].hi.v == cython.NULL:
                     item = 0x3D
                 else:
-                    item = PyObject_Hash(cython.cast(object, self.iv[i].hi.v))
+                    item = hash(cython.cast(object, self.iv[i].hi.v))
                 mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
                 mixed ^= (self.iv[i].lo_inc << 1) | self.iv[i].hi_inc
             h = cython.cast(cython.Py_hash_t, mixed)

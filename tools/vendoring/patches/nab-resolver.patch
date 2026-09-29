@@ -1498,10 +1498,10 @@ index 4385af4..e80ec69 100644
 +    Range = _cranges.Range  # type: ignore[misc,assignment]
 diff --git a/src/kpip/_vendor/nab_resolver/_cranges.py b/src/kpip/_vendor/nab_resolver/_cranges.py
 new file mode 100644
-index 0000000..8f08be2
+index 0000000..2823126
 --- /dev/null
 +++ b/src/kpip/_vendor/nab_resolver/_cranges.py
-@@ -0,0 +1,1145 @@
+@@ -0,0 +1,1144 @@
 +"""Compiled implementation of :class:`nab_resolver.ranges.Range`.
 +
 +Cython pure-Python-mode source: this file only works compiled, and
@@ -1538,7 +1538,6 @@ index 0000000..8f08be2
 +    Py_LT,
 +    Py_TYPE,
 +    PyObject,
-+    PyObject_Hash,
 +    PyObject_RichCompareBool,
 +    richcmpfunc,
 +)
@@ -2147,12 +2146,12 @@ index 0000000..8f08be2
 +                if self.iv[i].lo.v == cython.NULL:
 +                    item = 0x2B
 +                else:
-+                    item = PyObject_Hash(cython.cast(object, self.iv[i].lo.v))
++                    item = hash(cython.cast(object, self.iv[i].lo.v))
 +                mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
 +                if self.iv[i].hi.v == cython.NULL:
 +                    item = 0x3D
 +                else:
-+                    item = PyObject_Hash(cython.cast(object, self.iv[i].hi.v))
++                    item = hash(cython.cast(object, self.iv[i].hi.v))
 +                mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
 +                mixed ^= (self.iv[i].lo_inc << 1) | self.iv[i].hi_inc
 +            h = cython.cast(cython.Py_hash_t, mixed)

@@ -39,8 +39,13 @@ def test_builds_beside_the_source_and_leaves_no_c(
         shutil.copy(SOURCE_ROOT / path, destination)
     # A CFLAGS without optimization must not decide the build's.
     monkeypatch.setenv("CFLAGS", "-O0")
+    before = Path.cwd()
 
     built = build_extensions(tmp_path, force=True)
+
+    # It works from relative paths, to keep Windows object paths short, and
+    # hands the caller's working directory back.
+    assert Path.cwd() == before
 
     suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
     assert len(built) == len(EXTENSIONS)

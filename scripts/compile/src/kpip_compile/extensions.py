@@ -10,7 +10,10 @@ tree.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 from kpip_compile.vendor import REPO_ROOT
@@ -60,32 +63,52 @@ def build_extensions(
             ]
             super().build_extension(ext)
 
+    source_root = source_root.resolve()
     extensions = [
-        Extension(
-            name,
-            [str(source_root / path)],
-            define_macros=[("NDEBUG", None)],
-        )
+        Extension(name, [path], define_macros=[("NDEBUG", None)])
         for name, path in EXTENSIONS.items()
     ]
 
+    # Every path handed on is relative. Cython lays the C it generates out
+    # under build_dir by its source's path, and setuptools lays each object
+    # file out under build_temp by its C file's path: absolute, each repeats
+    # the whole of the one before, and an object file under a Windows
+    # temporary directory runs past MAX_PATH, where MSVC cannot write it.
     with tempfile.TemporaryDirectory(prefix="kpip-extensions-") as temp:
         # The generated C goes to the temporary directory, not beside the
         # source; only the finished extension belongs in the tree.
-        modules = cythonize(
-            extensions,
-            build_dir=str(Path(temp) / "c"),
-            compiler_directives={"language_level": 3},
-            force=force,
-            quiet=True,
-        )
-        command = OptimizedBuildExt(Distribution({"ext_modules": modules}))
-        command.initialize_options()
-        # build_lib is where a module's dotted name is laid out, so pointing
-        # it at the source root builds each extension beside its source.
-        command.build_lib = str(source_root)
-        command.build_temp = str(Path(temp) / "build")
-        command.force = force
-        command.finalize_options()
-        command.run()
-        return [Path(command.get_ext_fullpath(name)) for name in EXTENSIONS]
+        with _working_directory(source_root):
+            modules = cythonize(
+                extensions,
+                build_dir=str(Path(temp) / "c"),
+                compiler_directives={"language_level": 3},
+                force=force,
+                quiet=True,
+            )
+        for module in modules:
+            module.sources = [
+                os.path.relpath(source, temp) for source in module.sources
+            ]
+        with _working_directory(Path(temp)):
+            command = OptimizedBuildExt(Distribution({"ext_modules": modules}))
+            command.initialize_options()
+            # build_lib is where a module's dotted name is laid out, so
+            # pointing it at the source root builds each extension beside
+            # its source.
+            command.build_lib = str(source_root)
+            command.build_temp = "build"
+            command.force = force
+            command.finalize_options()
+            command.run()
+            return [Path(command.get_ext_fullpath(name)) for name in EXTENSIONS]
+
+
+@contextlib.contextmanager
+def _working_directory(path: Path) -> Iterator[None]:
+    """``contextlib.chdir``, which arrived in 3.11."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
