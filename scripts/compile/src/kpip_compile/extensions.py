@@ -22,6 +22,7 @@ SOURCE_ROOT = REPO_ROOT / "src"
 
 EXTENSIONS = {
     "kpip._vendor.nab_resolver._cranges": "kpip/_vendor/nab_resolver/_cranges.py",
+    "kpip.index._page_catalog": "kpip/index/_page_catalog.py",
 }
 """Module name to source path under ``SOURCE_ROOT``.
 
