@@ -178,6 +178,55 @@ def test_transaction_rejects_duplicate_destination(tmp_path: Path) -> None:
         install_transaction.add(tmp_path / "second.py", destination)
 
 
+def test_transaction_stages_a_later_distributions_copy(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two distributions shipping one file: the later one's copy is staged,
+    as pip leaves it, with a warning naming both."""
+    first = tmp_path / "first.py"
+    first.write_text("first", encoding="utf-8")
+    second = tmp_path / "second.py"
+    second.write_text("second", encoding="utf-8")
+    destination = tmp_path / "target" / "shared.py"
+
+    install_transaction = InstallTransaction()
+    install_transaction.owner = "jupyter-core"
+    install_transaction.add(first, destination)
+    install_transaction.owner = "jupyter"
+    with caplog.at_level("WARNING"):
+        install_transaction.add(second, destination)
+    install_transaction.commit()
+
+    assert destination.read_text(encoding="utf-8") == "second"
+    assert "jupyter-core and jupyter both install" in caplog.text
+
+
+def test_transaction_adopts_a_later_distributions_copy(tmp_path: Path) -> None:
+    destination = tmp_path / "target" / "shared.py"
+    batch = InstallTransaction()
+    for owner in ("pkg-a", "pkg-b"):
+        local = InstallTransaction()
+        local.owner = owner
+        local.add_contents(destination, owner.encode())
+        batch.adopt(local)
+    batch.commit()
+
+    assert destination.read_bytes() == b"pkg-b"
+    assert batch.owner is None
+
+
+def test_transaction_rejects_one_distribution_staging_a_file_twice(
+    tmp_path: Path,
+) -> None:
+    install_transaction = InstallTransaction()
+    install_transaction.owner = "pkg"
+    destination = tmp_path / "demo.py"
+
+    install_transaction.add(tmp_path / "first.py", destination)
+    with pytest.raises(InstallationError, match="duplicate installation destination"):
+        install_transaction.add(tmp_path / "second.py", destination)
+
+
 def test_transaction_rolls_back_previous_changes_on_failure(tmp_path: Path) -> None:
     first = tmp_path / "first.py"
     first.write_text("old", encoding="utf-8")

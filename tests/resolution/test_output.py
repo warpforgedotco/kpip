@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 
 from kpip.core.packaging import parse_requirement
 from kpip.core.versions import Version
@@ -14,6 +15,7 @@ from kpip.index.links import Link
 from kpip.index.source_models import CandidateRecord
 from kpip.install.output import (
     _run_candidate_operation,
+    installation_order,
     prepare_install_candidates,
 )
 
@@ -157,3 +159,38 @@ def test_prepare_install_candidates_treats_cache_errors_as_fallback(
 
     assert result == [candidate]
     assert result[0].wheel_layout is None
+
+
+def _named(*names: str) -> list[SimpleNamespace]:
+    return [SimpleNamespace(canonical_name=name) for name in names]
+
+
+def test_installation_order_is_pips_leaves_first_requested_last() -> None:
+    """pip's weights: leaves pruned round by round, the first round
+    heaviest, installed heaviest first, ties by name descending. The
+    requested ``jupyter`` goes last, so its ``jupyter.py`` is the one left
+    over ``jupyter-core``'s."""
+    graph = {
+        "jupyter": {"notebook", "jupyter-console"},
+        "notebook": {"jupyter-core"},
+        "jupyter-console": {"jupyter-core"},
+        "jupyter-core": set(),
+    }
+    candidates = _named("jupyter", "jupyter-console", "jupyter-core", "notebook")
+
+    ordered = installation_order(candidates, graph, {"jupyter"})
+
+    assert [candidate.canonical_name for candidate in ordered] == [
+        "jupyter-core",
+        "notebook",
+        "jupyter-console",
+        "jupyter",
+    ]
+
+
+def test_installation_order_weighs_a_cycle_by_its_longest_path() -> None:
+    graph = {"root": {"a"}, "a": {"b"}, "b": {"a"}}
+
+    ordered = installation_order(_named("a", "b", "root"), graph, {"root"})
+
+    assert [candidate.canonical_name for candidate in ordered] == ["b", "a", "root"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -220,3 +220,78 @@ def prepare_install_candidates(
         raise RuntimeError("candidate preparation did not produce every wheel")
 
     return [candidate for candidate in prepared if candidate is not None]
+
+
+def installation_order(
+    candidates: Sequence[WheelCandidate],
+    graph: Mapping[str, Collection[str]],
+    roots: Collection[str],
+) -> list[WheelCandidate]:
+    """``candidates`` in the order pip installs them.
+
+    The order only shows when two distributions ship the same file: each
+    is installed in turn, so the later one's copy is the one left, and
+    kpip keeps the same one. pip weighs each distribution by its place in
+    the dependency graph (``get_topological_weights``): leaves pruned
+    round by round weigh most, the first round most of all, and every
+    other distribution weighs its longest path from a requested one; it
+    installs the heaviest first, ties by name, both descending.
+    """
+
+    names = {candidate.canonical_name for candidate in candidates}
+
+    remaining: dict[str | None, set[str]] = {
+        name: {child for child in graph.get(name, ()) if child in names}
+        for name in names
+    }
+
+    remaining[None] = {name for name in roots if name in names}
+
+    weights: dict[str, int] = {}
+
+    while True:
+        leaves = [
+            name
+            for name, children in remaining.items()
+            if name is not None and not children
+        ]
+
+        if not leaves:
+            break
+
+        weight = len(remaining) - 1
+
+        for leaf in leaves:
+            weights[leaf] = weight
+
+            del remaining[leaf]
+
+        for children in remaining.values():
+            children.difference_update(leaves)
+
+    path: set[str | None] = set()
+
+    def visit(node: str | None) -> None:
+        if node in path:
+            return
+
+        path.add(node)
+
+        for child in sorted(remaining.get(node, ())):
+            visit(child)
+
+        path.remove(node)
+
+        if node is not None:
+            weights[node] = max(weights.get(node, 0), len(path))
+
+    visit(None)
+
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            weights.get(candidate.canonical_name, 0),
+            candidate.canonical_name,
+        ),
+        reverse=True,
+    )

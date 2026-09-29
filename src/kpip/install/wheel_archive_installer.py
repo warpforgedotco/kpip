@@ -128,6 +128,15 @@ def _normalized_destination(parts: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(os.path.normcase(part) for part in parts)
 
 
+class _SharedDestination(Exception):
+    """Two wheels of a batch install the same file.
+
+    pip installs both, the later one's copy last; this path clones every
+    wheel's tree at once and cannot order them, so the batch goes to the
+    transactional installer, which does.
+    """
+
+
 def _reserve_destination(
     trie: _DestinationNode,
     parts: tuple[str, ...],
@@ -159,6 +168,9 @@ def _reserve_destination(
     terminal = node.owner
 
     has_children = bool(node.children)
+
+    if terminal is not None and terminal != owner and not has_children:
+        raise _SharedDestination
 
     if (
         terminal is not None and not (allow_same_owner and terminal == owner)
@@ -800,7 +812,11 @@ def install_wheels_from_archive_cache(
     except OSError:
         return None
 
-    plans = _build_plans(requests, candidates, archives, pycompile=pycompile)
+    try:
+        plans = _build_plans(requests, candidates, archives, pycompile=pycompile)
+
+    except _SharedDestination:
+        return None
 
     parent = os.path.dirname(root)
 

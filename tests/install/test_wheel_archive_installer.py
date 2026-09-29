@@ -117,9 +117,12 @@ def _prevalidated_candidates(
     )
 
 
-def test_prevalidated_candidates_still_reject_colliding_files(
+def test_colliding_files_leave_the_batch_to_the_transactional_installer(
     tmp_path: Path,
 ) -> None:
+    """Two wheels shipping one file both install under pip, the later one's
+    copy last. This path clones every wheel's tree at once and cannot order
+    them, so it declines the batch and writes nothing."""
     cache_dir = tmp_path / "cache"
     wheel_a = _make_wheel(tmp_path, "pkg_a", shared_module="shared_thing.py")
     wheel_b = _make_wheel(tmp_path, "pkg_b", shared_module="shared_thing.py")
@@ -133,26 +136,25 @@ def test_prevalidated_candidates_still_reject_colliding_files(
     target = tmp_path / "target"
     install_target = InstallTarget.from_options("pkg_a", target=str(target))
 
-    with pytest.raises(InstallationError, match="duplicate installation destination"):
+    assert (
         install_wheels_from_archive_cache(
             [(wheel_a, True, None), (wheel_b, True, None)],
             (candidate_a, candidate_b),
             target=install_target,
             cache_dir=str(cache_dir),
         )
+        is None
+    )
+    assert not target.exists()
 
 
-def test_prevalidated_candidates_still_reject_colliding_console_scripts(
+def test_colliding_console_scripts_leave_the_batch_to_the_transactional_installer(
     tmp_path: Path,
 ) -> None:
-    """Two unrelated packages both providing a ``mytool`` console script
-
-    must fail the batch, not silently install one script and drop the
-    other. Script generation writes via ``os.rename``, which overwrites
-    silently on POSIX -- the batch-level destination reservation
-    (``_reserve_destination``) is the only thing that can catch this, and it
-    must run unconditionally.
-    """
+    """Two packages providing a ``mytool`` console script: script generation
+    writes via ``os.rename``, which overwrites silently on POSIX, so the
+    batch-level reservation (``_reserve_destination``) must see the clash
+    and hand the batch to the installer that orders it."""
     cache_dir = tmp_path / "cache"
     entry_points = "[console_scripts]\nmytool = pkg:main\n"
     wheel_a = _make_wheel(tmp_path, "pkg_a", entry_points=entry_points)
@@ -167,13 +169,47 @@ def test_prevalidated_candidates_still_reject_colliding_console_scripts(
     target = tmp_path / "target"
     install_target = InstallTarget.from_options("pkg_a", target=str(target))
 
-    with pytest.raises(InstallationError, match="duplicate installation destination"):
+    assert (
         install_wheels_from_archive_cache(
             [(wheel_a, True, None), (wheel_b, True, None)],
             (candidate_a, candidate_b),
             target=install_target,
             cache_dir=str(cache_dir),
         )
+        is None
+    )
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("with_cache", [False, True])
+@pytest.mark.parametrize("extra_wheels", [0, 3])
+def test_colliding_files_install_the_later_wheels_copy(
+    tmp_path: Path,
+    with_cache: bool,
+    extra_wheels: int,
+) -> None:
+    """``jupyter`` and ``jupyter-core`` both ship ``jupyter.py``: pip installs
+    both and the file is the later one's. Serial and parallel batches (four
+    wheels or more), with and without the archive cache, keep the same one."""
+    from kpip.install.wheel_transaction import install_wheels_transactionally
+
+    wheels = [
+        _make_wheel(tmp_path, "pkg_a", shared_module="shared_thing.py"),
+        *(_make_wheel(tmp_path, f"pkg_x{index}") for index in range(extra_wheels)),
+        _make_wheel(tmp_path, "pkg_b", shared_module="shared_thing.py"),
+    ]
+    target = tmp_path / "target"
+
+    install_wheels_transactionally(
+        [(wheel, True, None) for wheel in wheels],
+        target=InstallTarget.from_options("pkg_a", target=str(target)),
+        pycompile=False,
+        cache_dir=str(tmp_path / "cache") if with_cache else None,
+    )
+
+    assert (target / "shared_thing.py").read_text() == "# from pkg_b\n"
+    for name in ("pkg_a", "pkg_b"):
+        assert (target / f"{name}-1.0.dist-info" / "METADATA").exists()
 
 
 def test_record_rows_match_the_files_on_disk(tmp_path: Path) -> None:
@@ -319,6 +355,44 @@ def _make_wheel_with_members(
         )
         archive.writestr(f"{name}-1.0.dist-info/RECORD", "")
     return wheel
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_vendored_dist_info_is_installed_as_ordinary_files(
+    tmp_path: Path, force: bool
+) -> None:
+    """debugpy vendors a whole ``bytecode-*.dist-info`` inside its package.
+    Only the wheel's own dist-info has the RECORD kpip writes and the
+    METADATA it normalizes; the vendored ones are files like any other.
+    ``force`` takes the staged route, its absence the direct one."""
+    from kpip.install.wheel_transaction import install_wheels_transactionally
+
+    vendored = "vendorer/_vendored/thing-0.1.dist-info"
+    wheel = _make_wheel_with_members(
+        tmp_path,
+        "vendorer",
+        {
+            "vendorer/__init__.py": "",
+            f"{vendored}/METADATA": "Metadata-Version: 2.1\nName: Thing\n",
+            f"{vendored}/RECORD": "thing/__init__.py,,\n",
+        },
+    )
+    target = tmp_path / "target"
+
+    install_wheels_transactionally(
+        [(wheel, True, None)],
+        target=InstallTarget.from_options("vendorer", target=str(target)),
+        pycompile=False,
+        force=force,
+    )
+
+    assert (target / vendored / "RECORD").read_text() == "thing/__init__.py,,\n"
+    assert (target / vendored / "METADATA").read_text() == (
+        "Metadata-Version: 2.1\nName: Thing\n"
+    )
+    record = (target / "vendorer-1.0.dist-info" / "RECORD").read_text()
+    assert f"{vendored}/RECORD,sha256=" in record
+    assert "vendorer-1.0.dist-info/RECORD,," in record
 
 
 def test_wheel_shipping_its_own_generated_pyc_is_rejected_under_compilation(
