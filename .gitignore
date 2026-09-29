@@ -18,3 +18,9 @@ dist/
 
 # Recorded kpip-bench baselines (kpip-bench-record).
 benchmark-runs/
+
+# Compiled extensions, and the C Cython generates from pure-Python-mode
+# sources (a blanket *.c would hide the test fixtures' real C sources).
+*.so
+*.pyd
+src/kpip/_vendor/nab_resolver/_cranges.c

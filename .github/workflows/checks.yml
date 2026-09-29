@@ -75,6 +75,45 @@ jobs:
           -m "not network"
           -p no:randomly
 
+  compiled:
+    name: Tests compiled / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest and newest Pythons Cython builds for. The tests job
+        # above runs every version without the extension.
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+      - run: uv python install ${{ matrix.python-version }}
+      - name: Install Subversion
+        run: sudo apt-get update && sudo apt-get install --yes subversion
+      - run: uv sync --locked --group test --python ${{ matrix.python-version }}
+      - name: Build the compiled modules
+        run: >
+          uv run --project scripts/compile --locked
+          --python ${{ matrix.python-version }} kpip-compile extensions
+      - name: Check the compiled Range is the one in use
+        # A build that does not import falls back to pure Python silently,
+        # and every test below would pass against the wrong class.
+        run: >
+          uv run --python ${{ matrix.python-version }} python -c
+          "from kpip._vendor.nab_resolver.ranges import Range;
+          assert Range.__module__.endswith('._cranges'), Range.__module__"
+      - name: Unit and package tests
+        run: >
+          uv run --python ${{ matrix.python-version }} pytest tests
+          --ignore=tests/cli/functional
+          --ignore=tests/benchmarks
+          -m "not network"
+          -p no:randomly
+
   functional:
     name: Functional / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest

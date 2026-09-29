@@ -30,7 +30,7 @@ from tests.range_oracles import (
 )
 
 _HAS_EXTENDED_BETWEEN = "lower_inclusive" in inspect.signature(Range.between).parameters
-_HAS_POINT_SET_CACHE = "_points" in Range.__slots__
+_HAS_POINT_SET_CACHE = "_points" in getattr(Range, "__slots__", ())
 _HAS_SAFE_INFINITY_COMPARISONS = hasattr(ranges_module, "_same_bound")
 
 PROBES = [value * 0.5 for value in range(-2, 20)]

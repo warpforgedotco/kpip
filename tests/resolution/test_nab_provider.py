@@ -11,6 +11,7 @@ from kpip.core.versions import Version
 from kpip.index.provider import CandidateProvider
 from kpip.resolution.models import ResolutionConfig
 from kpip.resolution.nab_provider import NabProvider
+from tests.range_oracles import requires_patchable_range
 
 
 class FakeProvider:
@@ -612,6 +613,7 @@ def test_add_roots_prefetches_without_materializing_candidates() -> None:
     assert provider.events == [("prefetch", ("app", "dep"))]
 
 
+@requires_patchable_range
 def test_unique_roots_do_not_intersect_their_ranges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

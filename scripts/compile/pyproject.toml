@@ -4,6 +4,10 @@ version = "0.0.1"
 description = "Compile kpip with a vendored, patched Nuitka"
 requires-python = ">=3.10"
 dependencies = [
+  # kpip-compile extensions: Cython's pure-Python mode compiles the sources,
+  # setuptools drives the C compiler.
+  "cython>=3.3",
+  "setuptools>=70",
   # Onefile payload compression; 3.14 ships compression.zstd instead.
   "zstandard>=0.15; python_version < '3.14'",
 ]
