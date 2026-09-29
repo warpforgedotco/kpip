@@ -88,6 +88,9 @@ def split_plain_url(url: str) -> urllib.parse.SplitResult | None:
 _split_plain_url = split_plain_url
 """Kept for callers that predate the public name."""
 
+PLAIN_URL = _PLAIN_URL
+"""The shape ``split_plain_url`` admits, for a caller that needs only a part."""
+
 
 @functools.total_ordering
 class Link:

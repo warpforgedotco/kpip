@@ -589,6 +589,20 @@ def parse_wheel_file(path: str) -> WheelFile | None:
     return _parse_wheel_filename(name)
 
 
+def parse_wheel_file_once(path: str) -> WheelFile | None:
+    """``parse_wheel_file`` for a name parsed once, past the memo.
+
+    Compiling an index page parses each of its wheel names exactly once,
+    and a cold airflow lock lists 211,000 of them, every one distinct: the
+    memo only ever missed, evicted and stored, half again the cost of the
+    parse itself.
+    """
+    name = os.fspath(path)
+    if "/" in name or "\\" in name or ":" in name:
+        name = os.path.basename(name)
+    return _parse_wheel_filename.__wrapped__(name)
+
+
 _BUILD_TAG_RE = re.compile(r"^(\d+)(.*)$", re.ASCII)
 
 

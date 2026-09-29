@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import operator
 import sys
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
@@ -38,6 +39,8 @@ from kpip.resolution.nab_types import (
 )
 
 _MISSING = object()
+
+_IS_PRERELEASE = operator.attrgetter("is_prerelease")
 
 _BOOL = object()
 """Stands in a read log for the key of a truth test of the whole map."""
@@ -478,10 +481,10 @@ class NabProvider:
         """
         memo = self._catalog_shape_memo.get(package)
         if memo is None or memo[0] is not versions:
-            ascending = all(
-                earlier <= later for earlier, later in zip(versions, versions[1:])
-            )
-            has_prerelease = any(version.is_prerelease for version in versions)
+            # Both walks run in C: a Version compares as bytes, and the
+            # getter spares a generator frame per release.
+            ascending = all(map(operator.le, versions, versions[1:]))
+            has_prerelease = any(map(_IS_PRERELEASE, versions))
             memo = (versions, ascending, has_prerelease)
             self._catalog_shape_memo[package] = memo
         return memo[1], memo[2]
@@ -2292,8 +2295,13 @@ class NabProvider:
         if not materializer.prepares_source_metadata:
             return
 
+        # Hints are pinned views: their keys and items come back as copies that
+        # iterate and test membership in C, where going through the Mapping
+        # protocol cost two Python calls per package per propagation round.
+        decided = decisions.keys()
+
         for package, positive_range in positive_ranges.items():
-            if package in decisions or package in self._source_metadata_started:
+            if package in decided or package in self._source_metadata_started:
                 continue
 
             requirement = self.requirements.get(package)
