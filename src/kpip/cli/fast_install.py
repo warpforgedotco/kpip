@@ -627,6 +627,12 @@ def run_cached_remote(args: list[str]) -> int | None:
     if plan is None:
         return None
 
+    from kpip.install.output import installation_order
+
+    # pip's order: when two distributions ship one file, the later one's
+    # copy is the one left.
+    ordered = installation_order(plan.candidates, plan.graph, roots)
+
     installed = install_wheels_from_archive_cache(
         tuple(
             (
@@ -634,9 +640,9 @@ def run_cached_remote(args: list[str]) -> int | None:
                 candidate.canonical_name in roots,
                 None,
             )
-            for candidate in plan.candidates
+            for candidate in ordered
         ),
-        tuple(plan.candidates),
+        tuple(ordered),
         target=InstallTarget.from_options("kpip", target=options.target),
         cache_dir=cache_dir,
         report=not options.quiet,
@@ -1491,6 +1497,12 @@ def run_local_fallback(args: list[str]) -> int | None:
 
     if not options.quiet:
         report_plan(options.find_links, candidates)
+
+    from kpip.install.output import dependency_graph, installation_order
+
+    # pip's order: when two distributions ship one file, the later one's
+    # copy is the one left.
+    candidates = installation_order(candidates, dependency_graph(candidates), roots)
 
     requests = tuple(
         (candidate.path, candidate.canonical_name in roots, None)

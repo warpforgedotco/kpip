@@ -229,3 +229,52 @@ def test_replace_contents_breaks_the_link_and_keeps_the_mode(tmp_path: Path) -> 
     assert installed.stat().st_nlink == 1
     if os.name != "nt":
         assert installed.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.parametrize("winner_first", [False, True])
+def test_clone_skips_and_replaces_a_shared_file_in_either_order(
+    tmp_path: Path, winner_first: bool
+) -> None:
+    """Two wheel trees shipping one file merge into one stage: the one that
+    replaces it leaves its copy whichever clones first, and the other's is
+    never written over it."""
+    from kpip.host.clone import clone_path
+
+    trees = {}
+    for name in ("earlier", "later"):
+        tree = tmp_path / name
+        (tree / "pkg").mkdir(parents=True)
+        (tree / "shared.py").write_text(name)
+        (tree / "pkg" / f"{name}.py").write_text(name)
+        trees[name] = tree
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    shared = frozenset({str(stage / "shared.py")})
+
+    order = ("later", "earlier") if winner_first else ("earlier", "later")
+    for name in order:
+        if name == "later":
+            clone_path(str(trees[name]), str(stage), replace=shared)
+        else:
+            clone_path(str(trees[name]), str(stage), skip=shared)
+
+    assert (stage / "shared.py").read_text() == "later"
+    assert sorted(path.name for path in (stage / "pkg").iterdir()) == [
+        "earlier.py",
+        "later.py",
+    ]
+    assert (trees["earlier"] / "shared.py").read_text() == "earlier"
+
+
+def test_clone_still_rejects_a_duplicate_it_was_not_told_about(tmp_path: Path) -> None:
+    from kpip.host.clone import clone_path
+
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "shared.py").write_text(name)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+
+    clone_path(str(tmp_path / "a"), str(stage))
+    with pytest.raises(FileExistsError):
+        clone_path(str(tmp_path / "b"), str(stage))
