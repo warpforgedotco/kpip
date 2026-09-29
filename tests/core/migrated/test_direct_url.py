@@ -150,3 +150,18 @@ def test_redact_url() -> None:
         == "https://${KPIP_TOKEN}@g.c/u/p.git"
     )
     assert redact_git("ssh://git@g.c/u/p.git") == "ssh://git@g.c/u/p.git"
+
+
+def test_redact_archive_credentials() -> None:
+    """Archive urls lose their credentials as VCS ones do."""
+
+    def redact(url: str) -> str:
+        return DirectUrl(url=url, archive_info=ArchiveInfo()).to_dict()["url"]
+
+    assert redact("https://user:secret@h/x-1.0.whl") == "https://h/x-1.0.whl"
+    assert redact("https://token@h/x-1.0.whl") == "https://h/x-1.0.whl"
+    assert redact("https://${U}:secret@h/x-1.0.whl") == "https://h/x-1.0.whl"
+    assert redact("https://${U}:${P}@h/x-1.0.whl") == "https://${U}:${P}@h/x-1.0.whl"
+    assert redact("https://name@corp:secret@h/x-1.0.whl") == "https://h/x-1.0.whl"
+    # ``git`` is kept only as git's own user.
+    assert redact("https://git@h/x-1.0.whl") == "https://h/x-1.0.whl"

@@ -289,9 +289,9 @@ def _select_distribution(
     wheels = package.get("wheels")
 
     if isinstance(wheels, list):
-        for distribution in wheels:
-            if isinstance(distribution, dict):
-                return distribution, "wheel"  # ty:ignore[invalid-return-type]
+        wheel = _best_wheel(wheels)
+        if wheel is not None:
+            return wheel, "wheel"
 
     sdist = package.get("sdist")
 
@@ -299,6 +299,35 @@ def _select_distribution(
         return sdist, "sdist"  # ty:ignore[invalid-return-type]
 
     raise InstallationError("Cannot select a distribution from pylock package")
+
+
+def _best_wheel(wheels: list[Any]) -> dict[str, Any] | None:
+    """The wheel this interpreter ranks first, or None if none is compatible.
+
+    A lock lists a package's wheels for every platform it covers; PEP 751
+    leaves choosing among them to the installer, which must pick one the
+    interpreter supports, not the first one written.
+    """
+    from kpip.core.wheel import parse_wheel_file, wheel_tag_rank
+
+    best: dict[str, Any] | None = None
+    best_rank: int | None = None
+    for distribution in wheels:
+        if not isinstance(distribution, dict):
+            continue
+        filename = distribution.get("name")
+        if not isinstance(filename, str):
+            location = distribution.get("url") or distribution.get("path")
+            if not isinstance(location, str):
+                continue
+            filename = posixpath.basename(urllib.parse.urlsplit(location).path)
+        parsed = parse_wheel_file(filename)
+        if parsed is None:
+            continue
+        rank = wheel_tag_rank(parsed.tags)
+        if rank is not None and (best_rank is None or rank < best_rank):
+            best, best_rank = distribution, rank
+    return best
 
 
 def _distribution_string(distribution: dict[str, object], key: str) -> str | None:

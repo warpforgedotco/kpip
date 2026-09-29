@@ -63,6 +63,26 @@ def test_parse_requirement_reuses_immutable_result() -> None:
         first.specifier.specifiers = ()  # type: ignore[misc]
 
 
+@pytest.mark.parametrize(
+    "raw, url, marker",
+    [
+        ("depy @ file:///tmp/a;b/depy-1.0.whl", "file:///tmp/a;b/depy-1.0.whl", None),
+        ("depy @ https://h/p.whl;os_name=='nt'", "https://h/p.whl;os_name=='nt'", None),
+        ("depy @ https://h/p.whl ; os_name=='nt'", "https://h/p.whl", "os_name=='nt'"),
+        ("depy[x] @ https://h/p.whl\t;extra=='y'", "https://h/p.whl", "extra=='y'"),
+    ],
+)
+def test_url_requirement_marker_needs_whitespace(
+    raw: str, url: str, marker: str | None
+) -> None:
+    """PEP 508 ends a url at whitespace; a ";" inside it is the url's own."""
+    requirement = parse_requirement(raw)
+
+    assert requirement.url == url
+    assert requirement.marker == marker
+    assert parse_requirement(str(requirement)) == requirement
+
+
 def test_canonicalize_requirement() -> None:
     assert (
         canonicalize_requirement('Demo_Pkg[SSL,PDF] >= 1.0; python_version >= "3.11"')
@@ -92,6 +112,31 @@ def test_version_comparison_ignores_trailing_release_zeros() -> None:
 )
 def test_version_accepts_pep440_separator_forms(raw: str, normalized: str) -> None:
     assert str(Version(raw)) == normalized
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "1.0prev\u0130ew1",  # dotted capital I, lowercases to "i\u0307"
+        "1.0.po\u017ft1",  # long s, which IGNORECASE matches as "s"
+        "1.0+\u017f",
+        "1.0+\u0131",  # dotless i
+        "\u0661.\u0660",  # Arabic-Indic digits
+        "\uff11.0",  # fullwidth one
+    ],
+)
+def test_version_rejects_non_ascii_spellings(raw: str) -> None:
+    """PEP 440 numbers are ASCII digits and its labels ASCII letters."""
+    with pytest.raises(InvalidVersion):
+        Version(raw)
+
+
+@pytest.mark.parametrize(
+    "specifier, version",
+    [("===1.0RC1", "1.0rc1"), ("===1.0+Abc", "1.0+abc"), ("===1.0rc1", "1.0RC1")],
+)
+def test_arbitrary_equality_ignores_ascii_case(specifier: str, version: str) -> None:
+    assert SpecifierSet(specifier).contains(Version(version), allow_prereleases=True)
 
 
 def test_version_orders_epoch_and_dev_releases() -> None:

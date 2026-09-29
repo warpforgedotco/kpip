@@ -14,6 +14,7 @@ from kpip.build.build import build_wheel_from_source, unpack_source_internal
 from kpip.core.logger import get_logger
 from kpip.core.errors import (
     BuildError,
+    HashMismatch,
     InstallationError,
     KpipError,
     UnsupportedWheel,
@@ -70,6 +71,8 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     import tempfile
     import zipfile
+
+    from kpip.core.hashes import Hashes
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -296,6 +299,19 @@ def _open_resolver_wheel_archive(
         return zipfile.ZipFile(path_text)
 
     return _ResolverWheelArchive(archive)
+
+
+def provides_extras(metadata: CandidateMetadata, requested: frozenset[str]) -> bool:
+    """Whether ``metadata`` declares every one of ``requested``.
+
+    Requested extras are normalized; a ``Provides-Extra`` header is stored
+    as written, and core metadata says the two are compared normalized, so
+    ``Foo_Bar`` provides ``foo-bar``.
+    """
+    provided = metadata.provided_extras
+    if requested <= provided:
+        return True
+    return requested <= {canonicalize_name(extra) for extra in provided}
 
 
 def project_provided_extras(project: object) -> frozenset[str]:
@@ -592,8 +608,14 @@ class CandidateMaterializer:
             Sequence[Link],
         ]
         | None = None,
+        user_hashes: Callable[[str], Hashes | None] | None = None,
     ) -> None:
         self.release_metadata_links = release_metadata_links
+
+        # The hashes the user gave for a project, from a requirement or a
+        # constraint; every archive of it is checked against them once it
+        # is on disk.
+        self.user_hashes = user_hashes
 
         self.sibling_metadata_cache: dict[
             tuple[str, str],
@@ -683,6 +705,9 @@ class CandidateMaterializer:
 
         self.local_artifacts: dict[str, str] = {}
 
+        # URLs whose archive passed _check_user_hashes.
+        self.user_hashes_checked: set[str] = set()
+
         self.vcs_revisions: dict[str, str] = {}
 
         self.metadata_prefetcher: Prefetcher[Any, str] | None = None
@@ -710,12 +735,80 @@ class CandidateMaterializer:
         *,
         local_path: str | None = None,
     ) -> str:
-        if not candidate.link.is_vcs:
-            cached = self.local_artifacts.get(candidate.link.url)
+        url = candidate.link.url
 
-            if cached is not None:
-                return cached
+        if candidate.link.is_vcs:
+            return self._ensure_local_text(candidate, local_path=local_path)
 
+        path = self.local_artifacts.get(url)
+
+        if path is None:
+            path = self._ensure_local_text(candidate, local_path=local_path)
+
+        # Kept apart from the path cache, which other routes fill too: a
+        # path cached before its check -- or by a caller that caught the
+        # mismatch and went on -- must not be handed out unchecked.
+        if url not in self.user_hashes_checked:
+            self._check_user_hashes(candidate, path)
+            self.user_hashes_checked.add(url)
+
+        return path
+
+    def _check_user_hashes(self, candidate: CandidateRecord, path: str) -> None:
+        """Raise unless the archive at ``path`` has a hash the user allowed.
+
+        The user's hashes also filter an index's links by the digests the
+        index publishes, but a link that publishes none -- a find-links page,
+        a mirror -- passed that filter unchecked, and its download was
+        installed whatever it held. pip checks every archive it fetches.
+        """
+        if self.user_hashes is None or os.path.isdir(path):
+            return
+
+        hashes = self.user_hashes(candidate.canonical_name)
+
+        if hashes is None or not hashes.allowed_internal:
+            return
+
+        import hashlib
+
+        gots = {}
+        for name in hashes.allowed_internal:
+            try:
+                gots[name] = hashlib.new(name)
+            except (TypeError, ValueError):
+                continue
+
+        with open(path, "rb") as file:
+            while chunk := file.read(1024 * 1024):
+                for digest in gots.values():
+                    digest.update(chunk)
+
+        if any(
+            hashes.is_hash_allowed(name, digest.hexdigest())
+            for name, digest in gots.items()
+        ):
+            return
+
+        expected = "\n".join(
+            f"        Expected {name} {value}"
+            for name, values in sorted(hashes.allowed_internal.items())
+            for value in values
+        )
+        got = gots.get("sha256") or next(iter(gots.values()), None)
+        raise HashMismatch(
+            f"{HashMismatch.head}\n"
+            f"    {candidate.name}=={candidate.version} from {candidate.link.url}:\n"
+            f"{expected}\n"
+            f"             Got        {got.hexdigest() if got is not None else '?'}"
+        )
+
+    def _ensure_local_text(
+        self,
+        candidate: CandidateRecord,
+        *,
+        local_path: str | None = None,
+    ) -> str:
         if candidate.link.is_file:
             path = (
                 os.fspath(local_path)
@@ -1362,19 +1455,14 @@ class CandidateMaterializer:
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
                 metadata = self.pypi_metadata(candidate, requested_extras)
 
-                if metadata is None or not (
-                    requested_extras <= metadata.provided_extras
-                ):
+                if metadata is None or not provides_extras(metadata, requested_extras):
                     metadata = self.sibling_wheel_metadata(
                         candidate,
                         requirement,
                         requested_extras,
                     )
 
-                if (
-                    metadata is not None
-                    and requested_extras <= metadata.provided_extras
-                ):
+                if metadata is not None and provides_extras(metadata, requested_extras):
                     self.metadata_cache[key] = metadata
 
                     if persistent_cache is not None:

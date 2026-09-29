@@ -416,7 +416,11 @@ class NabProvider:
         installed = self._installed_candidate(package)
         if installed is not None and installed.version not in versions:
             versions += (installed.version,)
-        if not versions and requirement.url is None:
+        if (
+            not versions
+            and requirement.url is None
+            and self._pins_one_release(package, requirement)
+        ):
             fallback_provider = self._provider_with_yanked()
             fallback_candidates = tuple(
                 fallback_provider.find_candidates(parse_requirement(package))
@@ -434,6 +438,18 @@ class NabProvider:
                 return versions
         self._version_cache[cache_key] = versions
         return versions
+
+    def _pins_one_release(self, package: str, requirement: Requirement) -> bool:
+        """Whether a yanked release may be taken for ``package``.
+
+        PEP 592: an installer ignores yanked releases unless the specifier
+        pins one with ``==`` or ``===`` and only yanked releases satisfy it.
+        The pin may come from the requirement or from a constraint.
+        """
+        return requirement.specifier.is_pinned or any(
+            constraint.specifier.is_pinned
+            for constraint in self._constraint_for(package)
+        )
 
     def _provider_with_yanked(self):
         """Return an explicit yanked-policy view when the provider supports it."""
@@ -1613,6 +1629,8 @@ class NabProvider:
         if not isinstance(self.provider, CandidateProvider):
             return None
         if self.provider.allow_yanked:
+            return None
+        if not self._pins_one_release(package, self.requirements[package]):
             return None
 
         fallback_provider = self.provider.with_yanked_policy(True)

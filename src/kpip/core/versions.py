@@ -87,7 +87,10 @@ def version_re() -> re.Pattern[str]:
             (?:\+(?P<local>[a-z0-9]+(?:[-_.][a-z0-9]+)*))?
             \s*$
             """,
-            re.IGNORECASE | re.VERBOSE,
+            # ASCII: PEP 440 spells numbers in ASCII digits and labels in
+            # ASCII letters. Without it IGNORECASE matches "İ" as "i" and
+            # ``\d`` matches any script's digits.
+            re.ASCII | re.IGNORECASE | re.VERBOSE,
         )
         _local_separators = re.compile(r"[-_.]+")
 
@@ -216,6 +219,7 @@ def _parse(value: str) -> tuple[int, tuple[int, ...], tuple[int, ...], Any]:
     raw = value.strip()
     if (
         raw
+        and raw.isascii()
         and raw.replace(".", "").isdecimal()
         and ".." not in raw
         and raw[0] != "."

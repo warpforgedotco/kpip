@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
 
 REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+_URL_MARKER_SEPARATOR = re.compile(r"\s;")
+"""A marker after a url: PEP 508 needs whitespace before its ";"."""
 
 
 EMPTY_FROZENSET: frozenset[str] = frozenset()
@@ -246,7 +248,9 @@ class Specifier:
         other = self.parsed_version
 
         if other is None:
-            return version.public == self.version
+            # ``===`` is string equality, which PEP 440 says MUST treat ASCII
+            # letters case-insensitively.
+            return version.public.lower() == self.version.lower()
 
         if operator == "==":
             if self.is_wildcard:
@@ -916,7 +920,11 @@ class Requirement:
         else:
             parts.append(str(self.specifier))
         if self.marker:
-            parts.append("; " + self.canonical_marker)
+            # After a url the ";" needs whitespace before it, or it reads as
+            # part of the url.
+            parts.append(
+                (" ; " if self.url is not None else "; ") + self.canonical_marker
+            )
         return "".join(parts)
 
     def __repr__(self) -> str:
@@ -1031,7 +1039,17 @@ def parse_requirement(value: str) -> Requirement:
     url: str | None = None
 
     if first == "@":
-        url = rest[1:].strip()
+        # PEP 508 ends a url at whitespace -- ``urlspec (wsp+ | end)
+        # quoted_marker?`` -- so a ";" inside it is part of the url, not the
+        # marker's start. Split again from the unsplit text: ``split_marker``
+        # cut at the first ";" before anything knew there was a url.
+        tail = raw[raw.index("@", name_match.end()) + 1 :]
+        separator = _URL_MARKER_SEPARATOR.search(tail)
+        if separator is None:
+            url, marker = tail.strip(), None
+        else:
+            url = tail[: separator.start()].strip()
+            marker = tail[separator.end() :].strip()
 
         spec = ""
 

@@ -429,3 +429,41 @@ def test_install_report_to_stdout(
     report = json.loads(result.stdout)
     assert "install" in report
     assert len(report["install"]) == 1
+
+
+def test_yanked_version_needs_a_pin(
+    script: KpipTestEnvironment,
+    data: TestData,
+) -> None:
+    """PEP 592: a yanked release is taken only for ``==`` or ``===``.
+
+    ``simple>=3.0`` admits only the yanked 3.0, and is not a pin.
+    """
+    result = script.kpip(
+        "install",
+        "--no-build-isolation",
+        "simple>=3.0",
+        "--index-url",
+        data.index_url("yanked"),
+        "--dry-run",
+        expect_error=True,
+    )
+    assert "simple" in result.stderr
+    assert "Would install" not in result.stdout
+
+
+def test_yanked_version_warns_with_its_reason(
+    script: KpipTestEnvironment,
+    data: TestData,
+) -> None:
+    result = script.kpip(
+        "install",
+        "--no-build-isolation",
+        "simple==3.0",
+        "--index-url",
+        data.index_url("yanked"),
+        "--dry-run",
+        allow_stderr_warning=True,
+    )
+    assert "a yanked version: 'simple' candidate (version 3.0" in result.stderr
+    assert "Reason for being yanked: test reason message" in result.stderr

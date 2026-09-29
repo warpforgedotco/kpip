@@ -696,8 +696,9 @@ def test_forward_check_does_not_hide_programming_errors(
         adapter._pins_are_impossible("app", Version("1.0.0"))
 
 
-def test_malformed_requires_python_rejects_without_raising() -> None:
-    """The index provider treats bad metadata as incompatible; so must this."""
+def test_malformed_requires_python_is_ignored_without_raising() -> None:
+    """A Requires-Python that does not parse says nothing, and the release
+    stays eligible, as the index provider and pip both have it."""
 
     class BadMetadata:
         requires_python = "not a specifier"
@@ -705,7 +706,7 @@ def test_malformed_requires_python_rejects_without_raising() -> None:
     provider = CandidateProvider.from_options(no_index=True)
     adapter = NabProvider(provider, ResolutionConfig(ignore_installed=True))
 
-    assert adapter._requires_python_rejects(BadMetadata()) is True
+    assert adapter._requires_python_rejects(BadMetadata()) is False
 
 
 @pytest.mark.parametrize(

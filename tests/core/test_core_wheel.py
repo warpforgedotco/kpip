@@ -138,13 +138,22 @@ def test_wheel_tag_rank_oracle() -> None:
         WheelTag("py2", "TEST", "any"),
         WheelTag("py2", "none", "any"),
     )
-    any_wheel = parse_wheel_file("simple-0.1-py2-none-any.whl")
-    test_wheel = parse_wheel_file("simple-0.1-py2-none-TEST.whl")
 
+    def rank(filename: str) -> int:
+        wheel = parse_wheel_file(filename)
+        assert wheel is not None
+        result = wheel_tag_rank(wheel.tags, supported)
+        assert result is not None
+        return result
+
+    # Lower ranks first, in the order of the supported tags matched.
+    test_rank = rank("simple-0.1-py2-none-TEST.whl")
+    abi_rank = rank("simple-0.1-py2-TEST-any.whl")
+    any_rank = rank("simple-0.1-py2-none-any.whl")
+    assert test_rank < abi_rank < any_rank
+
+    any_wheel = parse_wheel_file("simple-0.1-py2-none-any.whl")
     assert any_wheel is not None
-    assert test_wheel is not None
-    assert wheel_tag_rank(any_wheel.tags, supported) == 2
-    assert wheel_tag_rank(test_wheel.tags, supported) == 0
     assert wheel_tag_rank(any_wheel.tags, ()) is None
 
 
@@ -472,3 +481,92 @@ def test_build_tag_keeps_its_number_and_suffix() -> None:
     assert legacy_build_tag(None) == ()
     assert legacy_build_tag("1") == (1, "")
     assert legacy_build_tag("12rc1") == (12, "rc1")
+
+
+@pytest.mark.parametrize(
+    "filename, compatible",
+    [
+        ("demo-1.0-py311-none-any.whl", True),
+        ("demo-1.0-py38-none-any.whl", True),
+        ("demo-1.0-py310-none-linux_x86_64.whl", True),
+        ("demo-1.0-py313-none-any.whl", False),
+        ("demo-1.0-py27-none-any.whl", False),
+        ("demo-1.0-py311-abi3-any.whl", False),
+    ],
+)
+def test_pure_wheel_for_an_older_minor_is_compatible(
+    filename: str, compatible: bool
+) -> None:
+    """packaging's compatible_tags: py3X-none-* for every X up to the running one."""
+
+    supported = supported_wheel_tags(
+        TargetContext(platforms=("linux_x86_64",), python_version="3.12")
+    )
+    wheel = parse_wheel_file(filename)
+    assert wheel is not None
+    assert (wheel_tag_rank(wheel.tags, supported) is not None) is compatible
+
+
+@pytest.mark.parametrize(
+    "platform, python, worse, better",
+    [
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-cp312-cp312-manylinux_2_17_x86_64.whl",
+            "demo-1.0-cp312-cp312-manylinux_2_28_x86_64.whl",
+        ),
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-cp312-cp312-manylinux2014_x86_64.whl",
+            "demo-1.0-cp312-cp312-manylinux_2_34_x86_64.whl",
+        ),
+        (
+            "macosx_14_0_arm64",
+            "3.12",
+            "demo-1.0-cp312-cp312-macosx_10_9_universal2.whl",
+            "demo-1.0-cp312-cp312-macosx_11_0_arm64.whl",
+        ),
+        (
+            "macosx_14_0_arm64",
+            "3.12",
+            "demo-1.0-cp312-cp312-macosx_11_0_arm64.whl",
+            "demo-1.0-cp312-cp312-macosx_14_0_arm64.whl",
+        ),
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-cp39-abi3-manylinux_2_28_x86_64.whl",
+            "demo-1.0-cp311-abi3-manylinux_2_17_x86_64.whl",
+        ),
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-py38-none-any.whl",
+            "demo-1.0-py311-none-any.whl",
+        ),
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-cp311-abi3-manylinux_2_28_x86_64.whl",
+            "demo-1.0-cp312-cp312-manylinux_2_17_x86_64.whl",
+        ),
+    ],
+)
+def test_newest_and_most_specific_match_ranks_first(
+    platform: str, python: str, worse: str, better: str
+) -> None:
+    """As packaging.tags orders them, and so pip prefers them."""
+    supported = supported_wheel_tags(
+        TargetContext(platforms=(platform,), python_version=python)
+    )
+
+    def rank(filename: str) -> int:
+        wheel = parse_wheel_file(filename)
+        assert wheel is not None
+        result = wheel_tag_rank(wheel.tags, supported)
+        assert result is not None
+        return result
+
+    assert rank(better) < rank(worse)

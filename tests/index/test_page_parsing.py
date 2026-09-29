@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import urllib.parse
+from pathlib import Path
 
 import pytest
 from kpip.index.page_parsing import IndexPageParser, join_index_url
@@ -412,3 +413,107 @@ def test_base_without_an_href_attribute_does_not_consume_the_slot() -> None:
     )
     links = IndexPageParser().links_from_html(body, PAGE_URL)
     assert [link.url for link in links] == ["https://second.invalid/pkg-1.0.tar.gz"]
+
+
+def test_find_links_html_file_resolves_against_the_file(tmp_path: Path) -> None:
+    """``--find-links /dir/links.html``: "x.whl" is /dir/x.whl, not a file
+    inside a directory named links.html."""
+    page = tmp_path / "links.html"
+    page.write_text('<a href="pkg-1.0-py3-none-any.whl">pkg</a>', encoding="utf-8")
+
+    links = IndexPageParser().links_from_url(page.as_uri())
+
+    assert [link.url for link in links] == [
+        (tmp_path / "pkg-1.0-py3-none-any.whl").as_uri(),
+    ]
+
+
+def test_local_directory_index_resolves_against_the_directory(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text(
+        '<a href="pkg-1.0-py3-none-any.whl">pkg</a>', encoding="utf-8"
+    )
+
+    links = IndexPageParser().links_from_url(tmp_path.as_uri())
+
+    assert [link.url for link in links] == [
+        (tmp_path / "pkg-1.0-py3-none-any.whl").as_uri(),
+    ]
+
+
+def test_links_resolve_against_the_url_after_redirects() -> None:
+    """A redirect to ``/simple/pkg/`` moves the base with it, as pip's
+    ``urljoin(response.url, href)`` does; the requested URL is not it."""
+
+    class Response:
+        status = 200
+        url = "https://mirror.invalid/simple/pkg/"
+        headers = {"Content-Type": "text/html"}
+        data = b'<a href="../../files/pkg-1.0.tar.gz">pkg</a>'
+
+    class Session:
+        def get(self, url: str, **kwargs: object) -> Response:
+            return Response()
+
+    parser = IndexPageParser(session=Session())  # type: ignore[arg-type]
+    links = parser.links_from_url("https://example.invalid/simple/pkg")
+
+    assert [link.url for link in links] == [
+        "https://mirror.invalid/files/pkg-1.0.tar.gz",
+    ]
+
+
+def test_bare_data_yanked_yanks() -> None:
+    """PEP 592: the attribute may have no value; its presence yanks."""
+    body = (
+        '<a href="pkg-1.0.tar.gz" data-yanked>pkg</a>'
+        '<a href="pkg-1.1.tar.gz" data-yanked="broken">pkg</a>'
+        '<a href="pkg-1.2.tar.gz">pkg</a>'
+    )
+    links = IndexPageParser().links_from_html(body, PAGE_URL)
+    assert [link.yanked_reason for link in links] == ["", "broken", None]
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.4", " 1.99 "])
+def test_simple_api_version_1_is_read(version: str) -> None:
+    html = (
+        f'<meta name="pypi:repository-version" content="{version}">'
+        '<a href="pkg-1.0.tar.gz">pkg</a>'
+    )
+    json_page = (
+        f'{{"meta": {{"api-version": "{version}"}}, "files": '
+        '[{"filename": "pkg-1.0.tar.gz", "url": "pkg-1.0.tar.gz", "hashes": {}}]}'
+    )
+    parser = IndexPageParser()
+
+    assert len(parser.links_from_html(html, PAGE_URL)) == 1
+    assert len(parser.links_from_json(json_page, PAGE_URL)) == 1
+
+
+def test_simple_api_major_version_2_is_refused() -> None:
+    """The spec: a client MUST fail on a major version it does not support."""
+    from kpip.core.errors import InstallationError
+
+    parser = IndexPageParser()
+    with pytest.raises(InstallationError, match="API version 2.0"):
+        parser.links_from_html(
+            '<meta name="pypi:repository-version" content="2.0">', PAGE_URL
+        )
+    with pytest.raises(InstallationError, match="API version 2.1"):
+        parser.links_from_json(
+            '{"meta": {"api-version": "2.1"}, "files": []}', PAGE_URL
+        )
+
+
+def test_relative_base_href_resolves_against_the_url_after_redirects() -> None:
+    body = (
+        '<html><head><base href="../packages/"></head>'
+        '<body><a href="pkg-1.0.tar.gz">pkg</a></body></html>'
+    )
+    links = IndexPageParser().links_from_html(
+        body,
+        "https://example.invalid/simple/pkg",
+        "https://mirror.invalid/simple/pkg/",
+    )
+    assert [link.url for link in links] == [
+        "https://mirror.invalid/simple/packages/pkg-1.0.tar.gz",
+    ]

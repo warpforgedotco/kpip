@@ -86,7 +86,9 @@ class ConfigurationStore:
             try:
                 self.parser_internal.read(path, encoding="utf-8")
             except configparser.Error as exc:
-                raise ConfigurationError(str(exc)) from exc
+                raise ConfigurationError(
+                    f"Configuration file could not be loaded.\n{exc}"
+                ) from exc
 
     def get(self, key: str) -> str:
         section, option = split_key(key)
@@ -114,16 +116,23 @@ def config_locations() -> list[ConfigLocation]:
         )
     else:
         global_path = os.path.join("/etc", "kpip.conf")
-    locations = [ConfigLocation("global", global_path)]
     env_config = os.environ.get("KPIP_CONFIG_FILE")
-    locations.append(ConfigLocation("user", user_config_path()))
+    # As pip documents for PIP_CONFIG_FILE: os.devnull turns every
+    # configuration file off, and a file that exists stands in for the user
+    # file.
+    if env_config == os.devnull:
+        return []
+    env_path = os.path.expanduser(env_config) if env_config else None
+    locations = [ConfigLocation("global", global_path)]
+    if not (env_path and os.path.exists(env_path)):
+        locations.extend(ConfigLocation("user", path) for path in user_config_paths())
     prefix = os.environ.get("VIRTUAL_ENV") or sys.prefix
     executable_prefix = os.path.dirname(os.path.dirname(sys.executable))
     if os.path.isfile(os.path.join(executable_prefix, "pyvenv.cfg")):
         prefix = executable_prefix
     locations.append(ConfigLocation("site", os.path.join(prefix, CONFIG_BASENAME)))
-    if env_config:
-        locations.append(ConfigLocation("env", os.path.expanduser(env_config)))
+    if env_path:
+        locations.append(ConfigLocation("env", env_path))
     return locations
 
 
@@ -151,11 +160,26 @@ def new_parser() -> configparser.RawConfigParser:
     return raw_config_parser_class()()
 
 
-def user_config_path() -> str:
+def user_config_paths() -> list[str]:
+    """The user configuration files, the later overriding the earlier.
+
+    The file lives in the platform's user config directory, as pip's does:
+    ``$XDG_CONFIG_HOME/kpip`` or ``~/.config/kpip`` on Linux, the
+    Application Support directory on macOS, ``%APPDATA%`` on Windows. It
+    used to be ``~/.config/kpip.conf`` unless XDG_CONFIG_HOME was set, and
+    ``$XDG_CONFIG_HOME/kpip/kpip.conf`` when it was -- two files for one
+    home directory -- so both are still read, first.
+    """
+    from kpip.core.appdirs import user_config_dir
+
+    paths = [os.path.join(os.path.expanduser("~"), ".config", CONFIG_BASENAME)]
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
-        return os.path.join(xdg, "kpip", CONFIG_BASENAME)
-    return os.path.join(os.path.expanduser("~"), ".config", CONFIG_BASENAME)
+        # Where it was read from with XDG_CONFIG_HOME set, on every platform;
+        # macOS's own directory ignores the variable.
+        paths.append(os.path.join(xdg, "kpip", CONFIG_BASENAME))
+    paths.append(os.path.join(user_config_dir("kpip"), CONFIG_BASENAME))
+    return list(dict.fromkeys(paths))
 
 
 class SourceConfig:
@@ -184,11 +208,10 @@ def load_source_config(command: str | None = None) -> SourceConfig:
 
     store = ConfigurationStore()
 
-    try:
-        store.load()
-
-    except ConfigurationError:
-        return SourceConfig([], DEFAULT_INDEX_URL, [], False)
+    # A file that does not parse is an error, not an empty configuration:
+    # dropping it would drop its valid settings too, and an install that
+    # was told ``no-index`` would quietly go to PyPI.
+    store.load()
 
     def configured(option: str) -> str | None:
         if command is not None:

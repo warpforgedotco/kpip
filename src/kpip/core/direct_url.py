@@ -210,45 +210,22 @@ class DirectUrl:
 
         parsed = urllib.parse.urlsplit(self.url)
         redacted_url = self.url
-        if parsed.scheme != "ssh" and "@" in parsed.netloc:
-            auth, host = parsed.netloc.rsplit("@", 1)
-            if not (auth.startswith("${") and auth.endswith("}")):
-                if ":" in auth:
-                    user, _, password = auth.partition(":")
-                    if user.startswith("${") and user.endswith("}"):
-                        user = ""
-                    if password.startswith("${") and password.endswith("}"):
-                        if self.vcs_info is not None:
-                            redacted_url = urllib.parse.urlunsplit(
-                                (
-                                    parsed.scheme,
-                                    parsed.netloc,
-                                    parsed.path,
-                                    parsed.query,
-                                    parsed.fragment,
-                                ),
-                            )
-                    else:
-                        netloc = host if self.vcs_info is not None else parsed.netloc
-                        redacted_url = urllib.parse.urlunsplit(
-                            (
-                                parsed.scheme,
-                                netloc,
-                                parsed.path,
-                                parsed.query,
-                                parsed.fragment,
-                            ),
-                        )
-                elif not (auth.startswith("${") and auth.endswith("}")):
-                    redacted_url = urllib.parse.urlunsplit(
-                        (
-                            parsed.scheme,
-                            host,
-                            parsed.path,
-                            parsed.query,
-                            parsed.fragment,
-                        ),
-                    )
+        if "@" in parsed.netloc:
+            # The spec: a persisted url MUST be stripped of credentials, except
+            # environment-variable placeholders and git's well-known ``git``
+            # user, which name no secret. pip strips the same set.
+            # The last "@", as urlsplit reads it: an unencoded "@" in the
+            # userinfo belongs to the credentials, not the host.
+            auth, _, host = parsed.netloc.rpartition("@")
+            keep = _is_env_var_auth(auth) or (
+                auth == "git"
+                and self.vcs_info is not None
+                and self.vcs_info.vcs == "git"
+            )
+            if not keep:
+                redacted_url = urllib.parse.urlunsplit(
+                    (parsed.scheme, host, parsed.path, parsed.query, parsed.fragment),
+                )
         data: dict[str, object] = {
             "url": redacted_url,
         }
@@ -306,3 +283,21 @@ class DirectUrl:
                 if isinstance(algorithm, str) and isinstance(digest, str):
                     archive_info["hash"] = f"{algorithm}={digest}"  # ty:ignore[invalid-assignment]
         return data
+
+
+_ENV_VAR_NAME_CHARACTERS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+)
+
+
+def _is_env_var_auth(auth: str) -> bool:
+    """Whether ``auth`` is ``${NAME}`` or ``${NAME}:${NAME}``, as pip's
+    ``ENV_VAR_RE`` accepts: placeholders the installer never expanded."""
+    parts = auth.split(":")
+    return len(parts) <= 2 and all(
+        len(part) > 3
+        and part.startswith("${")
+        and part.endswith("}")
+        and _ENV_VAR_NAME_CHARACTERS.issuperset(part[2:-1])
+        for part in parts
+    )

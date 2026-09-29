@@ -26,6 +26,7 @@ from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import (
     CommandError,
     DistributionNotFound,
+    HashMismatch,
     InstallationError,
     ResolutionError,
 )
@@ -1422,35 +1423,81 @@ def run_install(args: list[str]) -> int:
                     retained.append(candidate)
             plan = plan.replace(candidates=tuple(retained))
 
+        for candidate in plan.candidates:
+            yanked_reason = getattr(candidate, "yanked_reason", None)
+            if yanked_reason is not None:
+                # PEP 592: installing a yanked release should warn, with the
+                # reason the index gave.
+                print(
+                    "WARNING: The candidate selected for download or install is "
+                    f"a yanked version: {candidate.name!r} candidate (version "
+                    f"{candidate.version} at {getattr(candidate, 'source_url', '')})"
+                    f"\nReason for being yanked: {yanked_reason or '<none given>'}",
+                    file=sys.stderr,
+                )
+
+        if execution.bundle.require_hashes:
+            from kpip.resolution.hash_checking import enforce_dependency_hashes
+
+            enforce_dependency_hashes(
+                plan.candidates,
+                hashed_names={
+                    *(
+                        item.req.canonical_name
+                        for item in execution.requirements
+                        if item.req is not None and item.hash_options
+                    ),
+                    *(
+                        parse_requirement(raw).canonical_name
+                        for raw in (
+                            *execution.bundle.requirement_hashes,
+                            *execution.bundle.constraint_hashes,
+                        )
+                    ),
+                },
+                checked_names=requested_roots,
+            )
+
         if plan.candidates and (
-            not execution.options.dry_run or bool(execution.bundle.requirement_hashes)
+            not execution.options.dry_run
+            or bool(execution.bundle.requirement_hashes)
+            or bool(execution.bundle.constraint_hashes)
         ):
-            if execution.bundle.requirement_hashes:
+            user_hashes = [
+                *execution.bundle.requirement_hashes.items(),
+                *execution.bundle.constraint_hashes.items(),
+            ]
+            if user_hashes:
+                # A local archive is used where it lies, not downloaded, so
+                # it is checked here -- against every requirement and
+                # constraint that hashes it; each must allow its digest.
                 for candidate in plan.candidates:
-                    expected = {}
-                    for raw, hashes in execution.bundle.requirement_hashes.items():
-                        if (
-                            canonicalize_name(raw.split("==", 1)[0].strip())
-                            == candidate.canonical_name
-                        ):
-                            expected = hashes
-                            break
-                    if (
-                        expected
-                        and candidate.source_url
+                    if not (
+                        candidate.source_url
                         and candidate.source_url.startswith("file:")
                     ):
-                        path = url_to_path(candidate.source_url)
-                        actual = file_hashes(path)["sha256"]
-                        allowed = expected.get("sha256", [])
-                        if expected and not allowed:
-                            raise InstallationError(
-                                "THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.",
-                            )
-                        if allowed and actual not in allowed:
-                            raise InstallationError(
-                                "THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.\n"
-                                f"Expected sha256 {allowed[0]}\nGot        {actual}",
+                        continue
+                    expected = [
+                        hashes
+                        for raw, hashes in user_hashes
+                        if parse_requirement(raw).canonical_name
+                        == candidate.canonical_name
+                    ]
+                    if not expected:
+                        continue
+                    actual = file_hashes(url_to_path(candidate.source_url))["sha256"]
+                    for hashes in expected:
+                        allowed = hashes.get("sha256", [])
+                        if actual not in allowed:
+                            raise HashMismatch(
+                                f"{HashMismatch.head}\n"
+                                f"    {candidate.name}=={candidate.version} "
+                                f"from {candidate.source_url}:\n"
+                                + "".join(
+                                    f"        Expected sha256 {value}\n"
+                                    for value in allowed
+                                )
+                                + f"             Got        {actual}",
                             )
             pycompile = not execution.options.no_compile
             materialized_candidates = prepare_install_candidates(
@@ -1485,7 +1532,12 @@ def run_install(args: list[str]) -> int:
 
         for candidate in plan.candidates:
             requested = requested_extras_by_name.get(candidate.canonical_name, set())
-            provided = set(getattr(candidate, "provided_extras", ()))
+            # Compared normalized, as core metadata requires: a header of
+            # ``Foo_Bar`` provides the requested ``foo-bar``.
+            provided = {
+                canonicalize_name(extra)
+                for extra in getattr(candidate, "provided_extras", ())
+            }
             for extra in sorted(requested - provided):
                 print(
                     f"WARNING: {candidate.name} {candidate.version} does not provide the extra '{extra}'",
