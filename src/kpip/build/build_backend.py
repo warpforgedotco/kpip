@@ -13,9 +13,12 @@ import io
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
+import threading
 
 try:
     from tomllib import loads
@@ -32,8 +35,9 @@ from kpip.core.errors import BuildError
 from kpip.core.packaging import canonicalize_name, parse_requirement
 from kpip.core.versions import InvalidVersion, Version
 from kpip.core.subprocesses import call_subprocess
-from kpip.core.interpreter import build_interpreter, is_own_interpreter
-from kpip.install.build_env.isolated_venv import create_isolated_venv
+from kpip.core.appdirs import command_cache_arguments
+from kpip.core.interpreter import build_interpreter, is_compiled, is_own_interpreter
+from kpip.install.build_env.isolated_venv import CreatedVenv, create_isolated_venv
 
 
 LEGACY_SETUPTOOLS_REQUIREMENT = "setuptools>=40.8.0,<82"
@@ -280,117 +284,273 @@ class BackendRunner:
 
             return
 
-        with tempfile.TemporaryDirectory(prefix="pip-build-env-") as env_dir:
-            env_path = env_dir
-
-            venv = create_isolated_venv(
-                env_path,
-                with_pip=bool(self.spec.requirements),
-                python=build_interpreter(),
+        try:
+            venv = _prepared_environment(
+                self.source_dir, self.spec, self.build_constraints
             )
-            python = venv.python_executable
 
-            if self.spec.requirements:
-                constraint_args = [
-                    argument
-                    for constraint in self.build_constraints or ()
-                    for argument in ("--constraint", constraint)
-                ]
+        except subprocess.CalledProcessError as exc:
+            detail = "\n".join(part for part in (exc.stdout, exc.stderr) if part)
 
-                environment = os.environ.copy()
-
-                environment.pop("KPIP_CONSTRAINT", None)
-
-                local_find_links = shlex.split(environment.get("KPIP_FIND_LINKS", ""))
-
-                install_options = [
-                    option
-                    for link in local_find_links
-                    if link
-                    for option in ("--find-links", link)
-                ]
-
-                install_options.insert(0, "--ignore-installed")
-
-                no_index = environment.get("KPIP_NO_INDEX", "").lower()
-
-                if no_index in {"1", "true", "yes", "on"}:
-                    install_options.insert(0, "--no-index")
-
-                else:
-                    environment.pop("KPIP_NO_INDEX", None)
-
-                if any(
-                    requirement.split("[", 1)[0].split(" ", 1)[0].lower()
-                    == "setuptools"
-                    for requirement in self.spec.requirements
-                ):
-                    install_options.extend(("--only-binary", "setuptools"))
-
-                try:
-                    subprocess.run(
-                        [
-                            python,
-                            "-m",
-                            "pip",
-                            "install",
-                            *install_options,
-                            *constraint_args,
-                            *self.spec.requirements,
-                        ],
-                        check=True,
-                        cwd=self.source_dir,
-                        env=environment,
-                        capture_output=True,
-                        text=True,
+            if (
+                not self.build_constraints
+                and self.spec.name.startswith("setuptools.build_meta")
+                and (
+                    "Cannot import 'setuptools.build_meta'" in detail
+                    or "No matching distribution found for setuptools" in detail
+                    or "Could not find a version that satisfies the requirement setuptools"
+                    in detail
+                )
+            ) and (
+                # Only this process's own interpreter can be asked
+                # in-process whether it has setuptools.
+                is_own_interpreter(build_interpreter())
+                and importlib.util.find_spec("setuptools.build_meta")  # type: ignore
+                is not None
+            ):
+                with tempfile.TemporaryDirectory(
+                    prefix="pip-build-metadata-",
+                ) as metadata_dir:
+                    caller = BuildBackendHookCaller(
+                        os.fspath(self.source_dir),
+                        self.spec.name,
+                        backend_path=list(self.spec.backend_path) or None,
+                        python_executable=build_interpreter(),
                     )
 
-                except subprocess.CalledProcessError as exc:
-                    detail = "\n".join(
-                        part for part in (exc.stdout, exc.stderr) if part
-                    )
+                    yield caller, metadata_dir
 
-                    if (
-                        not self.build_constraints
-                        and self.spec.name.startswith("setuptools.build_meta")
-                        and (
-                            "Cannot import 'setuptools.build_meta'" in detail
-                            or "No matching distribution found for setuptools" in detail
-                            or "Could not find a version that satisfies the requirement setuptools"
-                            in detail
-                        )
-                    ) and (
-                        # Only this process's own interpreter can be asked
-                        # in-process whether it has setuptools.
-                        is_own_interpreter(build_interpreter())
-                        and importlib.util.find_spec("setuptools.build_meta")  # type: ignore
-                        is not None
-                    ):
-                        with tempfile.TemporaryDirectory(
-                            prefix="pip-build-metadata-",
-                        ) as metadata_dir:
-                            caller = BuildBackendHookCaller(
-                                os.fspath(self.source_dir),
-                                self.spec.name,
-                                backend_path=list(self.spec.backend_path) or None,
-                                python_executable=build_interpreter(),
-                            )
+                return
 
-                            yield caller, metadata_dir
+            raise RuntimeError(detail or str(exc)) from exc
 
-                        return
-
-                    raise RuntimeError(detail or str(exc)) from exc
-
+        # The environment is shared; what a build writes goes here.
+        with tempfile.TemporaryDirectory(prefix="pip-build-env-") as scratch:
             caller = BuildBackendHookCaller(
                 os.fspath(self.source_dir),
                 self.spec.name,
                 backend_path=list(self.spec.backend_path) or None,
-                python_executable=python,
+                python_executable=venv.python_executable,
                 scripts_dir=venv.bin_path,
             )
 
-            yield caller, env_path
+            yield caller, scratch
+
+
+class _PreparedEnvironment:
+    """One isolated build environment, made by the first build to need it."""
+
+    __slots__ = ("lock", "venv")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+        self.venv: CreatedVenv | None = None
+
+
+_prepared_environments: dict[tuple[object, ...], _PreparedEnvironment] = {}
+
+_prepared_environments_lock = threading.Lock()
+
+_prepared_environments_root: list[str] = []
+
+
+def _environments_root() -> str:
+    """A directory for this process's build environments, removed at exit."""
+    with _prepared_environments_lock:
+        if not _prepared_environments_root:
+            import atexit
+            import shutil
+
+            root = tempfile.mkdtemp(prefix="pip-build-envs-")
+
+            atexit.register(shutil.rmtree, root, ignore_errors=True)
+
+            _prepared_environments_root.append(root)
+
+        return _prepared_environments_root[0]
+
+
+def _installs_build_requirements() -> bool:
+    """Whether kpip installs a build environment's requirements itself.
+
+    A bare environment and a kpip subprocess take 0.4 s where a pip-seeded
+    one and pip take 4.2 s, and the requirements come from kpip's own index
+    settings and cache, as uv's do. That needs kpip to run as ``-m kpip``
+    under the build interpreter: not a compiled binary, whose
+    ``sys.executable`` is the binary, and not another interpreter, whose
+    wheels kpip would have to pick for it. Those keep pip.
+    """
+    return not is_compiled() and is_own_interpreter(build_interpreter())
+
+
+def _prefix_is_environment(env_path: str, venv: CreatedVenv) -> bool:
+    """Whether ``--prefix env_path`` installs where ``venv`` imports from."""
+    from kpip.host.locations.sysconfig_scheme import get_scheme
+
+    scheme = get_scheme("", prefix=env_path)
+
+    libraries = {os.path.realpath(path) for path in venv.lib_dirs}
+
+    return (
+        os.path.realpath(scheme.purelib) in libraries
+        and os.path.realpath(scheme.platlib) in libraries
+        and os.path.realpath(scheme.scripts) == os.path.realpath(venv.bin_path)
+    )
+
+
+def _prepared_environment(
+    source_dir: str | os.PathLike[str],
+    spec: BackendSpec,
+    build_constraints: list[str] | None,
+) -> CreatedVenv:
+    """The isolated environment for ``spec``'s requirements, made once.
+
+    Standing one up is a virtualenv seeded with pip and a pip process to
+    install the backend's requirements into it: 4.2 s of a 4.5 s metadata
+    read, paid 19 times over by a cold airflow lock whose sdists all ask for
+    the same setuptools. Nothing but those requirements is ever installed
+    into it and a hook only reads it, so every build with the same
+    requirements, constraints and installer settings shares the first one's.
+    Raises ``subprocess.CalledProcessError`` when pip cannot install them;
+    a failure is not kept, so the next build tries again.
+    """
+    constraint_args = [
+        argument
+        for constraint in build_constraints or ()
+        for argument in ("--constraint", constraint)
+    ]
+
+    environment = os.environ.copy()
+
+    environment.pop("KPIP_CONSTRAINT", None)
+
+    installs_itself = bool(spec.requirements) and _installs_build_requirements()
+
+    local_find_links = shlex.split(environment.get("KPIP_FIND_LINKS", ""))
+
+    install_options = [
+        option for link in local_find_links if link for option in ("--find-links", link)
+    ]
+
+    install_options.insert(0, "--ignore-installed")
+
+    no_index = environment.get("KPIP_NO_INDEX", "").lower()
+
+    if no_index in {"1", "true", "yes", "on"}:
+        install_options.insert(0, "--no-index")
+
+    else:
+        environment.pop("KPIP_NO_INDEX", None)
+
+    # setuptools is the backend most builds need; building it from source
+    # would need a backend of its own.
+    only_binary = (
+        ["--only-binary", "setuptools"]
+        if any(
+            requirement.split("[", 1)[0].split(" ", 1)[0].lower() == "setuptools"
+            for requirement in spec.requirements
+        )
+        else []
+    )
+
+    install_options.extend(only_binary)
+
+    key = (
+        build_interpreter(),
+        installs_itself,
+        spec.requirements,
+        tuple(install_options),
+        tuple(constraint_args),
+        # pip reads a relative constraint against the source directory.
+        os.fspath(source_dir) if constraint_args else None,
+        tuple(
+            sorted(
+                item
+                for item in environment.items()
+                if item[0].startswith(("PIP_", "KPIP_"))
+            )
+        ),
+    )
+
+    with _prepared_environments_lock:
+        prepared = _prepared_environments.get(key)
+
+        if prepared is None:
+            prepared = _prepared_environments[key] = _PreparedEnvironment()
+
+    with prepared.lock:
+        if prepared.venv is not None:
+            return prepared.venv
+
+        env_path = tempfile.mkdtemp(prefix="pip-build-env-", dir=_environments_root())
+
+        try:
+            venv = create_isolated_venv(
+                env_path,
+                with_pip=bool(spec.requirements) and not installs_itself,
+                python=build_interpreter(),
+            )
+
+            if installs_itself and not _prefix_is_environment(env_path, venv):
+                # A layout kpip's --prefix would not match: pip installs
+                # into the environment from inside it instead.
+                shutil.rmtree(env_path, ignore_errors=True)
+                venv = create_isolated_venv(
+                    env_path, with_pip=True, python=build_interpreter()
+                )
+                installs_itself = False
+
+            if installs_itself:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "kpip",
+                        "install",
+                        "--quiet",
+                        "--no-compile",
+                        "--ignore-installed",
+                        "--prefix",
+                        env_path,
+                        *command_cache_arguments(),
+                        *only_binary,
+                        *constraint_args,
+                        *spec.requirements,
+                    ],
+                    check=True,
+                    cwd=source_dir,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                )
+
+            elif spec.requirements:
+                subprocess.run(
+                    [
+                        venv.python_executable,
+                        "-m",
+                        "pip",
+                        "install",
+                        *install_options,
+                        *constraint_args,
+                        *spec.requirements,
+                    ],
+                    check=True,
+                    cwd=source_dir,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                )
+
+        except BaseException:
+            shutil.rmtree(env_path, ignore_errors=True)
+
+            raise
+
+        prepared.venv = venv
+
+        return venv
 
 
 def build_wheel(
