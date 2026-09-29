@@ -301,7 +301,7 @@ def _select_distribution(
     raise InstallationError("Cannot select a distribution from pylock package")
 
 
-def _best_wheel(wheels: list[object]) -> dict[str, object] | None:
+def _best_wheel(wheels: list[Any]) -> dict[str, Any] | None:
     """The wheel this interpreter ranks first, or None if none is compatible.
 
     A lock lists a package's wheels for every platform it covers; PEP 751
@@ -310,7 +310,7 @@ def _best_wheel(wheels: list[object]) -> dict[str, object] | None:
     """
     from kpip.core.wheel import parse_wheel_file, wheel_tag_rank
 
-    best: dict[str, object] | None = None
+    best: dict[str, Any] | None = None
     best_rank: int | None = None
     for distribution in wheels:
         if not isinstance(distribution, dict):

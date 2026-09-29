@@ -301,14 +301,14 @@ def _open_resolver_wheel_archive(
     return _ResolverWheelArchive(archive)
 
 
-def provides_extras(metadata: object, requested: frozenset[str]) -> bool:
+def provides_extras(metadata: CandidateMetadata, requested: frozenset[str]) -> bool:
     """Whether ``metadata`` declares every one of ``requested``.
 
     Requested extras are normalized; a ``Provides-Extra`` header is stored
     as written, and core metadata says the two are compared normalized, so
     ``Foo_Bar`` provides ``foo-bar``.
     """
-    provided = getattr(metadata, "provided_extras", ())
+    provided = metadata.provided_extras
     if requested <= provided:
         return True
     return requested <= {canonicalize_name(extra) for extra in provided}
