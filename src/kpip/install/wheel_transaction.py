@@ -338,18 +338,12 @@ def install_wheel_internal(
                     len(relative_parts) == 2
                     and relative_parts[0] == validated_dist_info
                 )
-                rewrite_metadata = (
-                    own_metadata
-                    and relative_name == "METADATA"
-                    and candidate.name.isalpha()
-                )
                 script_member = (
                     len(relative_parts) >= 2 and relative_parts[-2] == "scripts"
                 )
                 is_record = own_metadata and relative_name == "RECORD"
                 direct_content = (
                     getattr(member, "source_path", None) is None
-                    and not rewrite_metadata
                     and not script_member
                     and not is_record
                     and member.file_size <= DIRECT_CONTENT_LIMIT
@@ -363,7 +357,7 @@ def install_wheel_internal(
                     if source_parent_text not in stage_directories:
                         os.makedirs(source_parent_text, exist_ok=True)
                         stage_directories.add(source_parent_text)
-                if rewrite_metadata or script_member:
+                if script_member:
                     contents = archive.read(member)  # ty:ignore[invalid-argument-type]
                 elif is_record:
                     contents = None
@@ -407,15 +401,6 @@ def install_wheel_internal(
                     else:
                         record_metadata[source_text] = metadata
                     contents = None
-                if rewrite_metadata:
-                    assert contents is not None
-                    lines = contents.decode("utf-8").splitlines(keepends=True)
-                    for index, line in enumerate(lines):
-                        if line.lower().startswith("name:"):
-                            ending = "\n" if line.endswith("\n") else ""
-                            lines[index] = f"Name: {candidate.name.lower()}{ending}"
-                            contents = "".join(lines).encode("utf-8")
-                            break
                 if direct and contents is not None and not direct_content:
                     write_direct(destination_text, contents, zip_mode(member))  # ty:ignore[invalid-argument-type]
                 if contents is not None and not direct_content and not direct:

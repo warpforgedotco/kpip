@@ -32,7 +32,7 @@ from kpip.install.wheel_scripts import (
     generate_entry_point_files,
     rewrite_shebang,
 )
-from kpip.host.clone import clone_path, replace_contents
+from kpip.host.clone import clone_path
 
 if TYPE_CHECKING:
     from types import CodeType
@@ -314,38 +314,6 @@ def _write_new_file(path: str, contents: bytes) -> tuple[str, str]:
     return record_metadata_internal(contents)
 
 
-def _rewrite_metadata(
-    path: str,
-    candidate: WheelInstallCandidate,
-) -> tuple[str, str] | None:
-    """Normalize METADATA's Name; returns the rewritten file's RECORD hash
-    and size, or ``None`` when the file was already normalized."""
-
-    with open(path, "rb") as file:
-        contents = file.read()
-
-    lines = contents.decode("utf-8").splitlines(keepends=True)
-
-    rewritten = contents
-
-    for index, line in enumerate(lines):
-        if line.lower().startswith("name:"):
-            ending = "\n" if line.endswith("\n") else ""
-
-            lines[index] = f"Name: {candidate.name.lower()}{ending}"
-
-            rewritten = "".join(lines).encode("utf-8")
-
-            break
-
-    if rewritten != contents:
-        replace_contents(path, rewritten)
-
-        return record_metadata_internal(rewritten)
-
-    return None
-
-
 def _file_metadata(path: str) -> tuple[str, str]:
     with open(path, "rb") as file:
         return record_metadata_internal(file.read())
@@ -514,15 +482,9 @@ def _finalize_wheel(
 ) -> None:
     archive = plan.archive
 
-    candidate = plan.candidate
-
     dist_info = archive.dist_info
 
     dist_info_root = os.path.join(stage, dist_info)
-
-    metadata_path = os.path.join(dist_info_root, "METADATA")
-
-    metadata_rewritten = _rewrite_metadata(metadata_path, candidate)
 
     script_members: set[str] = set()
 
@@ -643,10 +605,7 @@ def _finalize_wheel(
 
         path = os.path.join(stage, installed_relative)
 
-        if installed_relative == f"{dist_info}/METADATA" and metadata_rewritten:
-            digest, size = metadata_rewritten
-
-        elif installed_relative in script_members:
+        if installed_relative in script_members:
             digest, size = _file_metadata(path)
 
         rows.append((installed_relative, digest, size))

@@ -43,7 +43,9 @@ class Tests_UserSite:
             "('initools').metadata['Name'])",
         )
         project_name = result.stdout.strip()
-        assert project_name == "initools", project_name
+        # The name as the project spells it: METADATA is installed as the
+        # wheel ships it, as pip installs it.
+        assert project_name == "INITools", project_name
 
     @pytest.mark.xfail
     @pytest.mark.network
