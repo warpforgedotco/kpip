@@ -983,11 +983,14 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
 
     return tuple(merged)
 
+def _range_from_intervals(intervals: tuple[Interval, ...]) -> Range[Any]:
+    """Rebuild a pickled compiled range as the ``Range`` this process uses."""
+    return Range(intervals)
+
+
 try:
     from . import _cranges
-except ImportError:
-    pass
-else:
+
     _cranges._install(
         NEGATIVE_INFINITY,
         POSITIVE_INFINITY,
@@ -995,5 +998,11 @@ else:
         _SUBSET_REL,
         _DISJOINT_REL,
         _OVERLAPPING_REL,
+        _range_from_intervals,
     )
+except (ImportError, TypeError):
+    # No extension, or one built from an older _cranges.py whose _install
+    # takes other arguments: keep the class above.
+    pass
+else:
     Range = _cranges.Range  # type: ignore[misc,assignment]

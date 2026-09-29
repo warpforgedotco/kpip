@@ -180,6 +180,35 @@ def test_a_version_never_compares_with_text() -> None:
         "2.0" in candidate  # noqa: B015
 
 
+@pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+def test_a_pickle_loads_without_the_extension(protocol: int) -> None:
+    """It names only what the pure-Python ``ranges`` also has."""
+    candidate = ranges.Range.between(
+        Version("1"), Version("2")
+    ) | ranges.Range.at_least(Version("3"))
+    data = pickle.dumps(candidate, protocol)
+
+    assert b"_cranges" not in data
+    assert pickle.loads(data) == candidate
+
+
+def test_a_pure_pickle_loads_as_the_compiled_class(pure: Any) -> None:
+    """What the pure class pickles, rebuilt as pickle does where it is compiled."""
+    original = pure.Range.between(Version("1"), Version("2")) | pure.Range.singleton(
+        Version("3")
+    )
+    new_object, (cls,), state = original.__reduce_ex__(2)[:3]
+    assert cls is pure.Range
+
+    # ``ranges.Range`` is the compiled class in a process that has it.
+    restored = new_object(ranges.Range)
+    restored.__setstate__(state)
+
+    assert restored == ranges.Range.between(
+        Version("1"), Version("2")
+    ) | ranges.Range.singleton(Version("3"))
+
+
 def test_an_unpickled_sentinel_is_still_an_infinity() -> None:
     """Unpickling copies the sentinels; they must not become ordinary bounds."""
     unbounded = ranges.Range.less_than(Version("2"))

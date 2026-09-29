@@ -761,7 +761,7 @@ index fba4d17..ff46dcd 100644
  
      if result is None:
 diff --git a/src/kpip/_vendor/nab_resolver/ranges.py b/src/kpip/_vendor/nab_resolver/ranges.py
-index 4385af4..2047f5d 100644
+index 4385af4..e80ec69 100644
 --- a/src/kpip/_vendor/nab_resolver/ranges.py
 +++ b/src/kpip/_vendor/nab_resolver/ranges.py
 @@ -13,13 +13,14 @@ provider uses int; the Python provider uses packaging.version.Version.
@@ -1468,16 +1468,19 @@ index 4385af4..2047f5d 100644
  
      merged: list[Interval] = [intervals[0]]
      for lower, lower_inclusive, upper, upper_inclusive in intervals[1:]:
-@@ -790,3 +982,18 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
+@@ -790,3 +982,27 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
              merged.append((lower, lower_inclusive, upper, upper_inclusive))
  
      return tuple(merged)
 +
++def _range_from_intervals(intervals: tuple[Interval, ...]) -> Range[Any]:
++    """Rebuild a pickled compiled range as the ``Range`` this process uses."""
++    return Range(intervals)
++
++
 +try:
 +    from . import _cranges
-+except ImportError:
-+    pass
-+else:
++
 +    _cranges._install(
 +        NEGATIVE_INFINITY,
 +        POSITIVE_INFINITY,
@@ -1485,14 +1488,20 @@ index 4385af4..2047f5d 100644
 +        _SUBSET_REL,
 +        _DISJOINT_REL,
 +        _OVERLAPPING_REL,
++        _range_from_intervals,
 +    )
++except (ImportError, TypeError):
++    # No extension, or one built from an older _cranges.py whose _install
++    # takes other arguments: keep the class above.
++    pass
++else:
 +    Range = _cranges.Range  # type: ignore[misc,assignment]
 diff --git a/src/kpip/_vendor/nab_resolver/_cranges.py b/src/kpip/_vendor/nab_resolver/_cranges.py
 new file mode 100644
-index 0000000..5ca3277
+index 0000000..8f08be2
 --- /dev/null
 +++ b/src/kpip/_vendor/nab_resolver/_cranges.py
-@@ -0,0 +1,1126 @@
+@@ -0,0 +1,1145 @@
 +"""Compiled implementation of :class:`nab_resolver.ranges.Range`.
 +
 +Cython pure-Python-mode source: this file only works compiled, and
@@ -1562,12 +1571,13 @@ index 0000000..5ca3277
 +REL_SUBSET = cython.declare(object, None)
 +REL_DISJOINT = cython.declare(object, None)
 +REL_OVERLAPPING = cython.declare(object, None)
++FROM_INTERVALS = cython.declare(object, None)
 +
 +NO_BOUND = cython.declare(Bd)  # zero-initialised: an infinity
 +
 +
-+def _install(neg, pos, empty, subset, disjoint, overlapping):
-+    global NEG, POS, NEG_TYPE, POS_TYPE
++def _install(neg, pos, empty, subset, disjoint, overlapping, from_intervals):
++    global NEG, POS, NEG_TYPE, POS_TYPE, FROM_INTERVALS
 +    global REL_EMPTY, REL_SUBSET, REL_DISJOINT, REL_OVERLAPPING
 +    NEG = neg
 +    POS = pos
@@ -1577,6 +1587,7 @@ index 0000000..5ca3277
 +    REL_SUBSET = subset
 +    REL_DISJOINT = disjoint
 +    REL_OVERLAPPING = overlapping
++    FROM_INTERVALS = from_intervals
 +
 +
 +# -- bounds -------------------------------------------------------------------
@@ -1736,7 +1747,7 @@ index 0000000..5ca3277
 +
 +
 +@cython.cfunc
-+def adopt(cls: type, buf: cython.pointer(Buf)) -> "Range":
++def adopt(cls: type, buf: cython.pointer(Buf)) -> Range:
 +    """A new ``cls`` owning ``buf``'s intervals, with references to the bounds.
 +
 +    Takes ``buf.data``; the caller frees it only if this raises first.
@@ -2083,16 +2094,16 @@ index 0000000..5ca3277
 +            return NotImplemented
 +        return difference(self, other)
 +
-+    def is_subset(self, other: "Range") -> bool:
++    def is_subset(self, other: Range) -> bool:
 +        return is_subset(self, other)
 +
 +    def is_superset(self, other):
 +        return other.is_subset(self)
 +
-+    def is_disjoint(self, other: "Range") -> bool:
++    def is_disjoint(self, other: Range) -> bool:
 +        return is_disjoint(self, other)
 +
-+    def relation(self, other: "Range"):
++    def relation(self, other: Range):
 +        return relation(self, other)
 +
 +    # -- identity -------------------------------------------------------------
@@ -2127,27 +2138,44 @@ index 0000000..5ca3277
 +        h: cython.Py_hash_t = self._hash
 +        i: cython.Py_ssize_t
 +        item: cython.Py_hash_t
++        # Unsigned, as CPython hashes a tuple: the multiplications overflow,
++        # which is defined for an unsigned integer and undefined for a signed.
++        mixed: cython.size_t
 +        if h == 0:
-+            h = 0x345678
++            mixed = 0x345678
 +            for i in range(self.n):
 +                if self.iv[i].lo.v == cython.NULL:
 +                    item = 0x2B
 +                else:
 +                    item = PyObject_Hash(cython.cast(object, self.iv[i].lo.v))
-+                h = (h ^ item) * 1000003
++                mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
 +                if self.iv[i].hi.v == cython.NULL:
 +                    item = 0x3D
 +                else:
 +                    item = PyObject_Hash(cython.cast(object, self.iv[i].hi.v))
-+                h = (h ^ item) * 1000003
-+                h ^= (self.iv[i].lo_inc << 1) | self.iv[i].hi_inc
++                mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
++                mixed ^= (self.iv[i].lo_inc << 1) | self.iv[i].hi_inc
++            h = cython.cast(cython.Py_hash_t, mixed)
 +            if h == 0 or h == -1:
 +                h = 1
 +            self._hash = h
 +        return h
 +
 +    def __reduce__(self):
++        if type(self) is Range:
++            # Through the name both implementations answer to, so a pickle
++            # loads whether or not the reading process has the extension.
++            return (FROM_INTERVALS, (self._intervals,))
 +        return (type(self), (self._intervals,))
++
++    def __setstate__(self, state):
++        """Load a pickle of the pure-Python class, whose state is ``(intervals,)``.
++
++        ``ranges.Range`` names this class in a process that has it, so a
++        pickle written without the extension is rebuilt here.
++        """
++        (intervals,) = state
++        self.__init__(intervals)
 +
 +    def __repr__(self):
 +        return f"Range({self._intervals!r})"

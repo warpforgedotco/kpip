@@ -67,12 +67,13 @@ REL_EMPTY = cython.declare(object, None)
 REL_SUBSET = cython.declare(object, None)
 REL_DISJOINT = cython.declare(object, None)
 REL_OVERLAPPING = cython.declare(object, None)
+FROM_INTERVALS = cython.declare(object, None)
 
 NO_BOUND = cython.declare(Bd)  # zero-initialised: an infinity
 
 
-def _install(neg, pos, empty, subset, disjoint, overlapping):
-    global NEG, POS, NEG_TYPE, POS_TYPE
+def _install(neg, pos, empty, subset, disjoint, overlapping, from_intervals):
+    global NEG, POS, NEG_TYPE, POS_TYPE, FROM_INTERVALS
     global REL_EMPTY, REL_SUBSET, REL_DISJOINT, REL_OVERLAPPING
     NEG = neg
     POS = pos
@@ -82,6 +83,7 @@ def _install(neg, pos, empty, subset, disjoint, overlapping):
     REL_SUBSET = subset
     REL_DISJOINT = disjoint
     REL_OVERLAPPING = overlapping
+    FROM_INTERVALS = from_intervals
 
 
 # -- bounds -------------------------------------------------------------------
@@ -632,27 +634,44 @@ class Range:
         h: cython.Py_hash_t = self._hash
         i: cython.Py_ssize_t
         item: cython.Py_hash_t
+        # Unsigned, as CPython hashes a tuple: the multiplications overflow,
+        # which is defined for an unsigned integer and undefined for a signed.
+        mixed: cython.size_t
         if h == 0:
-            h = 0x345678
+            mixed = 0x345678
             for i in range(self.n):
                 if self.iv[i].lo.v == cython.NULL:
                     item = 0x2B
                 else:
                     item = PyObject_Hash(cython.cast(object, self.iv[i].lo.v))
-                h = (h ^ item) * 1000003
+                mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
                 if self.iv[i].hi.v == cython.NULL:
                     item = 0x3D
                 else:
                     item = PyObject_Hash(cython.cast(object, self.iv[i].hi.v))
-                h = (h ^ item) * 1000003
-                h ^= (self.iv[i].lo_inc << 1) | self.iv[i].hi_inc
+                mixed = (mixed ^ cython.cast(cython.size_t, item)) * 1000003
+                mixed ^= (self.iv[i].lo_inc << 1) | self.iv[i].hi_inc
+            h = cython.cast(cython.Py_hash_t, mixed)
             if h == 0 or h == -1:
                 h = 1
             self._hash = h
         return h
 
     def __reduce__(self):
+        if type(self) is Range:
+            # Through the name both implementations answer to, so a pickle
+            # loads whether or not the reading process has the extension.
+            return (FROM_INTERVALS, (self._intervals,))
         return (type(self), (self._intervals,))
+
+    def __setstate__(self, state):
+        """Load a pickle of the pure-Python class, whose state is ``(intervals,)``.
+
+        ``ranges.Range`` names this class in a process that has it, so a
+        pickle written without the extension is rebuilt here.
+        """
+        (intervals,) = state
+        self.__init__(intervals)
 
     def __repr__(self):
         return f"Range({self._intervals!r})"
