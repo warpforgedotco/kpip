@@ -1228,7 +1228,13 @@ class NetworkSession:
         while True:
             parsed = urllib.parse.urlsplit(current_url)
             verify: bool | str = self.verify
-            if parsed.hostname and is_trusted_host(self.trusted_hosts, parsed):
+            # Nearly every session trusts no host; checking one reads the
+            # URL's port, which parses its netloc again on every request.
+            if (
+                self.trusted_hosts
+                and parsed.hostname
+                and is_trusted_host(self.trusted_hosts, parsed)
+            ):
                 verify = False
             elif verify is True and self.environ_ca_bundle is not None:
                 verify = self.environ_ca_bundle
