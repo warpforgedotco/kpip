@@ -31,6 +31,7 @@ from kpip.core.errors import CommandError, KpipError
 from kpip.core.format_control import FormatControl
 from kpip.core.hashes import file_hashes
 from kpip.core.packaging import (
+    canonicalize_name,
     marker_applies,
     normalize_python_version,
     parse_requirement,
@@ -897,6 +898,12 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         order = {name: index for index, name in enumerate(locked_order)}
 
         packages.sort(key=lambda package: order.get(str(package["name"]), len(order)))
+
+    else:
+        # By name: the order the resolver pinned them in depends on which
+        # pages arrived first, and a lock file whose entries move between
+        # runs is a diff with nothing in it.
+        packages.sort(key=lambda package: canonicalize_name(str(package["name"])))
 
     rendered = render_lock(packages)
 

@@ -955,6 +955,8 @@ def run_lock(args: list[str]) -> int | None:
             ),
         )
 
+    # By name, as cli.lock writes every lock, so either path gives one file.
+    packages.sort(key=lambda package: canonicalize_name(package[0]))
     rendered = render_wheel_lock(packages)
     # Kept for a lock that starts where this one did, and for the next lock,
     # which starts from this one; see cli.lock.record_replayable_lock for why
