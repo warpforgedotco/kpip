@@ -283,13 +283,13 @@ class IndexPageParser:
         base_url: str,
         source_url: str,
         file_url: str,
-        filename: object,
-        yanked: object,
-        hashes: object,
-        requires_python: object,
-        upload_time: object,
-        size: object,
-        metadata: object,
+        filename: Any,
+        yanked: Any,
+        hashes: Any,
+        requires_python: Any,
+        upload_time: Any,
+        size: Any,
+        metadata: Any,
     ) -> tuple[Any, tuple[int, str, str] | None]:
         """One catalog record and its release identity, from an entry's fields.
 
