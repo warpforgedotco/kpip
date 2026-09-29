@@ -25,7 +25,7 @@ from .ranges import Range
 from .types import PackageType, RangeProtocol, VersionType
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, ItemsView, Iterator, KeysView, Sequence
     from collections.abc import Set as AbstractSet
     from typing import TypeAlias
 
@@ -148,6 +148,27 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
     @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
+
+    @override
+    def items(self) -> ItemsView[PackageType, _ValueType]:
+        """Return the snapshot's items, copied at C speed while nothing is frozen.
+
+        ``Mapping.items`` iterates through ``__iter__`` and ``__getitem__``, two
+        Python calls per package, and a provider reading every hint walks every
+        package on every propagation round. Until the solution changes a
+        package, the snapshot is exactly the live map, so a copy of it is a
+        pinned view that iterates in C.
+        """
+        if not self._shadow:
+            return dict(self._live).items()
+        return super().items()
+
+    @override
+    def keys(self) -> KeysView[PackageType]:
+        """Return the snapshot's keys; see :meth:`items`."""
+        if not self._shadow:
+            return dict(self._live).keys()
+        return super().keys()
 
     def __bool__(self) -> bool:
         """Return whether the snapshot contains any packages."""

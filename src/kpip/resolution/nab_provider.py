@@ -2292,8 +2292,13 @@ class NabProvider:
         if not materializer.prepares_source_metadata:
             return
 
+        # Hints are pinned views: their keys and items come back as copies that
+        # iterate and test membership in C, where going through the Mapping
+        # protocol cost two Python calls per package per propagation round.
+        decided = decisions.keys()
+
         for package, positive_range in positive_ranges.items():
-            if package in decisions or package in self._source_metadata_started:
+            if package in decided or package in self._source_metadata_started:
                 continue
 
             requirement = self.requirements.get(package)
