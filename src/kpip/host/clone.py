@@ -518,8 +518,11 @@ def _clone_absent(
             # bits added above.  A read-only source directory cannot be
             # created read-only up front: its own children could not then be
             # written into it.  Only owner bits are added, so the directory is
-            # never briefly more permissive to anyone else.
-            shutil.copystat(source, destination, follow_symlinks=False)
+            # never briefly more permissive to anyone else.  The mode alone:
+            # a directory's timestamps and extended attributes say nothing
+            # about what is installed in it, and copying them cost a stat, a
+            # utimensat and a listxattr for each of trio's 900 directories.
+            os.chmod(destination, source_mode)
 
         except BaseException:
             shutil.rmtree(destination, ignore_errors=True)

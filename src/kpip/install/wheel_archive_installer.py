@@ -53,6 +53,13 @@ if TYPE_CHECKING:
     from kpip.install.wheel_state import InstalledWheelDistribution
 
 
+_CLONE_WORKERS = min(INSTALL_WORKERS, 4)
+"""Threads linking a batch's trees into place. Each makes a syscall per file
+or directory and takes the interpreter lock back after it, so more of them
+trade the lock rather than link faster: a warm trio install takes 0.21 s
+with 2 to 4 and 0.29 s with the machine's 20."""
+
+
 class _WheelInstallPlan:
     __slots__ = (
         "archive",
@@ -1023,7 +1030,7 @@ def install_wheels_from_archive_cache(
 
             pool = ThreadPoolExecutor(
                 max_workers=min(
-                    INSTALL_WORKERS,
+                    _CLONE_WORKERS,
                     max(len(active_archives), len(active_plans)),
                 ),
             )
