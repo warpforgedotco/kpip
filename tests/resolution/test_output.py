@@ -161,8 +161,16 @@ def test_prepare_install_candidates_treats_cache_errors_as_fallback(
     assert result[0].wheel_layout is None
 
 
-def _named(*names: str) -> list[SimpleNamespace]:
-    return [SimpleNamespace(canonical_name=name) for name in names]
+def _named(
+    *names: str, requires_python: dict[str, str] | None = None
+) -> list[SimpleNamespace]:
+    return [
+        SimpleNamespace(
+            canonical_name=name,
+            requires_python=(requires_python or {}).get(name),
+        )
+        for name in names
+    ]
 
 
 def test_installation_order_is_pips_leaves_first_requested_last() -> None:
@@ -194,3 +202,35 @@ def test_installation_order_weighs_a_cycle_by_its_longest_path() -> None:
     ordered = installation_order(_named("a", "b", "root"), graph, {"root"})
 
     assert [candidate.canonical_name for candidate in ordered] == ["b", "a", "root"]
+
+
+def test_installation_order_counts_the_interpreter_as_pip_does() -> None:
+    """``pip install --no-deps jupyter==1.0.0 jupyter-core==5.7.1`` installs
+    jupyter, then jupyter-core: jupyter-core's Requires-Python makes the
+    interpreter its child in pip's graph, so it is not a first-round leaf
+    and weighs less (pip 26.2 weighs them 3 and 1)."""
+    candidates = _named(
+        "jupyter", "jupyter-core", requires_python={"jupyter-core": ">=3.8"}
+    )
+
+    ordered = installation_order(candidates, {}, {"jupyter", "jupyter-core"})
+
+    assert [candidate.canonical_name for candidate in ordered] == [
+        "jupyter",
+        "jupyter-core",
+    ]
+
+
+def test_installation_order_leaves_the_interpreter_out_when_ignored() -> None:
+    candidates = _named(
+        "jupyter", "jupyter-core", requires_python={"jupyter-core": ">=3.8"}
+    )
+
+    ordered = installation_order(
+        candidates, {}, {"jupyter", "jupyter-core"}, ignore_requires_python=True
+    )
+
+    assert [candidate.canonical_name for candidate in ordered] == [
+        "jupyter-core",
+        "jupyter",
+    ]
