@@ -141,9 +141,9 @@ def test_extract_permits_are_returned(tmp_path: Path) -> None:
     for index in range(3):
         prepare_cached_wheels((_candidate(wheel),), str(tmp_path / f"cache{index}"))
 
-    taken = cache_module._borrow_extract_workers(cache_module.INSTALL_WORKERS - 1)
+    taken = cache_module._borrow_extract_workers(cache_module.EXTRACT_WORKERS - 1)
     try:
-        assert taken == max(0, cache_module.INSTALL_WORKERS - 1)
+        assert taken == max(0, cache_module.EXTRACT_WORKERS - 1)
     finally:
         cache_module._return_extract_workers(taken)
 
@@ -210,3 +210,93 @@ def test_extracted_files_take_the_umask_and_keep_executable_bits(
 
     assert (tree / "modes/plain.py").stat().st_mode & 0o777 == 0o666 & ~umask
     assert (tree / "modes/tool.sh").stat().st_mode & 0o777 == 0o777 & ~umask
+
+
+def _lean_work(tmp_path: Path, wheel: Path, name: str) -> tuple:
+    with zipfile.ZipFile(wheel) as archive:
+        member = archive.getinfo(name)
+    return (member, name, str(tmp_path / "out.bin"), None)
+
+
+@pytest.mark.skipif(not cache_module._HAS_PREAD, reason="no pread")
+@pytest.mark.parametrize("method", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
+def test_lean_extraction_writes_what_zipfile_reads(tmp_path: Path, method: int) -> None:
+    """A member read with one pread and one zlib call is zipfile's bytes,
+    with the RECORD hash and size of them."""
+    wheel = tmp_path / "lean-1.0-py3-none-any.whl"
+    payload = b"x = 1\n" * 5000
+    with zipfile.ZipFile(wheel, "w", compression=method) as archive:
+        archive.writestr("lean/mod.py", payload)
+
+    fd = os.open(wheel, os.O_RDONLY)
+    try:
+        entry = cache_module._extract_member_lean(
+            fd, _lean_work(tmp_path, wheel, "lean/mod.py")
+        )
+    finally:
+        os.close(fd)
+
+    assert entry is not None
+    assert (tmp_path / "out.bin").read_bytes() == payload
+    import base64
+
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+    assert entry[1:3] == (f"sha256={digest.decode()}", str(len(payload)))
+
+
+@pytest.mark.skipif(not cache_module._HAS_PREAD, reason="no pread")
+def test_lean_extraction_refuses_a_corrupt_member(tmp_path: Path) -> None:
+    wheel = tmp_path / "bad-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("bad/mod.py", b"original contents")
+    wheel.write_bytes(wheel.read_bytes().replace(b"original", b"tampered"))
+
+    fd = os.open(wheel, os.O_RDONLY)
+    try:
+        with pytest.raises(zipfile.BadZipFile, match="CRC"):
+            cache_module._extract_member_lean(
+                fd, _lean_work(tmp_path, wheel, "bad/mod.py")
+            )
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.skipif(not cache_module._HAS_PREAD, reason="no pread")
+def test_lean_extraction_refuses_a_local_name_the_directory_does_not_list(
+    tmp_path: Path,
+) -> None:
+    wheel = tmp_path / "odd-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("odd/aaa.py", b"x")
+    raw = wheel.read_bytes()
+    # The local header's copy of the name only: the central directory's
+    # copy comes after it.
+    local = raw.index(b"odd/aaa.py")
+    wheel.write_bytes(raw[:local] + b"odd/zzz.py" + raw[local + 10 :])
+
+    fd = os.open(wheel, os.O_RDONLY)
+    try:
+        with pytest.raises(zipfile.BadZipFile, match="differ"):
+            cache_module._extract_member_lean(
+                fd, _lean_work(tmp_path, wheel, "odd/aaa.py")
+            )
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.skipif(not cache_module._HAS_PREAD, reason="no pread")
+def test_lean_extraction_leaves_other_compression_to_zipfile(tmp_path: Path) -> None:
+    wheel = tmp_path / "bz-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_BZIP2) as archive:
+        archive.writestr("bz/mod.py", b"x = 1\n")
+
+    fd = os.open(wheel, os.O_RDONLY)
+    try:
+        assert (
+            cache_module._extract_member_lean(
+                fd, _lean_work(tmp_path, wheel, "bz/mod.py")
+            )
+            is None
+        )
+    finally:
+        os.close(fd)

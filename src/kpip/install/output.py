@@ -10,7 +10,7 @@ from kpip.core.utils import default_worker_count
 from kpip.core.wheel import WheelCandidate
 from kpip.index.candidate_materialization import LazyWheelCandidate
 from kpip.index.vcs import vcs_scheme
-from kpip.install.wheel_archive_cache import INSTALL_WORKERS
+from kpip.install.wheel_archive_cache import EXTRACT_WORKERS
 
 _MATERIALIZATION_WORKERS = 32
 
@@ -156,7 +156,7 @@ def prepare_install_candidates(
     archive_futures: dict[Future[object], int] = {}
 
     with ThreadPoolExecutor(
-        max_workers=min(INSTALL_WORKERS, count),
+        max_workers=min(EXTRACT_WORKERS, count),
         thread_name_prefix="kpip-archive",
     ) as archive_pool:
 
