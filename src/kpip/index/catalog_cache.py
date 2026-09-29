@@ -684,35 +684,24 @@ def save_summary_value(
 
 
 def _shared_summary(summary: CatalogSummary) -> CatalogSummary:
-    """``summary`` with equal release tuples and fact lists made one object.
+    """``summary`` with equal fact lists made one object.
 
     marshal writes an object it has already written as a back-reference, so
-    what releases have in common -- the suffix of every final release, the
-    facts of every release with the same files and Requires-Python -- is
-    stored and loaded once.  An airflow lock's summaries shrink by a sixth
-    and load a quarter faster.  Fact lists are shared only because nothing
-    changes them once loaded.
+    the facts of every release with the same files and Requires-Python are
+    stored and loaded once: an airflow lock's summaries are a fifth smaller
+    and load a quarter faster. Fact lists are shared only because nothing
+    changes them once loaded. A release's stored version is its own text and
+    key, which no other release shares; interning those as well found
+    nothing to share and was seven times the cost of the rest.
     """
-    memo: dict[object, Any] = {}
-
-    def share(value: Any) -> Any:
-        if type(value) is tuple:
-            value = tuple([share(item) for item in value])
-            try:
-                return memo.setdefault(value, value)
-            except TypeError:
-                return value
-        return value
-
+    memo: dict[tuple[object, ...], list[CatalogFact]] = {}
     groups = []
     for name, version_text, wire, facts, uploaded in summary[1]:
-        shared_facts = [share(fact) for fact in facts]
-        facts_key = ("facts", tuple(shared_facts))
         try:
-            shared_facts = memo.setdefault(facts_key, shared_facts)
+            facts = memo.setdefault(tuple(facts), facts)
         except TypeError:
             pass
-        groups.append((name, version_text, share(wire), shared_facts, uploaded))
+        groups.append((name, version_text, wire, facts, uploaded))
     return summary[0], groups, summary[2], summary[3]
 
 
