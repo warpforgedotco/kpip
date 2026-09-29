@@ -51,7 +51,7 @@ from kpip.install.metadata import (
     prepare_editable_source,
     write_install_report,
 )
-from kpip.install.output import prepare_install_candidates
+from kpip.install.output import installation_order, prepare_install_candidates
 from kpip.install.target import InstallTarget
 from kpip.install.wheel_archive_cache import CachedWheelArchive, prepare_cached_wheel
 from kpip.install.wheel_install_plan_cache import (
@@ -1630,6 +1630,9 @@ def run_install(args: list[str]) -> int:
                     )
 
                 if not hybrid_installed:
+                    install_order = installation_order(
+                        plan.candidates, plan.graph, requested_roots
+                    )
                     try:
                         install_wheels_transactionally(
                             [
@@ -1638,7 +1641,7 @@ def run_install(args: list[str]) -> int:
                                     candidate.canonical_name in requested_roots,
                                     candidate_direct_urls[candidate.canonical_name],
                                 )
-                                for candidate in plan.candidates
+                                for candidate in install_order
                             ],
                             target=batch_target,
                             pycompile=not execution.options.no_compile,
@@ -1649,7 +1652,7 @@ def run_install(args: list[str]) -> int:
                                 and execution.options.ignore_installed
                                 and target_is_empty
                             ),
-                            candidates=plan.candidates,
+                            candidates=install_order,
                             cache_dir=execution.cache_dir,
                         )
 

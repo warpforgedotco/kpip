@@ -124,6 +124,7 @@ def install_wheels_directly(
             candidate: WheelCandidate,
         ) -> tuple[int, InstallTransaction, WheelCandidate]:
             local_transaction = InstallTransaction()
+            local_transaction.owner = candidate.canonical_name
             try:
                 result = installer.install(
                     request[0],
@@ -165,23 +166,26 @@ def install_wheels_directly(
                     local_transaction.finalize()
                 return tuple(result for _, _, result in ordered_results)
 
-            results = tuple(
-                installer.install(
-                    path,
-                    candidate=candidate,
-                    requested=requested,
-                    direct_url=direct_url,
-                    existing=None,
-                    lookup_existing=False,
-                    destination_cache=destination_cache,
-                    transaction=transaction,
-                    direct=True,
+            installed: list[WheelCandidate] = []
+            for (path, requested, direct_url), candidate in zip(
+                requests,
+                candidates,
+            ):
+                transaction.owner = candidate.canonical_name
+                installed.append(
+                    installer.install(
+                        path,
+                        candidate=candidate,
+                        requested=requested,
+                        direct_url=direct_url,
+                        existing=None,
+                        lookup_existing=False,
+                        destination_cache=destination_cache,
+                        transaction=transaction,
+                        direct=True,
+                    )
                 )
-                for (path, requested, direct_url), candidate in zip(
-                    requests,
-                    candidates,
-                )
-            )
+            results = tuple(installed)
             transaction.finish_successfully()
             return results
         except Exception:

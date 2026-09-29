@@ -331,13 +331,22 @@ def install_wheel_internal(
                 relative_name = relative_parts[-1] if relative_parts else ""
                 if relative_parts and relative_parts[0].endswith(".dist-info"):
                     dist_info = relative_parts[0]
+                # The wheel's own RECORD and METADATA, not a vendored copy
+                # deeper in the tree: debugpy ships a whole dist-info under
+                # its package, which is a file like any other.
+                own_metadata = (
+                    len(relative_parts) == 2
+                    and relative_parts[0] == validated_dist_info
+                )
                 rewrite_metadata = (
-                    relative_name == "METADATA" and candidate.name.isalpha()
+                    own_metadata
+                    and relative_name == "METADATA"
+                    and candidate.name.isalpha()
                 )
                 script_member = (
                     len(relative_parts) >= 2 and relative_parts[-2] == "scripts"
                 )
-                is_record = relative_name == "RECORD" and bool(relative_parts)
+                is_record = own_metadata and relative_name == "RECORD"
                 direct_content = (
                     getattr(member, "source_path", None) is None
                     and not rewrite_metadata
@@ -434,7 +443,7 @@ def install_wheel_internal(
                         record_metadata[source_text] = metadata
                 mode = zip_mode(member)  # ty:ignore[invalid-argument-type]
                 staged.append((source_text, destination_text, destination_text, mode))
-                if relative_name == "RECORD" and relative_parts:
+                if is_record:
                     record_destination = destination_text
 
         if dist_info is None or record_destination is None:
@@ -897,6 +906,7 @@ def _install_wheels_locked(
                 candidate: WheelCandidate,
             ) -> tuple[int, InstallTransaction, WheelCandidate]:
                 local_transaction = InstallTransaction()
+                local_transaction.owner = candidate.canonical_name
                 try:
                     result = installer.install(
                         request[0],
@@ -951,25 +961,28 @@ def _install_wheels_locked(
                         raise
                     candidates = tuple(result for _, _, result in ordered_results)
                 else:
-                    candidates = tuple(
-                        installer.install(
-                            path,
-                            candidate=candidate,
-                            requested=requested,
-                            direct_url=direct_url,
-                            existing=existing_distributions.get(
-                                candidate.canonical_name,
-                            ),
-                            lookup_existing=False,
-                            destination_cache=destination_cache,
-                            stage_root=os.path.join(batch_stage, str(index)),
-                            transaction=transaction,
+                    installed: list[WheelCandidate] = []
+                    for index, (
+                        (path, requested, direct_url),
+                        candidate,
+                    ) in enumerate(zip(requests, planned_candidates)):
+                        transaction.owner = candidate.canonical_name
+                        installed.append(
+                            installer.install(
+                                path,
+                                candidate=candidate,
+                                requested=requested,
+                                direct_url=direct_url,
+                                existing=existing_distributions.get(
+                                    candidate.canonical_name,
+                                ),
+                                lookup_existing=False,
+                                destination_cache=destination_cache,
+                                stage_root=os.path.join(batch_stage, str(index)),
+                                transaction=transaction,
+                            )
                         )
-                        for index, (
-                            (path, requested, direct_url),
-                            candidate,
-                        ) in enumerate(zip(requests, planned_candidates))
-                    )
+                    candidates = tuple(installed)
             except Exception:
                 transaction.rollback()
                 raise

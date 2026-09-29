@@ -10,7 +10,10 @@ import tempfile
 from collections.abc import Iterable
 
 from kpip.core.errors import InstallationError
+from kpip.core.logger import get_logger
 from kpip.host.clone import clone_path
+
+logger = get_logger(__name__)
 
 
 def _read_staged_source(path: str | None) -> bytes:
@@ -91,6 +94,12 @@ class InstallTransaction:
         self.owned = {normalized_internal(path) for path in owned_paths}
         self.staged_internal: list[StagedFile] = []
         self.staged_destinations: set[str] = set()
+        # The distribution staging files, set by a batch before each wheel:
+        # a destination two distributions both ship goes to the later one,
+        # as pip installs it, while one distribution shipping it twice is
+        # an error.  None stages without an owner, where any repeat is one.
+        self.owner: str | None = None
+        self.staged_owners: dict[str, tuple[str | None, int]] = {}
         self.deletions: set[str] = set()
         self.backups: list[tuple[str, str]] = []
         self.created_internal: list[str] = []
@@ -109,12 +118,7 @@ class InstallTransaction:
         destination_text = (
             destination if isinstance(destination, str) else os.fspath(destination)
         )
-        if destination_text in self.staged_destinations:
-            raise InstallationError(
-                f"duplicate installation destination: {destination_text}",
-            )
-        self.staged_internal.append(StagedFile(source_text, destination_text, mode))
-        self.staged_destinations.add(destination_text)
+        self._stage(StagedFile(source_text, destination_text, mode))
 
     def add_contents(
         self,
@@ -127,14 +131,7 @@ class InstallTransaction:
         destination_text = (
             destination if isinstance(destination, str) else os.fspath(destination)
         )
-        if destination_text in self.staged_destinations:
-            raise InstallationError(
-                f"duplicate installation destination: {destination_text}",
-            )
-        self.staged_internal.append(
-            StagedFile(None, destination_text, mode, contents=contents),
-        )
-        self.staged_destinations.add(destination_text)
+        self._stage(StagedFile(None, destination_text, mode, contents=contents))
 
     def add_clone(
         self,
@@ -148,14 +145,31 @@ class InstallTransaction:
         destination_text = (
             destination if isinstance(destination, str) else os.fspath(destination)
         )
-        if destination_text in self.staged_destinations:
+        self._stage(StagedFile(source_text, destination_text, mode, clone=True))
+
+    def _stage(self, item: StagedFile) -> None:
+        destination_text = item.destination_text
+        owner = self.owner
+        earlier = self.staged_owners.get(destination_text)
+        if earlier is None:
+            self.staged_owners[destination_text] = (owner, len(self.staged_internal))
+            self.staged_internal.append(item)
+            self.staged_destinations.add(destination_text)
+            return
+        earlier_owner, position = earlier
+        if owner is None or earlier_owner is None or owner == earlier_owner:
             raise InstallationError(
                 f"duplicate installation destination: {destination_text}",
             )
-        self.staged_internal.append(
-            StagedFile(source_text, destination_text, mode, clone=True),
+        logger.warning(
+            "%s and %s both install %s; installing %s's copy",
+            earlier_owner,
+            owner,
+            destination_text,
+            owner,
         )
-        self.staged_destinations.add(destination_text)
+        self.staged_internal[position] = item
+        self.staged_owners[destination_text] = (owner, position)
 
     def delete(self, path: str) -> None:
         self.deletions.add(os.fspath(path))
@@ -164,13 +178,19 @@ class InstallTransaction:
         """Merge staged actions from a transaction that has not committed."""
         self.owned.update(other.owned)
         self.created_internal.extend(other.created_internal)
-        for item in other.staged_internal:
-            if item.contents is None:
-                assert item.source_text is not None
-                operation = self.add_clone if item.clone else self.add
-                operation(item.source_text, item.destination_text, mode=item.mode)
-            else:
-                self.add_contents(item.destination_text, item.contents, mode=item.mode)
+        owner, self.owner = self.owner, other.owner
+        try:
+            for item in other.staged_internal:
+                if item.contents is None:
+                    assert item.source_text is not None
+                    operation = self.add_clone if item.clone else self.add
+                    operation(item.source_text, item.destination_text, mode=item.mode)
+                else:
+                    self.add_contents(
+                        item.destination_text, item.contents, mode=item.mode
+                    )
+        finally:
+            self.owner = owner
         self.deletions.update(other.deletions)
 
     def record_created(self, destination: str) -> None:
