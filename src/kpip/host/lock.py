@@ -25,15 +25,15 @@ scope.
 
 from __future__ import annotations
 
-lazy import contextlib
-lazy import errno
-lazy import logging
-lazy import os
-lazy import sys
-lazy from collections.abc import Iterator
+import contextlib
+import errno
+import logging
+import os
+import sys
+from collections.abc import Iterator
 
-lazy from kpip.core.appdirs import user_cache_dir
-lazy from kpip.core.digests import sha256_hexdigest
+from kpip.core.appdirs import user_cache_dir
+from kpip.core.digests import sha256_hexdigest
 
 if sys.platform == "win32":
     import msvcrt

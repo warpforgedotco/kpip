@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-lazy import atexit
-lazy import os
-lazy import shutil
-lazy import tempfile
+import atexit
+import os
+import shutil
+import tempfile
 
-lazy from kpip.core import run_options
-lazy from kpip.core.errors import BuildError, InstallationError
-lazy from kpip.core.temp_dir import build_directory
-lazy from kpip.host.unpacking import ArchiveExtractor
+from kpip.core import run_options
+from kpip.core.errors import BuildError, InstallationError
+from kpip.core.temp_dir import build_directory
+from kpip.host.unpacking import ArchiveExtractor
 
-lazy from .build_backend import BuildHookMissing, ProjectBuilder
+from .build_backend import BuildHookMissing, ProjectBuilder
 
 
 def build_wheel_from_source(

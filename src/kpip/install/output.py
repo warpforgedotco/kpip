@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-lazy import os
-lazy import queue
-lazy import threading
-lazy from collections.abc import Callable, Collection, Mapping, Sequence
-lazy from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-lazy from typing import Any, Protocol, TypeVar
+import os
+import queue
+import threading
+from collections.abc import Callable, Collection, Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from typing import Any, Protocol, TypeVar
 
-lazy from kpip.core.appdirs import archive_entry_root
-lazy from kpip.core.digests import valid_sha256
-lazy from kpip.core.utils import default_worker_count
-lazy from kpip.core.wheel import WheelCandidate
-lazy from kpip.index.candidate_materialization import LazyWheelCandidate
-lazy from kpip.index.vcs import vcs_scheme
-lazy from kpip.install.wheel_archive_cache import EXTRACT_WORKERS
+from kpip.core.appdirs import archive_entry_root
+from kpip.core.digests import valid_sha256
+from kpip.core.utils import default_worker_count
+from kpip.core.wheel import WheelCandidate
+from kpip.index.candidate_materialization import LazyWheelCandidate
+from kpip.index.vcs import vcs_scheme
+from kpip.install.wheel_archive_cache import EXTRACT_WORKERS
 
 _MATERIALIZATION_WORKERS = 32
 

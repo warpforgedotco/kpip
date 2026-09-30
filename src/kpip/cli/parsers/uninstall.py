@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-lazy from kpip.cli.parser import ArgumentParser
-lazy from kpip.cli.parsers.shared import add_externally_managed_options
+from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import add_externally_managed_options
 
 
 def create_parser() -> ArgumentParser:

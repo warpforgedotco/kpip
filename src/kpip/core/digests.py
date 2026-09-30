@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-lazy from hashlib import sha224, sha256
+from hashlib import sha224, sha256
 
 
 def sha224_hexdigest(data: bytes) -> str:

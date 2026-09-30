@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import io
-lazy import os
-lazy import zipfile
+import io
+import os
+import zipfile
 
-lazy from kpip.core.archive import (
+from kpip.core.archive import (
     WheelArchive,
     WheelhouseUnavailable,
 )
-lazy from kpip.install.wheel_archive_cache import CachedWheelArchive
+from kpip.install.wheel_archive_cache import CachedWheelArchive
 
 if TYPE_CHECKING:
     from typing import Any

@@ -7,39 +7,39 @@ an installation target with copy-on-write semantics.
 
 from __future__ import annotations
 
-lazy import base64
-lazy import csv
-lazy import errno
-lazy import hashlib
-lazy import io
-lazy import marshal
-lazy import os
-lazy import py_compile
-lazy import shutil
-lazy import struct
-lazy import tempfile
-lazy import threading
-lazy import time
-lazy import zipfile
-lazy import zlib
-lazy from collections.abc import Generator, Iterable
-lazy from concurrent.futures import ThreadPoolExecutor
-lazy from contextlib import contextmanager
+import base64
+import csv
+import errno
+import hashlib
+import io
+import marshal
+import os
+import py_compile
+import shutil
+import struct
+import tempfile
+import threading
+import time
+import zipfile
+import zlib
+from collections.abc import Generator, Iterable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
-lazy from kpip.core.appdirs import archive_entry_root
-lazy from kpip.core.digests import valid_sha256
-lazy from kpip.core.direct_url import DirectUrl
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.utils import default_worker_count
-lazy from kpip.core.wheel import validate_wheel
-lazy from kpip.index.metadata_cache import (
+from kpip.core.appdirs import archive_entry_root
+from kpip.core.digests import valid_sha256
+from kpip.core.direct_url import DirectUrl
+from kpip.core.errors import InstallationError
+from kpip.core.utils import default_worker_count
+from kpip.core.wheel import validate_wheel
+from kpip.index.metadata_cache import (
     MetadataIdentity,
     get_wheel_metadata_cache,
     metadata_identity,
 )
-lazy from kpip.install.bytecode import compile_jobs
-lazy from kpip.install.wheel_archive import (
+from kpip.install.bytecode import compile_jobs
+from kpip.install.wheel_archive import (
     compiled_parts,
     copy_member_with_metadata,
     mapped_parts,

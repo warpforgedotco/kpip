@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-lazy import hashlib
-lazy import marshal
-lazy import os
-lazy import shutil
-lazy import tempfile
-lazy from collections.abc import Iterable, Mapping
+import hashlib
+import marshal
+import os
+import shutil
+import tempfile
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Protocol
 
-lazy from kpip.core.digests import sha256_hexdigest
-lazy from kpip.core.errors import HashMismatch
-lazy from kpip.core.utils import versioned_bucket
+from kpip.core.digests import sha256_hexdigest
+from kpip.core.errors import HashMismatch
+from kpip.core.utils import versioned_bucket
 
 if TYPE_CHECKING:
 

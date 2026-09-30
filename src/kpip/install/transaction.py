@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-lazy import errno
-lazy import logging
-lazy import os
-lazy import shutil
-lazy import stat
-lazy import tempfile
-lazy from collections.abc import Iterable
+import errno
+import logging
+import os
+import shutil
+import stat
+import tempfile
+from collections.abc import Iterable
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.host.clone import clone_path
+from kpip.core.errors import InstallationError
+from kpip.host.clone import clone_path
 
 logger = logging.getLogger(__name__)
 

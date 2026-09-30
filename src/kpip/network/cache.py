@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import marshal
-lazy import os
-lazy import shutil
-lazy import struct
-lazy import threading
-lazy from contextlib import contextmanager
+import marshal
+import os
+import shutil
+import struct
+import threading
+from contextlib import contextmanager
 
-lazy from kpip.core.utils import ensure_dir
-lazy from kpip.host.filesystem import replace, set_descriptor_permissions
-lazy from kpip.network.freshness import (
+from kpip.core.utils import ensure_dir
+from kpip.host.filesystem import replace, set_descriptor_permissions
+from kpip.network.freshness import (
     COMBINED_MAGIC,
     cache_entry_path,
     read_cache_metadata,

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-lazy import logging
+import logging
 
-lazy from kpip.core.urls import path_to_url
-lazy from kpip.core.utils import AuthInfo, display_path
+from kpip.core.urls import path_to_url
+from kpip.core.utils import AuthInfo, display_path
 
-lazy from .subprocesses import make_command
-lazy from .support import HiddenText
-lazy from .versioncontrol import (
+from .subprocesses import make_command
+from .support import HiddenText
+from .versioncontrol import (
     RemoteNotFoundError,
     RevOptions,
     VersionControl,

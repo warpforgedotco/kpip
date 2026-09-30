@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import threading
+import threading
 
-lazy from kpip.core import run_options
-lazy from kpip.core.appdirs import http_cache_path
-lazy from kpip.network.cache import SafeFileCache
-lazy from kpip.network.freshness import cached_response_is_fresh, has_cached_validator
-lazy from kpip.network.session import DEFAULT_RETRIES, NetworkSession, Timeout
+from kpip.core import run_options
+from kpip.core.appdirs import http_cache_path
+from kpip.network.cache import SafeFileCache
+from kpip.network.freshness import cached_response_is_fresh, has_cached_validator
+from kpip.network.session import DEFAULT_RETRIES, NetworkSession, Timeout
 
 if TYPE_CHECKING:
     from typing import Any

@@ -13,56 +13,56 @@ caches, fetching while the solve runs), so it calls the steps
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
-lazy import os
+import logging
+import os
 
-lazy from kpip.cli.config import load_source_config
-lazy from kpip.cli.dependency_groups import group_items, parse_dependency_groups
-lazy from kpip.cli.package_finder import (
+from kpip.cli.config import load_source_config
+from kpip.cli.dependency_groups import group_items, parse_dependency_groups
+from kpip.cli.package_finder import (
     apply_refresh,
     check_release_control,
     format_control,
     release_control,
 )
-lazy from kpip.cli.requirements import (
+from kpip.cli.requirements import (
     build_options_from_requirements,
     bundle_install_requirements,
     collect_requirements,
     config_settings,
     requirements_from_script,
 )
-lazy from kpip.cli.resolution_errors import resolution_error_message
-lazy from kpip.core.appdirs import command_cache_dir
-lazy from kpip.core.errors import (
+from kpip.cli.resolution_errors import resolution_error_message
+from kpip.core.appdirs import command_cache_dir
+from kpip.core.errors import (
     CommandError,
     DistributionNotFound,
     HashMismatch,
     InstallationError,
     ResolutionError,
 )
-lazy from kpip.core.format_control import FormatControl
-lazy from kpip.core.hashes import Hashes, file_hashes
-lazy from kpip.core.metadata import use_header_cache
-lazy from kpip.core.packaging import (
+from kpip.core.format_control import FormatControl
+from kpip.core.hashes import Hashes, file_hashes
+from kpip.core.metadata import use_header_cache
+from kpip.core.packaging import (
     canonicalize_name,
     normalize_python_version,
     parse_requirement,
 )
-lazy from kpip.core.urls import url_to_path
-lazy from kpip.core.utils import (
+from kpip.core.urls import url_to_path
+from kpip.core.utils import (
     CURRENT_PYTHON_VERSION_DIGITS,
     CURRENT_PYTHON_VERSION_FULL,
 )
-lazy from kpip.core.wheel import TargetContext
-lazy from kpip.index.links import Link
-lazy from kpip.index.metadata_cache import get_wheel_metadata_cache
-lazy from kpip.index.provider import CandidateProvider
-lazy from kpip.resolution.api import ResolutionEngine
-lazy from kpip.resolution.hash_checking import (
+from kpip.core.wheel import TargetContext
+from kpip.index.links import Link
+from kpip.index.metadata_cache import get_wheel_metadata_cache
+from kpip.index.provider import CandidateProvider
+from kpip.resolution.api import ResolutionEngine
+from kpip.resolution.hash_checking import (
     enforce_dependency_hashes,
     enforce_hash_checking,
 )
-lazy from kpip.resolution.input_requirements import install_req_from_line
+from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
     import argparse

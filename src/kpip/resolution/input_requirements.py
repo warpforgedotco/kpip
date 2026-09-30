@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-lazy import os
-lazy import stat
-lazy import urllib.parse
+import os
+import stat
+import urllib.parse
 
-lazy from kpip.core.errors import InstallationError, InvalidWheelFilename
-lazy from kpip.core.packaging import EMPTY_FROZENSET, Requirement, parse_requirement
-lazy from kpip.core.urls import path_to_url
-lazy from kpip.index.links import Link
-lazy from kpip.resolution.input_paths import (
+from kpip.core.errors import InstallationError, InvalidWheelFilename
+from kpip.core.packaging import EMPTY_FROZENSET, Requirement, parse_requirement
+from kpip.core.urls import path_to_url
+from kpip.index.links import Link
+from kpip.resolution.input_paths import (
     get_url_from_path_with_mode,
     looks_like_path,
     normalize_file_url_reference,
 )
-lazy from kpip.resolution.req_install import InstallRequirement
+from kpip.resolution.req_install import InstallRequirement
 
 
 def install_req_from_line(

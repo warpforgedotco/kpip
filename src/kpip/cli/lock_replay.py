@@ -11,16 +11,16 @@ The lock command asks this before anything that resolves.
 
 from __future__ import annotations
 
-lazy import marshal
-lazy import os
-lazy import sys
-lazy import time
+import marshal
+import os
+import sys
+import time
 from typing import TYPE_CHECKING, Protocol
 
-lazy from kpip.core.appdirs import http_cache_path
-lazy from kpip.core.code_identity import code_identity
-lazy from kpip.core.utils import key_bytes, load_snapshot, versioned_bucket
-lazy from kpip.network.freshness import (
+from kpip.core.appdirs import http_cache_path
+from kpip.core.code_identity import code_identity
+from kpip.core.utils import key_bytes, load_snapshot, versioned_bucket
+from kpip.network.freshness import (
     CacheMetadataReader,
     decode_metadata,
     metadata_is_fresh,

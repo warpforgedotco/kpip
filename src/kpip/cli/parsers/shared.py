@@ -9,12 +9,12 @@ their requirements. Each function here adds one such group to a parser.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import argparse
-lazy import datetime
-lazy import os
-lazy import re
+import argparse
+import datetime
+import os
+import re
 
-lazy from kpip.core.packaging import canonicalize_name
+from kpip.core.packaging import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

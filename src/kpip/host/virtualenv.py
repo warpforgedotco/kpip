@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-lazy import sys
+import sys
 
 
 def running_under_virtualenv() -> bool:

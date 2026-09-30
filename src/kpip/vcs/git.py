@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
-lazy import os.path
-lazy import re
-lazy import urllib.parse
-lazy import urllib.request
+import logging
+import os.path
+import re
+import urllib.parse
+import urllib.request
 
-lazy from kpip.core import run_options
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.urls import path_to_url
-lazy from kpip.core.utils import AuthInfo, display_path
+from kpip.core import run_options
+from kpip.core.errors import InstallationError
+from kpip.core.urls import path_to_url
+from kpip.core.utils import AuthInfo, display_path
 
-lazy from .errors import BadCommand
-lazy from .subprocesses import make_command
-lazy from .support import HiddenText, hide_url
-lazy from .versioncontrol import (
+from .errors import BadCommand
+from .subprocesses import make_command
+from .support import HiddenText, hide_url
+from .versioncontrol import (
     RemoteNotFoundError,
     RemoteNotValidError,
     RevOptions,

@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import json
-lazy import os
-lazy import urllib.parse
-lazy from collections.abc import Callable
-lazy from html.parser import HTMLParser
+import json
+import os
+import urllib.parse
+from collections.abc import Callable
+from html.parser import HTMLParser
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.http_contracts import raise_for_status, response_text
-lazy from kpip.core.packaging import canonicalize_name
-lazy from kpip.core.urls import split_auth_from_netloc
-lazy from kpip.core.versions import InvalidVersion, Version
-lazy from kpip.core.wheel import parse_wheel_file_once
-lazy from kpip.index import typed_pages
-lazy from kpip.index.artifacts import ArtifactLocator
-lazy from kpip.index.catalog_cache import (
+from kpip.core.errors import InstallationError
+from kpip.core.http_contracts import raise_for_status, response_text
+from kpip.core.packaging import canonicalize_name
+from kpip.core.urls import split_auth_from_netloc
+from kpip.core.versions import InvalidVersion, Version
+from kpip.core.wheel import parse_wheel_file_once
+from kpip.index import typed_pages
+from kpip.index.artifacts import ArtifactLocator
+from kpip.index.catalog_cache import (
     RECORD_REQUIRES_PYTHON,
     RECORD_YANKED,
     WHEEL_RECORD,
@@ -33,11 +33,11 @@ lazy from kpip.index.catalog_cache import (
     save_links,
     url_path_tail,
 )
-lazy from kpip.index.dates import parse_iso_datetime
-lazy from kpip.index.hashes import SUPPORTED_RECORD_HASHES
-lazy from kpip.index.links import PLAIN_URL, SOURCE_ARCHIVE_SUFFIXES, Link
-lazy from kpip.index.paths import PathComponent
-lazy from kpip.index.source_models import ArtifactKind, MetadataFile
+from kpip.index.dates import parse_iso_datetime
+from kpip.index.hashes import SUPPORTED_RECORD_HASHES
+from kpip.index.links import PLAIN_URL, SOURCE_ARCHIVE_SUFFIXES, Link
+from kpip.index.paths import PathComponent
+from kpip.index.source_models import ArtifactKind, MetadataFile
 
 if TYPE_CHECKING:
     from typing import Any

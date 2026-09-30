@@ -6,25 +6,25 @@ filesystem transaction engine. It deliberately does not invoke kpip again.
 
 from __future__ import annotations
 
-lazy import csv
-lazy import io
-lazy import logging
-lazy import os
-lazy import tempfile
-lazy import zipfile
-lazy from collections.abc import Iterable
-lazy from concurrent.futures import ThreadPoolExecutor
-lazy from contextlib import nullcontext
-lazy from threading import Lock
+import csv
+import io
+import logging
+import os
+import tempfile
+import zipfile
+from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+from threading import Lock
 from typing import TYPE_CHECKING, Protocol
 
-lazy from kpip.build.metadata import (
+from kpip.build.metadata import (
     InstalledDistributionStore,
     InstalledMetadataDistribution,
 )
-lazy from kpip.core.errors import InstallationError, UnsupportedWheel
-lazy from kpip.core.names import canonicalize_name
-lazy from kpip.core.wheel import (
+from kpip.core.errors import InstallationError, UnsupportedWheel
+from kpip.core.names import canonicalize_name
+from kpip.core.wheel import (
     WheelCandidate,
     root_is_purelib_from_text,
     validate_wheel,
@@ -32,11 +32,11 @@ lazy from kpip.core.wheel import (
     wheel_candidate,
     wheel_candidate_from_path,
 )
-lazy from kpip.host.clone import clone_path
-lazy from kpip.host.lock import environment_write_lock
-lazy from kpip.install.target import InstallTarget
-lazy from kpip.install.transaction import InstallTransaction, normalized_internal
-lazy from kpip.install.wheel_archive import (
+from kpip.host.clone import clone_path
+from kpip.host.lock import environment_write_lock
+from kpip.install.target import InstallTarget
+from kpip.install.transaction import InstallTransaction, normalized_internal
+from kpip.install.wheel_archive import (
     DestinationCache,
     MemberPaths,
     ResolvedRoots,
@@ -46,23 +46,23 @@ lazy from kpip.install.wheel_archive import (
     validate_member_parts,
     zip_mode,
 )
-lazy from kpip.install.wheel_archive_cache import INSTALL_WORKERS, CachedWheelArchive
-lazy from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
-lazy from kpip.install.wheel_archive_runtime import CachedWheelInfo, open_wheel_archive
-lazy from kpip.install.wheel_scripts import (
+from kpip.install.wheel_archive_cache import INSTALL_WORKERS, CachedWheelArchive
+from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
+from kpip.install.wheel_archive_runtime import CachedWheelInfo, open_wheel_archive
+from kpip.install.wheel_scripts import (
     entry_point_scripts,
     generate_entry_point_files,
     rewrite_shebang,
     script_matches,
     warn_about_scripts_not_on_path,
 )
-lazy from kpip.install.wheel_state import (
+from kpip.install.wheel_state import (
     InstalledTargetInventory,
     InstalledWheelDistribution,
     compiled_files,
     existing_paths,
 )
-lazy from kpip.install.wheel_transaction_direct import (
+from kpip.install.wheel_transaction_direct import (
     DIRECT_CONTENT_BATCH_LIMIT,
     direct_batch_preflight,
     install_wheels_directly,

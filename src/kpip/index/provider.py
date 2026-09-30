@@ -1,35 +1,35 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import copy
-lazy import datetime
-lazy import logging
-lazy import operator
-lazy import os
-lazy import stat
-lazy import time
-lazy import urllib.parse
-lazy from bisect import bisect_left, bisect_right
-lazy from collections.abc import Callable, Iterator, Mapping, Sequence
-lazy from concurrent.futures import ThreadPoolExecutor
-lazy from itertools import chain
-lazy from threading import RLock
-lazy from types import MappingProxyType
+import copy
+import datetime
+import logging
+import operator
+import os
+import stat
+import time
+import urllib.parse
+from bisect import bisect_left, bisect_right
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from itertools import chain
+from threading import RLock
+from types import MappingProxyType
 
-lazy from kpip.core.digests import sha256_hexdigest
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.hashes import Hashes
-lazy from kpip.core.http_contracts import raise_for_status, response_text
-lazy from kpip.core.packaging import Requirement
-lazy from kpip.core.release_control import ReleaseControl
-lazy from kpip.core.urls import path_to_url, url_to_path
-lazy from kpip.core.versions import Version
-lazy from kpip.core.wheel import supported_wheel_tags, wheel_tag_rank
-lazy from kpip.core.wheel_metadata import parse_metadata_headers
-lazy from kpip.index.candidate_evaluators import CandidateEvaluator
-lazy from kpip.index.candidate_materialization import CandidateMaterializer
-lazy from kpip.index.candidates import InstallationCandidate
-lazy from kpip.index.catalog_cache import (
+from kpip.core.digests import sha256_hexdigest
+from kpip.core.errors import InstallationError
+from kpip.core.hashes import Hashes
+from kpip.core.http_contracts import raise_for_status, response_text
+from kpip.core.packaging import Requirement
+from kpip.core.release_control import ReleaseControl
+from kpip.core.urls import path_to_url, url_to_path
+from kpip.core.versions import Version
+from kpip.core.wheel import supported_wheel_tags, wheel_tag_rank
+from kpip.core.wheel_metadata import parse_metadata_headers
+from kpip.index.candidate_evaluators import CandidateEvaluator
+from kpip.index.candidate_materialization import CandidateMaterializer
+from kpip.index.candidates import InstallationCandidate
+from kpip.index.catalog_cache import (
     RECORD_REQUIRES_PYTHON,
     RECORD_YANKED,
     SDIST_RECORD,
@@ -42,15 +42,15 @@ lazy from kpip.index.catalog_cache import (
     save_choices,
     wheel_file_from_record,
 )
-lazy from kpip.index.config import DEFAULT_INDEX_URL
-lazy from kpip.index.links import Link
-lazy from kpip.index.prefetch import Prefetcher, PrefetchPolicy
-lazy from kpip.index.source_locations import (
+from kpip.index.config import DEFAULT_INDEX_URL
+from kpip.index.links import Link
+from kpip.index.prefetch import Prefetcher, PrefetchPolicy
+from kpip.index.source_locations import (
     FindLinksSource,
     SimpleIndexSource,
     is_remote_source_location,
 )
-lazy from kpip.index.source_models import (
+from kpip.index.source_models import (
     INSTALLABLE_ARTIFACT_KINDS,
     SOURCE_ARTIFACT_KINDS,
     ArtifactKind,

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-lazy import ntpath
-lazy import os
-lazy import string
-lazy import sys
-lazy import urllib.parse
-lazy from urllib import request
+import ntpath
+import os
+import string
+import sys
+import urllib.parse
+from urllib import request
 
 WINDOWS = sys.platform == "win32"
 

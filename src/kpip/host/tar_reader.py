@@ -33,14 +33,14 @@ without this module needing to know about it at all.
 
 from __future__ import annotations
 
-lazy import gzip
-lazy import os
-lazy import shutil
-lazy import struct
-lazy import sys
+import gzip
+import os
+import shutil
+import struct
+import sys
 from typing import IO, TYPE_CHECKING
 
-lazy from kpip.core.errors import InstallationError
+from kpip.core.errors import InstallationError
 
 if TYPE_CHECKING:
     _ReadableStream = IO[bytes] | gzip.GzipFile

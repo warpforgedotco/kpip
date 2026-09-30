@@ -1,32 +1,32 @@
 from __future__ import annotations
 
-lazy import logging
-lazy import os
-lazy import tempfile
-lazy from collections.abc import Iterable
-lazy from tomllib import loads
+import logging
+import os
+import tempfile
+from collections.abc import Iterable
+from tomllib import loads
 from typing import TYPE_CHECKING, Any, Protocol
 
-lazy from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
-lazy from kpip.core.direct_url import ArchiveInfo, DirInfo
-lazy from kpip.core.errors import (
+from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
+from kpip.core.direct_url import ArchiveInfo, DirInfo
+from kpip.core.errors import (
     DiagnosticKpipError,
     InstallationError,
 )
-lazy from kpip.core.hashes import Hashes
-lazy from kpip.core.interpreter import build_interpreter
-lazy from kpip.core.packaging import (
+from kpip.core.hashes import Hashes
+from kpip.core.interpreter import build_interpreter
+from kpip.core.packaging import (
     Requirement as ParsedRequirement,
 )
-lazy from kpip.core.packaging import (
+from kpip.core.packaging import (
     SpecifierSet,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-lazy from kpip.core.versions import Version
-lazy from kpip.index.links import Link
-lazy from kpip.resolution.input_paths import looks_like_path
+from kpip.core.versions import Version
+from kpip.index.links import Link
+from kpip.resolution.input_paths import looks_like_path
 
 if TYPE_CHECKING:
     import email.message

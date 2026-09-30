@@ -3,14 +3,14 @@ headers and its SHA-256, both keyed by the file's path, size and mtime."""
 
 from __future__ import annotations
 
-lazy import marshal
-lazy import os
-lazy import sqlite3
-lazy from collections.abc import Iterable
+import marshal
+import os
+import sqlite3
+from collections.abc import Iterable
 
-lazy from kpip.core.digests import valid_sha256
-lazy from kpip.core.utils import versioned_bucket
-lazy from kpip.index.sqlite_cache import SqliteBackedCache
+from kpip.core.digests import valid_sha256
+from kpip.core.utils import versioned_bucket
+from kpip.index.sqlite_cache import SqliteBackedCache
 
 MetadataHeaders = dict[str, list[str]]
 MetadataIdentity = tuple[str, int, int]

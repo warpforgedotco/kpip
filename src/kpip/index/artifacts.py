@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import atexit
-lazy import logging
-lazy import os
-lazy import posixpath
-lazy import shutil
-lazy import tempfile
-lazy import urllib.parse
+import atexit
+import logging
+import os
+import posixpath
+import shutil
+import tempfile
+import urllib.parse
 
-lazy from kpip.core.digests import sha256_hexdigest
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.urls import url_to_path
-lazy from kpip.index.artifact_cache import ArtifactCache, materialize_cached_artifact
-lazy from kpip.index.vcs import materialize_vcs
-lazy from kpip.index.vcs_urls import vcs_scheme
+from kpip.core.digests import sha256_hexdigest
+from kpip.core.errors import InstallationError
+from kpip.core.urls import url_to_path
+from kpip.index.artifact_cache import ArtifactCache, materialize_cached_artifact
+from kpip.index.vcs import materialize_vcs
+from kpip.index.vcs_urls import vcs_scheme
 
 if TYPE_CHECKING:
     from typing import Any

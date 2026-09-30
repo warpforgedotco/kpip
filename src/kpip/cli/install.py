@@ -1,26 +1,26 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
-lazy import os
-lazy import site
+import logging
+import os
+import site
 
-lazy from kpip.build.build import build_editable_from_source
-lazy from kpip.build.metadata import InstalledDistributionStore
-lazy from kpip.build.query import (
+from kpip.build.build import build_editable_from_source
+from kpip.build.metadata import InstalledDistributionStore
+from kpip.build.query import (
     check_package_set,
     installed_dependencies_by_name,
     package_set_from_dependencies,
 )
-lazy from kpip.cli.lock_replay import (
+from kpip.cli.lock_replay import (
     FRESH,
     open_http_cache,
     page_state,
     page_validators,
     resolution_environment,
 )
-lazy from kpip.cli.parsers.install import create_parser
-lazy from kpip.cli.requirement_command import (
+from kpip.cli.parsers.install import create_parser
+from kpip.cli.requirement_command import (
     PreparedRequirements,
     check_dependency_hashes,
     check_local_archive_hashes,
@@ -34,43 +34,43 @@ lazy from kpip.cli.requirement_command import (
     warn_about_yanked,
     without_user_requested,
 )
-lazy from kpip.cli.requirements import build_options_from_requirements
-lazy from kpip.cli.target import target_prefix
-lazy from kpip.core.code_identity import code_identity
-lazy from kpip.core.errors import (
+from kpip.cli.requirements import build_options_from_requirements
+from kpip.cli.target import target_prefix
+from kpip.core.code_identity import code_identity
+from kpip.core.errors import (
     CommandError,
     InstallationError,
     ResolutionError,
 )
-lazy from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-lazy from kpip.core.metadata import find_installed, installed_index, user_lib_path
-lazy from kpip.core.packaging import (
+from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
+from kpip.core.metadata import find_installed, installed_index, user_lib_path
+from kpip.core.packaging import (
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-lazy from kpip.core.wheel import TargetContext, wheel_candidate_from_path
-lazy from kpip.host.environment_checks import (
+from kpip.core.wheel import TargetContext, wheel_candidate_from_path
+from kpip.host.environment_checks import (
     check_externally_managed,
     warn_if_run_as_root,
 )
-lazy from kpip.host.virtualenv import running_under_virtualenv
-lazy from kpip.index.candidate_materialization import LazyWheelCandidate
-lazy from kpip.install.archive_workers import start_archive_workers
-lazy from kpip.install.metadata import (
+from kpip.host.virtualenv import running_under_virtualenv
+from kpip.index.candidate_materialization import LazyWheelCandidate
+from kpip.install.archive_workers import start_archive_workers
+from kpip.install.metadata import (
     ReportItem,
     direct_url_from_link,
     prepare_editable_source,
     write_install_report,
 )
-lazy from kpip.install.output import (
+from kpip.install.output import (
     WheelPrefetch,
     installation_order,
     prepare_install_candidates,
 )
-lazy from kpip.install.target import InstallTarget
-lazy from kpip.install.wheel_archive_cache import prepare_cached_wheel
-lazy from kpip.install.wheel_install_plan_cache import (
+from kpip.install.target import InstallTarget
+from kpip.install.wheel_archive_cache import prepare_cached_wheel
+from kpip.install.wheel_install_plan_cache import (
     REMOTE_EXACT_CONTEXT,
     exact_install_plan_key,
     load_cached_install_plan,
@@ -79,12 +79,12 @@ lazy from kpip.install.wheel_install_plan_cache import (
     save_cached_install_plan,
     save_plan_pages,
 )
-lazy from kpip.install.wheel_transaction import (
+from kpip.install.wheel_transaction import (
     WheelInstaller,
     install_wheels_transactionally,
 )
-lazy from kpip.resolution.api import ResolutionEngine
-lazy from kpip.resolution.input_requirements import install_req_from_line
+from kpip.resolution.api import ResolutionEngine
+from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
     import argparse

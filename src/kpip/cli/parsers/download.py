@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-lazy import os
+import os
 
-lazy from kpip.cli.parser import ArgumentParser
-lazy from kpip.cli.parsers.shared import (
+from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import (
     add_index_options,
     add_requirement_options,
     add_selection_options,

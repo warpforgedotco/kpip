@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-lazy import os
-lazy import sys
-lazy import sysconfig
-lazy from collections.abc import Callable
+import os
+import sys
+import sysconfig
+from collections.abc import Callable
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.interpreter import is_compiled
-lazy from kpip.host.scheme import SCHEME_KEYS, Scheme
-lazy from kpip.host.virtualenv import running_under_virtualenv
+from kpip.core.errors import InstallationError
+from kpip.core.interpreter import is_compiled
+from kpip.host.scheme import SCHEME_KEYS, Scheme
+from kpip.host.virtualenv import running_under_virtualenv
 
-lazy from .base import change_root, get_major_minor_version, is_osx_framework
+from .base import change_root, get_major_minor_version, is_osx_framework
 
 
 class InvalidSchemeCombination(InstallationError):

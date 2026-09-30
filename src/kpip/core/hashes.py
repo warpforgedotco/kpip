@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-lazy import hashlib
-lazy import os
+import hashlib
+import os
 from typing import TYPE_CHECKING, Any
 
-lazy from kpip.core.errors import HashMismatch, HashMissing, InstallationError
+from kpip.core.errors import HashMismatch, HashMissing, InstallationError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping

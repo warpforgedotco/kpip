@@ -29,7 +29,7 @@ lookup is a cache miss, never a wrong answer.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy from functools import lru_cache
+from functools import lru_cache
 
 if TYPE_CHECKING:
     from collections.abc import Callable

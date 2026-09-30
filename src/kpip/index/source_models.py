@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-lazy from collections.abc import Callable, Iterator, Mapping
-lazy from enum import Enum
+from collections.abc import Callable, Iterator, Mapping
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
-lazy from kpip.core.packaging import Requirement, canonicalize_name
-lazy from kpip.core.versions import Version
-lazy from kpip.core.wheel import CandidateMetadata, legacy_build_tag
+from kpip.core.packaging import Requirement, canonicalize_name
+from kpip.core.versions import Version
+from kpip.core.wheel import CandidateMetadata, legacy_build_tag
 
 
 class ArtifactKind(Enum):

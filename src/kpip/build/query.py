@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-lazy import json
-lazy import string
-lazy from collections import namedtuple
-lazy from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+import json
+import string
+from collections import namedtuple
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
-lazy from kpip.build.metadata import InstalledDistributionStore
-lazy from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-lazy from kpip.core.light_metadata import parse_metadata_text
-lazy from kpip.core.packaging import (
+from kpip.build.metadata import InstalledDistributionStore
+from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
+from kpip.core.light_metadata import parse_metadata_text
+from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-lazy from kpip.core.versions import Version
-lazy from kpip.core.wheel import WheelTag, wheel_tag_rank
+from kpip.core.versions import Version
+from kpip.core.wheel import WheelTag, wheel_tag_rank
 
 if TYPE_CHECKING:
     LatestInfo = Mapping[str, tuple[Any, str]]

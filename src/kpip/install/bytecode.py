@@ -17,16 +17,16 @@ faster, it is never the reason one fails.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import atexit
-lazy import os
-lazy import queue
-lazy import subprocess
-lazy import sys
-lazy import threading
+import atexit
+import os
+import queue
+import subprocess
+import sys
+import threading
 
-lazy from kpip.core.interpreter import is_compiled, own_command
-lazy from kpip.core.utils import default_worker_count
-lazy from kpip.install._compile_worker import WORKER_ARGUMENT
+from kpip.core.interpreter import is_compiled, own_command
+from kpip.core.utils import default_worker_count
+from kpip.install._compile_worker import WORKER_ARGUMENT
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

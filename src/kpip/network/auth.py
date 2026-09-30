@@ -6,25 +6,25 @@ providing credentials in the context of network requests.
 
 from __future__ import annotations
 
-lazy import getpass
-lazy import importlib.util
-lazy import json
-lazy import logging
-lazy import netrc
-lazy import os
-lazy import shutil
-lazy import subprocess
-lazy import sys
-lazy import sysconfig
-lazy import typing
-lazy import urllib.parse
-lazy from abc import ABC, abstractmethod
-lazy from functools import cache
-lazy from os.path import commonpath
-lazy from typing import NamedTuple
+import getpass
+import importlib.util
+import json
+import logging
+import netrc
+import os
+import shutil
+import subprocess
+import sys
+import sysconfig
+import typing
+import urllib.parse
+from abc import ABC, abstractmethod
+from functools import cache
+from os.path import commonpath
+from typing import NamedTuple
 
-lazy from kpip.core.urls import remove_auth_from_url, split_auth_netloc_from_url
-lazy from kpip.core.utils import AuthInfo
+from kpip.core.urls import remove_auth_from_url, split_auth_netloc_from_url
+from kpip.core.utils import AuthInfo
 
 logger = logging.getLogger(__name__)
 

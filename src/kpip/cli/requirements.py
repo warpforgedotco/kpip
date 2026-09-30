@@ -3,27 +3,27 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import argparse
-lazy import logging
-lazy import os
-lazy import sys
-lazy import tomllib
-lazy import urllib.parse
+import argparse
+import logging
+import os
+import sys
+import tomllib
+import urllib.parse
 
-lazy from kpip.build.build_backend import prepare_project_metadata
-lazy from kpip.cli.package_finder import release_control_from
-lazy from kpip.core.errors import InstallationError, KpipError
-lazy from kpip.core.format_control import FormatControl
-lazy from kpip.core.packaging import SpecifierSet, canonicalize_name, parse_requirement
-lazy from kpip.core.release_control import ReleaseControl
-lazy from kpip.core.versions import Version
-lazy from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
-lazy from kpip.index.config import DEFAULT_INDEX_URL
-lazy from kpip.index.links import Link
-lazy from kpip.index.source_locations import resolve_source_location
-lazy from kpip.network.deferred import DeferredNetworkSession
-lazy from kpip.resolution.files import parse_requirements
-lazy from kpip.resolution.input_requirements import install_req_from_line
+from kpip.build.build_backend import prepare_project_metadata
+from kpip.cli.package_finder import release_control_from
+from kpip.core.errors import InstallationError, KpipError
+from kpip.core.format_control import FormatControl
+from kpip.core.packaging import SpecifierSet, canonicalize_name, parse_requirement
+from kpip.core.release_control import ReleaseControl
+from kpip.core.versions import Version
+from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
+from kpip.index.config import DEFAULT_INDEX_URL
+from kpip.index.links import Link
+from kpip.index.source_locations import resolve_source_location
+from kpip.network.deferred import DeferredNetworkSession
+from kpip.resolution.files import parse_requirements
+from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
     from typing import Any

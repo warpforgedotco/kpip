@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-lazy import atexit
-lazy import marshal
-lazy import os
-lazy import threading
+import atexit
+import marshal
+import os
+import threading
 
-lazy from kpip.core.packaging import Requirement, parse_requirement
-lazy from kpip.core.utils import load_snapshot, save_snapshot, versioned_bucket
-lazy from kpip.core.versions import Version
-lazy from kpip.index.source_models import CandidateMetadata
+from kpip.core.packaging import Requirement, parse_requirement
+from kpip.core.utils import load_snapshot, save_snapshot, versioned_bucket
+from kpip.core.versions import Version
+from kpip.index.source_models import CandidateMetadata
 
 # Version 2 is one marshal file rather than an SQLite database.
 NAME = f"{versioned_bucket('candidate-metadata', 2)}.snapshot"

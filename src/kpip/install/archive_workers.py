@@ -21,14 +21,14 @@ returns None and wheels unpack on threads as before.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import _imp
-lazy import os
-lazy import sys
-lazy import threading
-lazy from concurrent.futures import InterpreterPoolExecutor
+import _imp
+import os
+import sys
+import threading
+from concurrent.futures import InterpreterPoolExecutor
 
-lazy from kpip.core.interpreter import is_compiled
-lazy from kpip.install.wheel_archive_cache import (
+from kpip.core.interpreter import is_compiled
+from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
     _ensure_pyc,
     archive_entry_root,

@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import os
-lazy import platform
-lazy import re
-lazy import sys
-lazy import urllib.parse
-lazy from bisect import bisect_left, bisect_right
+import os
+import platform
+import re
+import sys
+import urllib.parse
+from bisect import bisect_left, bisect_right
 
 # `markers` and this module import each other, so each is imported whole
 # and its names are read when used.
-lazy from kpip.core import markers
-lazy from kpip.core.caches import bounded_put, clear_all, memoized, register_table
-lazy from kpip.core.names import canonicalize_name
-lazy from kpip.core.versions import (
+from kpip.core import markers
+from kpip.core.caches import bounded_put, clear_all, memoized, register_table
+from kpip.core.names import canonicalize_name
+from kpip.core.versions import (
     FINAL_SUFFIX,
     InvalidVersion,
     Version,

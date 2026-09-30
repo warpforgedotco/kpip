@@ -8,8 +8,8 @@ about the link.
 
 from __future__ import annotations
 
-lazy import threading
-lazy from collections import deque
+import threading
+from collections import deque
 
 _SETTLED_AFTER = 8
 """Requests to see before an estimate is given: the first few carry the

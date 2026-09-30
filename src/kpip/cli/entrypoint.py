@@ -3,27 +3,27 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import atexit
-lazy import errno
-lazy import gc
-lazy import logging
-lazy import os
-lazy import sys
-lazy import traceback
+import atexit
+import errno
+import gc
+import logging
+import os
+import sys
+import traceback
 
-lazy import kpip
-lazy from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
-lazy from kpip.cli.logging_config import (
+import kpip
+from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
+from kpip.cli.logging_config import (
     BrokenStdoutLoggingError,
     configure_logging,
     set_log_file,
 )
-lazy from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
-lazy from kpip.core import run_options
-lazy from kpip.core.errors import KpipError
-lazy from kpip.core.temp_dir import global_tempdir_manager
-lazy from kpip.core.utils import configure
-lazy from kpip.host.virtualenv import running_under_virtualenv
+from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
+from kpip.core import run_options
+from kpip.core.errors import KpipError
+from kpip.core.temp_dir import global_tempdir_manager
+from kpip.core.utils import configure
+from kpip.host.virtualenv import running_under_virtualenv
 
 if TYPE_CHECKING:
     from typing import NoReturn

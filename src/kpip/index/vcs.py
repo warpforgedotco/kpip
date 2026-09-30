@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-lazy import atexit
-lazy import logging
-lazy import os
-lazy import shutil
-lazy import subprocess
-lazy import tempfile
-lazy import threading
+import atexit
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+import threading
 
-lazy from kpip.index.vcs_urls import (
+from kpip.index.vcs_urls import (
     VCS_SCHEMES,
     is_immutable_vcs_link,
     vcs_reference,

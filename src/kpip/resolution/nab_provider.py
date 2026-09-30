@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
-lazy import operator
-lazy import os
-lazy import sys
-lazy from bisect import bisect_left, bisect_right
-lazy from collections import deque
-lazy from collections.abc import Callable, Mapping, Sequence
-lazy from urllib.parse import urlsplit
+import logging
+import operator
+import os
+import sys
+from bisect import bisect_left, bisect_right
+from collections import deque
+from collections.abc import Callable, Mapping, Sequence
+from urllib.parse import urlsplit
 
-lazy from kpip._vendor.nab_resolver.ranges import Range
-lazy from kpip._vendor.nab_resolver.types import (
+from kpip._vendor.nab_resolver.ranges import Range
+from kpip._vendor.nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
     RangeProtocol,
     Term,
 )
-lazy from kpip.core.errors import KpipError
-lazy from kpip.core.metadata import InstalledDistribution, find_installed
-lazy from kpip.core.packaging import (
+from kpip.core.errors import KpipError
+from kpip.core.metadata import InstalledDistribution, find_installed
+from kpip.core.packaging import (
     Requirement,
     SpecifierSet,
     canonicalize_name,
@@ -27,14 +27,14 @@ lazy from kpip.core.packaging import (
     marker_applies,
     parse_requirement,
 )
-lazy from kpip.core.versions import ZERO_VERSION, InvalidVersion, Version
-lazy from kpip.core.wheel import WheelCandidate
-lazy from kpip.index.candidate_evaluators import CandidateEvaluator
-lazy from kpip.index.provider import CandidateProvider
-lazy from kpip.index.source_models import CandidateRecord
-lazy from kpip.resolution.models import ResolutionConfig, canonical_url, url_name
-lazy from kpip.resolution.nab_observer import DecisionObserver
-lazy from kpip.resolution.nab_types import (
+from kpip.core.versions import ZERO_VERSION, InvalidVersion, Version
+from kpip.core.wheel import WheelCandidate
+from kpip.index.candidate_evaluators import CandidateEvaluator
+from kpip.index.provider import CandidateProvider
+from kpip.index.source_models import CandidateRecord
+from kpip.resolution.models import ResolutionConfig, canonical_url, url_name
+from kpip.resolution.nab_observer import DecisionObserver
+from kpip.resolution.nab_types import (
     _MIN_PINS_TO_DISAGREE,
     InstalledCandidate,
     _dependencies_or_none,

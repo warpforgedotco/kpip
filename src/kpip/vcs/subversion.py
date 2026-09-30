@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-lazy import logging
-lazy import os
-lazy import re
-lazy import sys
+import logging
+import os
+import re
+import sys
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.subprocesses import CommandArgs
-lazy from kpip.core.urls import split_auth_from_netloc
-lazy from kpip.core.utils import AuthInfo, display_path
+from kpip.core.errors import InstallationError
+from kpip.core.subprocesses import CommandArgs
+from kpip.core.urls import split_auth_from_netloc
+from kpip.core.utils import AuthInfo, display_path
 
-lazy from .subprocesses import make_command
-lazy from .support import (
+from .subprocesses import make_command
+from .support import (
     HiddenText,
     is_installable_dir,
 )
-lazy from .versioncontrol import (
+from .versioncontrol import (
     RemoteNotFoundError,
     RevOptions,
     VersionControl,

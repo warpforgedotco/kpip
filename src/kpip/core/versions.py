@@ -28,9 +28,9 @@ The rules that follow from that:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import re
+import re
 
-lazy from kpip.core.caches import register_table
+from kpip.core.caches import register_table
 
 if TYPE_CHECKING:
     from typing import Any

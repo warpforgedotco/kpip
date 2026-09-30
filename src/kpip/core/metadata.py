@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-lazy import importlib.metadata
-lazy import os
-lazy import pathlib
-lazy import site
-lazy import sys
-lazy import sysconfig
-lazy from collections.abc import Collection, Iterable
-lazy from importlib.machinery import PathFinder
+import importlib.metadata
+import os
+import pathlib
+import site
+import sys
+import sysconfig
+from collections.abc import Collection, Iterable
+from importlib.machinery import PathFinder
 from typing import TYPE_CHECKING, Protocol
 
-lazy from .names import installed_name_might_match
-lazy from .packaging import (
+from .names import installed_name_might_match
+from .packaging import (
     Requirement,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-lazy from .versions import Version, version_of
-lazy from .wheel_metadata import parse_metadata_headers
+from .versions import Version, version_of
+from .wheel_metadata import parse_metadata_headers
 
 if TYPE_CHECKING:
     from email.message import Message

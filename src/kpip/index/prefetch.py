@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-lazy from collections.abc import Callable, Hashable
-lazy from concurrent.futures import ThreadPoolExecutor
-lazy from math import ceil
-lazy from threading import Condition, RLock
+from collections.abc import Callable, Hashable
+from concurrent.futures import ThreadPoolExecutor
+from math import ceil
+from threading import Condition, RLock
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-lazy from kpip.core import latency
+from kpip.core import latency
 
 if TYPE_CHECKING:
     from concurrent.futures import Future

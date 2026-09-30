@@ -9,10 +9,10 @@ and ``core`` is the only package all of them may import.
 
 from __future__ import annotations
 
-lazy import io
-lazy import os
-lazy import struct
-lazy import zlib
+import io
+import os
+import struct
+import zlib
 
 END_OF_CENTRAL_DIRECTORY = struct.Struct("<4s4H2LH")
 CENTRAL_DIRECTORY_HEADER = struct.Struct("<4s6H3L5H2L")

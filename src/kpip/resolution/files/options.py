@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-lazy import ntpath
-lazy import os
-lazy import re
-lazy import urllib.parse
-lazy from typing import cast
+import ntpath
+import os
+import re
+import urllib.parse
+from typing import cast
 
-lazy from kpip.core.urls import path_to_url
-lazy from kpip.resolution.files.models import RequirementsFileParseError
+from kpip.core.urls import path_to_url
+from kpip.resolution.files.models import RequirementsFileParseError
 
 
 def strip_matching_quotes(value: str) -> str:

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-lazy import hashlib
+import hashlib
 
-lazy from kpip.cli.parser import ArgumentParser
+from kpip.cli.parser import ArgumentParser
 
 
 def create_check_parser() -> ArgumentParser:

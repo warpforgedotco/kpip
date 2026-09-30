@@ -15,16 +15,16 @@ does that for the installer's own rewrites.
 
 from __future__ import annotations
 
-lazy import ctypes
-lazy import errno
-lazy import os
-lazy import shutil
-lazy import stat
-lazy import sys
-lazy import threading
-lazy import time
-lazy from collections.abc import Callable
-lazy from concurrent.futures import ThreadPoolExecutor
+import ctypes
+import errno
+import os
+import shutil
+import stat
+import sys
+import threading
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:

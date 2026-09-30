@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-lazy import os
-lazy import tomllib
-lazy from typing import Any
+import os
+import tomllib
+from typing import Any
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.names import canonicalize_name
+from kpip.core.errors import InstallationError
+from kpip.core.names import canonicalize_name
 
 
 def group_items(values: list[str]) -> list[tuple[str, str]]:

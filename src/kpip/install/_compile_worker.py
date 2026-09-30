@@ -21,9 +21,9 @@ wheel that ships a module this interpreter cannot compile -- vendored Python
 module, which is what pip does too.
 """
 
-lazy import py_compile
-lazy import sys
-lazy import warnings
+import py_compile
+import sys
+import warnings
 
 WORKER_ARGUMENT = "--kpip-compile-worker"
 """What a compiled kpip is started with to be a worker: it has no script to

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-lazy from collections.abc import Callable, Iterator, Sequence
-lazy from typing import overload
+from collections.abc import Callable, Iterator, Sequence
+from typing import overload
 
-lazy from kpip.core.wheel import WheelCandidate
+from kpip.core.wheel import WheelCandidate
 
 
 class CandidateStream(Sequence[WheelCandidate]):

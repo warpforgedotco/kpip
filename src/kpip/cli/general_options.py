@@ -4,8 +4,8 @@ from __future__ import annotations
 
 
 from typing import TYPE_CHECKING
-lazy from kpip.cli.logging_config import configure_logging
-lazy from kpip.core import run_options
+from kpip.cli.logging_config import configure_logging
+from kpip.core import run_options
 
 if TYPE_CHECKING:
     import argparse

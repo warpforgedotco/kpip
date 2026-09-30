@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-lazy from typing import Any, Protocol
+from typing import Any, Protocol
 
-lazy from kpip.core.errors import KpipError
+from kpip.core.errors import KpipError
 
 
 class HttpStatusError(KpipError):

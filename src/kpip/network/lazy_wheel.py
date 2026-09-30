@@ -9,23 +9,23 @@ __all__ = [
 ]
 
 from typing import TYPE_CHECKING
-lazy import shutil
-lazy from bisect import bisect_left, bisect_right
-lazy from collections.abc import Generator
-lazy from contextlib import contextmanager
-lazy from tempfile import NamedTemporaryFile
-lazy from types import TracebackType
-lazy from zipfile import BadZipFile, ZipFile
+import shutil
+from bisect import bisect_left, bisect_right
+from collections.abc import Generator
+from contextlib import contextmanager
+from tempfile import NamedTemporaryFile
+from types import TracebackType
+from zipfile import BadZipFile, ZipFile
 
-lazy from kpip._vendor.urllib3.exceptions import DecodeError
-lazy from kpip.build.metadata import MetadataDistribution
-lazy from kpip.core.http_contracts import (
+from kpip._vendor.urllib3.exceptions import DecodeError
+from kpip.build.metadata import MetadataDistribution
+from kpip.core.http_contracts import (
     HttpResponse,
     HttpStatusError,
     raise_for_status,
 )
-lazy from kpip.core.wheel import read_wheel_archive_member, validate_wheel
-lazy from kpip.network.exceptions import InvalidWheel
+from kpip.core.wheel import read_wheel_archive_member, validate_wheel
+from kpip.network.exceptions import InvalidWheel
 
 if TYPE_CHECKING:
     from kpip.network.session import NetworkSession

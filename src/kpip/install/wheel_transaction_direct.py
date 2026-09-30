@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import importlib.util
-lazy import os
-lazy from concurrent.futures import ThreadPoolExecutor
+import importlib.util
+import os
+from concurrent.futures import ThreadPoolExecutor
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.wheel import WheelCandidate
-lazy from kpip.install.target import InstallTarget
-lazy from kpip.install.transaction import InstallTransaction
-lazy from kpip.install.wheel_archive import (
+from kpip.core.errors import InstallationError
+from kpip.core.wheel import WheelCandidate
+from kpip.install.target import InstallTarget
+from kpip.install.transaction import InstallTransaction
+from kpip.install.wheel_archive import (
     DestinationCache,
     ResolvedRoots,
     destination_internal_parts_text,
     validate_member_parts,
 )
-lazy from kpip.install.wheel_archive_cache import INSTALL_WORKERS
+from kpip.install.wheel_archive_cache import INSTALL_WORKERS
 
 if TYPE_CHECKING:
     from typing import Any

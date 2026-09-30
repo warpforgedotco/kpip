@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-lazy import ntpath
-lazy import os
-lazy import stat
-lazy import urllib.parse
+import ntpath
+import os
+import stat
+import urllib.parse
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.urls import path_to_url, url_to_path
+from kpip.core.errors import InstallationError
+from kpip.core.urls import path_to_url, url_to_path
 
 
 def looks_like_path(value: str) -> bool:

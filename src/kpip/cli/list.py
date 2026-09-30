@@ -3,24 +3,24 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
+import logging
 
-lazy from kpip.build.query import (
+from kpip.build.query import (
     format_list_columns,
     format_list_freeze,
     format_list_json,
     select_installed_distributions,
 )
-lazy from kpip.cli.config import load_source_config, resolve_sources
-lazy from kpip.cli.package_finder import (
+from kpip.cli.config import load_source_config, resolve_sources
+from kpip.cli.package_finder import (
     check_release_control,
     excludes_prereleases,
     package_finder,
 )
-lazy from kpip.cli.parsers.list import create_parser
-lazy from kpip.cli.target import target_paths
-lazy from kpip.core.metadata import stdlib_pkgs, user_lib_path
-lazy from kpip.core.packaging import parse_requirement
+from kpip.cli.parsers.list import create_parser
+from kpip.cli.target import target_paths
+from kpip.core.metadata import stdlib_pkgs, user_lib_path
+from kpip.core.packaging import parse_requirement
 
 if TYPE_CHECKING:
     from typing import Any
