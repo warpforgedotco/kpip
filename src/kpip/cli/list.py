@@ -145,6 +145,11 @@ def run_list(args: list[str]) -> int:
         latest=latest,
     )
 
+    # As pip: an environment with nothing to list prints nothing, not a
+    # header over no rows.
+    if not rows:
+        return 0
+
     rows.insert(0, header)
 
     widths = [
@@ -152,13 +157,14 @@ def run_list(args: list[str]) -> int:
         for i in range(len(rows[0]))
     ]
 
-    print(
-        "\n".join(
-            " ".join(
-                str(value).ljust(widths[i]) for i, value in enumerate(row)
-            ).rstrip()
-            for row in rows
-        ),
-    )
+    lines = [
+        " ".join(str(value).ljust(widths[i]) for i, value in enumerate(row)).rstrip()
+        for row in rows
+    ]
+
+    # pip rules the header off from the rows.
+    lines.insert(1, " ".join("-" * width for width in widths))
+
+    print("\n".join(lines))
 
     return 0

@@ -32,9 +32,7 @@ cli.entrypoint:main
   |      +--> cli.fast_install:run_cached_remote   missing target + exact remote pins, warm receipt
   |      +--> cli.fast_install:run_local_fallback  non-empty local target, --no-index wheelhouse
   |      +--> cli.fast_install:run                 empty target, --no-index wheelhouse
-  |      +--> run_satisfied_install                 plain names, all already installed
-  |      +--> run_list                             no index options; sys.path or --path
-  |      `--> run_freeze                           no -r/--user; no editables unless excluded
+  |      `--> run_satisfied_install                 plain names, all already installed
   +--> execution context, logging, temp dir (per CommandSpec flags)
   +--> cli.fast:run_install_after_startup / run_lock_after_startup
   `--> run_command -> CommandSpec.load_runner
@@ -42,22 +40,15 @@ cli.entrypoint:main
 
 Rules:
 
-- Fast paths are recognizers, not separate semantics: they return `None` for
-  any argument, target state or feature they do not implement completely, and
-  normal dispatch always remains available afterwards. Keep recognition rules
-  in `cli/fast.py` and `cli/fast_install.py`; ordinary command dispatch stays
-  registry-driven. `cli/entrypoint.py` names only its built-in `help` handling.
+- One implementation per behaviour, and it follows pip's semantics. A cache
+  or an early exit inside that implementation is fine; a second implementation
+  of the same behaviour is not. The recognizers still in `cli/fast.py` and
+  `cli/fast_install.py` predate this rule and are being folded into their
+  commands: do not add to them, and do not add new ones. `list` and `freeze`
+  have none.
 - The registry stores module paths and imports a command on first use. Startup
   gating belongs in `CommandSpec` flags (`needs_logging`, `needs_tempdir`,
   `needs_execution_context`), not in command-name tests.
-- `cli/fast.py` and `cli/fast_install.py` are imported lazily and carry their
-  own name normalization, requirement parsing, METADATA scanning and minimal
-  wheelhouse resolver so a declined command pays only for the token tests. That
-  duplication is deliberate; do not consolidate it into the shared
-  implementations. The modules the fast install path does import keep their
-  rarely-run dependencies (`email.parser`, `importlib.resources`,
-  `concurrent.futures`, `resolution.models`) behind function-level imports;
-  `tests/core/test_startup_imports.py` pins what that path may load.
 
 Shared concerns inside `cli` have one owner each; extend the owner rather than
 re-deriving locally:
