@@ -336,6 +336,48 @@ def test_primary_only_persists_choice_for_reuse(tmp_path: Path) -> None:
     assert persisted.get("1.0.0") is not None
 
 
+def test_primary_only_chooses_from_a_catalog_replaced_since_it_was_read(
+    tmp_path: Path,
+) -> None:
+    """A page stored again -- by a second fetch, or another process -- under
+    another generation than the one the resolver read still has its release:
+    it is chosen from what is stored now, and no choice is persisted under a
+    generation whose catalog is gone."""
+    cache = SafeFileCache(str(tmp_path))
+    source_url = "https://example.test/simple/demo/"
+    link = Link.from_url(
+        "https://files.example.test/demo-1.0.0-py3-none-any.whl#sha256=777",
+        source_url=source_url,
+        text="demo-1.0.0-py3-none-any.whl",
+    )
+    save_links(cache, source_url, [link])
+    read_generation = _generation(cache, source_url)
+    newer = Link.from_url(
+        "https://files.example.test/demo-1.1.0-py3-none-any.whl#sha256=888",
+        source_url=source_url,
+        text="demo-1.1.0-py3-none-any.whl",
+    )
+    save_links(cache, source_url, [link, newer])
+    assert _generation(cache, source_url) != read_generation
+    version = Version("1.0.0")
+    records_by_version = {version: ((source_url, read_generation),)}
+
+    provider = _provider(cache)
+    _supported_tags, target_key = provider.catalog_target_internal()
+
+    result = provider.candidate_records_from_catalog(
+        ("demo", True, True),
+        SimpleNamespace(records_by_version=records_by_version),
+        (version,),
+        primary_only=True,
+    )
+
+    assert len(result) == 1
+    assert result[0].link.url.startswith("https://files.example.test/demo-1.0.0")
+    persisted = load_choices(cache, source_url, read_generation, target_key, True, True)
+    assert not persisted or persisted.get("1.0.0") is None
+
+
 def test_records_by_version_none_falls_back_to_candidates_by_version() -> None:
     provider = CandidateProvider.from_options(no_index=True)
     version = Version("1.0.0")

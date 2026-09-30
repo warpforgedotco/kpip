@@ -919,18 +919,18 @@ class CandidateProvider:
 
                         version_text = version.public
 
-                        if version_text not in choices:
-                            if not self._fill_catalog_choice(
-                                catalog_key,
-                                supported_tags,
-                                choices,
-                                persistent_cache,
-                                source_url,
-                                generation,
-                                version,
-                            ):
-                                continue
+                        if version_text in choices:
+                            choice = choices[version_text]
 
+                        elif self._fill_catalog_choice(
+                            catalog_key,
+                            supported_tags,
+                            choices,
+                            persistent_cache,
+                            source_url,
+                            generation,
+                            version,
+                        ):
                             dirty_choices.add(
                                 (
                                     source_url,
@@ -941,7 +941,28 @@ class CandidateProvider:
                                 ),
                             )
 
-                        choice = choices[version_text]
+                            choice = choices[version_text]
+
+                        else:
+                            # The page was stored again since it was read --
+                            # by a second fetch, or another process -- so no
+                            # choice may be persisted under this generation.
+                            # The release is still there: chosen from what is
+                            # stored now, as the full path reads it, rather
+                            # than dropped, which left the resolver finding
+                            # no artifact for a release the index lists.
+                            choice = self._select_catalog_choice(
+                                catalog_key,
+                                supported_tags,
+                                self._catalog_artifacts_for(
+                                    catalog_key,
+                                    persistent_cache,
+                                    source_url,
+                                    generation,
+                                    version,
+                                ),
+                                version,
+                            )
 
                         if choice is None:
                             continue
