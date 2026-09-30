@@ -17,12 +17,12 @@ than one type, floats and complex values, now also compares their types.
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
  nuitka/build/static_src/HelpersConstantsBlob.c | changed
- 1 file changed, 73 insertions(+), 9 deletions(-)
+ 1 file changed, 74 insertions(+), 9 deletions(-)
 
 diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/static_src/HelpersConstantsBlob.c
 --- a/nuitka/build/static_src/HelpersConstantsBlob.c
 +++ b/nuitka/build/static_src/HelpersConstantsBlob.c
-@@ -300,7 +300,78 @@
+@@ -300,8 +300,80 @@
  
      Py_INCREF_IMMORTAL(result);
      return result;
@@ -67,14 +67,15 @@ diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/stati
 +
 +    return a->richcompare(a->value, other->value, op);
  }
-+
+ 
 +static void Nuitka_ConstantKey_tp_dealloc(Nuitka_ConstantKey *key) {
 +    Py_DECREF(key->value);
 +    PyObject_Del(key);
 +}
 +
 +static PyTypeObject Nuitka_ConstantKey_Type = {
-+    PyVarObject_HEAD_INIT(&PyType_Type, 0) "compiled_constant_key", // tp_name
++    // The metatype is set by "PyType_Ready", as it is not a constant everywhere.
++    PyVarObject_HEAD_INIT(NULL, 0) "compiled_constant_key", // tp_name
 +    sizeof(Nuitka_ConstantKey),                                      // tp_basicsize
 +    0,                                                               // tp_itemsize
 +    (destructor)Nuitka_ConstantKey_tp_dealloc,                       // tp_dealloc
@@ -98,10 +99,11 @@ diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/stati
 +    0,                                                               // tp_clear
 +    (richcmpfunc)Nuitka_ConstantKey_tp_richcompare,                  // tp_richcompare
 +};
- 
++
  // For creation of small long singleton long values as required by Python3.
  #if PYTHON_VERSION < 0x3b0
-@@ -345,6 +416,8 @@
+ #if PYTHON_VERSION >= 0x390
+@@ -345,6 +417,8 @@
  
      frozenset_cache = PyDict_New();
  
@@ -110,7 +112,7 @@ diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/stati
  #if PYTHON_VERSION < 0x3b0
  #if PYTHON_VERSION >= 0x390
      // On Python3.9+ these are exposed in the interpreter.
-@@ -394,20 +467,23 @@
+@@ -394,20 +468,23 @@
  
  static void insertToDictCacheForcedHash(PyObject *dict, PyObject **value, hashfunc tp_hash,
                                          richcmpfunc tp_richcompare) {
