@@ -324,3 +324,47 @@ def test_nothing_is_fetched_after_close(monkeypatch) -> None:
     time.sleep(0.05)
 
     assert fetched == []
+
+
+def test_prepare_install_candidates_builds_sources_alongside_downloads(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A source distribution starts building while wheels still download,
+    rather than after the last of them: its build is most of the install."""
+    requirement = parse_requirement("built==1.0")
+    assert requirement is not None
+    source = LazyWheelCandidate(
+        CandidateRecord(
+            name="built",
+            version=Version("1.0"),
+            link=Link.from_url(
+                "https://example.invalid/built-1.0.tar.gz", source_url=None
+            ),
+        ),
+        requirement,
+        CandidateMaterializer(),
+    )
+    candidates = [remote_candidate("demo-0"), source, remote_candidate("demo-1")]
+    build_started = threading.Event()
+
+    def materialize(candidate: LazyWheelCandidate) -> WheelCandidate:
+        if candidate.name == "built":
+            build_started.set()
+        else:
+            # Downloads finish only once the build is under way.
+            assert build_started.wait(timeout=5), "the build waited for downloads"
+        return WheelCandidate(
+            name=candidate.name,
+            version=candidate.version,
+            path=str(tmp_path / f"{candidate.name}.whl"),
+            dependencies=(),
+            source_kind="wheel",
+        )
+
+    monkeypatch.setattr(LazyWheelCandidate, "materialize", materialize)
+    result = prepare_install_candidates(
+        candidates, str(tmp_path / "cache"), lambda candidate, cache_dir: object()
+    )
+
+    assert [candidate.name for candidate in result] == ["demo-0", "built", "demo-1"]

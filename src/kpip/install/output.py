@@ -17,6 +17,11 @@ from kpip.install.wheel_archive_cache import EXTRACT_WORKERS
 
 _MATERIALIZATION_WORKERS = 32
 
+_LOCAL_WORKERS = 4
+"""Local candidates, source distributions to build among them, prepared at
+once. Each build is a process of its own; four keep a few busy without
+compiling every sdist of a large install at the same time."""
+
 
 def fetch_candidate_sources(
     candidates: Sequence[Any],
@@ -286,12 +291,17 @@ def prepare_install_candidates(
 
     With ``prefetched``, its fetches of these candidates finish first; each is
     then prepared as without it, finding the caches it warmed.
+
+    What is not a wheel to download -- a source distribution to build above
+    all -- starts first, on threads of its own: it used to wait for every
+    wheel download, a quarter second of a cold trio install before its one
+    sdist build began, with the whole build still to run.
     """
 
-    if prefetched is not None:
-        prefetched.wait(candidates)
-
     if cache_dir is None or not candidates or prepare_archive is None:
+        if prefetched is not None:
+            prefetched.wait(candidates)
+
         return materialize_candidates(candidates)
 
     count = len(candidates)
@@ -315,62 +325,93 @@ def prepare_install_candidates(
 
     archive_futures: dict[Future[object], int] = {}
 
-    with ThreadPoolExecutor(
-        max_workers=min(EXTRACT_WORKERS, count),
-        thread_name_prefix="kpip-archive",
-    ) as archive_pool:
+    local_pool = (
+        ThreadPoolExecutor(
+            max_workers=min(_LOCAL_WORKERS, len(local)),
+            thread_name_prefix="kpip-local",
+        )
+        if local
+        else None
+    )
 
-        def submit_archive(index: int, candidate: WheelCandidate) -> None:
-            concrete[index] = candidate
+    local_futures = (
+        {
+            local_pool.submit(materialize_candidate, candidate): index
+            for index, candidate in local
+        }
+        if local_pool is not None
+        else {}
+    )
 
-            archive_futures[
-                archive_pool.submit(prepare_archive, candidate, cache_dir)
-            ] = index
+    try:
+        if prefetched is not None:
+            prefetched.wait(candidates)
 
-        if remote:
-            with ThreadPoolExecutor(
-                max_workers=min(_MATERIALIZATION_WORKERS, len(remote)),
-                thread_name_prefix="kpip-wheel",
-            ) as download_pool:
-                download_futures = {
-                    download_pool.submit(materialize_candidate, candidate): index
-                    for index, candidate in remote
-                }
+        with ThreadPoolExecutor(
+            max_workers=min(EXTRACT_WORKERS, count),
+            thread_name_prefix="kpip-archive",
+        ) as archive_pool:
 
-                for future in as_completed(download_futures):
-                    index = download_futures[future]
+            def submit_archive(index: int, candidate: WheelCandidate) -> None:
+                concrete[index] = candidate
 
-                    try:
-                        submit_archive(index, future.result())
+                archive_futures[
+                    archive_pool.submit(prepare_archive, candidate, cache_dir)
+                ] = index
 
-                    except Exception as exc:
-                        errors[index] = exc
+            if remote:
+                with ThreadPoolExecutor(
+                    max_workers=min(_MATERIALIZATION_WORKERS, len(remote)),
+                    thread_name_prefix="kpip-wheel",
+                ) as download_pool:
+                    download_futures = {
+                        download_pool.submit(materialize_candidate, candidate): index
+                        for index, candidate in remote
+                    }
 
-        for index, candidate in local:
-            try:
-                submit_archive(index, materialize_candidate(candidate))
+                    for future in as_completed(download_futures):
+                        index = download_futures[future]
 
-            except Exception as exc:
-                errors[index] = exc
+                        try:
+                            submit_archive(index, future.result())
 
-        for future in as_completed(tuple(archive_futures)):
-            index = archive_futures[future]
+                        except Exception as exc:
+                            errors[index] = exc
 
-            candidate = concrete[index]
+            for future in as_completed(local_futures):
+                index = local_futures[future]
 
-            assert candidate is not None
+                try:
+                    submit_archive(index, future.result())
 
-            try:
-                archive = future.result()
+                except Exception as exc:
+                    errors[index] = exc
 
-            except OSError:
-                prepared[index] = candidate
+            for future in as_completed(tuple(archive_futures)):
+                index = archive_futures[future]
 
-            except Exception as exc:
-                errors[index] = exc
+                candidate = concrete[index]
 
-            else:
-                prepared[index] = candidate.copy_with(wheel_layout=archive)
+                assert candidate is not None
+
+                try:
+                    archive = future.result()
+
+                except OSError:
+                    prepared[index] = candidate
+
+                except Exception as exc:
+                    errors[index] = exc
+
+                else:
+                    prepared[index] = candidate.copy_with(wheel_layout=archive)
+
+    finally:
+        if local_pool is not None:
+            # All done by now, unless this is leaving early: then nothing not
+            # yet started is wanted, and a build already running finishes on
+            # its own.
+            local_pool.shutdown(wait=False, cancel_futures=True)
 
     for error in errors:
         if error is not None:
