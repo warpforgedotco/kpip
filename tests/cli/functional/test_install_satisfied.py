@@ -73,3 +73,25 @@ def test_an_installed_name_skipped_for_its_markers_is_not_satisfied(
 
     assert result.stdout == "", result.stdout
     assert result.stderr == "", result.stderr
+
+
+def test_a_target_directory_gets_what_the_environment_already_has(
+    script: KpipTestEnvironment, data: TestData
+) -> None:
+    """As with pip, ``--target`` is a library of its own: a requirement the
+    running environment has installed is installed into the target too."""
+    script.kpip_install_local("simplewheel==2.0")
+    target = script.scratch_path / "target"
+
+    result = script.kpip(
+        "install",
+        "--no-index",
+        "-f",
+        data.find_links,
+        "--target",
+        target,
+        "simplewheel",
+    )
+
+    assert "Requirement already satisfied" not in result.stdout, result.stdout
+    assert (target / "simplewheel").is_dir()
