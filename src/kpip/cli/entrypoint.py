@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 
+from kpip.core import run_options
 from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
 from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
 
@@ -33,6 +34,10 @@ VISIBLE_COMMAND_NAMES = tuple(spec.name for spec in COMMAND_SPECS if spec.visibl
 COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECS)
 
 VIRTUALENV_OPTIONS = frozenset(("--require-virtualenv", "--require-venv"))
+
+LOG_OPTIONS = frozenset(("--log", "--log-file", "--local-log"))
+
+LOG_OPTION_PREFIXES = ("--log=", "--log-file=", "--local-log=")
 
 
 VERBOSITY_FLAGS = frozenset(("-vv", "-vvv"))
@@ -88,12 +93,14 @@ def extract_global_options(
 
     log_file: str | None = None
 
+    require_virtualenv = False
+
     index = 0
 
     while index < len(args):
         token = args[index]
 
-        if token == "--log":
+        if token in LOG_OPTIONS:
             if index + 1 < len(args):
                 log_file = args[index + 1]
 
@@ -101,8 +108,15 @@ def extract_global_options(
 
             continue
 
-        if token.startswith("--log="):
+        if token.startswith(LOG_OPTION_PREFIXES):
             log_file = token.partition("=")[2]
+
+            index += 1
+
+            continue
+
+        if token in VIRTUALENV_OPTIONS:
+            require_virtualenv = True
 
             index += 1
 
@@ -116,19 +130,10 @@ def extract_global_options(
 
     verbosity = 0
 
-    require_virtualenv = False
-
     index = 0
 
     while index < len(filtered):
         token = filtered[index]
-
-        if token in VIRTUALENV_OPTIONS:
-            require_virtualenv = True
-
-            index += 1
-
-            continue
 
         if token in ("--verbose", "--quiet"):
             verbosity += 1 if token == "--verbose" else -1
@@ -399,6 +404,8 @@ def main(
         for name in ("KPIP_RESOLVER_DEBUG", "KPIP_TARGET_PREFIX")
     }
     try:
+        run_options.reset()
+
         argv = list(sys.argv[1:] if args is None else args)
         argv, verbosity, require_virtualenv, log_file = extract_global_options(argv)
 
@@ -520,6 +527,9 @@ def main(
         return 1
 
     except ValueError as exc:
+        if run_options.current.debug:
+            raise
+
         logging.getLogger(__name__).critical("%s", exc)
 
         return 1
@@ -527,7 +537,7 @@ def main(
     except Exception as exc:
         from kpip.core.errors import KpipError
 
-        if not isinstance(exc, KpipError):
+        if not isinstance(exc, KpipError) or run_options.current.debug:
             raise
 
         logging.getLogger(__name__).critical("%s", exc)

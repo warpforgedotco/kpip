@@ -84,30 +84,46 @@ class DeferredNetworkSession:
             if self.session is not None:
                 return self.session
 
-            from kpip.network.session import DEFAULT_RETRIES, NetworkSession
+            from kpip.core import run_options
+            from kpip.network.session import DEFAULT_RETRIES, NetworkSession, Timeout
+
+            # What the session was not told itself, the command's general
+            # options decide.
+            general = run_options.current
 
             session = NetworkSession(
                 index_urls=self.index_urls,
                 cache=self.page_cache(),
-                retries=DEFAULT_RETRIES,
+                retries=DEFAULT_RETRIES if general.retries is None else general.retries,
+                resume_retries=general.resume_retries or 0,
+                trusted_hosts=general.trusted_hosts,
             )
+
+            if general.timeout is not None:
+                session.timeout = Timeout(connect=general.timeout, read=general.timeout)
 
             assert session.auth is not None
 
-            session.auth.prompting = not self.no_input
+            session.auth.prompting = not (self.no_input or general.no_input)
 
-            session.auth.keyring_provider = self.keyring_provider
+            session.auth.keyring_provider = (
+                general.keyring_provider or self.keyring_provider
+            )
 
-            if self.cert:
-                session.verify = self.cert
+            cert = self.cert or general.cert
 
-            if self.client_cert:
-                session.cert = self.client_cert
+            if cert:
+                session.verify = cert
 
-            if self.proxy is not None:
-                session.proxies = (
-                    {"http": self.proxy, "https": self.proxy} if self.proxy else {}
-                )
+            client_cert = self.client_cert or general.client_cert
+
+            if client_cert:
+                session.cert = client_cert
+
+            proxy = self.proxy if self.proxy is not None else general.proxy
+
+            if proxy is not None:
+                session.proxies = {"http": proxy, "https": proxy} if proxy else {}
 
             self.session = session
 

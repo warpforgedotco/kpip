@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
+from kpip.core import run_options
 from kpip.core.utils import CACHE_VERSION_TAG, versioned_bucket
 
 
@@ -83,13 +84,17 @@ def command_cache_dir(explicit: str | None, disabled: bool) -> str | None:
     here, so ``lock``, ``install`` and ``download`` agree on both.
     """
 
-    if disabled or (
-        os.environ.get("KPIP_NO_CACHE_DIR", "").strip().lower() in _TRUE_VALUES
+    general = run_options.current
+
+    if (
+        disabled
+        or general.no_cache_dir
+        or os.environ.get("KPIP_NO_CACHE_DIR", "").strip().lower() in _TRUE_VALUES
     ):
         _command_cache[:] = [None]
         return None
 
-    root = cache_root(explicit)
+    root = cache_root(explicit or general.cache_dir)
     _command_cache[:] = [root]
     return versioned_cache_dir(root)
 
