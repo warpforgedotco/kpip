@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import operator
+import os
 import sys
 from bisect import bisect_left, bisect_right
 from collections import deque
@@ -46,6 +48,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from kpip._vendor.nab_resolver.resolver import ResolverObserver
+
+logger = logging.getLogger(__name__)
 
 _MISSING = object()
 
@@ -147,6 +151,33 @@ def _conflicting_exact_root(
 # Sorts a package with no place in the decision order after every placed one.
 _UNPLACED = sys.maxsize
 
+# How many conflicts a resolve may meet while deciding packages in the order
+# that makes its answer the best one; see ``NabProvider.note_conflict``.
+# Decided in that order, the locks of scripts/benchmark/requirements met 25
+# conflicts at most and the hardest graph measured 66 (the recorded
+# ``apache-airflow[all]==2.9.3``, 590 packages), so an ordinary resolve comes
+# nowhere near the default.  A conflict on a graph that size costs a fraction
+# of a second, which makes the default minutes of search at the outside.
+# The variable replaces it, for experiments: 0 gives the order up at the
+# first conflict.
+ORDER_BUDGET_VARIABLE = "KPIP_BEST_ANSWER_BUDGET"
+DEFAULT_ORDER_BUDGET = 1000
+
+
+def _order_budget() -> int:
+    value = os.environ.get(ORDER_BUDGET_VARIABLE)
+    if value is None:
+        return DEFAULT_ORDER_BUDGET
+    try:
+        return max(0, int(value))
+    except ValueError:
+        logger.warning(
+            "Ignoring %s=%r: expected a number of conflicts",
+            ORDER_BUDGET_VARIABLE,
+            value,
+        )
+        return DEFAULT_ORDER_BUDGET
+
 
 class NabProvider:
     """Native NAB provider backed by kpip candidate discovery."""
@@ -244,6 +275,9 @@ class NabProvider:
         self._placed_by: list[list[str]] = []
         self._just_decided: tuple[str, Version] | None = None
         self._place_moved: set[str] = set()
+        self._conflicts = 0
+        self._order_budget = _order_budget()
+        self.order_budget_spent = False
         self._constrained_root_packages: set[str] = set()
         # A release's dependencies as the forward check reads them; see
         # ``_forward_dependencies``.
@@ -1850,6 +1884,33 @@ class NabProvider:
             placed_by.append([])
         self._just_decided = (package, version)
 
+    def note_conflict(self) -> None:
+        """Hear of a conflict, and give up the best-answer order past the budget.
+
+        The breadth-first order says which package gives way, not which
+        decision would end the search soonest, and on some graphs it is slow
+        beyond use: boto3 and botocore release in step, a thousand releases
+        each, and a lock that pins neither walks them pair by pair.  The
+        budget is counted in conflicts and not in seconds so that a lock is
+        the same on every machine.  Once it is spent the rest of the solve
+        decides dependencies by the speed heuristic; what it returns is still
+        a valid answer, but the package held back need no longer be the one
+        furthest from the roots.
+        """
+        self._conflicts += 1
+        if self.order_budget_spent or self._conflicts <= self._order_budget:
+            return
+        self.order_budget_spent = True
+        logger.warning(
+            "Resolution met more than %d conflicts deciding packages in order "
+            "of their distance from the requirements given. The rest are "
+            "decided in the order that resolves fastest: the result satisfies "
+            "every requirement, but some packages may be older than they "
+            "need to be. Set %s to allow more conflicts.",
+            self._order_budget,
+            ORDER_BUDGET_VARIABLE,
+        )
+
     def _place_dependencies(
         self, package: str, version: Version, dependencies: Mapping[str, object]
     ) -> None:
@@ -2459,13 +2520,16 @@ class NabProvider:
         if rank is not None:
             return (rank, 0, 0, package)
         place = self._place.get(package)
-        if place is not None:
+        if place is not None and not self.order_budget_spent:
             return (place, 0, 0, package)
 
         # A package with no place yet is one no decided release depends on;
         # it is in the solution only because a clause over every release of
         # an undecided package asks for it.  It waits for the placed ones,
-        # and among its like goes by the speed heuristic.  A package that has
+        # and among its like goes by the speed heuristic, as every dependency
+        # does once the budget is spent (``note_conflict``; the conflict that
+        # spends it also advances the resolver's priority epoch, so every
+        # key is asked for again).  A package that has
         # already caused a backjump is more valuable than an unrelated
         # package with a smaller catalog.  Keeping catalog size first makes a
         # deep backjump replay every one-release package before returning to

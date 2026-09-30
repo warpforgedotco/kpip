@@ -181,6 +181,7 @@ class ResolutionEngine:
             metrics={
                 "nab_rounds": resolver.stats.rounds,
                 "nab_conflicts": resolver.stats.conflicts,
+                "nab_order_budget_spent": int(adapter.order_budget_spent),
             },
         )
 

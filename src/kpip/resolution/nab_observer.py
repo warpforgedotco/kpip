@@ -8,14 +8,19 @@ from kpip.core.versions import Version
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from kpip.resolution.nab_provider import NabProvider
 
 
 class DecisionObserver(ResolverObserver[str, Version]):
-    """Tells a provider of each decision the resolver makes."""
+    """Tells a provider of each decision the resolver makes, and each conflict."""
 
     def __init__(self, provider: NabProvider) -> None:
         self._provider = provider
 
     def on_decision(self, package: str, version: Version, level: int) -> None:
         self._provider.note_decision(package, version, level)
+
+    def on_conflict(self, incompatibility: Any) -> None:
+        self._provider.note_conflict()

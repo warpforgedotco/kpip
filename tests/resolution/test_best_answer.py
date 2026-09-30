@@ -8,6 +8,7 @@ which looks for any valid answer that beats it.
 
 from __future__ import annotations
 
+import logging
 import random
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import pytest
 
 from kpip.core import errors
 from kpip.resolution.api import ResolutionEngine
+from kpip.resolution.nab_provider import ORDER_BUDGET_VARIABLE
 from tests.resolution.best_answer import (
     build_wheelhouse,
     check_best,
@@ -169,3 +171,70 @@ def test_answer_is_best_on_a_random_index(tmp_path: Path, seed: int) -> None:
     report = check_best(wheelhouse_resolver(wheelhouse, roots), roots, pins_of(result))
     assert report.counterexamples == []
     assert report.inconclusive == []
+
+
+def test_a_spent_budget_falls_back_to_a_valid_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wheelhouse = build_wheelhouse(tmp_path, DEEP_BACKTRACK)
+    roots = ["a", "k"]
+    monkeypatch.setenv(ORDER_BUDGET_VARIABLE, "0")
+
+    with caplog.at_level(logging.WARNING, logger="kpip.resolution.nab_provider"):
+        result = ResolutionEngine.resolve_wheelhouse([wheelhouse], roots)
+
+    assert result is not None
+    assert result.metrics["nab_conflicts"] > 0
+    assert result.metrics["nab_order_budget_spent"] == 1
+    (warning,) = caplog.records
+    assert "more than 0 conflicts" in warning.getMessage()
+    assert ORDER_BUDGET_VARIABLE in warning.getMessage()
+
+    # Still an answer: check_best refuses pins that do not resolve.  The
+    # named packages keep their places, but past the first conflict ``d`` was
+    # decided before ``e``, which is the answer the budget gave up on.
+    pins = pins_of(result)
+    monkeypatch.delenv(ORDER_BUDGET_VARIABLE)
+    report = check_best(wheelhouse_resolver(wheelhouse, roots), roots, pins)
+    assert pins == {"a": "2", "k": "1", "b": "2", "e": "2", "c": "2", "d": "2"}
+    assert [found.package for found in report.counterexamples] == ["e"]
+
+
+def test_a_budget_that_covers_the_conflicts_is_not_spent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wheelhouse = build_wheelhouse(tmp_path, DEEP_BACKTRACK)
+    unbounded = ResolutionEngine.resolve_wheelhouse([wheelhouse], ["a", "k"])
+    assert unbounded is not None
+    conflicts = unbounded.metrics["nab_conflicts"]
+    monkeypatch.setenv(ORDER_BUDGET_VARIABLE, str(conflicts))
+
+    with caplog.at_level(logging.WARNING, logger="kpip.resolution.nab_provider"):
+        result = ResolutionEngine.resolve_wheelhouse([wheelhouse], ["a", "k"])
+
+    assert result is not None
+    assert result.metrics["nab_order_budget_spent"] == 0
+    assert caplog.records == []
+    assert pins_of(result) == pins_of(unbounded)
+
+
+def test_a_budget_that_is_not_a_number_is_ignored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wheelhouse = build_wheelhouse(tmp_path, TWO_ROOTS)
+    monkeypatch.setenv(ORDER_BUDGET_VARIABLE, "plenty")
+
+    with caplog.at_level(logging.WARNING, logger="kpip.resolution.nab_provider"):
+        result = ResolutionEngine.resolve_wheelhouse([wheelhouse], ["a", "b"])
+
+    assert result is not None
+    assert pins_of(result) == {"a": "2", "b": "1"}
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Ignoring {ORDER_BUDGET_VARIABLE}='plenty': expected a number of conflicts"
+    ]
