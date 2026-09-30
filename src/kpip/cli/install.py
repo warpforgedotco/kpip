@@ -467,6 +467,13 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
     normalized_args = normalize_install_args(args, INDEX_URL_OPTIONS)
     options = parser.parse_args(normalized_args)
 
+    if options.target:
+        # As pip: a target directory is a library of its own, which what the
+        # running environment has installed does not satisfy. A requirement
+        # installed there was left out of the target, and the target could
+        # not be used without it.
+        options.ignore_installed = True
+
     if len(options.requirements_from_scripts) > 1:
         raise CommandError("--requirements-from-script can only be given once")
 
