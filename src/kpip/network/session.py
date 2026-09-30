@@ -24,6 +24,7 @@ from kpip.core.logger import get_logger
 from kpip.core.kpip_version import get_kpip_version
 from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.core.utils import current_version
+from kpip.core import latency
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
 from kpip.network.freshness import (
@@ -940,7 +941,9 @@ class NetworkSession:
             timeout if timeout is not None else self.timeout,
         )
 
-        return self.open_with_redirects(
+        started = time.perf_counter()
+
+        response = self.open_with_redirects(
             method,
             url,
             headers,
@@ -948,6 +951,10 @@ class NetworkSession:
             transport_timeout,
             stream=stream,
         )
+
+        latency.observe(time.perf_counter() - started)
+
+        return response
 
     def environ_proxies_for(
         self,
