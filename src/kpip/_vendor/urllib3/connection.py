@@ -934,7 +934,11 @@ def _ssl_wrap_socket_and_match_hostname(
     else:
         context = ssl_context
 
-    context.verify_mode = resolve_cert_reqs(cert_reqs)
+    # Only when it changes: the context is shared by every connection, and
+    # writing it while other threads' handshakes read it is a data race
+    # without the GIL.
+    if context.verify_mode != (verify_mode := resolve_cert_reqs(cert_reqs)):
+        context.verify_mode = verify_mode
 
     # In some cases, we want to verify hostnames ourselves
     if (
@@ -947,7 +951,7 @@ def _ssl_wrap_socket_and_match_hostname(
         # hostnames easily: https://github.com/pyca/pyopenssl/pull/933
         or ssl_.IS_PYOPENSSL
         or not ssl_.HAS_NEVER_CHECK_COMMON_NAME
-    ):
+    ) and context.check_hostname:
         context.check_hostname = False
 
     # Try to load OS default certs if none are given. We need to do the hasattr() check

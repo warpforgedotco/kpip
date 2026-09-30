@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import os
 import socket
+import threading
 import sys
 import typing
 import warnings
@@ -478,10 +479,38 @@ def ssl_wrap_socket(
         else:
             context.load_cert_chain(certfile, keyfile, key_password)
 
-    context.set_alpn_protocols(ALPN_PROTOCOLS)
+    _set_alpn_protocols_once(context)
 
     ssl_sock = _ssl_wrap_socket_impl(sock, context, tls_in_tls, server_hostname)
     return ssl_sock
+
+
+_alpn_lock = threading.Lock()
+
+
+def _set_alpn_protocols_once(context: ssl.SSLContext) -> None:
+    """Set ALPN on ``context`` the first time it wraps a socket, not every time.
+
+    A context is shared by every connection of a pool, and setting ALPN
+    replaces a buffer that other threads' handshakes read: without the GIL,
+    one being built meanwhile could send it half-written, and the server
+    answered "decode error". The value is always the same, so it is set once,
+    under a lock no handshake can pass until it is. A context that cannot be
+    marked is set every time, as before.
+    """
+    if getattr(context, "_urllib3_alpn_set", False):
+        return
+
+    with _alpn_lock:
+        if getattr(context, "_urllib3_alpn_set", False):
+            return
+
+        context.set_alpn_protocols(ALPN_PROTOCOLS)
+
+        try:
+            context._urllib3_alpn_set = True  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
 
 
 def is_ipaddress(hostname: str | bytes) -> bool:
