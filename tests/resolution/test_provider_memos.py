@@ -92,7 +92,7 @@ def test_priority_memo_recomputes_for_a_replaced_requirement(
     """The decision-scan priority must move with the version count."""
     provider = make_provider(wheelhouse_with_demo(tmp_path))
     provider.requirements["demo"] = parse_requirement("demo")
-    assert provider.prioritize("demo", None, {})[1] == len(VERSIONS)
+    assert provider.prioritize("demo", None, {})[2] == len(VERSIONS)
 
     monkeypatch.setattr(
         provider,
@@ -100,7 +100,7 @@ def test_priority_memo_recomputes_for_a_replaced_requirement(
         lambda package, requirement: (Version("1.0.0"),),
     )
     provider.requirements["demo"] = parse_requirement("demo ; python_version >= '3'")
-    assert provider.prioritize("demo", None, {})[1] == 1
+    assert provider.prioritize("demo", None, {})[2] == 1
 
 
 def test_priority_memo_recomputes_for_a_rising_conflict_count(tmp_path: Path) -> None:
@@ -108,8 +108,8 @@ def test_priority_memo_recomputes_for_a_rising_conflict_count(tmp_path: Path) ->
     provider = make_provider(wheelhouse_with_demo(tmp_path))
     provider.requirements["demo"] = parse_requirement("demo")
 
-    assert provider.prioritize("demo", None, {})[0] == 0
-    assert provider.prioritize("demo", None, {"demo": 3})[0] == -3
+    assert provider.prioritize("demo", None, {})[1] == 0
+    assert provider.prioritize("demo", None, {"demo": 3})[1] == -3
 
 
 def test_conflict_activity_outranks_catalog_size(tmp_path: Path) -> None:
@@ -125,6 +125,23 @@ def test_conflict_activity_outranks_catalog_size(tmp_path: Path) -> None:
     conflicts = {"demo": 1}
     assert provider.prioritize("demo", None, conflicts) < provider.prioritize(
         "single", None, conflicts
+    )
+
+
+def test_a_named_package_outranks_conflict_activity_and_catalog_size(
+    tmp_path: Path,
+) -> None:
+    """What the user named is decided first, in the order it was named."""
+    provider = make_provider(wheelhouse_with_demo(tmp_path))
+    provider.add_roots([parse_requirement("demo")])
+    provider.requirements["single"] = parse_requirement("single")
+    provider._version_memo["single"] = (
+        provider.requirements["single"],
+        (Version("1.0.0"),),
+    )
+
+    assert provider.prioritize("demo", None, {"single": 5}) < provider.prioritize(
+        "single", None, {"single": 5}
     )
 
 

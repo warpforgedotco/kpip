@@ -206,7 +206,7 @@ class NabProvider:
         self._version_cache: dict[tuple[object, ...], tuple[Version, ...]] = {}
         self._version_memo: dict[str, tuple[Requirement, tuple[Version, ...]]] = {}
         self._priority_memo: dict[
-            str, tuple[Requirement, int, tuple[int, int, str]]
+            str, tuple[Requirement, int, tuple[int, int, int, str]]
         ] = {}
         self._installed_cache: dict[
             tuple[str, frozenset[str]], InstalledCandidate | None
@@ -220,6 +220,7 @@ class NabProvider:
         self._active_decisions: Mapping[str, Version] = {}
         self._active_positive_ranges: Mapping[str, RangeProtocol[Version]] = {}
         self._root_packages: set[str] = set()
+        self._root_rank: dict[str, int] = {}
         self._constrained_root_packages: set[str] = set()
         # A release's dependencies as the forward check reads them; see
         # ``_forward_dependencies``.
@@ -2244,7 +2245,7 @@ class NabProvider:
         version_range: RangeProtocol[Version],
         conflict_counts: Mapping[str, int],
         culprit_counts: Mapping[str, int] | None = None,
-    ) -> tuple[int, int, str]:
+    ) -> tuple[int, int, int, str]:
         conflicts = conflict_counts.get(package, 0)
         requirement = self.requirements[package]
         memo = self._priority_memo.get(package)
@@ -2255,7 +2256,18 @@ class NabProvider:
         # an unrelated package with a smaller catalog.  Keeping catalog size
         # first makes a deep backjump replay every one-release package before
         # returning to the decision that can actually advance the solve.
-        priority = (-conflicts, len(self._versions(package)), package)
+        #
+        # The packages the user named come before all of that, in the order
+        # they were listed.  Whichever package is decided later is the one
+        # that gives way: its newest release is passed over when it
+        # contradicts what is already decided.  Ordered by catalog size, a
+        # named package with many releases was decided after the
+        # dependencies of one with few, and stepped down to suit a
+        # dependency that could have moved instead.  Decided first, a named
+        # package gets its newest release that can be satisfied at all, an
+        # earlier-listed one before a later, which is the answer pip gives.
+        rank = self._root_rank.get(package, len(self._root_rank))
+        priority = (rank, -conflicts, len(self._versions(package)), package)
         self._priority_memo[package] = (requirement, conflicts, priority)
         return priority
 
@@ -2444,6 +2456,7 @@ class NabProvider:
                 requirement_range if existing is None else existing & requirement_range
             )
         self._root_packages = set(roots)
+        self._root_rank = {package: rank for rank, package in enumerate(roots)}
         self._constrained_root_packages = {
             _key(requirement)
             for requirement in merged
