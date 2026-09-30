@@ -108,13 +108,17 @@ def script_text(target_ref: str, executable: str | None) -> str:
 def write_windows_script(path: str, script: str, *, gui: bool) -> None:
     """Create a distlib-compatible Windows launcher without importing distlib."""
 
+    if sys.maxsize <= 2**32:
+        # Only the 64-bit launchers ship with kpip.
+        raise InstallationError(
+            "kpip installs console and GUI scripts only for 64-bit Python on Windows"
+        )
+
     machine = os.environ.get("PROCESSOR_ARCHITECTURE", "").lower()
 
     suffix = "-arm" if "arm" in machine else ""
 
-    bits = "64" if sys.maxsize > 2**32 else "32"
-
-    launcher_name = f"{'w' if gui else 't'}{bits}{suffix}.exe"
+    launcher_name = f"{'w' if gui else 't'}64{suffix}.exe"
 
     from importlib.resources import files
 
