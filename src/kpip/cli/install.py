@@ -60,6 +60,7 @@ from kpip.host.environment_checks import (
 from kpip.host.interpreter_facts import target_interpreter
 from kpip.index.candidate_materialization import LazyWheelCandidate
 from kpip.install.archive_workers import start_archive_workers
+from kpip.install.bytecode import compiles_as_this_process
 from kpip.install.metadata import (
     ReportItem,
     direct_url_from_link,
@@ -1178,7 +1179,10 @@ def run_install(args: list[str]) -> int:
         # when its first answer does not stand.
         providers: list[Any] = []
 
-        pycompile = not execution.options.no_compile
+        # The archive cache keeps bytecode this process compiles, which is
+        # the target's only when it compiles as this process does; otherwise
+        # the install compiles with the target's own interpreter.
+        pycompile = not execution.options.no_compile and compiles_as_this_process()
 
         # Started before resolving, so the workers are up by the first wheel.
         archive_workers = (

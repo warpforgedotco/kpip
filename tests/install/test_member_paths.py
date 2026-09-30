@@ -217,48 +217,51 @@ class TestCompiledParts:
         assert compiled_parts(mapped_parts("f-1.0.data/scripts/tool.py")) is None
         assert compiled_parts(mapped_parts("pkg/data.txt")) is None
 
-    def test_windows_separators_never_leak_into_a_part(
+    def test_the_name_is_the_target_interpreters(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``cache_from_source`` joins with a backslash on Windows.
+        """Not ``cache_from_source``'s, which answers for the Python running
+        kpip: compiled, the one it was built with."""
+        import types
 
-        Splitting its answer on "/" there yields one part with separators
-        buried in it: a wrong trie key, and a RECORD row that violates the
-        wheel spec. Only the file name may come from it.
-        """
-        import importlib.util
-
+        from kpip.install import bytecode
         from kpip.install.wheel_archive import compiled_parts, mapped_parts
 
-        monkeypatch.setattr(
-            importlib.util,
-            "cache_from_source",
-            lambda path: "pkg\\sub\\__pycache__\\mod.cpython-312.pyc",
-        )
+        other = types.SimpleNamespace(cache_tag="cpython-312")
+        monkeypatch.setattr(bytecode, "target_interpreter", lambda **_: other)
 
         parts = compiled_parts(mapped_parts("pkg/sub/mod.py"))
 
         assert parts == ("pkg", "sub", "__pycache__", "mod.cpython-312.pyc")
-        assert not any("\\" in part or "/" in part for part in parts)
+
+    def test_an_interpreter_without_bytecode_gets_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import types
+
+        from kpip.install import bytecode
+        from kpip.install.wheel_archive import compiled_parts, mapped_parts
+
+        other = types.SimpleNamespace(cache_tag=None)
+        monkeypatch.setattr(bytecode, "target_interpreter", lambda **_: other)
+
+        assert compiled_parts(mapped_parts("pkg/sub/mod.py")) is None
 
     def test_pycache_prefix_does_not_relocate_installed_bytecode(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Under ``sys.pycache_prefix`` the interpreter answers with a path
-        somewhere else entirely. An installer has to ignore that -- the
-        bytecode belongs beside the module it was built from."""
-        import importlib.util
+        """The bytecode belongs beside the module it was built from, whatever
+        ``sys.pycache_prefix`` says."""
+        import sys
 
         from kpip.install.wheel_archive import compiled_parts, mapped_parts
 
-        monkeypatch.setattr(
-            importlib.util,
-            "cache_from_source",
-            lambda path: "/var/pycache/pkg/sub/mod.cpython-312.pyc",
-        )
+        monkeypatch.setattr(sys, "pycache_prefix", "/var/pycache")
 
         parts = compiled_parts(mapped_parts("pkg/sub/mod.py"))
 
-        assert parts == ("pkg", "sub", "__pycache__", "mod.cpython-312.pyc")
+        assert parts is not None
+        assert parts[:3] == ("pkg", "sub", "__pycache__")

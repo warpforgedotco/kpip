@@ -99,7 +99,7 @@ def test_jobs_come_back_when_no_worker_can_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "out").mkdir()
-    monkeypatch.setattr(bytecode, "_spawn", lambda: None)
+    monkeypatch.setattr(bytecode, "_spawn", lambda command: None)
 
     jobs = [_job(tmp_path, "orphan", "D = 4\n")]
 
@@ -198,3 +198,86 @@ def test_a_compiled_kpip_starts_itself_as_the_worker(monkeypatch) -> None:
     monkeypatch.setattr(bytecode, "own_command", lambda: ["/opt/kpip"])
 
     assert bytecode._worker_command() == ["/opt/kpip", WORKER_ARGUMENT]
+
+
+def _target(monkeypatch: pytest.MonkeyPatch, **facts: object) -> None:
+    import types
+
+    defaults = {
+        "is_own": False,
+        "executable": "/opt/python3.12",
+        "cache_tag": sys.implementation.cache_tag,
+        "magic": importlib.util.MAGIC_NUMBER.hex(),
+    }
+    other = types.SimpleNamespace(**(defaults | facts))
+    monkeypatch.setattr(bytecode, "target_interpreter", lambda **_: other)
+
+
+def test_another_python_that_compiles_as_this_one_takes_this_ones_bytecode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _target(monkeypatch)
+
+    assert bytecode.compiles_as_this_process()
+
+
+@pytest.mark.parametrize("facts", [{"cache_tag": "cpython-312"}, {"magic": "00000000"}])
+def test_another_version_compiles_its_own_bytecode(
+    monkeypatch: pytest.MonkeyPatch, facts: dict[str, str]
+) -> None:
+    """Its workers are that interpreter, handed the loop: a compiled kpip
+    has no script on disk to point it at."""
+    from kpip.install._compile_worker import SOURCE
+
+    _target(monkeypatch, **facts)
+
+    assert not bytecode.compiles_as_this_process()
+    assert bytecode._worker_command() == ["/opt/python3.12", "-c", SOURCE]
+
+
+def test_another_versions_modules_are_not_compiled_here(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """What its workers decline goes without bytecode: this process would
+    write its own version's under the other's name."""
+    (tmp_path / "out").mkdir()
+    job = _job(tmp_path, "foreign", "A = 1\n")
+    _target(monkeypatch, cache_tag="cpython-312")
+    monkeypatch.setattr(bytecode, "_spawn", lambda command: None)
+
+    bytecode.compile_modules([job])
+
+    assert not Path(job[1]).exists()
+
+
+def test_the_pyc_name_is_the_target_interpreters_unoptimized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _target(monkeypatch, cache_tag="cpython-312")
+
+    assert bytecode.pyc_name("mod.py") == "mod.cpython-312.pyc"
+    assert bytecode.pyc_name("a.b.py") == "a.b.cpython-312.pyc"
+
+
+def test_the_worker_loop_runs_given_as_text(tmp_path: Path) -> None:
+    """As another interpreter runs it, with ``-c``."""
+    import subprocess
+
+    from kpip.install._compile_worker import SOURCE
+
+    source = tmp_path / "module.py"
+    source.write_text("VALUE = 1\n")
+    destination = tmp_path / "module.pyc"
+
+    result = subprocess.run(
+        [sys.executable, "-c", SOURCE],
+        input=f"{source}\t{destination}\tpkg/module.py\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+
+    assert result.stdout.splitlines() == ["Ready", str(source)]
+    code = marshal.loads(destination.read_bytes()[16:])
+    assert code.co_filename == "pkg/module.py"

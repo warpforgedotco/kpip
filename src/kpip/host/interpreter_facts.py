@@ -23,6 +23,7 @@ from kpip.core.errors import CommandError
 from kpip.core.compiled import is_compiled, is_own_interpreter
 
 PROBE = r"""
+import importlib.util
 import json
 import platform
 import site
@@ -58,6 +59,7 @@ def facts():
         "version": list(sys.version_info[:3]),
         "implementation": sys.implementation.name,
         "cache_tag": sys.implementation.cache_tag,
+        "magic": importlib.util.MAGIC_NUMBER.hex(),
         "path": [entry for entry in sys.path if entry],
         "stdlib": sysconfig.get_path("stdlib"),
         "platform": sysconfig.get_platform(),
@@ -104,6 +106,7 @@ class Interpreter:
         "executable",
         "extension_suffixes",
         "implementation",
+        "magic",
         "markers",
         "path",
         "platform",
@@ -124,6 +127,7 @@ class Interpreter:
         self.version: tuple[int, int, int] = tuple(facts["version"])
         self.implementation: str = facts["implementation"]
         self.cache_tag: str | None = facts["cache_tag"]
+        self.magic: str = facts["magic"]
         self.path: list[str] = facts["path"]
         self.stdlib: str = facts["stdlib"]
         self.platform: str = facts["platform"]

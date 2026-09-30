@@ -9,6 +9,14 @@ The work therefore goes to child interpreters running
 every module in the session, because starting an interpreter costs about as
 much as compiling a small module.
 
+The bytecode is the target interpreter's: the Python kpip installs for,
+which need not be the one running kpip, and is not when kpip is compiled.
+When that one compiles just as this process does -- the same cache tag and
+magic number -- this process and its workers compile, and the archive cache
+keeps what they made. Otherwise the target's own interpreter does, in
+workers of its own, and nothing is compiled here: this process's ``marshal``
+neither reads nor writes another version's code.
+
 Everything here is optional. If workers cannot be started, misbehave, or
 time out, the caller compiles in-process instead: this makes installs
 faster, it is never the reason one fails.
@@ -18,7 +26,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 import atexit
+import importlib.util
 import os
+import py_compile
 import queue
 import subprocess
 import sys
@@ -26,7 +36,8 @@ import threading
 
 from kpip.core.compiled import is_compiled, own_command
 from kpip.core.utils import default_worker_count
-from kpip.install._compile_worker import WORKER_ARGUMENT
+from kpip.host.interpreter_facts import target_interpreter
+from kpip.install._compile_worker import SOURCE, WORKER_ARGUMENT
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -155,6 +166,67 @@ class _Worker:
             process.kill()
 
 
+def compiles_as_this_process() -> bool:
+    """Whether the target interpreter's bytecode is what this process
+    compiles: the same cache tag and magic number."""
+    interpreter = target_interpreter(installing=False)
+
+    return interpreter.is_own or (
+        interpreter.cache_tag == sys.implementation.cache_tag
+        and interpreter.magic == importlib.util.MAGIC_NUMBER.hex()
+    )
+
+
+def pyc_name(module: str) -> str | None:
+    """The file name of the ``.pyc`` the target interpreter reads for the
+    module file ``module``, or ``None`` if it reads none.
+
+    ``cache_from_source`` would answer for this process: its cache tag, and
+    its ``-O`` level, where kpip compiles unoptimized.
+    """
+    cache_tag = target_interpreter(installing=False).cache_tag
+
+    if cache_tag is None:
+        return None
+
+    return f"{module[:-3]}.{cache_tag}.pyc"
+
+
+def compile_in_process(job: CompileJob) -> None:
+    """Compile one module here. Only for bytecode this process compiles as
+    the target does: see :func:`compiles_as_this_process`."""
+    source, output, display = job
+
+    try:
+        py_compile.compile(
+            source,
+            cfile=output,
+            dfile=display,
+            doraise=False,
+            optimize=0,
+            quiet=2,
+        )
+
+    except OSError, ValueError, RecursionError, MemoryError:
+        pass
+
+
+def compile_modules(jobs: list[CompileJob]) -> None:
+    """Compile ``jobs`` as the target interpreter would, at install time.
+
+    Here, as before workers existed, when this process compiles as the
+    target does; otherwise in the target's own workers, and what they
+    decline goes without bytecode, as a module that will not compile does.
+    """
+    if compiles_as_this_process():
+        for job in jobs:
+            compile_in_process(job)
+
+        return
+
+    compile_jobs(jobs)
+
+
 def _worker_script() -> str:
     return os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "_compile_worker.py"
@@ -162,13 +234,18 @@ def _worker_script() -> str:
 
 
 def _worker_command() -> list[str]:
-    """How to start a worker: this interpreter running the worker script, or
-    a compiled kpip, which has neither, as itself with the worker argument.
+    """How to start a worker: the target interpreter given the worker loop,
+    when it does not compile as this process does; else this interpreter
+    running the worker script, or a compiled kpip, which has neither, as
+    itself with the worker argument.
 
     The compiled one used to be started as ``sys.executable``, a ``python``
     beside the binary that does not exist: no worker ever started, and it
     compiled every module in the main process, one at a time.
     """
+
+    if not compiles_as_this_process():
+        return [target_interpreter(installing=False).executable, "-c", SOURCE]
 
     if is_compiled():
         return [*own_command(), WORKER_ARGUMENT]
@@ -176,12 +253,12 @@ def _worker_command() -> list[str]:
     return [sys.executable, _worker_script()]
 
 
-def _spawn() -> _Worker | None:
+def _spawn(command: list[str]) -> _Worker | None:
     """Start one worker, or ``None`` if it will not answer."""
 
     try:
         process = subprocess.Popen(  # noqa: S603
-            _worker_command(),
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -245,8 +322,10 @@ class CompilePool:
     interleave rather than queue behind each other.
     """
 
-    def __init__(self, workers: int) -> None:
+    def __init__(self, workers: int, command: list[str]) -> None:
         self._limit = max(1, min(workers, default_worker_count()))
+
+        self.command = command
 
         self._queue: queue.Queue[tuple[CompileJob, _Batch] | None] = queue.Queue()
 
@@ -270,7 +349,7 @@ class CompilePool:
             self._started = True
 
             for _ in range(self._limit):
-                worker = _spawn()
+                worker = _spawn(self.command)
 
                 if worker is None:
                     break
@@ -431,13 +510,22 @@ def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     if _in_subinterpreter():
         return jobs
 
+    command = _worker_command()
+    retired: CompilePool | None = None
+
     with _POOL_LOCK:
+        if _POOL is not None and _POOL.command != command:
+            retired, _POOL = _POOL, None
+
         if _POOL is None:
-            _POOL = CompilePool(MAX_WORKERS)
+            _POOL = CompilePool(MAX_WORKERS, command)
 
             atexit.register(shutdown)
 
         pool = _POOL
+
+    if retired is not None:
+        retired.close()
 
     remaining = pool.compile(jobs)
 

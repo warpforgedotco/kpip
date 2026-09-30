@@ -14,7 +14,6 @@ import hashlib
 import io
 import marshal
 import os
-import py_compile
 import shutil
 import struct
 import tempfile
@@ -38,7 +37,7 @@ from kpip.index.metadata_cache import (
     get_wheel_metadata_cache,
     metadata_identity,
 )
-from kpip.install.bytecode import compile_jobs
+from kpip.install.bytecode import compile_in_process, compile_jobs
 from kpip.install.wheel_archive import (
     compiled_parts,
     copy_member_with_metadata,
@@ -643,26 +642,10 @@ def _compile_archive_pyc(
             ),
         )
 
-    for source, output, display in compile_jobs(jobs):
-        _compile_one(source, output, display)
+    for job in compile_jobs(jobs):
+        compile_in_process(job)
 
     return sum(1 for _, output, _ in jobs if os.path.exists(output))
-
-
-def _compile_one(source: str, output: str, display: str) -> None:
-    """Compile one module in this process, for whatever a worker declined."""
-
-    try:
-        py_compile.compile(
-            source,
-            cfile=output,
-            dfile=display,
-            doraise=False,
-            quiet=2,
-        )
-
-    except OSError, ValueError, RecursionError, MemoryError:
-        pass
 
 
 def _extract_archive(

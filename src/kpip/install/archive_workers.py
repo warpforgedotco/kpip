@@ -148,7 +148,11 @@ class ArchiveWorkers:
         *,
         pycompile: bool,
     ) -> CachedWheelArchive:
-        """``prepare_cached_wheel(candidate, cache_dir)``, unpacked in a worker."""
+        """``prepare_cached_wheel(candidate, cache_dir)``, unpacked in a worker.
+
+        ``pycompile`` asks for the archive cache's bytecode, which is this
+        process's: callers ask only when the target compiles as it does.
+        """
 
         archive = None
 

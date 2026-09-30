@@ -9,7 +9,6 @@ them into a real target directory.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import compileall
 import csv
 import errno
 import importlib.util
@@ -26,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.core.errors import InstallationError
 from kpip.host.clone import clone_path
+from kpip.install.bytecode import CompileJob, compile_modules, compiles_as_this_process
 from kpip.install.wheel_archive import (
     compiled_parts,
     mapped_parts,
@@ -597,7 +597,10 @@ def _materialize_pyc(
 
     Members the cache has no ``.pyc`` for -- an entry written before the cache
     learned to compile, a module that would not compile, a mismatched
-    interpreter magic -- fall back to compiling in the stage.
+    interpreter magic -- fall back to compiling in the stage. So does every
+    member when the target interpreter does not compile as this process
+    does: the cache holds this process's bytecode, and its ``marshal``
+    cannot rebind another version's code.
     """
 
     code_type = types.CodeType
@@ -606,9 +609,11 @@ def _materialize_pyc(
 
     rows: list[tuple[str, str, str]] = []
 
-    uncached: list[tuple[str, tuple[str, ...]]] = []
+    uncached: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
 
     magic = importlib.util.MAGIC_NUMBER
+
+    cached_is_usable = compiles_as_this_process()
 
     for relative, _, _, _ in archive.entries:
         if relative in skip:
@@ -623,17 +628,22 @@ def _materialize_pyc(
 
         source = os.path.join(stage, *mapped)
 
+        if not cached_is_usable:
+            uncached.append((source, mapped, target))
+
+            continue
+
         try:
             with open(os.path.join(cached_root, *target), "rb") as file:
                 cached = file.read()
 
         except OSError:
-            uncached.append((source, target))
+            uncached.append((source, mapped, target))
 
             continue
 
         if len(cached) <= 16 or cached[:4] != magic:
-            uncached.append((source, target))
+            uncached.append((source, mapped, target))
 
             continue
 
@@ -647,7 +657,7 @@ def _materialize_pyc(
             body = _timestamp_pyc(code, os.stat(source))
 
         except EOFError, OSError, ValueError, TypeError:
-            uncached.append((source, target))
+            uncached.append((source, mapped, target))
 
             continue
 
@@ -660,28 +670,41 @@ def _materialize_pyc(
 
         rows.append(("/".join(target), *record_metadata_internal(body)))
 
-    rows.extend(_compile_uncached(stage, uncached))
+    rows.extend(_compile_uncached(stage, install_root, uncached))
 
     return rows
 
 
 def _compile_uncached(
     stage: str,
-    members: list[tuple[str, tuple[str, ...]]],
+    install_root: str,
+    members: list[tuple[str, tuple[str, ...], tuple[str, ...]]],
 ) -> list[tuple[str, str, str]]:
-    """Compile members the archive cache had no ``.pyc`` for, in the stage."""
+    """Compile members the archive cache had no ``.pyc`` for, in the stage,
+    naming where each module will live."""
     if not members:
         return []
 
-    rows: list[tuple[str, str, str]] = []
+    outputs: list[tuple[str, tuple[str, ...]]] = []
 
-    for source, target in members:
-        if not compileall.compile_file(source, force=True, quiet=1):
-            continue
+    jobs: list[CompileJob] = []
 
-        rows.append(("/".join(target), *_file_metadata(os.path.join(stage, *target))))
+    for source, mapped, target in members:
+        output = os.path.join(stage, *target)
 
-    return rows
+        os.makedirs(os.path.dirname(output), exist_ok=True)
+
+        outputs.append((output, target))
+
+        jobs.append((source, output, os.path.join(install_root, *mapped)))
+
+    compile_modules(jobs)
+
+    return [
+        ("/".join(target), *_file_metadata(output))
+        for output, target in outputs
+        if os.path.exists(output)
+    ]
 
 
 def _finalize_wheel(
@@ -976,7 +999,11 @@ def install_wheels_from_archive_cache(
         return None
 
     try:
-        archives = prepare_cached_wheels(candidates, cache_dir, pycompile=pycompile)
+        archives = prepare_cached_wheels(
+            candidates,
+            cache_dir,
+            pycompile=pycompile and compiles_as_this_process(),
+        )
 
     except OSError:
         return None

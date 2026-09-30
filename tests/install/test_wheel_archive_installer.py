@@ -712,12 +712,12 @@ def test_a_cold_install_never_compiles_in_the_stage(tmp_path: Path) -> None:
         {f"orderpkg/mod_{index}.py": f"V = {index}\n" for index in range(6)},
     )
 
-    fell_back: list[tuple[str, tuple[str, ...]]] = []
+    fell_back: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     real = installer_module._compile_uncached
 
-    def recording(stage, members):  # noqa: ANN001, ANN202
+    def recording(stage, install_root, members):  # noqa: ANN001, ANN202
         fell_back.extend(members)
-        return real(stage, members)
+        return real(stage, install_root, members)
 
     installer_module._compile_uncached = recording
     try:

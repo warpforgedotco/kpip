@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import compileall
 import csv
-import importlib.util
 import os
 import stat
 from collections.abc import Iterable, Mapping
@@ -17,6 +15,7 @@ from kpip.core.names import (
     installed_name_might_match,
 )
 from kpip.core.versions import version_of
+from kpip.install.bytecode import CompileJob, compile_modules, pyc_name
 
 if TYPE_CHECKING:
     from kpip.build.metadata import InstalledMetadataDistribution
@@ -198,38 +197,35 @@ def compiled_files(
     if not python_files:
         return []
 
-    compiled = [
-        (source, destination)
-        for source, destination in python_files
-        if compileall.compile_file(os.fspath(source), force=True, quiet=1)
+    # The target interpreter's .pyc beside each module, naming where the
+    # module will live, not the stage.
+    planned: list[tuple[str, str]] = []
+
+    jobs: list[CompileJob] = []
+
+    for source, destination in python_files:
+        name = pyc_name(os.path.basename(os.fspath(source)))
+
+        if name is None:
+            continue
+
+        output = os.path.join(os.path.dirname(os.fspath(source)), "__pycache__", name)
+
+        os.makedirs(os.path.dirname(output), exist_ok=True)
+
+        planned.append(
+            (output, os.path.join(os.path.dirname(destination), "__pycache__", name))
+        )
+
+        jobs.append((os.fspath(source), output, os.fspath(destination)))
+
+    compile_modules(jobs)
+
+    return [
+        (output, compiled_destination, compiled_destination, None)
+        for output, compiled_destination in planned
+        if os.path.exists(output)
     ]
-
-    result = []
-
-    stage_root_text = os.fspath(stage_root)
-
-    for source, destination in compiled:
-        cache_text = importlib.util.cache_from_source(os.fspath(source))
-
-        relative = os.path.relpath(cache_text, stage_root_text)
-
-        relative_parts = relative.split(os.sep)
-
-        compiled_destination = os.path.join(
-            os.path.dirname(destination),
-            *relative_parts[-2:],
-        )
-
-        result.append(
-            (
-                cache_text,
-                compiled_destination,
-                compiled_destination,
-                None,
-            ),
-        )
-
-    return result
 
 
 def existing_paths(
