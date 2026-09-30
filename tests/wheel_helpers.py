@@ -28,6 +28,7 @@ def make_wheel(
     *,
     requires: list[str] | None = None,
     wheel_version: str = "1.0",
+    requires_python: str | None = None,
 ) -> Path:
     dist = project.replace("-", "_")
     wheel = wheelhouse / f"{dist}-{version}-py3-none-any.whl"
@@ -41,6 +42,7 @@ def make_wheel(
             f"Name: {project}\n"
             f"Version: {version}\n"
             f"{requires_metadata}"
+            + (f"Requires-Python: {requires_python}\n" if requires_python else "")
         ),
         f"{dist}-{version}.dist-info/WHEEL": (
             f"Wheel-Version: {wheel_version}\n"

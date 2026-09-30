@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import logging
 import operator
 import os
+import re
 import sys
 from bisect import bisect_left, bisect_right
 from collections import deque
@@ -11,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from kpip._vendor.nab_resolver.ranges import Range
+from kpip._vendor.nab_resolver.root import ROOT
 from kpip._vendor.nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
@@ -247,6 +249,12 @@ class NabProvider:
         ] = {}
         self.requirements: _RecordingRequirements = _RecordingRequirements()
         self.display_requirements: dict[str, Requirement] = {}
+        # Projects whose every candidate the target Python fell outside the
+        # Requires-Python of: their name and that specifier, for the report.
+        self.requires_python_rejections: dict[str, str] = {}
+        # The requirements the user gave, as given, for the failure report:
+        # ``requirements`` holds what the resolve narrowed each one to.
+        self.root_requirements: dict[str, Requirement] = {}
         self._unpinned_requirements: dict[str, tuple[Requirement, Requirement]] = {}
         self._version_cache: dict[tuple[object, ...], tuple[Version, ...]] = {}
         self._version_memo: dict[str, tuple[Requirement, tuple[Version, ...]]] = {}
@@ -841,6 +849,9 @@ class NabProvider:
                 matching=matching,
             )
             if alternative is None:
+                self.requires_python_rejections[candidate.name] = str(
+                    candidate.requires_python
+                )
                 return None
             selected, candidate = alternative
 
@@ -2690,6 +2701,85 @@ class NabProvider:
     def widen_decision(self, package: str, version: Version) -> Range[Version] | None:
         return None
 
+    def located_versions(self) -> dict[str, Version]:
+        """The versions of the user's path and URL requirements, as built."""
+        found: dict[str, Version] = {}
+        for package, requirement in self.root_requirements.items():
+            if requirement.url:
+                versions = [
+                    version for name, version in self.records if name == package
+                ]
+                if len(versions) == 1:
+                    found[package] = versions[0]
+        return found
+
+    def failure_edges(
+        self, incompatibility: Incompatibility[str, Version]
+    ) -> list[tuple[tuple[str, Version] | None, Requirement]]:
+        """The requirements a failed resolve could not meet together.
+
+        Each is paired with the release that declared it, or None for one
+        the user gave: the "depends on" facts at the leaves of the proof,
+        with the requirement as it was written rather than as a range.
+        """
+        edges: list[tuple[tuple[str, Version] | None, Requirement]] = []
+        seen: set[int] = set()
+        pending: list[Incompatibility[str, Version] | None] = [incompatibility]
+        while pending:
+            current = pending.pop()
+            if current is None or id(current) in seen:
+                continue
+            seen.add(id(current))
+            if current.cause is IncompatibilityCause.DERIVED:
+                pending += [current.cause_right, current.cause_left]
+                continue
+            if (
+                current.cause
+                not in (
+                    IncompatibilityCause.ROOT,
+                    IncompatibilityCause.DEPENDENCY,
+                )
+                or len(current.terms) != 2
+            ):
+                continue
+            parent_term, dependency_term = current.terms
+            dependency = dependency_term.package
+            if (
+                parent_term.package is ROOT
+                or current.cause is IncompatibilityCause.ROOT
+            ):
+                requirement = self.root_requirements.get(dependency)
+                if requirement is not None:
+                    if requirement.url:
+                        given = parse_requirement(requirement.raw)
+                        if given.url is None:
+                            # The URL is a constraint's, merged in: the
+                            # user's requirement is the text they gave.
+                            requirement = given
+                    edges.append((None, requirement))
+                continue
+            parent = parent_term.package
+            for version in sorted(
+                (
+                    version
+                    for name, version in self.records
+                    if name == parent and version in parent_term.constraint
+                ),
+                reverse=True,
+            ):
+                declared = next(
+                    (
+                        requirement
+                        for requirement in self.records[(parent, version)].dependencies
+                        if _key(requirement) == dependency
+                    ),
+                    None,
+                )
+                if declared is not None:
+                    edges.append(((parent, version), declared))
+                    break
+        return edges
+
     def narrow_for_display(
         self, package: str, constraint: RangeProtocol[Version]
     ) -> RangeProtocol[Version]:
@@ -2706,7 +2796,25 @@ class NabProvider:
                 marker=requirement.marker,
                 raw=requirement.raw,
             )
+
+        if requirement.url is not None and not _names_itself(requirement.raw):
+            # A path or URL the user did not name is named as its own
+            # metadata names it, as pip does before applying anything to it:
+            # a constraint on the project, or another requirement of it, must
+            # find it under that name, not its directory's. The resolve builds
+            # it for its version regardless.
+            built = next(iter(self.provider.find_candidates(requirement)), None)
+            if built is not None and canonicalize_name(built.name) != _key(requirement):
+                requirement = Requirement(
+                    name=built.name,
+                    specifier=requirement.specifier,
+                    extras=requirement.extras,
+                    url=requirement.url,
+                    marker=requirement.marker,
+                    raw=requirement.raw,
+                )
         package = _key(requirement)
+        self.root_requirements.setdefault(package, requirement)
         previous = self.requirements.get(package)
         if (
             previous is not None
@@ -2776,3 +2884,11 @@ class NabProvider:
             or bool(self._constraint_for(_key(requirement)))
         }
         return roots
+
+
+_NAMED = re.compile(r"\s*[A-Za-z0-9][A-Za-z0-9._-]*\s*(\[[^\]]*\])?\s*@")
+
+
+def _names_itself(raw: str) -> bool:
+    """Whether a requirement's text names its project (``name @ url``)."""
+    return _NAMED.match(raw) is not None

@@ -84,7 +84,9 @@ class TestUploadedPriorTo:
             "requests==2.0.0",
             expect_error=True,
         )
-        assert "because no versions of requests 2.0.0 are available" in result.stderr
+        assert "No matching distribution found for requests==2.0.0" in result.stderr, (
+            str(result)
+        )
 
         result = script.kpip(
             "install",

@@ -144,7 +144,17 @@ class ResolutionEngine:
                     restore_requirement,
                     message,
                 )
-                raise errors.ResolutionError(message) from error
+                raise errors.ResolutionError(
+                    message,
+                    requires_python=adapter.requires_python_rejections,
+                    edges=(
+                        adapter.failure_edges(error.incompatibility)
+                        if error.incompatibility is not None
+                        else []
+                    ),
+                    constraints=dict(adapter.constraints_by_name or {}),
+                    located_versions=adapter.located_versions(),
+                ) from error
             raise
         selected, edges = adapter.requested_solution(
             solution.pins, solution.edges, solution.roots

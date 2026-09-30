@@ -296,7 +296,7 @@ def test_new_resolver_no_dist_message(script: KpipTestEnvironment) -> None:
         expect_stderr=True,
     )
 
-    assert "No matching distribution found for b" in result.stderr, str(result)
+    assert "No matching distribution found for B" in result.stderr, str(result)
 
 
 def test_new_resolver_installs_editable(script: KpipTestEnvironment) -> None:
@@ -393,7 +393,10 @@ def test_new_resolver_requires_python_error(script: KpipTestEnvironment) -> None
         expect_error=True,
     )
 
-    assert "no versions of base 0.1.0 are available" in result.stderr, str(result)
+    message = "Package 'base' requires a different Python: {}.{}.{} not in '<2'".format(
+        *sys.version_info[:3]
+    )
+    assert message in result.stderr, str(result)
 
 
 def test_new_resolver_requires_python_ok_with_python_version_flag(
@@ -1138,7 +1141,10 @@ def test_new_resolver_no_deps_checks_requires_python(
         expect_error=True,
     )
 
-    assert "no versions of base 0.1.0 are available" in result.stderr
+    message = "Package 'base' requires a different Python: {}.{}.{} not in '<2'".format(
+        *sys.version_info[:3]
+    )
+    assert message in result.stderr
 
 
 def test_new_resolver_prefers_installed_in_upgrade_if_latest(
@@ -1771,10 +1777,13 @@ def test_new_resolver_fails_on_needed_conflicting_constraints(
         expect_error=True,
     )
 
-    assert "No matching distribution found for test-pkg==0.2.0" in result.stderr, str(
+    assert (
+        "Cannot install test_pkg because these package versions have conflicting "
+        "dependencies." in result.stderr
+    ), str(result)
+    assert "The user requested (constraint) test-pkg (from " in result.stdout, str(
         result
     )
-    assert "test-pkg" in result.stderr, str(result)
 
     script.assert_not_installed("test_pkg")
 
@@ -1817,7 +1826,8 @@ def test_new_resolver_fails_on_conflicting_constraint_and_requirement(
         expect_error=True,
     )
 
-    assert "No matching distribution found for test-pkg==0.2.0" in result.stderr, str(
+    assert "Cannot install test-pkg 0.2.0 (from " in result.stderr, str(result)
+    assert "The user requested (constraint) test-pkg (from " in result.stdout, str(
         result
     )
 

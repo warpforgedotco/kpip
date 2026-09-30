@@ -483,13 +483,19 @@ def resolve(
     """Resolve ``requirements`` as the command's options say to."""
     options = prepared.options
     bundle = prepared.bundle
+    # The report on a failure reads the pages the resolve already read.
+    providers: list[Any] = []
+
+    def providing() -> Any:
+        providers.append(make_provider())
+        return providers[-1]
 
     try:
         if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
             logger.info("Reporter.starting()")
         return ResolutionEngine.resolve_serving_stale_pages(
             lambda: ResolutionEngine(
-                provider=make_provider(),
+                provider=providing(),
                 on_decided=on_decided,
                 no_deps=options.no_deps or bundle.only_locked,
                 upgrade=upgrade,
@@ -520,18 +526,26 @@ def resolve(
             str(exc),
             requirements,
             prepared.release_control,
+            lambda: providers[-1] if providers else make_provider(),
+            getattr(exc, "requires_python", None),
+            getattr(exc, "edges", None),
+            getattr(exc, "constraints", None),
+            getattr(exc, "located_versions", None),
         )
-        constraints = [
-            f"The user requested (constraint) {raw}" for raw in bundle.constraints
-        ]
         if prepared.quiet:
             # A quiet run shows only the error, and a build that
             # installs its requirements quietly has nowhere else to
-            # say which constraints the failed resolve was held to.
-            detail = "\n".join((detail, *constraints))
-        else:
-            for constraint in constraints:
-                logger.info(constraint)
+            # say which constraints the failed resolve was held to. A
+            # run that is not quiet names them in the report, as pip does.
+            detail = "\n".join(
+                (
+                    detail,
+                    *(
+                        f"The user requested (constraint) {raw}"
+                        for raw in bundle.constraints
+                    ),
+                )
+            )
         if options.verbose:
             logger.info(f"DistributionNotFound: {detail}")
         raise DistributionNotFound(detail) from exc

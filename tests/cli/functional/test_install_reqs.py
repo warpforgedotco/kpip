@@ -516,7 +516,14 @@ def test_constraints_local_install_causes_error(
         to_install,
         expect_error=True,
     )
-    assert "No matching distribution found for singlemodule" in result.stderr, str(
+    # As pip 26: a conflict between the path and the constraint, naming the
+    # project's version; kpip then says what rules it out.
+    assert "Cannot install singlemodule 0.0.1 (from " in result.stderr, str(result)
+    assert (
+        "is singlemodule 0.0.1, and the constraint singlemodule==0.0.0 rules it out"
+        in result.stdout
+    ), str(result)
+    assert "The user requested (constraint) singlemodule==0.0.0" in result.stdout, str(
         result
     )
 
