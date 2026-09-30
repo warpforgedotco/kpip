@@ -138,7 +138,7 @@ def test_install_pep660_basic(tmpdir: Path, script: KpipTestEnvironment) -> None
         "--no-build-isolation",
         "--editable",
         project_dir,
-        "--config-setting",
+        "--config-settings",
         "x=y",
     )
     assert_hook_called(project_dir, "prepare_metadata_for_build_editable")
@@ -160,7 +160,7 @@ def test_install_pep660_from_reqs_file(
         with_setup_py=False,
     )
     reqs_file = tmpdir / "requirements.txt"
-    reqs_file.write_text(f"-e {project_dir.as_uri()} --config-setting x=y\n")
+    reqs_file.write_text(f"-e {project_dir.as_uri()} --config-settings x=y\n")
     result = script.kpip(
         "install",
         "--no-index",

@@ -506,7 +506,7 @@ def parse_requirement_line(
         option, _, value = line.partition(" ")
     value = value.strip()
     requirement_line = value if option in EDITABLE_OPTIONS else line
-    config_setting_options = ("--config-settings", "--config-setting")
+    config_setting_options = ("--config-settings", "-C")
     if (
         not any(option in requirement_line for option in config_setting_options)
         and "--hash" not in requirement_line
@@ -542,8 +542,10 @@ def parse_requirement_line(
                     config_settings,
                     strip_matching_quotes(tokens[index]),
                 )
-            elif token.startswith(config_setting_options):
+            elif token.startswith("--config-settings="):
                 merge_config_setting(config_settings, token.split("=", 1)[1])
+            elif token.startswith("-C"):
+                merge_config_setting(config_settings, token[2:].removeprefix("="))
             elif token == "--hash":
                 if index + 1 >= len(tokens):
                     raise RequirementsFileParseError(requirement_line)
