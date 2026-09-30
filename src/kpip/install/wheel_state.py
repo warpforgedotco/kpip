@@ -17,7 +17,7 @@ from kpip.core.names import (
 from kpip.core.versions import version_of
 from kpip.core.errors import InstallationError
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from kpip.build.metadata import InstalledMetadataDistribution

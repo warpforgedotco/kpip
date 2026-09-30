@@ -29,7 +29,7 @@ from kpip.install.wheel_archive_cache import (
     wheel_digest,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from kpip.resolution.models import ResolutionResult

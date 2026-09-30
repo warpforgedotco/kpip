@@ -17,7 +17,7 @@ from collections.abc import Set as AbstractSet
 from typing import TYPE_CHECKING
 
 from kpip.core.errors import InstallationError
-from kpip.core.logger import get_logger
+import logging
 from kpip.install.wheel_archive import (
     compiled_parts,
     mapped_parts,
@@ -36,7 +36,7 @@ from kpip.install.wheel_scripts import (
 )
 from kpip.host.clone import clone_path
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from types import CodeType

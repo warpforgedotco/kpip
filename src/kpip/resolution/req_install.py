@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.direct_url import ArchiveInfo, DirInfo
 from kpip.core.errors import (
     DiagnosticKpipError,
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     import email.message
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class InvalidPyProjectBuildRequires(DiagnosticKpipError):

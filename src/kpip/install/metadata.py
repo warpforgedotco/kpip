@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import json
 import os
 import shutil
@@ -23,11 +25,10 @@ from kpip.index.links import Link
 from kpip.index.vcs import release_checkout
 from kpip.resolution.input_requirements import install_req_from_editable
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from kpip.build.build_backend import ProjectMetadata

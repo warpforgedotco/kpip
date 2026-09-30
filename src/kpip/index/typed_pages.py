@@ -15,7 +15,7 @@ typed ``Any``, so an odd value is passed through for the record builder to
 judge exactly as it judges one read by ``json``.
 """
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable

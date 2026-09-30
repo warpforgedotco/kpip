@@ -23,7 +23,7 @@ import threading
 import time
 from typing import Any
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable

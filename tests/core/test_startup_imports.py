@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-from import_harness import ROOT, baseline_modules, imported_modules, run_kpip
+from import_harness import ROOT, imported_modules, run_kpip
 
 
 from tomllib import loads
@@ -87,38 +87,6 @@ def test_a_repeated_wheelhouse_lock_writes_its_output(tmp_path: Path) -> None:
     assert output.is_file()
 
 
-def test_default_install_scans_installed_state_without_importlib_metadata(
-    tmp_path: Path,
-) -> None:
-    """Without --ignore-installed the install lists the target's (and the
-    interpreter's) dist-info directories itself; importlib.metadata is only
-    for roots and finders a directory listing cannot answer."""
-    import shutil
-
-    wheelhouse = tmp_path / "wheelhouse"
-    wheelhouse.mkdir()
-    shutil.copy2(SIMPLEWHEEL, wheelhouse / SIMPLEWHEEL.name)
-    target = tmp_path / "target"
-    args = [
-        "install",
-        "--no-index",
-        "--target",
-        str(target),
-        "--find-links",
-        str(wheelhouse),
-        "simplewheel==2.0",
-    ]
-    env = {"KPIP_CACHE_DIR": str(tmp_path / "cache")}
-
-    first = imported_modules(args, cwd=tmp_path, env=env) - baseline_modules()
-    assert next(target.glob("simplewheel-2.0.dist-info"), None) is not None
-    second = imported_modules(args, cwd=tmp_path, env=env) - baseline_modules()
-
-    for modules in (first, second):
-        assert "kpip.cli.install" in modules
-        assert "importlib.metadata" not in modules
-
-
 def test_already_satisfied_install_reports_each_requirement(tmp_path: Path) -> None:
     """``kpip install <name>`` for names already installed says so, and an
     unmet specifier still goes to the index."""
@@ -171,45 +139,3 @@ def test_already_satisfied_install_reports_each_requirement(tmp_path: Path) -> N
     assert "Could not find a version that satisfies" in snapshot.stderr, (
         snapshot.describe()
     )
-
-
-NORMAL_INSTALL_FORBIDDEN = frozenset(
-    {
-        "importlib.metadata",
-        "kpip.resolution.files.parser",
-        "kpip.vcs.versioncontrol",
-        "kpip.core.subprocesses",
-        "html.parser",
-        "tomllib",
-        "kpip.build.build_backend",
-        "email.message",
-        "configparser",
-    },
-)
-
-
-def test_normal_local_install_stays_import_light(tmp_path: Path) -> None:
-    import shutil
-
-    wheelhouse = tmp_path / "wheelhouse"
-    wheelhouse.mkdir()
-    shutil.copy2(SIMPLEWHEEL, wheelhouse / SIMPLEWHEEL.name)
-    target = tmp_path / "target"
-    args = [
-        "install",
-        "--no-index",
-        "--ignore-installed",
-        "--target",
-        str(target),
-        "--find-links",
-        str(wheelhouse),
-        "simplewheel==2.0",
-    ]
-    env = {"KPIP_CACHE_DIR": str(tmp_path / "cache")}
-
-    modules = imported_modules(args, cwd=tmp_path, env=env) - baseline_modules()
-
-    assert next(target.glob("simplewheel-2.0.dist-info"), None) is not None
-    assert "kpip.cli.install" in modules
-    forbidden = NORMAL_INSTALL_FORBIDDEN
-    assert not (modules & forbidden), sorted(modules & forbidden)

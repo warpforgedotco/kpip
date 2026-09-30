@@ -6,7 +6,7 @@ import sys
 from kpip.core.errors import ConfigurationError
 from kpip.index.config import DEFAULT_INDEX_URL
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import configparser

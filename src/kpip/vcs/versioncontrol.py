@@ -8,7 +8,7 @@ import sys
 import urllib.parse
 from collections.abc import Iterable, Iterator, Mapping
 
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.errors import InstallationError
 from kpip.core.subprocesses import CommandArgs, format_command_args
 from kpip.core.utils import AuthInfo, display_path
@@ -23,7 +23,7 @@ from .support import (
     is_installable_dir,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any, Literal
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .subprocesses import SpinnerInterface
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def make_vcs_requirement_url(

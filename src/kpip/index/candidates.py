@@ -18,7 +18,7 @@ from kpip.index.source_models import (
     RejectionReason,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable

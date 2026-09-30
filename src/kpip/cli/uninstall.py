@@ -11,9 +11,9 @@ from kpip.cli.target import target_paths
 from kpip.core.packaging import parse_requirement
 from kpip.install.requirements import RequirementInstaller
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def run_uninstall(args: list[str]) -> int:

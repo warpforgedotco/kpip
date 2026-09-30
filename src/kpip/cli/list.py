@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 
 from kpip.build.query import (
     format_list_columns,
@@ -13,11 +15,10 @@ from kpip.cli.parsers.list import create_parser
 from kpip.cli.target import target_paths
 from kpip.core.metadata import stdlib_pkgs, user_lib_path
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from typing import Any

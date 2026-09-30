@@ -23,7 +23,7 @@ from kpip.resolution.models import (
 from kpip.resolution.nab_provider import NabProvider
 from kpip.resolution.nab_types import InstalledCandidate
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any

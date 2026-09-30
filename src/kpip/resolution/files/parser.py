@@ -8,7 +8,7 @@ import re
 import shlex
 import urllib.parse
 
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.errors import InstallationError
 from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.core.packaging import parse_requirement
@@ -30,7 +30,7 @@ from kpip.resolution.input_requirements import (
     install_req_from_line,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
         RequirementSource,
     )
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 CODING_RE = re.compile(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
 COMMENT_RE = re.compile(r"(^|\s+)#.*$")
 REMOTE_SCHEMES = frozenset(("http", "https", "file"))

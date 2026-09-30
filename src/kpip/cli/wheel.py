@@ -23,9 +23,9 @@ from kpip.index.provider import CandidateProvider
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def run_wheel(args: list[str]) -> int:

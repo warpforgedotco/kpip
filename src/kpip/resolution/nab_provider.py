@@ -37,9 +37,9 @@ from kpip.resolution.nab_types import (
     _RecordingRequirements,
 )
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 _MISSING = object()
 

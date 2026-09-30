@@ -9,18 +9,18 @@ import site
 from collections.abc import Generator, Iterable
 
 from kpip.cli.parsers.freeze import create_parser
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import InstallationError
 from kpip.core.packaging import canonicalize_name
 from kpip.core.versions import InvalidVersion
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from kpip.build.metadata import InstalledMetadataDistribution
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 VALID_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 

@@ -16,7 +16,7 @@ from kpip.core.packaging import (
 )
 from kpip.core.versions import Version
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any, NamedTuple, Protocol

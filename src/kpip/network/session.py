@@ -20,7 +20,7 @@ from kpip._vendor.urllib3.exceptions import (
     TimeoutError,
 )
 from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.kpip_version import get_kpip_version
 from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.core.utils import current_version
@@ -43,7 +43,7 @@ from kpip.network.exceptions import (
     TooManyRedirectsError,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import email.message
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
     from kpip.core.http_contracts import HttpResponse as HttpResponseProtocol
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 RETRY_STATUS_CODES = frozenset((500, 502, 503, 520, 527))
 DEFAULT_TIMEOUT = 15.0

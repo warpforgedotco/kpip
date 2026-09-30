@@ -10,9 +10,9 @@ from kpip.core.format_control import FormatControl
 from kpip.core.packaging import parse_requirement
 from kpip.index.provider import CandidateProvider
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def run_index(args: list[str]) -> int:

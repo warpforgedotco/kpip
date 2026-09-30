@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def run_hash(args: list[str]) -> int:

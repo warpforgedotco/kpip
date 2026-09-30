@@ -6,10 +6,10 @@ import json
 import os
 
 from kpip.core.digests import sha256_hexdigest
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.appdirs import WHEEL_CACHE_BUCKET
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 """Directory under the cache directory holding wheels built from source."""

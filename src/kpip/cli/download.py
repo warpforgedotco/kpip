@@ -26,9 +26,9 @@ from kpip.install.metadata import prepare_editable_source
 from kpip.install.output import fetch_candidate_sources
 from kpip.resolution.api import ResolutionEngine
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def run_download(args: list[str]) -> int:

@@ -6,6 +6,8 @@ filesystem transaction engine. It deliberately does not invoke kpip again.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import csv
 import io
 import os
@@ -60,11 +62,10 @@ from kpip.install.wheel_transaction_direct import (
 )
 from kpip.host.clone import clone_path
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from typing import Protocol

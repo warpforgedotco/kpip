@@ -8,20 +8,20 @@ import posixpath
 import urllib.parse
 
 from kpip.core.digests import sha256_hexdigest
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.errors import InstallationError
 from kpip.core.urls import url_to_path
 from kpip.index.artifact_cache import ArtifactCache, materialize_cached_artifact
 from kpip.index.vcs_urls import vcs_scheme
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
 
     from kpip.core.http_contracts import HttpSession
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 DOWNLOAD_DIR: str | None = None
