@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -18,17 +20,13 @@ def _dist(root: Path, dirname: str, name: str, version: str) -> None:
 
 
 @pytest.fixture
-def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     root = tmp_path / "site"
     _dist(root, "simple-2.0.0.dist-info", "simple", "2.0.0")
     _dist(root, "other-1.5.dist-info", "other", "1.5")
     monkeypatch.setattr(sys, "path", [str(root)])
     monkeypatch.delenv("KPIP_TARGET_PREFIX", raising=False)
     monkeypatch.setenv("KPIP_NO_CACHE_DIR", "1")
-    # The command leaves these behind for the builds it starts.
-    monkeypatch.setenv("KPIP_FIND_LINKS", "")
-    monkeypatch.setenv("KPIP_QUIET", "")
-    monkeypatch.setattr(logging.getLogger(), "level", logging.getLogger().level)
 
     def unexpected(*args: object, **kwargs: object) -> None:
         pytest.fail("resolved requirements the environment already satisfies")
@@ -37,9 +35,17 @@ def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         install.ResolutionEngine, "resolve_serving_stale_pages", unexpected
     )
     monkeypatch.setattr(install, "create_candidate_provider", unexpected)
-    monkeypatch.delenv("KPIP_FIND_LINKS")
-    monkeypatch.delenv("KPIP_QUIET")
-    return root
+
+    # The command leaves its source options in the environment, for the
+    # builds it starts, and lowers the log level when quiet.
+    environment = dict(os.environ)
+    level = logging.getLogger().level
+
+    yield root
+
+    os.environ.clear()
+    os.environ.update(environment)
+    logging.getLogger().setLevel(level)
 
 
 def test_satisfied_requirements_are_reported_and_nothing_is_resolved(
