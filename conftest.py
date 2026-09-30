@@ -487,7 +487,14 @@ def kpip_editable_parts(
         quiet=1,
     )
     kpip_self_install_path = tmpdir_factory.mktemp("kpip_self_install")
-    shutil.copytree(SRC_DIR / "src" / "kpip", kpip_self_install_path / "kpip")
+    # Without bytecode caches, as kpip_src copies: another worker writing a
+    # .pyc into src/kpip/__pycache__ mid-copy made copytree fail on the
+    # temporary file it had already renamed away.
+    shutil.copytree(
+        SRC_DIR / "src" / "kpip",
+        kpip_self_install_path / "kpip",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
     lock_path = Path(tempfile.gettempdir()) / "kpip-tests-editable-install.lock"
     with FileLock(lock_path):
         subprocess.check_call(
