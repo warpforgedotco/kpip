@@ -11,6 +11,17 @@ from kpip.core.errors import InstallationError
 from kpip.host.clone import replace_contents
 
 
+def script_python() -> str:
+    """The interpreter installed scripts run with, when none is given.
+
+    ``sys.executable``, unless the kpip that started this one named another
+    in ``KPIP_SCRIPT_PYTHON``: a build environment's scripts run with that
+    environment's Python, not the one installing into it -- which, for a
+    compiled kpip, is no Python at all.
+    """
+    return os.environ.get("KPIP_SCRIPT_PYTHON") or sys.executable
+
+
 def rewrite_shebang(path: str, executable: str | None) -> None:
     """Point a ``.data/scripts`` pseudo-shebang at the target interpreter.
 
@@ -29,7 +40,7 @@ def rewrite_shebang(path: str, executable: str | None) -> None:
     first_line, separator, rest = contents.partition(b"\n")
     if not separator:
         first_line, rest = contents, b""
-    interpreter = executable or sys.executable
+    interpreter = executable or script_python()
     if first_line.rstrip(b"\r")[len(b"#!python") :].startswith(b"w"):
         interpreter = _windowed(interpreter)
 
@@ -85,7 +96,7 @@ def script_text(target_ref: str, executable: str | None) -> str:
     entry = attribute or "main"
 
     return (
-        f"#!{executable or sys.executable}\n"
+        f"#!{executable or script_python()}\n"
         "import re\nimport sys\n"
         f"from {module} import {entry}\n\n"
         "if __name__ == '__main__':\n"

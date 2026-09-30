@@ -185,3 +185,22 @@ def test_record_paths_are_confined_to_the_distribution(
     from kpip.install.uninstall import _inside_distribution
 
     assert _inside_distribution(path, "/env/lib/python3.12/site-packages") is expected
+
+
+def test_scripts_run_with_the_python_a_parent_kpip_names(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A build environment's scripts run with its own Python: the kpip that
+    installs them may run under another, or be a compiled binary."""
+    from kpip.install.wheel_scripts import script_text
+
+    monkeypatch.setenv("KPIP_SCRIPT_PYTHON", "/env/bin/python")
+    script = tmp_path / "tool"
+    script.write_bytes(b"#!python\nprint(1)\n")
+
+    rewrite_shebang(str(script), None)
+
+    assert script.read_bytes() == b"#!/env/bin/python\nprint(1)\n"
+    assert script_text("tool:main", None).startswith("#!/env/bin/python\n")
+    # A named interpreter still wins.
+    assert script_text("tool:main", "/opt/py").startswith("#!/opt/py\n")

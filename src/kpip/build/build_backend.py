@@ -15,7 +15,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 import tarfile
 import tempfile
 import threading
@@ -32,7 +31,12 @@ from kpip.core.packaging import canonicalize_name, parse_requirement
 from kpip.core.versions import InvalidVersion, Version
 from kpip.core.subprocesses import call_subprocess
 from kpip.core.appdirs import command_cache_arguments
-from kpip.core.interpreter import build_interpreter, is_compiled, is_own_interpreter
+from kpip.core.interpreter import (
+    build_interpreter,
+    is_compiled,
+    is_own_interpreter,
+    own_command,
+)
 from kpip.install.build_env.isolated_venv import CreatedVenv, create_isolated_venv
 
 
@@ -368,16 +372,24 @@ def _environments_root() -> str:
 
 
 def _installs_build_requirements() -> bool:
-    """Whether kpip installs a build environment's requirements itself.
+    """Whether kpip may install a build environment's requirements itself.
 
     A bare environment and a kpip subprocess take 0.4 s where a pip-seeded
     one and pip take 4.2 s, and the requirements come from kpip's own index
-    settings and cache, as uv's do. That needs kpip to run as ``-m kpip``
-    under the build interpreter: not a compiled binary, whose
-    ``sys.executable`` is the binary, and not another interpreter, whose
-    wheels kpip would have to pick for it. Those keep pip.
+    settings and cache, as uv's do. The kpip installing them must pick wheels
+    for the environment's interpreter and lay them out where it looks: kpip
+    under the build interpreter, as ``-m kpip``, or a compiled kpip for an
+    interpreter just like its own, which :func:`_runs_like` checks once the
+    environment exists. Any other interpreter keeps pip.
     """
-    return not is_compiled() and is_own_interpreter(build_interpreter())
+    return is_compiled() or is_own_interpreter(build_interpreter())
+
+
+def _runs_like(venv: CreatedVenv) -> bool:
+    """Whether ``venv``'s interpreter takes the wheels this kpip would pick."""
+    from kpip.install.build_env.isolated_venv import interpreter_identity
+
+    return venv.identity is None or venv.identity == interpreter_identity()
 
 
 def _prefix_is_environment(env_path: str, venv: CreatedVenv) -> bool:
@@ -488,10 +500,14 @@ def _prepared_environment(
                 python=build_interpreter(),
             )
 
-            if installs_itself and not _prefix_is_environment(env_path, venv):
-                # A layout kpip's --prefix would not match: pip installs
-                # into the environment from inside it instead.
+            if installs_itself and not (
+                _runs_like(venv) and _prefix_is_environment(env_path, venv)
+            ):
+                # Another interpreter, or a layout kpip's --prefix would not
+                # match: pip installs into the environment from inside it.
                 shutil.rmtree(env_path, ignore_errors=True)
+                # Made again empty: the interpreter creates it from inside.
+                os.mkdir(env_path)
                 venv = create_isolated_venv(
                     env_path, with_pip=True, python=build_interpreter()
                 )
@@ -500,9 +516,7 @@ def _prepared_environment(
             if installs_itself:
                 subprocess.run(
                     [
-                        sys.executable,
-                        "-m",
-                        "kpip",
+                        *own_command(),
                         "install",
                         "--quiet",
                         "--no-compile",
@@ -516,7 +530,11 @@ def _prepared_environment(
                     ],
                     check=True,
                     cwd=source_dir,
-                    env=environment,
+                    # Its scripts run with the environment's Python.
+                    env={
+                        **environment,
+                        "KPIP_SCRIPT_PYTHON": venv.python_executable,
+                    },
                     capture_output=True,
                     text=True,
                 )
