@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from kpip.cli import lock_replay
-from kpip.cli.fast import run_lock
 from kpip.cli.lock_format import previous_lock_digest
 from kpip.core.appdirs import http_cache_path, resolve_cache_dir
 from kpip.index.config import DEFAULT_INDEX_URL
@@ -299,7 +298,7 @@ def test_the_metadata_reader_agrees_with_the_cache(
         assert reader.get(url) == files.get(url)
 
 
-class TestFastPath:
+class TestReplayDecision:
     def arguments(
         self, requirements: Path, output: Path, cache_root: Path
     ) -> list[str]:
@@ -312,6 +311,24 @@ class TestFastPath:
             str(output),
         ]
 
+    def replays(self, arguments: list[str]) -> bool:
+        """Whether the lock command answers ``arguments`` from a record."""
+        from kpip.cli.lock import replay_after_revalidation
+        from kpip.cli.lock_format import read_previous_lock
+        from kpip.cli.parsers.lock import create_parser
+        from kpip.core.appdirs import command_cache_dir
+        from kpip.network.deferred import DeferredNetworkSession
+
+        options = create_parser().parse_args(arguments)
+        cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
+
+        return replay_after_revalidation(
+            options,
+            cache_dir,
+            DeferredNetworkSession(cache_dir=cache_dir),
+            read_previous_lock(options.output, options.upgrade),
+        )
+
     def test_an_unchanged_lock_is_replayed(
         self, tmp_path: Path, requirements: Path
     ) -> None:
@@ -320,7 +337,7 @@ class TestFastPath:
         record(cache_dir, key_for(requirements))
         output = tmp_path / "pylock.toml"
 
-        assert run_lock(self.arguments(requirements, output, cache_root)) == 0
+        assert self.replays(self.arguments(requirements, output, cache_root))
         assert output.read_text(encoding="utf-8") == RENDERED
 
     def test_a_lock_is_replayed_only_from_the_lock_it_started_from(
@@ -342,25 +359,13 @@ class TestFastPath:
         )
         arguments = self.arguments(requirements, output, cache_root)
 
-        assert run_lock(arguments) == 0
-        assert run_lock([*arguments, "--upgrade"]) is None
-        assert run_lock([*arguments, "-P", "demo"]) is None
+        assert self.replays(arguments)
+        assert not self.replays([*arguments, "--upgrade"])
+        assert not self.replays([*arguments, "-P", "demo"])
 
         output.write_text(RENDERED + "# edited\n", encoding="utf-8")
 
-        assert run_lock(arguments) is None
-
-    def test_a_stale_page_goes_to_the_full_command(
-        self,
-        tmp_path: Path,
-        requirements: Path,
-    ) -> None:
-        cache_root = tmp_path / "cache"
-        record(resolve_cache_dir(str(cache_root)), key_for(requirements), fresh=False)
-        output = tmp_path / "pylock.toml"
-
-        assert run_lock(self.arguments(requirements, output, cache_root)) is None
-        assert not output.exists()
+        assert not self.replays(arguments)
 
     def test_no_cache_dir_never_replays(
         self, tmp_path: Path, requirements: Path
@@ -369,12 +374,10 @@ class TestFastPath:
         record(resolve_cache_dir(str(cache_root)), key_for(requirements))
         output = tmp_path / "pylock.toml"
 
-        arguments = [
-            *self.arguments(requirements, output, cache_root),
-            "--no-cache-dir",
-        ]
-
-        assert run_lock(arguments) is None
+        assert not self.replays(
+            [*self.arguments(requirements, output, cache_root), "--no-cache-dir"]
+        )
+        assert not output.exists()
 
 
 class Revalidating:

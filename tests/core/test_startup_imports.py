@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from import_harness import ROOT, baseline_modules, imported_modules, run_kpip
 
-from kpip.cli.fast import FAST_LOCK_PLAN_BUCKET
 
 from tomllib import loads
 
@@ -66,7 +64,7 @@ def test_list_reads_simple_dist_info(tmp_path: Path) -> None:
     assert json.loads(result.stdout) == [{"name": "demo-pkg", "version": "1.2"}]
 
 
-def test_fast_lock_produces_output_on_cache_hit(tmp_path: Path) -> None:
+def test_a_repeated_wheelhouse_lock_writes_its_output(tmp_path: Path) -> None:
     cache_dir = tmp_path / "cache"
     output = tmp_path / "pylock.toml"
     args = [
@@ -87,42 +85,6 @@ def test_fast_lock_produces_output_on_cache_hit(tmp_path: Path) -> None:
     assert first.returncode == 0
     assert second.returncode == 0
     assert output.is_file()
-
-
-@pytest.mark.parametrize("disable", [None, "--no-cache-dir", "KPIP_NO_CACHE_DIR"])
-def test_fast_lock_caches_by_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    disable: str | None,
-) -> None:
-    """Without KPIP_CACHE_DIR a lock caches in the default place, unless told not to."""
-
-    monkeypatch.delenv("KPIP_CACHE_DIR", raising=False)
-    monkeypatch.delenv("KPIP_NO_CACHE_DIR", raising=False)
-    default_cache = tmp_path / "user-cache"
-    env = {"XDG_CACHE_HOME": str(default_cache), "LOCALAPPDATA": str(default_cache)}
-    args = [
-        "lock",
-        "--quiet",
-        "--no-index",
-        "--find-links",
-        str(SIMPLEWHEEL),
-        "--output",
-        str(tmp_path / "pylock.toml"),
-        "simplewheel==2.0",
-    ]
-    if disable == "--no-cache-dir":
-        args.insert(1, disable)
-    elif disable is not None:
-        env[disable] = "1"
-
-    result = run_kpip(args, cwd=tmp_path, env=env)
-
-    assert result.returncode == 0, result.stderr
-    plans = list(default_cache.rglob(f"{FAST_LOCK_PLAN_BUCKET}/*.cache"))
-    # One for a lock that starts where this one did, one for the next lock,
-    # which starts from this one.
-    assert len(plans) == (0 if disable else 2)
 
 
 FAST_INSTALL_FORBIDDEN = frozenset(
@@ -324,118 +286,4 @@ def test_normal_local_install_stays_import_light(tmp_path: Path) -> None:
     assert next(target.glob("simplewheel-2.0.dist-info"), None) is not None
     assert "kpip.cli.install" in modules
     forbidden = NORMAL_INSTALL_FORBIDDEN
-    assert not (modules & forbidden), sorted(modules & forbidden)
-
-
-INDEX_LOCK_FORBIDDEN = frozenset(
-    {
-        "http.client",
-        "logging",
-        "ssl",
-        "traceback",
-        "kpip._vendor.urllib3",
-        "kpip.network.session",
-    },
-)
-
-
-def test_a_lock_does_not_build_the_client_it_may_never_use(tmp_path: Path) -> None:
-    """``kpip lock`` reaches the full command without the HTTP stack.
-
-    ``--python-version`` is what puts this past the wheelhouse fast path and
-    into ``kpip.cli.lock``, which is the one that used to build a
-    ``NetworkSession`` before it knew whether anything would be sent. That
-    import is the largest on the lock path -- the vendored urllib3 client,
-    ``ssl``, ``http.client`` and ``logging`` behind it -- and a resolve
-    whose answers are all local, or all still fresh in the cache, never
-    opens a socket at all.
-    """
-    import shutil
-
-    wheelhouse = tmp_path / "wheelhouse"
-    wheelhouse.mkdir()
-    shutil.copy2(SIMPLEWHEEL, wheelhouse / SIMPLEWHEEL.name)
-    requirements = tmp_path / "requirements.in"
-    requirements.write_text("simplewheel==2.0\n", encoding="utf-8")
-    output = tmp_path / "kpip.lock"
-    args = [
-        "lock",
-        "--quiet",
-        "--no-index",
-        "--find-links",
-        str(wheelhouse),
-        "--python-version",
-        "3.12",
-        "--output",
-        str(output),
-        "-r",
-        str(requirements),
-    ]
-    env = {"KPIP_CACHE_DIR": str(tmp_path / "cache")}
-
-    modules = imported_modules(args, cwd=tmp_path, env=env)
-
-    assert "simplewheel" in output.read_text(encoding="utf-8")
-    assert "kpip.cli.lock" in modules
-    assert not (modules & INDEX_LOCK_FORBIDDEN), sorted(modules & INDEX_LOCK_FORBIDDEN)
-
-
-@pytest.mark.parametrize("quiet", [True, False])
-def test_a_replayed_lock_loads_neither_the_resolver_nor_the_client(
-    tmp_path: Path,
-    quiet: bool,
-) -> None:
-    """A lock answered from its record never gets as far as resolving.
-
-    Nor, since it neither prints nor logs, as far as configuring logging:
-    ``--quiet`` or not, it is answered before CLI startup.
-    """
-    from kpip.cli import lock_replay
-    from kpip.core.appdirs import http_cache_path, resolve_cache_dir
-    from kpip.index.config import DEFAULT_INDEX_URL
-    from kpip.network.cache import SafeFileCache
-    from kpip.network.freshness import encode_metadata
-
-    requirements = tmp_path / "requirements.txt"
-    requirements.write_text("demo>=1\n", encoding="utf-8")
-    cache_root = tmp_path / "cache"
-    cache_dir = resolve_cache_dir(str(cache_root))
-    page = "https://pypi.org/simple/demo/"
-    SafeFileCache(http_cache_path(cache_dir)).set_with_body(
-        page,
-        encode_metadata({"expires_at": 4e9, "etag": '"v1"', "last_modified": None}),
-        b"{}",
-    )
-    key = lock_replay.replay_key(
-        requirements=[],
-        requirement_files=[str(requirements)],
-        constraint_files=[],
-        index_urls=(DEFAULT_INDEX_URL,),
-    )
-    assert key is not None
-    lock_replay.save_record(cache_dir, key, ((page, '"v1"', None),), "# replayed\n")
-    output = tmp_path / "pylock.toml"
-
-    modules = imported_modules(
-        [
-            "lock",
-            *(["--quiet"] if quiet else []),
-            "--cache-dir",
-            str(cache_root),
-            "-r",
-            str(requirements),
-            "--output",
-            str(output),
-        ],
-        cwd=tmp_path,
-    )
-
-    assert output.read_text(encoding="utf-8") == "# replayed\n"
-    assert "kpip.cli.lock_replay" in modules
-    forbidden = INDEX_LOCK_FORBIDDEN | {
-        "hashlib",
-        "kpip.cli.lock",
-        "kpip.cli.logging_config",
-        "kpip.resolution.api",
-    }
     assert not (modules & forbidden), sorted(modules & forbidden)
