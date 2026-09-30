@@ -58,6 +58,20 @@ jobs:
         run: uv run --group tests pytest
       - name: Compile
         run: uv run kpip-compile build
+      - name: Debug cached lock
+        continue-on-error: true
+        run: |
+          kpip=build/kpip
+          if [ "$RUNNER_OS" = Windows ]; then kpip=build/kpip.exe; fi
+          echo "=== binary, cached, verbose"
+          "$kpip" lock -v --cache-dir "$RUNNER_TEMP/c1" --output "$RUNNER_TEMP/a.toml" requests 2>&1 | tail -40 || true
+          echo "=== interpreted, compiled page loop"
+          uv run --project ../.. --python "${{ steps.python.outputs.python-path }}" python -m kpip lock -v --cache-dir "$RUNNER_TEMP/c2" --output "$RUNNER_TEMP/b.toml" requests 2>&1 | tail -40 || true
+          uv run --project ../.. --python "${{ steps.python.outputs.python-path }}" python debug_cached.py "$RUNNER_TEMP/c2" || true
+          echo "=== interpreted, no compiled page loop"
+          rm -f ../../src/kpip/index/_page_catalog*.pyd ../../src/kpip/index/_page_catalog*.so
+          uv run --project ../.. --python "${{ steps.python.outputs.python-path }}" python -m kpip lock -v --cache-dir "$RUNNER_TEMP/c3" --output "$RUNNER_TEMP/c.toml" requests 2>&1 | tail -40 || true
+          uv run --project ../.. --python "${{ steps.python.outputs.python-path }}" python debug_cached.py "$RUNNER_TEMP/c3" || true
       - name: Smoke test
         run: |
           # Where Nuitka's {CACHE_DIR} points on each system.
