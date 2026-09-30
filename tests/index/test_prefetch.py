@@ -48,6 +48,29 @@ def test_prefetcher_deduplicates_and_overlaps_work() -> None:
         prefetcher.close()
 
 
+def test_prefetcher_runs_a_key_once_though_it_was_taken() -> None:
+    """Taking a result does not make its key new again: a page asked for
+    between the take and its result being stored was fetched a second time."""
+    calls: list[str] = []
+
+    def load(value: str) -> str:
+        calls.append(value)
+        return value.upper()
+
+    prefetcher = Prefetcher(load, max_workers=2)
+    try:
+        assert prefetcher.submit("page", "page")
+        assert prefetcher.take("page").result() == "PAGE"
+
+        assert not prefetcher.submit("page", "page")
+        assert prefetcher.take("page") is None
+        assert not prefetcher.pending("page")
+    finally:
+        prefetcher.close()
+
+    assert calls == ["page"]
+
+
 def test_prefetcher_propagates_loader_errors() -> None:
     def load(value: str) -> str:
         raise ValueError(value)

@@ -116,13 +116,19 @@ class Prefetcher(Generic[T, V]):
         self.loader = gated
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.futures: dict[Hashable, Future[T]] = {}
+        # Every key ever submitted. A key whose future was taken is not new:
+        # its result is on its way to wherever its consumer keeps it, and
+        # until it is there, a second request for it looked unserved and ran
+        # the task again.
+        self.submitted: set[Hashable] = set()
         self.lock = RLock()
         self.closed = False
 
     def submit(self, key: Hashable, value: V) -> bool:
         with self.lock:
-            if self.closed or key in self.futures:
+            if self.closed or key in self.submitted:
                 return False
+            self.submitted.add(key)
             self.futures[key] = self.executor.submit(self.loader, value)
             return True
 

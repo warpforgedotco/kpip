@@ -396,6 +396,115 @@ def test_warm_remote_indexes_do_not_start_catalog_prefetcher() -> None:
     assert checks == 2
 
 
+def test_prefetch_leaves_a_page_the_resolver_is_loading_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lookahead that arrives while the resolver loads a page directly does
+    not start the same page on a worker: it was fetched and stored twice."""
+    prefetched: list[str] = []
+
+    class Session:
+        @staticmethod
+        def has_fresh_cached_response(url: str) -> bool:
+            del url
+            return False
+
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=Session(),
+    )
+    first = parse_requirement("first")
+    second = parse_requirement("second")
+
+    def load_catalog(requirement, cache_key):
+        del cache_key
+        if requirement.canonical_name == "first":
+            # The resolver is inside its own load of "first" right now.
+            provider.prefetch_available_versions((first, second), lookahead=True)
+        return EMPTY_CATALOG
+
+    def load_prefetched_versions(value):
+        prefetched.append(value[0].canonical_name)
+        return EMPTY_CATALOG
+
+    monkeypatch.setattr(provider, "load_catalog", load_catalog)
+    monkeypatch.setattr(provider, "load_prefetched_versions", load_prefetched_versions)
+
+    try:
+        assert provider._catalog(first) is EMPTY_CATALOG
+        second_key = ("second", *provider.allowed_formats_internal(second))
+        future = provider.prefetcher.take(second_key)
+        assert future is not None
+        future.result(timeout=10)
+    finally:
+        provider.close()
+
+    assert prefetched == ["second"]
+
+
+def test_two_callers_of_a_page_being_prefetched_share_its_one_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first caller to wait for a prefetched page used to take its future
+    away: a second caller, arriving before the result was stored, found
+    neither a catalog nor a fetch in flight and loaded the page again."""
+    import threading
+
+    direct_loads: list[str] = []
+    release = threading.Event()
+    started = threading.Event()
+
+    class Session:
+        @staticmethod
+        def has_fresh_cached_response(url: str) -> bool:
+            del url
+            return False
+
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=Session(),
+    )
+    first = parse_requirement("first")
+
+    def load_prefetched_versions(value):
+        del value
+        started.set()
+        assert release.wait(10)
+        return EMPTY_CATALOG
+
+    def load_catalog(requirement, cache_key):
+        del cache_key
+        direct_loads.append(requirement.canonical_name)
+        return EMPTY_CATALOG
+
+    monkeypatch.setattr(provider, "load_prefetched_versions", load_prefetched_versions)
+    monkeypatch.setattr(provider, "load_catalog", load_catalog)
+
+    results: list[object] = []
+
+    def caller() -> None:
+        results.append(provider._catalog(first))
+
+    try:
+        provider.prefetch_available_versions((first,), lookahead=True)
+        assert started.wait(10)
+        callers = [threading.Thread(target=caller) for _ in range(2)]
+        for thread in callers:
+            thread.start()
+        # Both are waiting on the prefetch, or one has fallen through.
+        for thread in callers:
+            thread.join(0.2)
+        release.set()
+        for thread in callers:
+            thread.join(10)
+    finally:
+        release.set()
+        provider.close()
+
+    assert results == [EMPTY_CATALOG, EMPTY_CATALOG]
+    assert direct_loads == []
+
+
 def test_exact_catalog_prefetch_starts_wheel_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
