@@ -438,13 +438,17 @@ def command_logging() -> Iterator[None]:
     import logging
 
     from kpip.cli.logging_config import configure_logging, set_log_file
+    from kpip.core import run_options
 
     root = logging.getLogger()
     level = root.level
     set_log_file(None)
     configure_logging(0)
+    run_options.reset()
 
     yield
+
+    run_options.reset()
 
     set_log_file(None)
     for handler in list(root.handlers):

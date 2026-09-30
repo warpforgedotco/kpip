@@ -8,6 +8,8 @@ import sys
 
 from typing import TYPE_CHECKING
 
+from kpip.cli.general_options import add_general_options, apply_general_options
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from typing import Any, NoReturn
@@ -49,17 +51,11 @@ class ArgumentParser(argparse.ArgumentParser):
     def parse_args(self, args: Any = None, namespace: Any = None) -> Any:
         """Parse as pip does.
 
-        Every command takes ``-q`` and ``-v``, which decide how much of what
-        it logs is shown from here on, and positional arguments may come
-        before, between and after options.
+        Every command takes pip's general options, which take effect from
+        here on, and positional arguments may come before, between and after
+        options.
         """
-        options = self._option_string_actions
-
-        if "-q" not in options and "--quiet" not in options:
-            self.add_argument("-q", "--quiet", action="count", default=0)
-
-        if "-v" not in options and "--verbose" not in options:
-            self.add_argument("-v", "--verbose", action="count", default=0)
+        add_general_options(self)
 
         if any(
             action.nargs in (argparse.PARSER, argparse.REMAINDER)
@@ -71,9 +67,7 @@ class ArgumentParser(argparse.ArgumentParser):
         else:
             parsed = self.parse_intermixed_args(args, namespace)
 
-        from kpip.cli.logging_config import configure_logging
-
-        configure_logging(int(parsed.verbose) - int(parsed.quiet))
+        apply_general_options(parsed)
 
         return parsed
 

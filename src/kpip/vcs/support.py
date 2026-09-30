@@ -4,6 +4,7 @@ import os
 import urllib.parse
 from collections.abc import Iterable
 
+from kpip.core import run_options
 from kpip.core.urls import split_auth_from_netloc
 
 import logging
@@ -66,11 +67,14 @@ def is_installable_dir(path: str) -> bool:
 
 
 def ask_path_exists(message: str, options: Iterable[str]) -> str:
-    for action in os.environ.get("KPIP_EXISTS_ACTION", "").split():
+    for action in (
+        *run_options.current.exists_action,
+        *os.environ.get("KPIP_EXISTS_ACTION", "").split(),
+    ):
         if action in options:
             return action
     while True:
-        if os.environ.get("KPIP_NO_INPUT"):
+        if run_options.current.no_input or os.environ.get("KPIP_NO_INPUT"):
             raise RuntimeError(f"No input was expected; question: {message}")
         response = input(message).strip().lower()
         if response in options:

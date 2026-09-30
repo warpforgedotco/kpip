@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
+from kpip.core import run_options
 from kpip.core.errors import ConfigurationError
 from kpip.index.config import DEFAULT_INDEX_URL
 
@@ -57,10 +58,15 @@ class ConfigurationStore:
         self.parser_internal: configparser.RawConfigParser | None = None
 
     def load(self) -> None:
+        # --isolated, as pip reads it: the user's own configuration and the
+        # environment are left out, the machine's and the environment's
+        # files are not.
+        isolated = run_options.current.isolated
         paths = [
             os.fspath(location.path)
             for location in config_locations()
             if os.path.isfile(os.fspath(location.path))
+            and not (isolated and location.kind in {"user", "env"})
         ]
         if not paths:
             return
@@ -233,6 +239,9 @@ def load_source_config(command: str | None = None) -> SourceConfig:
     no_index = (
         no_index_value is not None and no_index_value.strip().lower() in NO_INDEX_VALUES
     )
+
+    if run_options.current.isolated:
+        return SourceConfig(find_links, index_url, extra_index_urls, no_index)
 
     if (value := os.environ.get("KPIP_FIND_LINKS")) is not None:
         find_links = value.split()

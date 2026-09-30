@@ -5,6 +5,7 @@ import re
 import urllib.parse
 
 import logging
+from kpip.core import run_options
 from kpip.core.errors import InstallationError
 from kpip.core.urls import path_to_url
 from kpip.core.utils import AuthInfo, display_path
@@ -99,7 +100,7 @@ class Git(VersionControl):
 
     @classmethod
     def run_command(cls, *args: Any, **kwargs: Any) -> str:
-        if os.environ.get("KPIP_NO_INPUT"):
+        if run_options.current.no_input or os.environ.get("KPIP_NO_INPUT"):
             extra_environ = kwargs.get("extra_environ", {})
 
             extra_environ["GIT_TERMINAL_PROMPT"] = "0"
