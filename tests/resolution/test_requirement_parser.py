@@ -152,6 +152,8 @@ def test_remote_requirement_includes_are_prefetched(tmp_path) -> None:
         "--hash=sha256:" + "a" * 64,
         "--hash sha256:" + "a" * 64,
         "--config-settings=key=value",
+        "-C key=value",
+        "-Ckey=value",
     ],
 )
 def test_options_do_not_unquote_the_marker(tmp_path: Path, options: str) -> None:

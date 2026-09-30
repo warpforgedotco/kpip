@@ -7,6 +7,7 @@ from kpip.cli.parser import ArgumentParser
 from kpip.cli.parsers.install import create_parser as install_parser
 from kpip.cli.parsers.list import create_parser as list_parser
 from kpip.cli.parsers.lock import create_parser as lock_parser
+from kpip.cli.parsers.wheel import create_parser as wheel_parser
 
 
 def _parser() -> ArgumentParser:
@@ -47,3 +48,16 @@ def test_an_unknown_option_is_still_an_error(
 
     assert raised.value.code == 2
     assert "no such option: --nope" in capsys.readouterr().err
+
+
+def test_options_are_spelled_as_pip_spells_them() -> None:
+    for parser in (install_parser, wheel_parser):
+        options = parser().parse_args(["demo", "-C", "a=b", "--config-settings", "c"])
+
+        assert options.config_settings == ["a=b", "c"]
+
+    assert (
+        install_parser()
+        .parse_args(["demo", "--disable-pip-version-check"])
+        .disable_pip_version_check
+    )

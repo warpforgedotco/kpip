@@ -76,8 +76,8 @@ def create_parser() -> ArgumentParser:
     parser.add_argument("-v", "--verbose", action="count", default=0)
 
     parser.add_argument(
+        "-C",
         "--config-settings",
-        "--config-setting",
         dest="config_settings",
         action="append",
         default=[],

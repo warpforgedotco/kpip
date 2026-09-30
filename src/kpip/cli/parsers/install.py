@@ -72,7 +72,7 @@ def create_parser() -> ArgumentParser:
         action="append",
         default=[],
     )
-    parser.add_argument("--disable-kpip-version-check", action="store_true")
+    parser.add_argument("--disable-pip-version-check", action="store_true")
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--no-compile", action="store_true")
     parser.add_argument("-U", "--upgrade", action="store_true")
@@ -109,8 +109,8 @@ def create_parser() -> ArgumentParser:
     parser.add_argument("--no-warn-script-location", action="store_true")
     parser.add_argument("--no-warn-conflicts", action="store_true")
     parser.add_argument(
+        "-C",
         "--config-settings",
-        "--config-setting",
         dest="config_settings",
         action="append",
         default=[],
