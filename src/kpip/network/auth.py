@@ -23,6 +23,7 @@ from functools import cache
 from os.path import commonpath
 from typing import NamedTuple
 
+from kpip.core.compiled import is_compiled
 from kpip.core.urls import remove_auth_from_url, split_auth_netloc_from_url
 from kpip.core.utils import AuthInfo
 
@@ -215,6 +216,16 @@ def get_keyring_provider(provider: str) -> KeyRingBaseProvider:
 
     if KEYRING_DISABLED:
         provider = "disabled"
+    elif provider in {"auto", "import"} and is_compiled():
+        # The binary imports only what it was built with, and keyring is not
+        # among it: an environment's keyring is reached through its command.
+        if provider == "import":
+            logger.warning(
+                "--keyring-provider import is not available: kpip is a "
+                "compiled binary and cannot import keyring. Using the keyring "
+                "command instead (--keyring-provider subprocess)."
+            )
+        provider = "subprocess"
     cli = shutil.which("keyring")
     scripts = sysconfig.get_path("scripts")
     external_cli = (

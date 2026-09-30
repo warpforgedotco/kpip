@@ -776,3 +776,27 @@ def test_credentials_after_401_extracts_credentials_embedded_in_url(
 
     assert (username, password) == ("user", "pass")
     assert credentials is None
+
+
+@pytest.mark.parametrize("provider", ["auto", "import"])
+def test_a_compiled_kpip_uses_the_keyring_command(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    provider: str,
+) -> None:
+    """The binary cannot import an environment's keyring."""
+
+    def no_import(name: str) -> None:
+        pytest.fail(f"tried to import {name}")
+
+    monkeypatch.setattr(kpip.network.auth, "is_compiled", lambda: True)
+    monkeypatch.setattr(kpip.network.auth.importlib.util, "find_spec", no_import)
+    monkeypatch.setattr(
+        kpip.network.auth.shutil, "which", lambda name: "/usr/bin/keyring"
+    )
+
+    chosen = kpip.network.auth.get_keyring_provider(provider)
+
+    assert isinstance(chosen, kpip.network.auth.KeyRingCliProvider)
+    warned = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert bool(warned) == (provider == "import")
