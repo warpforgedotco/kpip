@@ -8,7 +8,7 @@ benefit.
 
 from __future__ import annotations
 
-from kpip.core.caches import memoized
+lazy from kpip.core.caches import memoized
 
 
 @memoized(4096)

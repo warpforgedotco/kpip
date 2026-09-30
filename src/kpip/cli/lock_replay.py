@@ -11,25 +11,23 @@ The lock command asks this before anything that resolves.
 
 from __future__ import annotations
 
-import marshal
-import os
-import sys
-import time
+lazy import marshal
+lazy import os
+lazy import sys
+lazy import time
+from typing import TYPE_CHECKING, Protocol
 
-from kpip.core.appdirs import http_cache_path
-from kpip.core.code_identity import code_identity
-from kpip.core.utils import key_bytes, versioned_bucket
-from kpip.network.freshness import (
+lazy from kpip.core.appdirs import http_cache_path
+lazy from kpip.core.code_identity import code_identity
+lazy from kpip.core.utils import key_bytes, load_snapshot, versioned_bucket
+lazy from kpip.network.freshness import (
     CacheMetadataReader,
     decode_metadata,
     metadata_is_fresh,
 )
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
-    from typing import Protocol
 
     class MetadataCache(Protocol):
         def get(self, key: str) -> bytes | None: ...
@@ -366,8 +364,6 @@ def builds_unchanged(builds: Iterable[BuildCheck]) -> bool:
 
 def _read_snapshot(path: str) -> Mapping[object, object] | None:
     """A candidate-metadata snapshot's entries, or None when it cannot be read."""
-
-    from kpip.core.utils import load_snapshot
 
     loaded = load_snapshot(path)
 

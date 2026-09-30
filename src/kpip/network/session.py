@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import os
-import ssl
-import sys
-import threading
-import time
-import urllib.parse
+from typing import TYPE_CHECKING
+lazy import logging
+lazy import os
+lazy import ssl
+lazy import sys
+lazy import threading
+lazy import time
+lazy import urllib.parse
+lazy import urllib.request
 
-from kpip._vendor.urllib3._collections import HTTPHeaderDict
-from kpip._vendor.urllib3.exceptions import (
+lazy from kpip._vendor import certifi, urllib3
+lazy from kpip._vendor.urllib3._collections import HTTPHeaderDict
+lazy from kpip._vendor.urllib3.exceptions import (
     MaxRetryError,
     NewConnectionError,
     ProtocolError,
@@ -19,37 +23,39 @@ from kpip._vendor.urllib3.exceptions import (
     SSLError,
     TimeoutError,
 )
-from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
-import logging
-from kpip.core.kpip_version import get_kpip_version
-from kpip.core.urls import redact_auth_from_url, url_to_path
-from kpip.core.utils import current_version
-from kpip.core import latency
-from kpip.network.auth import MultiDomainBasicAuth
-from kpip.network.cache import SafeFileCache
-from kpip.network.freshness import (
-    cached_response_is_fresh,
-    decode_metadata,
-    has_cached_validator,
-    encode_metadata,
-    freshness_deadline,
-    metadata_is_fresh,
-)
-from kpip.network.exceptions import (
+lazy from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
+lazy from kpip._vendor.urllib3.util.ssl_ import create_urllib3_context
+lazy from kpip.core import latency
+lazy from kpip.core.errors import CommandError
+lazy from kpip.core.kpip_version import get_kpip_version
+lazy from kpip.core.urls import redact_auth_from_url, url_to_path
+lazy from kpip.core.utils import current_version
+lazy from kpip.network.auth import MultiDomainBasicAuth
+lazy from kpip.network.cache import SafeFileCache
+lazy from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
     ProxyConnectionError,
     SSLVerificationError,
     TooManyRedirectsError,
 )
-
-from typing import TYPE_CHECKING
+lazy from kpip.network.freshness import (
+    cached_response_is_fresh,
+    decode_metadata,
+    encode_metadata,
+    freshness_deadline,
+    has_cached_validator,
+    metadata_is_fresh,
+)
+lazy from kpip.network.lazy_wheel import (
+    HTTPRangeRequestUnsupported,
+    metadata_text_from_wheel_url,
+)
 
 if TYPE_CHECKING:
     import email.message
     from collections.abc import Mapping, Sequence
     from typing import Any, NoReturn
-
     from kpip.core.http_contracts import HttpResponse as HttpResponseProtocol
 
 logger = logging.getLogger(__name__)
@@ -384,11 +390,6 @@ class NetworkSession:
         with self.no_range_requests_lock:
             if host in self.no_range_requests:
                 return None
-
-        from kpip.network.lazy_wheel import (
-            HTTPRangeRequestUnsupported,
-            metadata_text_from_wheel_url,
-        )
 
         try:
             return metadata_text_from_wheel_url(name, url, self)
@@ -979,8 +980,6 @@ class NetworkSession:
         cached = self.environ_proxies_cache.get(key)
 
         if cached is None:
-            import urllib.request
-
             if urllib.request.proxy_bypass(parsed.netloc):
                 cached = {}
 
@@ -1048,9 +1047,6 @@ class NetworkSession:
         if context is not None:
             return context
 
-        from kpip._vendor import certifi
-        from kpip._vendor.urllib3.util.ssl_ import create_urllib3_context
-
         with self.ssl_contexts_lock:
             context = self.ssl_contexts.get(key)
 
@@ -1102,8 +1098,6 @@ class NetworkSession:
 
         if manager is not None:
             return manager
-
-        from kpip._vendor import urllib3
 
         with self.transport_lock:
             manager = self.pool_managers.get(key)
@@ -1429,7 +1423,6 @@ def trusted_host_key(value: str) -> tuple[str, int | None]:
     except ValueError as error:
         # Not host-wide trust: an unusable port must not turn certificate
         # checks off for every port on the host.
-        from kpip.core.errors import CommandError
 
         raise CommandError(
             f"Invalid --trusted-host {value.strip()!r}: {error}"

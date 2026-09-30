@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from kpip.core.utils import current_version
+lazy import kpip
+lazy from kpip.core.utils import current_version
 
 KPIP_DISTRIBUTION_NAME = "kpip"
 
@@ -17,6 +18,4 @@ def get_kpip_version() -> str:
     if context_version is not None:
         return context_version
 
-    from kpip import __version__
-
-    return __version__
+    return kpip.__version__

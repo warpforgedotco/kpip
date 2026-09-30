@@ -21,7 +21,9 @@ wheel that ships a module this interpreter cannot compile -- vendored Python
 module, which is what pip does too.
 """
 
-import sys
+lazy import py_compile
+lazy import sys
+lazy import warnings
 
 WORKER_ARGUMENT = "--kpip-compile-worker"
 """What a compiled kpip is started with to be a worker: it has no script to
@@ -29,9 +31,6 @@ run, so ``kpip/__main__.py`` runs :func:`main` when this comes first."""
 
 
 def main() -> None:
-    import py_compile
-    import warnings
-
     with warnings.catch_warnings():
         # A module that warns at compile time (SyntaxWarning, most often) is
         # not this install's problem to report, and anything written to

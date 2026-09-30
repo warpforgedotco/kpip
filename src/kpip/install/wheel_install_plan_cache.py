@@ -10,17 +10,19 @@ than re-hashes, an existing tree's contents against the recorded entries.
 
 from __future__ import annotations
 
-import hashlib
-import marshal
-import os
-import time
-from types import MappingProxyType
+lazy import hashlib
+lazy import json
+lazy import marshal
+lazy import os
+lazy import tempfile
+lazy import time
+lazy from types import MappingProxyType
 
-from kpip.core.packaging import parse_requirement
-from kpip.core.versions import Version
-from kpip.core.utils import versioned_bucket
-from kpip.core.wheel import WheelCandidate
-from kpip.install.wheel_archive_cache import (
+lazy from kpip.core.packaging import parse_requirement
+lazy from kpip.core.utils import key_bytes, versioned_bucket
+lazy from kpip.core.versions import Version
+lazy from kpip.core.wheel import WheelCandidate
+lazy from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
     archive_entry_root,
     load_archive,
@@ -28,11 +30,7 @@ from kpip.install.wheel_archive_cache import (
     valid_sha256,
     wheel_digest,
 )
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from kpip.resolution.models import ResolutionResult
+lazy from kpip.resolution.models import ResolutionResult
 
 RESOLUTION_CACHE_BUCKET = versioned_bucket("resolution", 1, interpreter=True)
 
@@ -156,8 +154,6 @@ def _exact_install_plan_key(
     if not normalized:
         return None
 
-    import json
-
     payload = json.dumps(
         (tuple(sorted(normalized)), context),
         ensure_ascii=True,
@@ -181,7 +177,6 @@ def plain_install_plan_key(
     which the caller records with :func:`save_plan_pages` and checks before
     loading it; ``context`` carries the rest of what the resolve depended on.
     """
-    from kpip.core.utils import key_bytes
 
     normalized: list[tuple[str, str, tuple[str, ...], str]] = []
 
@@ -221,7 +216,6 @@ def _pages_path(cache_dir: str, key: str) -> str:
 
 def save_plan_pages(cache_dir: str, key: str, pages: tuple[object, ...]) -> None:
     """Record the index pages, with their validators, a plan was resolved from."""
-    import tempfile
 
     path = _pages_path(cache_dir, key)
     directory = os.path.dirname(path)
@@ -344,8 +338,6 @@ def save_cached_install_plan(
         directory = os.path.dirname(path)
 
         os.makedirs(directory, exist_ok=True)
-
-        import tempfile
 
         descriptor, temporary = tempfile.mkstemp(prefix=f".{key[:12]}-", dir=directory)
 
@@ -557,8 +549,6 @@ def load_cached_install_plan(
                 selected_dependency.version,
             ):
                 return None
-
-    from kpip.resolution.models import ResolutionResult
 
     return ResolutionResult(
         candidates=tuple(candidates),

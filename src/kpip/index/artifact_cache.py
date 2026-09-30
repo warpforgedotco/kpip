@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from kpip.core.digests import sha256_hexdigest
-from kpip.core.utils import versioned_bucket
+lazy import hashlib
+lazy import marshal
+lazy import os
+lazy import shutil
+lazy import tempfile
+lazy from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Protocol
 
-import marshal
-import os
-from collections.abc import Iterable, Mapping
-
-from kpip.core.errors import HashMismatch
-
-from typing import TYPE_CHECKING
+lazy from kpip.core.digests import sha256_hexdigest
+lazy from kpip.core.errors import HashMismatch
+lazy from kpip.core.utils import versioned_bucket
 
 if TYPE_CHECKING:
-    from typing import Protocol
 
     class HashDigest(Protocol):
         def update(self, data: bytes, /) -> None: ...
@@ -100,8 +100,6 @@ class ArtifactCache:
     def _digests(
         expected_hashes: Mapping[str, str] | None,
     ) -> dict[str, HashDigest]:
-        import hashlib
-
         result: dict[str, HashDigest] = {"sha256": hashlib.sha256()}
         for algorithm in expected_hashes or ():
             if algorithm in result:
@@ -141,8 +139,6 @@ class ArtifactCache:
         path = self._receipt_path(url)
         directory = os.path.dirname(path)
         os.makedirs(directory, exist_ok=True)
-
-        import tempfile
 
         descriptor, temporary = tempfile.mkstemp(prefix=".receipt-", dir=directory)
         try:
@@ -199,8 +195,6 @@ class ArtifactCache:
         staging = os.path.join(self.root, ".tmp")
         os.makedirs(staging, exist_ok=True)
 
-        import tempfile
-
         descriptor, temporary = tempfile.mkstemp(prefix=".artifact-", dir=staging)
         digests = self._digests(expected_hashes)
         size = 0
@@ -253,8 +247,6 @@ def materialize_cached_artifact(source: str, destination: str) -> None:
     except OSError:
         pass
     temporary = f"{destination}.{os.getpid()}.tmp"
-
-    import shutil
 
     try:
         shutil.copyfile(source, temporary)

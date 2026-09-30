@@ -7,8 +7,8 @@ warnings and errors to stderr, and how much of it is decided by how many
 
 from __future__ import annotations
 
-import logging
-import sys
+lazy import logging
+lazy import sys
 
 VERBOSE = 15
 """pip's level between INFO and DEBUG, for what one ``-v`` adds."""

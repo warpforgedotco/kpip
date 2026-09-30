@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import csv
-import importlib.util
-import ntpath
-import os
-import sys
+lazy import csv
+lazy import importlib.util
+lazy import ntpath
+lazy import os
+lazy import sys
+lazy import sysconfig
 
-from kpip.build.metadata import InstalledDistributionStore
-from kpip.core.errors import InstallationError
-from kpip.install.transaction import InstallTransaction
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.install.transaction import InstallTransaction
 
 
 class DistributionUninstaller:
@@ -38,7 +39,6 @@ def _script_directories(root: str) -> frozenset[str]:
     ``Lib/site-packages``, and ``<prefix>/bin`` above a POSIX
     ``lib/pythonX.Y/site-packages``.
     """
-    import sysconfig
 
     candidates = [os.path.join(root, "bin"), os.path.join(root, "Scripts")]
 

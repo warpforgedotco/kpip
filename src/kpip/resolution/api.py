@@ -2,32 +2,33 @@
 
 from __future__ import annotations
 
-import json
-import os
-import re
-import sys
-from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING
+lazy import json
+lazy import os
+lazy import re
+lazy import sys
+lazy from collections.abc import Callable, Iterable, Mapping
 
-from kpip.core import errors
-from kpip.core.metadata import installed_index
-from kpip.core.versions import ZERO_VERSION
-from kpip.index.provider import CandidateProvider
-from kpip.resolution.inputs import (
+lazy from kpip._vendor.nab_resolver.errors import ResolutionError
+lazy from kpip._vendor.nab_resolver.report import format_error
+lazy from kpip._vendor.nab_resolver.resolver import Resolver
+lazy from kpip.core import errors
+lazy from kpip.core.metadata import installed_index
+lazy from kpip.core.versions import ZERO_VERSION
+lazy from kpip.index.provider import CandidateProvider
+lazy from kpip.resolution.inputs import (
     coerce_requirements,
 )
-from kpip.resolution.models import (
+lazy from kpip.resolution.models import (
     ResolutionConfig,
     ResolutionResult,
     ResolvedRequirement,
 )
-from kpip.resolution.nab_provider import NabProvider
-from kpip.resolution.nab_types import InstalledCandidate
-
-from typing import TYPE_CHECKING
+lazy from kpip.resolution.nab_provider import NabProvider
+lazy from kpip.resolution.nab_types import InstalledCandidate
 
 if TYPE_CHECKING:
     from typing import Any
-
     from kpip.install.requirement_set import RequirementSet
     from kpip.resolution.req_install import InstallRequirement
 
@@ -102,8 +103,6 @@ class ResolutionEngine:
         | Iterable[InstallRequirement]
         | list[str],
     ) -> ResolutionResult:
-        from kpip._vendor.nab_resolver.resolver import Resolver
-
         requirements = coerce_requirements(requirements_input)
         installed = {} if self.config.ignore_installed else installed_index()
         adapter = NabProvider(
@@ -121,9 +120,6 @@ class ResolutionEngine:
         try:
             solution = resolver.solve(roots)
         except Exception as error:
-            from kpip._vendor.nab_resolver.errors import ResolutionError
-            from kpip._vendor.nab_resolver.report import format_error
-
             if isinstance(error, ResolutionError):
                 message = (
                     format_error(

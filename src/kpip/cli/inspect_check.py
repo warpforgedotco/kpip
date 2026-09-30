@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-import logging
+lazy import logging
+lazy import sys
+
+lazy from kpip.build import query
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.cli.parsers.inspection import create_check_parser
+lazy from kpip.core import kpip_version, packaging, target_python
 
 logger = logging.getLogger(__name__)
 
 
 def run_check(args: list[str]) -> int:
-    from kpip.cli.parsers.inspection import create_check_parser
-
     create_check_parser().parse_args(args)
-
-    import sys
-
-    from kpip.build import query
-    from kpip.build.metadata import InstalledDistributionStore
-    from kpip.core import kpip_version, packaging
 
     distributions = InstalledDistributionStore().iter(
         skip=kpip_version.KPIP_DISTRIBUTION_NAMES
@@ -33,8 +31,6 @@ def run_check(args: list[str]) -> int:
         return 1
 
     def supported_tags():  # noqa: ANN202
-        from kpip.core import target_python
-
         return target_python.get_supported()
 
     unsupported = [

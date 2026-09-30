@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+lazy from collections.abc import Callable
+lazy from importlib import import_module
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-    from types import ModuleType
+lazy from kpip.cli.parser import ArgumentParser
 
-    from kpip.cli.parser import ArgumentParser
+if TYPE_CHECKING:
+    from types import ModuleType
 
     CommandRunner = Callable[[list[str]], int]
 
@@ -60,16 +61,12 @@ class CommandSpec:
     @property
     def module(self) -> ModuleType:
         if self._module is None:
-            from importlib import import_module
-
             self._module = import_module(self.module_path)
         return self._module
 
     @property
     def parser_module(self) -> ModuleType:
         if self._parser_module is None:
-            from importlib import import_module
-
             self._parser_module = import_module(self.parser_module_path)
         return self._parser_module
 
@@ -84,8 +81,6 @@ class CommandSpec:
             factory: ParserFactory = getattr(self.parser_module, self.parser_factory)
 
             return factory()
-
-        from kpip.cli.parser import ArgumentParser
 
         return ArgumentParser(prog=f"kpip {self.name}")
 

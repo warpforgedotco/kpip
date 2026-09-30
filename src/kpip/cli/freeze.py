@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-import collections
-import os
-import re
-import site
-from collections.abc import Generator, Iterable
+lazy import collections
+lazy import logging
+lazy import os
+lazy import re
+lazy import site
+lazy from collections.abc import Generator, Iterable
+from typing import TYPE_CHECKING, NamedTuple
 
-from kpip.cli.parsers.freeze import create_parser
-import logging
-from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-from kpip.core.errors import CommandError, InstallationError
-from kpip.core.packaging import canonicalize_name
-from kpip.core.versions import InvalidVersion
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from kpip.build.metadata import InstalledMetadataDistribution
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.cli.parsers.freeze import create_parser
+lazy from kpip.core.errors import CommandError, InstallationError
+lazy from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
+lazy from kpip.core.metadata import stdlib_pkgs
+lazy from kpip.core.packaging import canonicalize_name
+lazy from kpip.core.versions import InvalidVersion
+lazy from kpip.resolution.files.parser import COMMENT_RE
+lazy from kpip.resolution.input_requirements import (
+    install_req_from_editable,
+    install_req_from_line,
+)
+lazy from kpip.vcs.errors import BadCommand
+lazy from kpip.vcs.versioncontrol import RemoteNotFoundError, RemoteNotValidError, vcs
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +31,7 @@ VALID_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 
 
 if TYPE_CHECKING:
-    from typing import NamedTuple
+    from kpip.build.metadata import InstalledMetadataDistribution
 
     class EditableInfo(NamedTuple):
         requirement: str
@@ -46,8 +51,6 @@ def freeze(
     exclude: Iterable[str] = (),
     skip: Iterable[str] = (),
 ) -> Generator[str, None, None]:
-    from kpip.build.metadata import InstalledDistributionStore
-
     installations: dict[str, FrozenRequirement] = {}
 
     excluded = {canonicalize_name(name) for name in exclude}
@@ -75,12 +78,6 @@ def freeze(
         installations[req.canonical_name] = req
 
     if requirement:
-        from kpip.resolution.files.parser import COMMENT_RE
-        from kpip.resolution.input_requirements import (
-            install_req_from_editable,
-            install_req_from_line,
-        )
-
         emitted_options: set[str] = set()
 
         req_files: dict[str, list[str]] = collections.defaultdict(list)
@@ -217,8 +214,6 @@ def get_editable_info(dist: InstalledMetadataDistribution) -> EditableInfo:
     FrozenRequirement.from_dist().
 
     """
-    from kpip.vcs.errors import BadCommand
-    from kpip.vcs.versioncontrol import RemoteNotFoundError, RemoteNotValidError, vcs
 
     editable_project_location = dist.editable_project_location
 
@@ -357,8 +352,6 @@ class FrozenRequirement:
 
 def run_freeze(args: list[str]) -> int:
     options = create_parser().parse_args(args)
-
-    from kpip.core.metadata import stdlib_pkgs
 
     excluded = {canonicalize_name(name) for name in options.exclude}
 

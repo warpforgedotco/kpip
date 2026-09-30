@@ -7,11 +7,14 @@ execution in the interpreter selected by the build environment.
 
 from __future__ import annotations
 
-import json
-import os
-from contextlib import contextmanager
-
 from typing import TYPE_CHECKING
+lazy import json
+lazy import os
+lazy import subprocess
+lazy import tempfile
+lazy from contextlib import contextmanager
+
+lazy from kpip.core.interpreter import build_interpreter
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -79,8 +82,6 @@ class BuildBackendHookCaller:
             for path in (backend_path or ())
         )
         if python_executable is None:
-            from kpip.core.interpreter import build_interpreter
-
             python_executable = build_interpreter()
 
         self.python_executable = python_executable
@@ -91,10 +92,6 @@ class BuildBackendHookCaller:
         yield
 
     def _call(self, hook: str, **kwargs: Any) -> Any:
-        import subprocess
-
-        import tempfile
-
         with tempfile.TemporaryDirectory(prefix="kpip-pep517-") as directory:
             input_path = os.path.join(directory, "input.json")
             output_path = os.path.join(directory, "output.json")

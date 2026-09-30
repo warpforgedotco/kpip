@@ -3,36 +3,37 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+lazy import json
+lazy import logging
+lazy import os
+lazy import shutil
+lazy import sys
 
-import json
-import os
-import shutil
-import sys
-
-from kpip.build.metadata import InstalledMetadataDistribution, MetadataDistribution
-from kpip.core.direct_url import ArchiveInfo, DirectUrl, DirInfo, VcsInfo
-from kpip.core.errors import BuildError, CommandError, InstallationError
-from kpip.core.hashes import file_hashes
-from kpip.core.packaging import (
+lazy from kpip.build.build_backend import BackendSpec, prepare_project_metadata
+lazy from kpip.build.metadata import InstalledMetadataDistribution, MetadataDistribution
+lazy from kpip.core.direct_url import ArchiveInfo, DirectUrl, DirInfo, VcsInfo
+lazy from kpip.core.errors import BuildError, CommandError, InstallationError
+lazy from kpip.core.hashes import file_hashes
+lazy from kpip.core.packaging import (
     SpecifierSet,
     canonicalize_name,
     canonicalize_requirement,
 )
-from kpip.core.urls import path_to_url, url_to_path
-from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
-from kpip.index.artifacts import ArtifactLocator
-from kpip.index.links import Link
-from kpip.index.vcs import release_checkout
-from kpip.resolution.input_requirements import install_req_from_editable
-
-import logging
-
-logger = logging.getLogger(__name__)
-
+lazy from kpip.core.urls import path_to_url, url_to_path
+lazy from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
+lazy from kpip.index.artifacts import ArtifactLocator
+lazy from kpip.index.links import Link
+lazy from kpip.index.vcs import release_checkout
+lazy from kpip.resolution.input_requirements import install_req_from_editable
+lazy from kpip.vcs.versioncontrol import vcs
 
 if TYPE_CHECKING:
     from kpip.build.build_backend import ProjectMetadata
     from kpip.resolution.req_install import InstallRequirement
+
+logger = logging.getLogger(__name__)
+
+
 
 MetadataView = MetadataDistribution | InstalledMetadataDistribution
 
@@ -147,8 +148,6 @@ def direct_url_from_link(
     link_is_in_wheel_cache: bool = False,
 ) -> DirectUrl:
     if link.is_vcs:
-        from kpip.vcs.versioncontrol import vcs
-
         vcs_backend = vcs.get_backend_for_scheme(link.scheme)
         assert vcs_backend
         url, requested_revision, _ = vcs_backend.get_url_rev_and_auth(
@@ -242,8 +241,6 @@ def prepare_editable_source(
 
     if prepare_metadata:
         try:
-            from kpip.build.build_backend import BackendSpec, prepare_project_metadata
-
             metadata = prepare_project_metadata(
                 source_path,
                 editable=True,
@@ -251,11 +248,6 @@ def prepare_editable_source(
             )
         except BuildError as exc:
             if "build_editable" in str(exc):
-                from kpip.build.build_backend import (
-                    BackendSpec,
-                    prepare_project_metadata,
-                )
-
                 backend_spec = BackendSpec.from_project(source_path)
                 if (
                     backend_spec is not None
@@ -272,11 +264,6 @@ def prepare_editable_source(
                 "Cannot import 'setuptools.build_meta'" in str(exc)
                 or "pyproject.toml" in project_files
             ):
-                from kpip.build.build_backend import (
-                    BackendSpec,
-                    prepare_project_metadata,
-                )
-
                 metadata = prepare_project_metadata(
                     source_path,
                     editable=True,

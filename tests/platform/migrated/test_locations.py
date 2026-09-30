@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-
 from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.host.scheme import SCHEME_KEYS
 
@@ -111,7 +110,6 @@ def test_a_compiled_kpip_lays_out_platlib_as_its_python_was_built(
     directory; a prefix's platlib still sits under the interpreter's lib."""
     import sysconfig
 
-    from kpip.core import interpreter
     from kpip.host.locations import sysconfig_scheme
 
     passed: dict[str, str] = {}
@@ -121,7 +119,7 @@ def test_a_compiled_kpip_lays_out_platlib_as_its_python_was_built(
         passed.update(vars or {})
         return get_paths(scheme, vars, expand)
 
-    monkeypatch.setattr(interpreter, "is_compiled", lambda: True)
+    monkeypatch.setattr(sysconfig_scheme, "is_compiled", lambda: True)
     monkeypatch.setattr(sysconfig_scheme.sysconfig, "get_paths", recording)
 
     scheme = sysconfig_scheme.get_scheme("demo", prefix="/x")

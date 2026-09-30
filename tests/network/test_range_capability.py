@@ -9,8 +9,8 @@ dropped connection is not evidence about range support.
 from __future__ import annotations
 
 import pytest
-from kpip.network.session import NetworkSession
 from kpip.network.lazy_wheel import HTTPRangeRequestUnsupported
+from kpip.network.session import NetworkSession
 
 _URL = "https://example.invalid/demo-1.0-py3-none-any.whl"
 
@@ -24,7 +24,7 @@ def test_metadata_is_returned_and_the_host_stays_usable(
 ) -> None:
     session = _session()
     monkeypatch.setattr(
-        "kpip.network.lazy_wheel.metadata_text_from_wheel_url",
+        "kpip.network.session.metadata_text_from_wheel_url",
         lambda name, url, session: "Metadata-Version: 2.1\nName: demo\n",
     )
 
@@ -43,7 +43,7 @@ def test_a_host_refusing_ranges_is_asked_once(
         raise HTTPRangeRequestUnsupported(url)
 
     monkeypatch.setattr(
-        "kpip.network.lazy_wheel.metadata_text_from_wheel_url",
+        "kpip.network.session.metadata_text_from_wheel_url",
         refuse,
     )
 
@@ -60,7 +60,7 @@ def test_the_verdict_is_per_host(monkeypatch: pytest.MonkeyPatch) -> None:
         raise HTTPRangeRequestUnsupported(url)
 
     monkeypatch.setattr(
-        "kpip.network.lazy_wheel.metadata_text_from_wheel_url",
+        "kpip.network.session.metadata_text_from_wheel_url",
         refuse,
     )
 
@@ -81,7 +81,7 @@ def test_an_unrelated_failure_is_not_taken_as_evidence(
         raise OSError("connection reset")
 
     monkeypatch.setattr(
-        "kpip.network.lazy_wheel.metadata_text_from_wheel_url",
+        "kpip.network.session.metadata_text_from_wheel_url",
         fail,
     )
 

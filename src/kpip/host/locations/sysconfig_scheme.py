@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import os
-import sys
-import sysconfig
-from collections.abc import Callable
+lazy import os
+lazy import sys
+lazy import sysconfig
+lazy from collections.abc import Callable
 
-from kpip.core.errors import InstallationError
-from kpip.host.scheme import SCHEME_KEYS, Scheme
-from kpip.host.virtualenv import running_under_virtualenv
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.interpreter import is_compiled
+lazy from kpip.host.scheme import SCHEME_KEYS, Scheme
+lazy from kpip.host.virtualenv import running_under_virtualenv
 
-from .base import change_root, get_major_minor_version, is_osx_framework
+lazy from .base import change_root, get_major_minor_version, is_osx_framework
 
 
 class InvalidSchemeCombination(InstallationError):
@@ -171,8 +172,6 @@ def get_scheme(
         variables = dict.fromkeys(HOME_KEYS, prefix)
     else:
         variables = {}
-
-    from kpip.core.interpreter import is_compiled
 
     if is_compiled():
         # A compiled kpip's runtime sets sys.platlibdir -- from which

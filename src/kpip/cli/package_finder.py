@@ -6,19 +6,17 @@ the commands that resolve requirements -- and means the same by them.
 
 from __future__ import annotations
 
-import time
-
 from typing import TYPE_CHECKING
+lazy import time
 
-from kpip.core.errors import CommandError
-from kpip.core.expiry import refresh_since
-from kpip.core.format_control import FormatControl
-from kpip.core.release_control import ReleaseControl
-from kpip.index.provider import CandidateProvider
+lazy from kpip.core.errors import CommandError
+lazy from kpip.core.expiry import refresh_since
+lazy from kpip.core.format_control import FormatControl
+lazy from kpip.core.release_control import ReleaseControl
+lazy from kpip.index.provider import CandidateProvider
 
 if TYPE_CHECKING:
     import argparse
-
     from kpip.cli.config import SourceConfig
     from kpip.core.wheel import TargetContext
 

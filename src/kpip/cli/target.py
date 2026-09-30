@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-import os
+lazy import os
+
+lazy from kpip.host.locations.sysconfig_scheme import get_scheme
 
 
 def target_prefix() -> str | None:
@@ -13,7 +15,6 @@ def target_paths() -> list[str] | None:
     prefix = target_prefix()
     if prefix is None:
         return None
-    from kpip.host.locations.sysconfig_scheme import get_scheme
 
     scheme = get_scheme("kpip", prefix=prefix)
     return [scheme.purelib, scheme.platlib]

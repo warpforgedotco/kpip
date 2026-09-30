@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable
-from math import ceil
-from threading import Condition, RLock
-from typing import Callable, Generic, TypeVar
+lazy from collections.abc import Callable, Hashable
+lazy from concurrent.futures import ThreadPoolExecutor
+lazy from math import ceil
+lazy from threading import Condition, RLock
+from typing import TYPE_CHECKING, Generic, TypeVar
 
-from kpip.core import latency
-
-from typing import TYPE_CHECKING
+lazy from kpip.core import latency
 
 if TYPE_CHECKING:
     from concurrent.futures import Future
@@ -105,8 +104,6 @@ class Prefetcher(Generic[T, V]):
     """Submit each keyed task once and consume it deterministically."""
 
     def __init__(self, loader: Callable[[V], T], max_workers: int) -> None:
-        from concurrent.futures import ThreadPoolExecutor
-
         gate = _Gate(max_workers)
 
         def gated(value: V) -> T:

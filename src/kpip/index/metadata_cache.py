@@ -3,19 +3,14 @@ headers and its SHA-256, both keyed by the file's path, size and mtime."""
 
 from __future__ import annotations
 
-from kpip.core.digests import valid_sha256
-from kpip.core.utils import versioned_bucket
+lazy import marshal
+lazy import os
+lazy import sqlite3
+lazy from collections.abc import Iterable
 
-import marshal
-import os
-from collections.abc import Iterable
-
-from kpip.index.sqlite_cache import SqliteBackedCache
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import sqlite3
+lazy from kpip.core.digests import valid_sha256
+lazy from kpip.core.utils import versioned_bucket
+lazy from kpip.index.sqlite_cache import SqliteBackedCache
 
 MetadataHeaders = dict[str, list[str]]
 MetadataIdentity = tuple[str, int, int]
@@ -76,7 +71,6 @@ class WheelMetadataCache(SqliteBackedCache):
 
     def _load(self, identity: MetadataIdentity) -> MetadataHeaders | None:
         """Read one row out of the database and memoize it."""
-        import sqlite3
 
         with self.lock:
             try:
@@ -108,7 +102,6 @@ class WheelMetadataCache(SqliteBackedCache):
     def prefetch(self, identities: Iterable[MetadataIdentity]) -> None:
         """Load the headers of many files in one query, so that the per-file
         ``get_reference`` that follows reads memory, not the database."""
-        import sqlite3
 
         wanted = {identity for identity in identities if identity not in self.entries}
         if not wanted:
@@ -155,7 +148,6 @@ class WheelMetadataCache(SqliteBackedCache):
 
     def get_digest(self, identity: MetadataIdentity) -> str | None:
         """The SHA-256 recorded for a file, or ``None`` when it was never hashed."""
-        import sqlite3
 
         digest = self.digests.get(identity)
         if digest is not None:
@@ -182,7 +174,6 @@ class WheelMetadataCache(SqliteBackedCache):
     def prefetch_digests(self, identities: Iterable[MetadataIdentity]) -> None:
         """Load the recorded digests of many files in one query, so that the
         per-file ``get_digest`` that follows reads memory, not the database."""
-        import sqlite3
 
         wanted = {identity for identity in identities if identity not in self.digests}
         if not wanted:

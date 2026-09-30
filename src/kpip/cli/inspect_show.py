@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import logging
+lazy import logging
+
+lazy from kpip.build import query
+lazy from kpip.cli.parsers.inspection import create_show_parser
+lazy from kpip.core import packaging
 
 logger = logging.getLogger(__name__)
 
 
 def run_show(args: list[str]) -> int:
-    from kpip.cli.parsers.inspection import create_show_parser
-
     options = create_show_parser().parse_args(args)
 
     if not options.packages:
         logger.error("Please provide a package name or names.")
         return 1
-
-    from kpip.build import query
-    from kpip.core import packaging
 
     infos = {
         info.distribution.canonical_name: info

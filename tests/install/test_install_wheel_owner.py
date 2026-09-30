@@ -985,7 +985,6 @@ def test_a_plan_replays_only_while_its_pages_are_unchanged_and_fresh(
     """Unchanged and fresh, the pages are what resolving again would read; a
     stale one is revalidated by resolving, a changed one resolved from."""
     from kpip.cli import install as install_cli
-    from kpip.cli import lock_replay
 
     wheel = make_wheel_internal(tmp_path)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
@@ -1002,8 +1001,8 @@ def test_a_plan_replays_only_while_its_pages_are_unchanged_and_fresh(
         cache_dir=str(cache),
     )
     pages = (("https://pypi.org/simple/owner-demo/", '"etag"', None),)
-    monkeypatch.setattr(lock_replay, "page_validators", lambda cache, urls: pages)
-    monkeypatch.setattr(lock_replay, "page_state", lambda cache, recorded: state)
+    monkeypatch.setattr(install_cli, "page_validators", lambda cache, urls: pages)
+    monkeypatch.setattr(install_cli, "page_state", lambda cache, recorded: state)
     provider = SimpleNamespace(
         index_sources=[SimpleNamespace(pages_read={pages[0][0]})]
     )

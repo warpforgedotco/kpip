@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import atexit
-import os
-from typing import cast
+lazy import atexit
+lazy import os
+lazy from typing import cast
 
-from kpip.core.utils import load_snapshot, save_snapshot, versioned_bucket
+lazy from kpip.core.utils import load_snapshot, save_snapshot, versioned_bucket
 
 NAME = f"{versioned_bucket('release-facts', 1, interpreter=True)}.marshal"
 MAX_ENTRIES = 32_768

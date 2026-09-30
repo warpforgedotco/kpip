@@ -17,7 +17,7 @@
 Meet **Kip**, the courier snake.
 
 [![Checks](https://github.com/warpforgedotco/kpip/actions/workflows/checks.yml/badge.svg)](https://github.com/warpforgedotco/kpip/actions/workflows/checks.yml)
-[![Python 3.14+](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Python 3.15+](https://img.shields.io/badge/Python-3.15%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
 
 **Pip reimagined for performance.**
@@ -97,7 +97,7 @@ every package afresh, and `--upgrade-package NAME` (`-P NAME`) just that one.
 before it is trusted, however long the index allowed it to be kept.
 
 To lock for a Python version other than the one running kpip, including
-versions below kpip's own 3.14 floor:
+versions below kpip's own 3.15 floor:
 
 ```console
 kpip lock -r requirements.in --python-version 3.8

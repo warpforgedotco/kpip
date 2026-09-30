@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import errno
-import marshal
-import os
-import sys
-
 from typing import TYPE_CHECKING
+lazy import errno
+lazy import marshal
+lazy import os
+lazy import sys
 
 if TYPE_CHECKING:
     from typing import Any
-
 
 AuthInfo = tuple[str | None, str | None]
 

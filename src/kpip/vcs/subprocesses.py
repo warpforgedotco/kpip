@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import logging
-import os
-from collections.abc import Iterable, Mapping, Sequence
+lazy import logging
+lazy import os
+lazy import subprocess
+lazy from collections.abc import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Protocol
 
-from kpip.core.errors import InstallationError
-from kpip.core.subprocesses import CommandArg, CommandArgs, command_args_to_argv
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.subprocesses import CommandArg, CommandArgs, command_args_to_argv
 
-from .support import HiddenText
-
-from typing import TYPE_CHECKING
+lazy from .support import HiddenText
 
 if TYPE_CHECKING:
-    from typing import Any, Literal, Protocol
+    from typing import Any, Literal
 
     class SpinnerInterface(Protocol):
         def spin(self) -> None: ...
@@ -43,8 +43,6 @@ def call_subprocess(
     *,
     command_desc: str,
 ) -> str:
-    import subprocess
-
     env = os.environ.copy()
     if extra_environ:
         env.update({key: str(value) for key, value in extra_environ.items()})

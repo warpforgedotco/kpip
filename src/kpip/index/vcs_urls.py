@@ -10,9 +10,9 @@ string parsing.
 
 from __future__ import annotations
 
-import urllib.parse
+lazy import urllib.parse
 
-from kpip.index.source_models import VcsReference
+lazy from kpip.index.source_models import VcsReference
 
 VCS_SCHEMES = ("git", "hg", "svn", "bzr")
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kpip.cli.parser import ArgumentParser
+lazy from kpip.cli.parser import ArgumentParser
 
 
 def create_parser() -> ArgumentParser:

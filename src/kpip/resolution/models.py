@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from types import MappingProxyType
+lazy from collections.abc import Mapping
+lazy from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
+lazy from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     from kpip.core.metadata import InstalledDistribution
     from kpip.core.packaging import Requirement
+
 
 
 class _FrozenRecord:

@@ -25,15 +25,20 @@ scope.
 
 from __future__ import annotations
 
-import contextlib
-import errno
-import os
-import sys
-from collections.abc import Iterator
+lazy import contextlib
+lazy import errno
+lazy import logging
+lazy import os
+lazy import sys
+lazy from collections.abc import Iterator
 
-from kpip.core.digests import sha256_hexdigest
-import logging
-from kpip.core.appdirs import user_cache_dir
+lazy from kpip.core.appdirs import user_cache_dir
+lazy from kpip.core.digests import sha256_hexdigest
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +74,6 @@ def _lock_exclusive(fd: int) -> None:
     """Block until ``fd`` holds the exclusive lock."""
 
     if sys.platform == "win32":
-        import msvcrt
-
         # LK_LOCK retries for ~10 seconds and then raises; loop as long as
         # the error still means "someone else holds it" so acquisition
         # blocks like flock does.
@@ -88,20 +91,14 @@ def _lock_exclusive(fd: int) -> None:
                 return
 
     else:
-        import fcntl
-
         fcntl.flock(fd, fcntl.LOCK_EX)
 
 
 def _unlock(fd: int) -> None:
     if sys.platform == "win32":
-        import msvcrt
-
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
     else:
-        import fcntl
-
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 

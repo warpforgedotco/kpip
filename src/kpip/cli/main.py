@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kpip.cli import entrypoint
+lazy from kpip.cli import entrypoint
 
 
 def main(

@@ -16,13 +16,13 @@ goes back to the Python functions that own those rules, handed in by
 :func:`_install`, so the catalog is the one the Python loop builds.
 """
 
-import cython
+lazy import cython
 
 if not cython.compiled:
     raise ImportError("kpip.index._page_catalog only works compiled")
 
-import os
-import urllib.parse
+lazy import os
+lazy import urllib.parse
 
 _join_index_url = None
 _record_from_fields = None

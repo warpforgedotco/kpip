@@ -1,26 +1,19 @@
 from __future__ import annotations
 
-import os
-import string
-import sys
+lazy import ntpath
+lazy import os
+lazy import string
+lazy import sys
+lazy import urllib.parse
+lazy from urllib import request
 
 WINDOWS = sys.platform == "win32"
 
-# ``urllib.parse`` is imported inside each function that needs it rather
-# than here. It reaches ``ipaddress``, and between them they are ~3ms of a
-# command's startup -- while an install from a wheelhouse, which is every
-# install whose artifacts are already local, never turns a URL into
-# anything.
-
 
 def path_to_url(path: str) -> str:
-    import urllib.parse
-
     path = normalize_windows_path(path)
     path = os.path.abspath(path)
     if WINDOWS:
-        from urllib import request
-
         path = request.pathname2url(path)
     else:
         path = urllib.parse.quote(path, safe="/:")
@@ -29,8 +22,6 @@ def path_to_url(path: str) -> str:
 
 
 def url_to_path(url: str) -> str:
-    import urllib.parse
-
     assert url.startswith("file:"), (
         f"You can only turn file: urls into filenames (not {url!r})"
     )
@@ -46,8 +37,6 @@ def url_to_path(url: str) -> str:
         )
 
     if WINDOWS:
-        from urllib import request
-
         path = request.url2pathname(netloc + path)
     else:
         path = urllib.parse.unquote(netloc + path)
@@ -65,7 +54,6 @@ def normalize_windows_path(path: str, *, strip_drive_separator: bool = False) ->
         and path[2] == ":"
     ):
         path = path[1:]
-    import ntpath
 
     drive, tail = ntpath.splitdrive(path)
     while (
@@ -86,8 +74,6 @@ def split_auth_from_netloc(
     if "@" not in netloc:
         return netloc, (None, None)
 
-    import urllib.parse
-
     auth, netloc = netloc.rsplit("@", 1)
     user, separator, password = auth.partition(":")
     return netloc, (
@@ -99,8 +85,6 @@ def split_auth_from_netloc(
 def split_auth_netloc_from_url(
     url: str,
 ) -> tuple[str, str, tuple[str | None, str | None]]:
-    import urllib.parse
-
     parsed = urllib.parse.urlsplit(url)
     netloc, credentials = split_auth_from_netloc(parsed.netloc)
     if netloc == parsed.netloc:
@@ -116,8 +100,6 @@ def remove_auth_from_url(url: str) -> str:
 
 
 def redact_auth_from_url(url: str) -> str:
-    import urllib.parse
-
     parsed = urllib.parse.urlsplit(url)
     if "@" not in parsed.netloc:
         return url

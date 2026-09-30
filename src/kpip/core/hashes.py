@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import os
+lazy import hashlib
+lazy import os
+from typing import TYPE_CHECKING, Any
 
-from kpip.core.errors import HashMismatch, HashMissing, InstallationError
-
-from typing import TYPE_CHECKING
+lazy from kpip.core.errors import HashMismatch, HashMissing, InstallationError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
-    from typing import Any, BinaryIO, NoReturn
+    from typing import BinaryIO, NoReturn
 
     # Every name here is only ever written in an annotation, and
     # annotations are strings in this module, so none of them needs to
@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 
 
 def file_hashes(path: str) -> dict[str, str]:
-    import hashlib
-
     digest = hashlib.sha256()
     with open(path, "rb") as stream:
         size = os.fstat(stream.fileno()).st_size
@@ -41,8 +39,6 @@ def read_chunks(file: BinaryIO, size: int = 1024 * 1024):
 
 
 def hash_file(path: str, blocksize: int = 1 << 20) -> tuple[Hash, int]:
-    import hashlib
-
     digest = hashlib.sha256()
     length = 0
     with open(path, "rb") as file:
@@ -94,8 +90,6 @@ class Hashes:
         return hex_digest.lower() in self.allowed_internal.get(hash_name, [])
 
     def check_against_chunks(self, chunks: Iterable[bytes]) -> None:
-        import hashlib
-
         gots = {}
         for hash_name in self.allowed_internal:
             try:

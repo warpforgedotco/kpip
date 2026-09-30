@@ -27,12 +27,12 @@ The rules that follow from that:
 
 from __future__ import annotations
 
-from kpip.core.caches import register_table
-
 from typing import TYPE_CHECKING
+lazy import re
+
+lazy from kpip.core.caches import register_table
 
 if TYPE_CHECKING:
-    import re
     from typing import Any
 
 
@@ -60,10 +60,6 @@ def version_re() -> re.Pattern[str]:
     global _version_re, _local_separators
 
     if _version_re is None:
-        # Imported here too: ``re`` costs some 2.5 ms to import, which a
-        # plain dotted version never needs.
-        import re
-
         _version_re = re.compile(
             r"""
             ^\s*

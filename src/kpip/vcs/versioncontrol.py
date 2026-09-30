@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-import sys
-import urllib.parse
-from collections.abc import Iterable, Iterator, Mapping
+from typing import TYPE_CHECKING
+lazy import logging
+lazy import os
+lazy import shutil
+lazy import sys
+lazy import urllib.parse
+lazy from collections.abc import Iterable, Iterator, Mapping
+lazy from concurrent.futures import ThreadPoolExecutor
 
-import logging
-from kpip.core.errors import InstallationError
-from kpip.core.subprocesses import CommandArgs, format_command_args
-from kpip.core.utils import AuthInfo, display_path
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.subprocesses import CommandArgs, format_command_args
+lazy from kpip.core.utils import AuthInfo, display_path
 
-from .errors import BadCommand
-from .subprocesses import call_subprocess, make_command
-from .support import (
+lazy from .errors import BadCommand
+lazy from .subprocesses import call_subprocess, make_command
+lazy from .support import (
     HiddenText,
     ask_path_exists,
     hide_url,
@@ -23,13 +25,9 @@ from .support import (
     is_installable_dir,
 )
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from typing import Any, Literal
-
     from .subprocesses import SpinnerInterface
-
 
 logger = logging.getLogger(__name__)
 
@@ -162,49 +160,19 @@ class RevOptions:
         return self.vc_class.make_rev_options(rev, extra_args=self.extra_args)
 
 
-BUILTIN_BACKENDS = (
-    ("bazaar", "bzr", ".bzr"),
-    ("git", "git", ".git"),
-    ("mercurial", "hg", ".hg"),
-    ("subversion", "svn", ".svn"),
-)
-
-BUILTIN_NAMES = frozenset(name for _, name, _ in BUILTIN_BACKENDS)
-
-
 class VcsSupport:
     registry_internal: dict[str, VersionControl] = {}
-    registry_customized_internal: bool = False
     schemes = ["ssh", "git", "hg", "bzr", "sftp", "svn"]
 
     def __init__(self) -> None:
-        self._builtin_backends_loaded = False
         urllib.parse.uses_netloc.extend(self.schemes)
         super().__init__()
 
-    def _ensure_builtin_backends_loaded(self) -> None:
-        if self._builtin_backends_loaded:
-            return
-        self._builtin_backends_loaded = True
-        try:
-            from . import bazaar, git, mercurial, subversion  # noqa: F401
-        except BaseException:
-            self._builtin_backends_loaded = False
-            raise
-
-    def _load_builtin_backend(self, module_name: str) -> None:
-        """Load one builtin backend module, leaving the other three alone."""
-        import importlib
-
-        importlib.import_module(f".{module_name}", __package__)
-
     def __iter__(self) -> Iterator[str]:
-        self._ensure_builtin_backends_loaded()
         return self.registry_internal.__iter__()
 
     @property
     def backends(self) -> list[VersionControl]:
-        self._ensure_builtin_backends_loaded()
         return list(self.registry_internal.values())
 
     @property
@@ -225,13 +193,10 @@ class VcsSupport:
         if cls.name not in self.registry_internal:
             self.registry_internal[cls.name] = cls()
             logger.debug("Registered VCS backend: %s", cls.name)
-        if cls.name not in BUILTIN_NAMES:
-            VcsSupport.registry_customized_internal = True
 
     def unregister(self, name: str) -> None:
         if name in self.registry_internal:
             del self.registry_internal[name]
-            VcsSupport.registry_customized_internal = True
 
     def get_backend_for_dir(self, location: str) -> VersionControl | None:
         """Return a VersionControl object if a repository of that type is found
@@ -241,7 +206,6 @@ class VcsSupport:
         if found is not None:
             logger.debug("Determine that %s uses VCS: %s", location, found.name)
             return found
-        self._ensure_builtin_backends_loaded()
         vcs_backends = {}
         for vcs_backend in self.registry_internal.values():
             repo_path = vcs_backend.get_repository_root(location)
@@ -263,42 +227,16 @@ class VcsSupport:
         deeper than ``location``, so a marker directory right here answers the
         question without asking the others -- each of which would otherwise
         spawn its command (``hg root``, ``bzr root``, ``svn info``) just to
-        learn it owns nothing. Last match wins, as it did when this walked the
-        registry.
-
-        The pass reads nothing but each backend's ``dirname``, which
-        BUILTIN_BACKENDS states directly, so only the module holding the
-        winner has to be imported -- worth avoiding, since between them the
-        four drag in ``configparser`` and a second subprocess stack for
-        repositories the caller does not have.
-
-        ``register`` and ``unregister`` are public, though, and the table
-        cannot describe a backend from outside this package -- nor can it
-        place one in registry order, which is what decides a tie. Once the
-        registry stops matching the table, this asks every backend directly
-        again, exactly as before.
+        learn it owns nothing. Last match wins, as it does in the registry.
         """
-
-        if self.registry_customized_internal:
-            self._ensure_builtin_backends_loaded()
-            found = None
-            for vcs_backend in self.registry_internal.values():
-                if vcs_backend.is_repository_directory(location):
-                    found = vcs_backend
-            return found
-
-        found_backend = None
-        for module_name, backend_name, dirname in BUILTIN_BACKENDS:
-            if os.path.exists(os.path.join(location, dirname)):
-                found_backend = (module_name, backend_name)
-        if found_backend is None:
-            return None
-        self._load_builtin_backend(found_backend[0])
-        return self.registry_internal[found_backend[1]]
+        found = None
+        for vcs_backend in self.registry_internal.values():
+            if vcs_backend.is_repository_directory(location):
+                found = vcs_backend
+        return found
 
     def get_backend_for_scheme(self, scheme: str) -> VersionControl | None:
         """Return a VersionControl object or None."""
-        self._ensure_builtin_backends_loaded()
         for vcs_backend in self.registry_internal.values():
             if scheme in vcs_backend.schemes:
                 return vcs_backend
@@ -306,7 +244,6 @@ class VcsSupport:
 
     def get_backend(self, name: str) -> VersionControl | None:
         """Return a VersionControl object or None."""
-        self._ensure_builtin_backends_loaded()
         name = name.lower()
         return self.registry_internal.get(name)
 
@@ -354,7 +291,6 @@ class VersionControl:
             {repository_url}@{revision}#egg={project_name}
 
         """
-        from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=3) as pool:
             url_future = pool.submit(cls.get_remote_url, repo_dir)

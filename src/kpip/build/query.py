@@ -2,26 +2,25 @@
 
 from __future__ import annotations
 
-import string
-from collections import namedtuple
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+lazy import json
+lazy import string
+lazy from collections import namedtuple
+lazy from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
-from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-from kpip.core.light_metadata import parse_metadata_text
-from kpip.core.packaging import (
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
+lazy from kpip.core.light_metadata import parse_metadata_text
+lazy from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-from kpip.core.versions import Version
-
-from typing import TYPE_CHECKING
+lazy from kpip.core.versions import Version
+lazy from kpip.core.wheel import WheelTag, wheel_tag_rank
 
 if TYPE_CHECKING:
-    from typing import Any, NamedTuple, Protocol
-
-    from kpip.core.wheel import WheelTag
 
     LatestInfo = Mapping[str, tuple[Any, str]]
 
@@ -133,7 +132,6 @@ def iter_installed_package_info(
     include_files: bool = False,
 ) -> Iterator[InstalledPackageInfo]:
     """Collect presentation-neutral information for named distributions."""
-    from kpip.build.metadata import InstalledDistributionStore
 
     installed = {
         dist.canonical_name: dist for dist in InstalledDistributionStore().iter()
@@ -201,7 +199,6 @@ def select_installed_distributions(
     user_site: str | None = None,
 ) -> list[DistributionLike]:
     """Return installed distributions after applying listing filters."""
-    from .metadata import InstalledDistributionStore
 
     excluded = {canonicalize_name(name) for name in excludes}
 
@@ -323,8 +320,6 @@ def format_list_json(
             info["latest_filetype"] = filetype
 
         data.append(info)
-
-    import json
 
     return json.dumps(data)
 
@@ -511,7 +506,6 @@ def unsupported_distributions(
                 tags.append(tuple(parts))
         if not tags or ("py3", "none", "any") in tags:
             continue
-        from kpip.core.wheel import WheelTag, wheel_tag_rank
 
         if supported is None:
             supported = tuple(supported_tags())

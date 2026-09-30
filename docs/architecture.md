@@ -37,6 +37,16 @@ Rules:
   or an early exit inside that implementation is fine; a second implementation
   of the same behaviour is not. There are no argv recognizers ahead of
   command dispatch; do not add one.
+- Imports sit at the top of a module and are lazy (PEP 810): `lazy import` and
+  `lazy from ... import`, loaded when a name is first used. Do not import
+  inside a function to save startup time. The exceptions import eagerly: an
+  import whose failure picks a fallback (a `try` around an optional module
+  such as a compiled extension or `msgspec`), a platform module under
+  `sys.platform`, an import kept for what loading does (the VCS backends
+  registering themselves), and `keyring`, which is imported only when that
+  provider is chosen. A compiled kpip imports eagerly (Nuitka does not
+  implement PEP 810), so modules must also import cleanly without laziness;
+  an import only annotations use stays under `TYPE_CHECKING`.
 - The registry stores module paths and imports a command on first use. Startup
   gating belongs in `CommandSpec` flags (`needs_tempdir`,
   `needs_execution_context`), not in command-name tests.

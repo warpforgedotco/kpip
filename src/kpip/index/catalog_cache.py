@@ -2,30 +2,29 @@
 
 from __future__ import annotations
 
-from kpip.core.utils import versioned_bucket
+from typing import TYPE_CHECKING
+lazy import binascii
+lazy import datetime
+lazy import hashlib
+lazy import marshal
+lazy import os
+lazy import struct
+lazy import threading
+lazy import urllib.parse
 
-import binascii
-import datetime
-import marshal
-import os
-import struct
-import threading
-import urllib.parse
-
-from kpip.core.expiry import expiry_is_fresh
-from kpip.core.versions import Version
-from kpip.core.wheel import (
+lazy from kpip.core.expiry import expiry_is_fresh
+lazy from kpip.core.utils import versioned_bucket
+lazy from kpip.core.versions import Version
+lazy from kpip.core.wheel import (
     WheelFile,
     WheelTag,
     parse_wheel_file,
     wheel_tag,
 )
-from kpip.index.dates import parse_iso_datetime
-from kpip.index.directory_index import project_version_from_filename
-from kpip.index.links import Link, split_plain_url
-from kpip.index.source_models import ArtifactKind, MetadataFile
-
-from typing import TYPE_CHECKING
+lazy from kpip.index.dates import parse_iso_datetime
+lazy from kpip.index.directory_index import project_version_from_filename
+lazy from kpip.index.links import Link, split_plain_url
+lazy from kpip.index.source_models import ArtifactKind, MetadataFile
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -584,7 +583,6 @@ def catalog_generation(payload: bytes) -> str:
     catalog being stored or a summary being compiled asks for it, so
     ``hashlib`` and the OpenSSL it loads wait until then.
     """
-    import hashlib
 
     return hashlib.sha256(payload).hexdigest()
 

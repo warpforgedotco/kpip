@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import os
-import queue
-import threading
-from collections.abc import Callable, Collection, Mapping, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from typing import Any, Protocol, TypeVar
+lazy import os
+lazy import queue
+lazy import threading
+lazy from collections.abc import Callable, Collection, Mapping, Sequence
+lazy from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+lazy from typing import Any, Protocol, TypeVar
 
-from kpip.core.utils import default_worker_count
-from kpip.core.wheel import WheelCandidate
-from kpip.index.candidate_materialization import LazyWheelCandidate
-from kpip.index.vcs import vcs_scheme
-from kpip.install.wheel_archive_cache import EXTRACT_WORKERS
+lazy from kpip.core.appdirs import archive_entry_root
+lazy from kpip.core.digests import valid_sha256
+lazy from kpip.core.utils import default_worker_count
+lazy from kpip.core.wheel import WheelCandidate
+lazy from kpip.index.candidate_materialization import LazyWheelCandidate
+lazy from kpip.index.vcs import vcs_scheme
+lazy from kpip.install.wheel_archive_cache import EXTRACT_WORKERS
 
 _MATERIALIZATION_WORKERS = 32
 
@@ -233,8 +235,6 @@ class WheelPrefetch:
         A warm install finds every wheel so, and fetching them again only
         took turns with the solve: one ``stat`` answers before any of that.
         """
-        from kpip.core.appdirs import archive_entry_root
-        from kpip.core.digests import valid_sha256
 
         digest = (getattr(candidate, "source_hashes", None) or {}).get("sha256")
 

@@ -3,36 +3,36 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+lazy import argparse
+lazy import logging
+lazy import os
+lazy import sys
+lazy import tomllib
+lazy import urllib.parse
 
-import argparse
-import os
-import sys
+lazy from kpip.build.build_backend import prepare_project_metadata
+lazy from kpip.cli.package_finder import release_control_from
+lazy from kpip.core.errors import InstallationError, KpipError
+lazy from kpip.core.format_control import FormatControl
+lazy from kpip.core.packaging import SpecifierSet, canonicalize_name, parse_requirement
+lazy from kpip.core.release_control import ReleaseControl
+lazy from kpip.core.versions import Version
+lazy from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
+lazy from kpip.index.config import DEFAULT_INDEX_URL
+lazy from kpip.index.links import Link
+lazy from kpip.index.source_locations import resolve_source_location
+lazy from kpip.network.deferred import DeferredNetworkSession
+lazy from kpip.resolution.files import parse_requirements
+lazy from kpip.resolution.input_requirements import install_req_from_line
 
-
-from kpip.cli.dependency_groups import toml_module
-from kpip.cli.package_finder import release_control_from
-from kpip.core.errors import KpipError, InstallationError
-from kpip.core.format_control import FormatControl
-import logging
-from kpip.core.packaging import SpecifierSet, canonicalize_name, parse_requirement
-from kpip.core.versions import Version
-from kpip.core.release_control import ReleaseControl
-from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
-from kpip.index.config import DEFAULT_INDEX_URL
-from kpip.index.links import Link
-from kpip.index.source_locations import resolve_source_location
-from kpip.network.deferred import DeferredNetworkSession
-from kpip.resolution.input_requirements import install_req_from_line
-
+if TYPE_CHECKING:
+    from typing import Any
+    from kpip.core.wheel import TargetContext
+    from kpip.resolution.req_install import InstallRequirement
 
 logger = logging.getLogger(__name__)
 
 
-if TYPE_CHECKING:
-    from typing import Any
-
-    from kpip.core.wheel import TargetContext
-    from kpip.resolution.req_install import InstallRequirement
 
 
 class RequirementsBundle:
@@ -210,8 +210,6 @@ def requirements_from_script(
     *,
     ignore_requires_python: bool = False,
 ) -> list[str]:
-    tomllib = toml_module()
-
     try:
         with open(path, encoding="utf-8") as file:
             source = file.read()
@@ -419,8 +417,6 @@ def collect_requirements(
     for filename in requirement_files or []:
         assert session is not None
 
-        from kpip.resolution.files import parse_requirements
-
         for item in parse_requirements(
             filename,
             session,
@@ -478,8 +474,6 @@ def collect_requirements(
 
     for filename in constraint_files or []:
         assert session is not None
-
-        from kpip.resolution.files import parse_requirements
 
         for item in parse_requirements(
             filename,
@@ -597,8 +591,6 @@ def bundle_install_requirements(
             source_path = os.path.realpath(raw_path)
 
             try:
-                from kpip.build.build_backend import prepare_project_metadata
-
                 metadata = prepare_project_metadata(
                     source_path,
                     build_isolation=False,
@@ -642,8 +634,6 @@ def bundle_install_requirements(
         )
 
         if direct_constraints:
-            import urllib.parse
-
             constrained = direct_constraints[-1]
 
             if item.req is not None and (
@@ -738,8 +728,6 @@ def bundle_install_requirements(
 
         if item.req is not None and item.local_file_path is not None:
             source_path = os.path.realpath(item.local_file_path)
-
-            from kpip.build.build_backend import prepare_project_metadata
 
             try:
                 source_version = str(

@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-import sys
-from typing import Any
+lazy import logging
+lazy import os
+lazy import shutil
+lazy import sys
+lazy from typing import Any
 
-from kpip.build.build import build_wheel_from_source
-from kpip.cli.parsers.download import create_parser
-from kpip.cli.requirement_command import (
+lazy from kpip.build.build import build_wheel_from_source
+lazy from kpip.cli.parsers.download import create_parser
+lazy from kpip.cli.requirement_command import (
     check_dist_restriction,
     prepare,
     resolve_requirements,
 )
-from kpip.cli.requirements import apply_proxy_environment
-from kpip.index.artifacts import ArtifactLocator
-from kpip.install.metadata import prepare_editable_source
-from kpip.install.output import fetch_candidate_sources
-
-import logging
+lazy from kpip.cli.requirements import apply_proxy_environment
+lazy from kpip.index.artifacts import ArtifactLocator
+lazy from kpip.install.metadata import prepare_editable_source
+lazy from kpip.install.output import fetch_candidate_sources
 
 logger = logging.getLogger(__name__)
 

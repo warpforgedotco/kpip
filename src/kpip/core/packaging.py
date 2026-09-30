@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-import os
-import re
-import sys
-from bisect import bisect_left, bisect_right
+from typing import TYPE_CHECKING
+lazy import os
+lazy import platform
+lazy import re
+lazy import sys
+lazy import urllib.parse
+lazy from bisect import bisect_left, bisect_right
 
-from kpip.core.caches import bounded_put, clear_all, memoized, register_table
-from kpip.core.names import canonicalize_name
-from kpip.core.versions import (
+# `markers` and this module import each other, so each is imported whole
+# and its names are read when used.
+lazy from kpip.core import markers
+lazy from kpip.core.caches import bounded_put, clear_all, memoized, register_table
+lazy from kpip.core.names import canonicalize_name
+lazy from kpip.core.versions import (
     FINAL_SUFFIX,
     InvalidVersion,
     Version,
@@ -15,12 +21,9 @@ from kpip.core.versions import (
     version_of,
 )
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
     from typing import Any
-
 
 REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 _URL_MARKER_SEPARATOR = re.compile(r"\s;")
@@ -111,8 +114,6 @@ def normalize_python_version(value: str) -> str:
 
 @memoized(8)
 def default_environment(extra: str | None = None) -> dict[str, str]:
-    import platform
-
     impl = platform.python_implementation()
 
     version = platform.python_version()
@@ -856,9 +857,7 @@ class Requirement:
         try:
             return self._canonical_marker
         except AttributeError:
-            from kpip.core.markers import canonical_marker
-
-            text = canonical_marker(self.marker) if self.marker else ""
+            text = markers.canonical_marker(self.marker) if self.marker else ""
             object.__setattr__(self, "_canonical_marker", text)
             return text
 
@@ -993,8 +992,6 @@ def parse_requirement(value: str) -> Requirement:
 
         name = raw
         if looks_like_url(raw):
-            import urllib.parse
-
             path = urllib.parse.unquote(urllib.parse.urlsplit(raw).path)
             name = path.rstrip("/").rsplit("/", 1)[-1] or raw
 
@@ -1107,7 +1104,6 @@ def looks_like_url(value: str) -> bool:
     # Reached only by a value that could be a URL. ``urllib.parse`` pulls
     # ``ipaddress`` behind it, and a requirement that names a project --
     # which is nearly all of them -- has already returned above.
-    import urllib.parse
 
     parsed = urllib.parse.urlparse(value)
 
@@ -1121,8 +1117,6 @@ def is_windows_path(value: str) -> bool:
 
 
 def project_from_direct_reference(value: str) -> tuple[str, str | None] | None:
-    import urllib.parse
-
     parsed = urllib.parse.urlparse(value)
 
     filename = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
@@ -1158,8 +1152,6 @@ def project_from_direct_reference(value: str) -> tuple[str, str | None] | None:
 
 
 def egg_fragment_internal(value: str) -> tuple[str | None, frozenset[str]]:
-    import urllib.parse
-
     fragment = urllib.parse.urlparse(value).fragment
 
     if not fragment:
@@ -1244,26 +1236,19 @@ def marker_applies_internal(
     define, is treated as not applying rather than raising: a single bad
     Requires-Dist line in one package's metadata must not abort a resolve.
     """
-    from kpip.core.markers import (
-        InvalidMarker,
-        UndefinedComparison,
-        UndefinedEnvironmentName,
-        evaluate_marker,
-        parse_marker,
-    )
 
     try:
-        tree = parse_marker(marker)
-    except InvalidMarker:
+        tree = markers.parse_marker(marker)
+    except markers.InvalidMarker:
         return False
 
     contexts = [{**env, "extra": extra} for extra in extras] or [{**env, "extra": ""}]
 
     for context in contexts:
         try:
-            if evaluate_marker(tree, context):
+            if markers.evaluate_marker(tree, context):
                 return True
-        except (UndefinedEnvironmentName, UndefinedComparison):
+        except (markers.UndefinedEnvironmentName, markers.UndefinedComparison):
             continue
 
     return False

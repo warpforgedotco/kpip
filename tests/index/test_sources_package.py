@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import logging
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from kpip.cli.main import main
@@ -42,8 +41,8 @@ from kpip.index.source_models import (
 from kpip.index.vcs import is_immutable_vcs_link, vcs_reference
 from kpip.network.cache import SafeFileCache
 from kpip_test_support.transport_mocks import make_response
-from ..wheel_helpers import make_sdist, make_wheel
 
+from ..wheel_helpers import make_sdist, make_wheel
 
 # What a stubbed catalog load hands the prefetch worker: a catalog listing
 # no releases.
@@ -1153,7 +1152,7 @@ def test_evaluate_links_propagates_unexpected_source_tree_error(
 
     provider = CandidateProvider.from_options(no_index=True)
     monkeypatch.setattr(
-        "kpip.build.build_backend.prepare_project_metadata",
+        "kpip.index.candidates.prepare_project_metadata",
         lambda *args_internal: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
@@ -1670,8 +1669,8 @@ def test_find_links_scan_defers_the_stat_to_the_first_fingerprint(
     """Scanning a wheelhouse must not stat every entry: the identity is
     computed when an artifact's metadata is first fingerprinted, in the
     same ``stat:dev:ino:size:mtime`` form, and remembered on the link."""
-    from kpip.index import candidate_materialization
     from kpip.core.versions import Version
+    from kpip.index import candidate_materialization
     from kpip.index.candidate_materialization import candidate_metadata_fingerprint
     from kpip.index.source_models import CandidateRecord
 

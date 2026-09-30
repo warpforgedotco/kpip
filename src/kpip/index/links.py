@@ -1,26 +1,25 @@
 from __future__ import annotations
 
-import datetime
-import functools
-import os
-import posixpath
-import re
-import stat
-import urllib.parse
+from typing import TYPE_CHECKING
+lazy import datetime
+lazy import functools
+lazy import os
+lazy import posixpath
+lazy import re
+lazy import stat
+lazy import urllib.parse
 
-from kpip.core.errors import DiagnosticKpipError
-from kpip.core.hashes import Hashes
-from kpip.core.urls import (
+lazy from kpip.core.errors import DiagnosticKpipError
+lazy from kpip.core.hashes import Hashes
+lazy from kpip.core.urls import (
     path_to_url,
     redact_auth_from_url,
     split_auth_from_netloc,
     url_to_path,
 )
-from kpip.index.hashes import SUPPORTED_HASHES
-from kpip.index.paths import PathComponent
-from kpip.index.source_models import ArtifactKind, MetadataFile
-
-from typing import TYPE_CHECKING
+lazy from kpip.index.hashes import SUPPORTED_HASHES
+lazy from kpip.index.paths import PathComponent
+lazy from kpip.index.source_models import ArtifactKind, MetadataFile
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

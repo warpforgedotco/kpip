@@ -1,15 +1,28 @@
 from __future__ import annotations
 
-import os
-import sys
-import sysconfig
-
-from kpip.core.errors import DiagnosticKpipError
-
 from typing import TYPE_CHECKING
+lazy import json
+lazy import os
+lazy import subprocess
+lazy import sys
+lazy import sysconfig
+
+lazy from kpip.core.errors import DiagnosticKpipError
+lazy from kpip.core.interpreter import is_own_interpreter
 
 if TYPE_CHECKING:
     from typing import Any
+
+try:
+    import virtualenv
+except ImportError:
+    virtualenv = None  # ty: ignore[invalid-assignment]
+
+try:
+    import venv
+except ImportError:
+    # Some distributions ship Python without it.
+    venv = None  # ty: ignore[invalid-assignment]
 
 
 class VenvImportError(DiagnosticKpipError):
@@ -130,8 +143,6 @@ def _create_with_interpreter(
     environment come from ``python`` itself rather than from this process's
     ``venv`` and ``sysconfig``.
     """
-    import json
-    import subprocess
 
     command = [
         python,
@@ -195,22 +206,20 @@ def create_isolated_venv(
     ``python`` is the interpreter the environment is for; when it is not the
     one running kpip, that interpreter creates it.
     """
-    from kpip.core.interpreter import is_own_interpreter
 
     if python is not None and not is_own_interpreter(python):
         return _create_with_interpreter(env_path, with_pip=with_pip, python=python)
 
     context: Any = None
-    try:
-        import virtualenv
-    except ImportError:
+    if virtualenv is not None:
         try:
-            import venv
-        except ImportError:
-            raise VenvImportError
-
-        import subprocess
-
+            arguments = [env_path, "--no-download", "--clear"]
+            if not with_pip:
+                arguments.append("--no-seed")
+            virtualenv.cli_run(arguments)
+        except (OSError, RuntimeError) as e:
+            raise VenvCreationError(str(e))
+    elif venv is not None:
         env = venv.EnvBuilder(symlinks=(os.name != "nt"), with_pip=False)
         try:
             context = env.ensure_directories(env_path)
@@ -239,13 +248,7 @@ def create_isolated_venv(
                     detail = f"{detail}: {output}"
             raise VenvCreationError(detail)
     else:
-        try:
-            arguments = [env_path, "--no-download", "--clear"]
-            if not with_pip:
-                arguments.append("--no-seed")
-            virtualenv.cli_run(arguments)
-        except (OSError, RuntimeError) as e:
-            raise VenvCreationError(str(e))
+        raise VenvImportError
 
     if context is not None:
         lib_dirs = [context.lib_path]

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-import atexit
-import os
+lazy import atexit
+lazy import os
+lazy import shutil
+lazy import tempfile
 
-from kpip.core import run_options
-from kpip.core.temp_dir import build_directory
-from kpip.core.errors import BuildError
+lazy from kpip.core import run_options
+lazy from kpip.core.errors import BuildError, InstallationError
+lazy from kpip.core.temp_dir import build_directory
+lazy from kpip.host.unpacking import ArchiveExtractor
+
+lazy from .build_backend import BuildHookMissing, ProjectBuilder
 
 
 def build_wheel_from_source(
@@ -15,8 +20,6 @@ def build_wheel_from_source(
     build_constraints: list[str] | None = None,
     build_isolation: bool = True,
 ) -> str:
-    from .build_backend import ProjectBuilder
-
     source_text = os.fspath(source)
     output_text = (
         os.fspath(wheel_dir) if wheel_dir is not None else default_wheel_dir_internal()
@@ -50,8 +53,6 @@ def build_editable_from_source(
     build_constraints: list[str] | None = None,
     build_isolation: bool = True,
 ) -> str:
-    from .build_backend import BuildHookMissing, ProjectBuilder
-
     source_text = os.fspath(source)
     output_text = (
         os.fspath(wheel_dir) if wheel_dir is not None else default_wheel_dir_internal()
@@ -100,9 +101,6 @@ def default_wheel_dir() -> str:
 
 
 def default_wheel_dir_internal() -> str:
-    import shutil
-    import tempfile
-
     path = tempfile.mkdtemp(prefix="pip-build-wheelhouse-")
     if not run_options.current.no_clean:
         atexit.register(shutil.rmtree, path, ignore_errors=True)
@@ -114,9 +112,6 @@ def unpack_source(source: str, destination: str) -> str:
 
 
 def unpack_source_internal(source: str, destination: str) -> str:
-    from kpip.core.errors import InstallationError
-    from kpip.host.unpacking import ArchiveExtractor
-
     source_text = os.fspath(source)
     destination_text = os.fspath(destination)
     try:
@@ -134,8 +129,6 @@ def single_project_root_internal(destination: str) -> str:
         return children[0]
     project = os.path.join(destination_text, "project")
     os.mkdir(project)
-
-    import shutil
 
     for child in children:
         shutil.move(child, os.path.join(project, os.path.basename(child)))

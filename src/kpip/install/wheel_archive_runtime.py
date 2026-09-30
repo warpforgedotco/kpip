@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-import io
-import os
-import zipfile
+from typing import TYPE_CHECKING
+lazy import io
+lazy import os
+lazy import zipfile
 
-from kpip.install.wheel_archive_cache import CachedWheelArchive
-from kpip.core.archive import (
+lazy from kpip.core.archive import (
     WheelArchive,
     WheelhouseUnavailable,
 )
-
-from typing import TYPE_CHECKING
+lazy from kpip.install.wheel_archive_cache import CachedWheelArchive
 
 if TYPE_CHECKING:
     from typing import Any
-
     from kpip.core.wheel import WheelCandidate
 
 

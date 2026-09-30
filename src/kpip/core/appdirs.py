@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
-import sys
+lazy import os
+lazy import sys
 
-from kpip.core import run_options
-from kpip.core.utils import CACHE_VERSION_TAG, versioned_bucket
+lazy from kpip.core import run_options
+lazy from kpip.core.utils import CACHE_VERSION_TAG, versioned_bucket
 
 
 def user_cache_dir(appname: str) -> str:

@@ -2,43 +2,40 @@
 
 from __future__ import annotations
 
-import codecs
-import os
-import re
-import shlex
-import urllib.parse
+from typing import TYPE_CHECKING
+lazy import codecs
+lazy import locale
+lazy import logging
+lazy import os
+lazy import re
+lazy import shlex
+lazy import urllib.parse
 
-import logging
-from kpip.core.errors import InstallationError
-from kpip.core.http_contracts import raise_for_status, response_text
-from kpip.core.packaging import parse_requirement
-from kpip.index.prefetch import Prefetcher
-from kpip.resolution.files.models import (
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.http_contracts import raise_for_status, response_text
+lazy from kpip.core.packaging import parse_requirement
+lazy from kpip.index.prefetch import Prefetcher
+lazy from kpip.network.session import trusted_host_key
+lazy from kpip.resolution.files.models import (
     ParsedRequirement,
     RequirementsFileParseError,
 )
-from kpip.resolution.files.options import (
+lazy from kpip.resolution.files.options import (
     add_hash_option,
     expand_env_variables,
     merge_config_setting,
     normalize_reference,
     strip_matching_quotes,
 )
-from kpip.resolution.files.pylock import is_pylock_reference, parse_pylock
-from kpip.resolution.input_requirements import (
+lazy from kpip.resolution.files.pylock import is_pylock_reference, parse_pylock
+lazy from kpip.resolution.input_requirements import (
     install_req_from_editable,
     install_req_from_line,
 )
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from typing import Any
-
-    from kpip.resolution.files.contracts import (
-        RequirementSession,
-        RequirementSource,
-    )
+    from kpip.resolution.files.contracts import RequirementSession, RequirementSource
 
 logger = logging.getLogger(__name__)
 CODING_RE = re.compile(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
@@ -293,8 +290,6 @@ def _read_requirement_content(
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
-        import locale
-
         getencoding = getattr(locale, "getencoding", None)
         encoding = (
             getencoding()
@@ -425,8 +420,6 @@ def parse_line(
                 if auth is not None:
                     auth.index_urls = []
             elif option == "--trusted-host":
-                from kpip.network.session import trusted_host_key
-
                 session.trusted_hosts.add(trusted_host_key(value))
                 logger.info(
                     "adding trusted host: %r (from line %d of %s)",

@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from kpip.core.errors import (
+
+from typing import TYPE_CHECKING
+lazy from kpip.core.errors import (
     DirectoryUrlHashUnsupported,
     HashError,
     HashMissing,
     HashUnpinned,
     VcsHashUnsupported,
 )
-
-from typing import TYPE_CHECKING
+lazy from kpip.core.packaging import parse_requirement
 
 if TYPE_CHECKING:
     from collections.abc import Container, Iterable
     from typing import Any
-
     from kpip.resolution.req_install import InstallRequirement
 
 
@@ -105,7 +105,6 @@ def check_requirement(
 
 def constraint_pinned_names(constraints: Iterable[str]) -> set[str]:
     """Canonical names some constraint pins to a single release."""
-    from kpip.core.packaging import parse_requirement
 
     pinned: set[str] = set()
     for raw in constraints:

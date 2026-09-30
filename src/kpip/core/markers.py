@@ -46,22 +46,21 @@ per candidate during a resolve, and the parse is the expensive half.
 
 from __future__ import annotations
 
-import re
-
-from kpip.core.caches import bounded_put, register_table
-from kpip.core.names import canonicalize_name
-
-# `packaging` reaches this module only from inside marker_applies(), so
-# importing it here is not a cycle -- and keeping the import at module level
-# means the version-comparison path does not re-resolve it per clause.
-from kpip.core.packaging import Specifier
-from kpip.core.versions import InvalidVersion, Version
-
 from typing import TYPE_CHECKING
+lazy import re
+
+# `packaging` and this module import each other, so each is imported whole
+# and its names are read when used.
+lazy from kpip.core import packaging
+lazy from kpip.core.caches import bounded_put, register_table
+lazy from kpip.core.names import canonicalize_name
+lazy from kpip.core.versions import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Any
+
+    from kpip.core.packaging import Specifier
 
 
 class InvalidMarker(ValueError):
@@ -329,7 +328,7 @@ def _specifier_for(operator: str, text: str) -> Specifier | None:
         return _specifiers[key]
     except KeyError:
         try:
-            value: Specifier | None = Specifier(operator, text)
+            value: Specifier | None = packaging.Specifier(operator, text)
         except ValueError:
             value = None
         bounded_put(_specifiers, key, value, _SPECIFIER_LIMIT)

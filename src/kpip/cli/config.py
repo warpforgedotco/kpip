@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import os
-import sys
-
-from kpip.core import run_options
-from kpip.core.errors import ConfigurationError
-from kpip.index.config import DEFAULT_INDEX_URL
-
 from typing import TYPE_CHECKING
+lazy import configparser
+lazy import os
+lazy import sys
+
+lazy from kpip.core import run_options
+lazy from kpip.core.appdirs import user_config_dir
+lazy from kpip.core.errors import ConfigurationError
+lazy from kpip.index.config import DEFAULT_INDEX_URL
 
 if TYPE_CHECKING:
-    import configparser
-
     import argparse
 
 NO_INDEX_VALUES = frozenset(("1", "true", "yes", "on"))
@@ -19,30 +18,9 @@ NO_INDEX_VALUES = frozenset(("1", "true", "yes", "on"))
 CONFIG_BASENAME = "kpip.conf" if os.name != "nt" else "kpip.ini"
 
 
-_PARSER_CLASS: type | None = None
-
-
-def raw_config_parser_class() -> type:
-    """The config parser subclass, built on first use: configparser is
-    imported only when a configuration file is actually read."""
-    global _PARSER_CLASS
-    if _PARSER_CLASS is not None:
-        return _PARSER_CLASS
-
-    import configparser
-
-    class RawConfigParser_internal(configparser.RawConfigParser):
-        def optionxform(self, optionstr: str) -> str:
-            return optionstr
-
-    _PARSER_CLASS = RawConfigParser_internal
-    return RawConfigParser_internal
-
-
-def __getattr__(name: str) -> object:
-    if name == "RawConfigParser_internal":
-        return raw_config_parser_class()
-    raise AttributeError(name)
+class RawConfigParser_internal(configparser.RawConfigParser):
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
 
 
 class ConfigLocation:
@@ -70,8 +48,6 @@ class ConfigurationStore:
         ]
         if not paths:
             return
-
-        import configparser
 
         self.parser_internal = new_parser()
         for path in paths:
@@ -149,7 +125,7 @@ def option_spellings(option: str) -> tuple[str, ...]:
 
 
 def new_parser() -> configparser.RawConfigParser:
-    return raw_config_parser_class()()
+    return RawConfigParser_internal()
 
 
 def user_config_paths() -> list[str]:
@@ -162,7 +138,6 @@ def user_config_paths() -> list[str]:
     ``$XDG_CONFIG_HOME/kpip/kpip.conf`` when it was -- two files for one
     home directory -- so both are still read, first.
     """
-    from kpip.core.appdirs import user_config_dir
 
     paths = [os.path.join(os.path.expanduser("~"), ".config", CONFIG_BASENAME)]
     xdg = os.environ.get("XDG_CONFIG_HOME")

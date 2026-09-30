@@ -3,32 +3,31 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+lazy import logging
 
-
-from kpip.build.query import (
+lazy from kpip.build.query import (
     format_list_columns,
     format_list_freeze,
     format_list_json,
     select_installed_distributions,
 )
-from kpip.cli.config import load_source_config, resolve_sources
-from kpip.cli.package_finder import (
+lazy from kpip.cli.config import load_source_config, resolve_sources
+lazy from kpip.cli.package_finder import (
     check_release_control,
     excludes_prereleases,
     package_finder,
 )
-from kpip.cli.parsers.list import create_parser
-from kpip.cli.target import target_paths
-from kpip.core.metadata import stdlib_pkgs, user_lib_path
-from kpip.core.packaging import parse_requirement
+lazy from kpip.cli.parsers.list import create_parser
+lazy from kpip.cli.target import target_paths
+lazy from kpip.core.metadata import stdlib_pkgs, user_lib_path
+lazy from kpip.core.packaging import parse_requirement
 
-import logging
+if TYPE_CHECKING:
+    from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-if TYPE_CHECKING:
-    from typing import Any
 
 
 def run_list(args: list[str]) -> int:

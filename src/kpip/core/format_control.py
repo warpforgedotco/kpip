@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .packaging import canonicalize_name
+lazy from .packaging import canonicalize_name
 
 FORMAT_CONTROL_KINDS = frozenset(
     ("no_binary", "only_binary", "no-binary", "only-binary"),

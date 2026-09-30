@@ -2,42 +2,24 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+lazy import os
+lazy import posixpath
+lazy import re
+lazy import tomllib
+lazy import urllib.parse
+from typing import TYPE_CHECKING, Any
 
-from typing import Any
-
-import os
-import posixpath
-import re
-import urllib.parse
-
-
-from kpip.core.errors import InstallationError
-from kpip.core.format_control import FormatControl
-from kpip.core.packaging import SpecifierSet, marker_applies
-from kpip.core.versions import Version
-from kpip.core.urls import path_to_url
-from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
-from kpip.core.wheel import parse_wheel_filename
-from kpip.resolution.files.models import ParsedRequirement
-
-
-def _toml_module() -> Any:
-    """The TOML parser, imported on first use: only a pylock input needs it."""
-    import tomllib
-
-    return tomllib
-
-
-def __getattr__(name: str) -> Any:
-    if name == "tomllib":
-        return _toml_module()
-    raise AttributeError(name)
-
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.format_control import FormatControl
+lazy from kpip.core.packaging import SpecifierSet, marker_applies
+lazy from kpip.core.urls import path_to_url
+lazy from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
+lazy from kpip.core.versions import Version
+lazy from kpip.core.wheel import parse_wheel_file, parse_wheel_filename, wheel_tag_rank
+lazy from kpip.resolution.files.models import ParsedRequirement
 
 if TYPE_CHECKING:
     from kpip.resolution.files.contracts import RequirementSource
-
 
 HTTP_SCHEMES = frozenset(("http", "https"))
 
@@ -80,8 +62,6 @@ def parse_pylock(
     *,
     provider: RequirementSource | None,
 ) -> list[ParsedRequirement]:
-    tomllib = _toml_module()
-
     try:
         lock = tomllib.loads(content)
 
@@ -304,7 +284,6 @@ def _best_wheel(wheels: list[Any]) -> dict[str, Any] | None:
     leaves choosing among them to the installer, which must pick one the
     interpreter supports, not the first one written.
     """
-    from kpip.core.wheel import parse_wheel_file, wheel_tag_rank
 
     best: dict[str, Any] | None = None
     best_rank: int | None = None

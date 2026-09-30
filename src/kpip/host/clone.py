@@ -15,22 +15,34 @@ does that for the installer's own rewrites.
 
 from __future__ import annotations
 
-import errno
-import os
-import stat
-import sys
-import threading
-import time
-from typing import Any
-
-from typing import TYPE_CHECKING
+lazy import ctypes
+lazy import errno
+lazy import os
+lazy import shutil
+lazy import stat
+lazy import sys
+lazy import threading
+lazy import time
+lazy from collections.abc import Callable
+lazy from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
 
     CloneFile = Callable[[bytes, bytes, int], int]
 
     Devices = tuple[int, int]
+
+try:
+    from kpip.host import _link_tree as _compiled_link_tree
+except ImportError:
+    _compiled_link_tree = None  # ty: ignore[invalid-assignment]
+
+try:
+    import fcntl
+except ImportError:
+    # Windows.
+    fcntl = None  # ty: ignore[invalid-assignment]
 
 _FICLONE = 0x40049409
 
@@ -46,8 +58,6 @@ def _darwin_clone(source: str, destination: str) -> bool:
 
     if sys.platform != "darwin":
         return False
-
-    import ctypes
 
     if not _clonefile_loaded:
         _clonefile_loaded = True
@@ -238,10 +248,7 @@ def _linux_reflink(
     if destination_device in _reflink_unsupported or source_device in _reflink_slow:
         return False
 
-    try:
-        import fcntl
-
-    except ImportError:
+    if fcntl is None:
         return False
 
     source_fd = os.open(source, os.O_RDONLY)
@@ -306,8 +313,6 @@ def _linux_reflink(
 
     finally:
         os.close(source_fd)
-
-    import shutil
 
     shutil.copystat(source, destination, follow_symlinks=False)
 
@@ -405,28 +410,11 @@ class _PythonLinkTree:
         return (0, len(names))
 
 
-_link_tree: Any = None
-"""The link loops once chosen: the compiled module or :class:`_PythonLinkTree`.
+_link_tree: Any = _compiled_link_tree or _PythonLinkTree
+"""The link loops: the compiled module or :class:`_PythonLinkTree`.
 
 False keeps every tree on the per-file walk.
 """
-
-
-def _link_tree_loops() -> Any:
-    """The compiled link loops, or their Python version when not built."""
-    global _link_tree
-
-    if _link_tree is None:
-        try:
-            from kpip.host import _link_tree as module
-
-        except ImportError:
-            _link_tree = _PythonLinkTree
-
-        else:
-            _link_tree = module
-
-    return _link_tree or None
 
 
 def _links_whole_trees(devices: Devices) -> bool:
@@ -468,8 +456,6 @@ def _split_pool() -> Any:
 
     with _split_lock:
         if _split_executor is None:
-            from concurrent.futures import ThreadPoolExecutor
-
             _split_executor = ThreadPoolExecutor(
                 max_workers=_SPLIT_WORKERS,
                 thread_name_prefix="kpip-link",
@@ -495,7 +481,6 @@ def _link_new_directory(
     on threads of their own, rather than leaving one thread to link them all
     while the others sit idle.
     """
-    import shutil
 
     try:
         source_root = os.fsencode(source)
@@ -580,7 +565,6 @@ def _link_files(
     would -- :func:`_hardlink` judging the device pair -- before the loop
     resumes after it; once the pair is judged, the rest are copied.
     """
-    import shutil
 
     start = 0
 
@@ -784,14 +768,12 @@ def _clone_absent(
             return _clone(source, destination, devices, overlaps)
 
         if overlaps is None and _links_whole_trees(devices):
-            link_tree = _link_tree_loops()
+            link_tree = _link_tree or None
 
             if link_tree is not None:
                 return _link_new_directory(
                     link_tree, source, destination, source_mode, devices
                 )
-
-        import shutil
 
         try:
             with os.scandir(source) as entries:
@@ -843,8 +825,6 @@ def _clone_absent(
         source, destination, source_device, destination_device
     ):
         return
-
-    import shutil
 
     shutil.copy2(source, destination, follow_symlinks=False)
 

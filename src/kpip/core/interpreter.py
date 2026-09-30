@@ -10,13 +10,13 @@ environment, then ``PATH``.
 
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
-import sys
+lazy import os
+lazy import shutil
+lazy import subprocess
+lazy import sys
 
-from kpip.core.errors import DiagnosticKpipError
-from kpip.core.packaging import target_python_version
+lazy from kpip.core.errors import DiagnosticKpipError
+lazy from kpip.core.packaging import target_python_version
 
 _PROBE = "import sys, venv; print('%d.%d' % sys.version_info[:2])"
 

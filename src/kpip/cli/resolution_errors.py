@@ -9,9 +9,8 @@ both commands report a failure identically.
 
 from __future__ import annotations
 
-import re
-
 from typing import TYPE_CHECKING
+lazy import re
 
 if TYPE_CHECKING:
     from typing import Any

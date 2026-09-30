@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from kpip.core.names import canonicalize_name
+lazy from kpip.core.names import canonicalize_name
 
 if TYPE_CHECKING:
     from kpip.resolution.models import RequirementInput
-
-
-if TYPE_CHECKING:
     RequirementT = TypeVar("RequirementT", bound="RequirementInput")
 
 else:

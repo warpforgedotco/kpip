@@ -188,7 +188,7 @@ def test_a_filesystem_without_ficlone_is_judged_once(
         raise OSError(errno.EOPNOTSUPP, "operation not supported")
 
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setitem(sys.modules, "fcntl", types.SimpleNamespace(ioctl=ioctl))
+    monkeypatch.setattr(clone, "fcntl", types.SimpleNamespace(ioctl=ioctl))
     source = make_tree(tmp_path)
     destination = tmp_path / "target"
 
@@ -208,7 +208,7 @@ def test_a_second_clone_onto_a_judged_device_never_touches_the_ioctl(
         raise AssertionError("FICLONE retried on a device that rejected it")
 
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setitem(sys.modules, "fcntl", types.SimpleNamespace(ioctl=ioctl))
+    monkeypatch.setattr(clone, "fcntl", types.SimpleNamespace(ioctl=ioctl))
     clone._reflink_unsupported.add(os.stat(tmp_path).st_dev)
     source = make_tree(tmp_path)
 

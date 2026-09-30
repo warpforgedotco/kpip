@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import os
-import site
+lazy import logging
+lazy import os
+lazy import site
 
-from kpip.build.metadata import InstalledDistributionStore
-from kpip.cli.parsers.uninstall import create_parser
-from kpip.cli.target import target_paths
-from kpip.core.packaging import parse_requirement
-from kpip.host.environment_checks import (
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.cli.parsers.uninstall import create_parser
+lazy from kpip.cli.target import target_paths
+lazy from kpip.core.packaging import parse_requirement
+lazy from kpip.host.environment_checks import (
     check_externally_managed,
     warn_if_run_as_root,
 )
-from kpip.install.requirements import RequirementInstaller
-
-import logging
+lazy from kpip.install.requirements import RequirementInstaller
 
 logger = logging.getLogger(__name__)
 

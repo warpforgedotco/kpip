@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import TypeVar
+lazy import logging
+lazy from functools import lru_cache
+lazy from typing import TypeVar
 
-import logging
-from kpip.core.hashes import Hashes
-from kpip.core.packaging import EMPTY_FROZENSET
-from kpip.core.wheel import WheelTag
-from kpip.index.source_models import CandidateRecord
+lazy from kpip.core.hashes import Hashes
+lazy from kpip.core.packaging import EMPTY_FROZENSET
+lazy from kpip.core.wheel import WheelTag
+lazy from kpip.index.source_models import CandidateRecord
 
 logger = logging.getLogger("kpip.index.candidate_evaluators")
 CandidateT = TypeVar("CandidateT", bound=CandidateRecord)

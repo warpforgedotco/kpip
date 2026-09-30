@@ -1,4 +1,4 @@
-from kpip.core.errors import InstallationError
+lazy from kpip.core.errors import InstallationError
 
 
 class BadCommand(InstallationError):

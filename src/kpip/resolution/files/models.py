@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kpip.core.errors import InstallationError
+lazy from kpip.core.errors import InstallationError
 
 
 class RequirementsFileParseError(InstallationError):

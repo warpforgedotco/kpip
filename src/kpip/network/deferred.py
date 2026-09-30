@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import threading
-
-from kpip.core.appdirs import http_cache_path
-from kpip.network.freshness import cached_response_is_fresh, has_cached_validator
-
 from typing import TYPE_CHECKING
+lazy import threading
+
+lazy from kpip.core import run_options
+lazy from kpip.core.appdirs import http_cache_path
+lazy from kpip.network.cache import SafeFileCache
+lazy from kpip.network.freshness import cached_response_is_fresh, has_cached_validator
+lazy from kpip.network.session import DEFAULT_RETRIES, NetworkSession, Timeout
 
 if TYPE_CHECKING:
     from typing import Any
@@ -83,9 +85,6 @@ class DeferredNetworkSession:
         with self.lock:
             if self.session is not None:
                 return self.session
-
-            from kpip.core import run_options
-            from kpip.network.session import DEFAULT_RETRIES, NetworkSession, Timeout
 
             # What the session was not told itself, the command's general
             # options decide.
@@ -171,8 +170,6 @@ class DeferredNetworkSession:
         """The HTTP page cache, built without the client that fills it."""
 
         if self.page_cache_internal is None and self.cache_dir:
-            from kpip.network.cache import SafeFileCache
-
             self.page_cache_internal = SafeFileCache(http_cache_path(self.cache_dir))
 
         return self.page_cache_internal

@@ -191,11 +191,10 @@ def test_kpip_itself_is_a_worker_given_the_worker_argument(tmp_path) -> None:
 
 
 def test_a_compiled_kpip_starts_itself_as_the_worker(monkeypatch) -> None:
-    from kpip.core import interpreter
     from kpip.install import bytecode
     from kpip.install._compile_worker import WORKER_ARGUMENT
 
-    monkeypatch.setattr(interpreter, "is_compiled", lambda: True)
-    monkeypatch.setattr(interpreter, "own_command", lambda: ["/opt/kpip"])
+    monkeypatch.setattr(bytecode, "is_compiled", lambda: True)
+    monkeypatch.setattr(bytecode, "own_command", lambda: ["/opt/kpip"])
 
     assert bytecode._worker_command() == ["/opt/kpip", WORKER_ARGUMENT]

@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from kpip.core.release_control import ReleaseControl
 
 
+
 class RequirementSession(Protocol):
     """Network operations needed by the requirement-file parser."""
 

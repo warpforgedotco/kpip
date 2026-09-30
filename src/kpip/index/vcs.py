@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import atexit
-import threading
-import os
-import shutil
-import tempfile
+lazy import atexit
+lazy import logging
+lazy import os
+lazy import shutil
+lazy import subprocess
+lazy import tempfile
+lazy import threading
 
-from kpip.index.vcs_urls import (
+lazy from kpip.index.vcs_urls import (
     VCS_SCHEMES,
     is_immutable_vcs_link,
     vcs_reference,
     vcs_scheme,
 )
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +118,6 @@ def _clone_vcs(
     emit_resolution: bool,
     prompting: bool,
 ) -> str:
-    import subprocess
-
     reference = vcs_reference(url)
     if reference.vcs != "git":
         raise OSError(f"Unsupported VCS URL: {url}")
@@ -173,8 +171,6 @@ def _clone_vcs(
 
 
 def git_revision(source_dir: str) -> str:
-    import subprocess
-
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=source_dir,
@@ -206,8 +202,6 @@ def resolve_git_commit(url: str, *, prompting: bool = True) -> str | None:
 
 
 def _resolve_git_commit(url: str, *, prompting: bool) -> str | None:
-    import subprocess
-
     try:
         reference = vcs_reference(url)
     except OSError:

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import configparser
-import locale
-import logging
-import os
-import sys
-import sysconfig
+lazy import configparser
+lazy import locale
+lazy import logging
+lazy import os
+lazy import sys
+lazy import sysconfig
 
-from kpip.core.errors import KpipError
-from kpip.host.virtualenv import running_under_virtualenv
+lazy from kpip.core.errors import KpipError
+lazy from kpip.host.virtualenv import running_under_virtualenv
 
 logger = logging.getLogger(__name__)
 

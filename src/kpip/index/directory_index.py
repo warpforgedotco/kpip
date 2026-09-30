@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
-from kpip.core.packaging import canonicalize_name
-from kpip.core.versions import Version
-from kpip.index.links import SOURCE_ARCHIVE_SUFFIXES
+lazy import os
+
+lazy from kpip.core.packaging import canonicalize_name
+lazy from kpip.core.versions import Version
+lazy from kpip.index.links import SOURCE_ARCHIVE_SUFFIXES
 
 
 class LocalSourceEntry:

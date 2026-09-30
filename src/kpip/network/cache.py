@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+lazy import marshal
+lazy import os
+lazy import shutil
+lazy import struct
+lazy import threading
+lazy from contextlib import contextmanager
 
-import marshal
-import os
-import struct
-import threading
-from contextlib import contextmanager
-
-from kpip.core.utils import ensure_dir
-from kpip.network.freshness import (
+lazy from kpip.core.utils import ensure_dir
+lazy from kpip.host.filesystem import replace, set_descriptor_permissions
+lazy from kpip.network.freshness import (
     COMBINED_MAGIC,
     cache_entry_path,
     read_cache_metadata,
 )
-from kpip.host.filesystem import replace, set_descriptor_permissions
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
+    from typing import Any, BinaryIO
 
 PRIVATE_MODE = 0o600
 """The mode a temporary entry falls back to when its own cannot be created."""
@@ -54,9 +58,6 @@ _PROCESS_UMASK: int | None = None
 """Directory under the cache directory holding the HTTP page cache."""
 
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
-    from typing import Any, BinaryIO
 
 COMBINED_HEADER = struct.Struct(f"<{len(COMBINED_MAGIC)}sQ")
 
@@ -341,8 +342,6 @@ class SafeFileCache:
                 raise
 
     def write_from_io(self, path: str, source_file: BinaryIO) -> None:
-        import shutil
-
         self.write_to_file(path, lambda f: shutil.copyfileobj(source_file, f))
 
     def set(self, key: str, value: bytes) -> None:

@@ -2,39 +2,31 @@
 
 from __future__ import annotations
 
-import ntpath
-import os
-import threading
-import time
-import urllib.parse
-from functools import lru_cache
+from typing import TYPE_CHECKING
+lazy import logging
+lazy import ntpath
+lazy import os
+lazy import threading
+lazy import time
+lazy import urllib.parse
+lazy from concurrent.futures import ThreadPoolExecutor
+lazy from functools import lru_cache
 
-from kpip.core.packaging import Requirement, canonicalize_name
-import logging
-from kpip.core.urls import WINDOWS, path_to_url, url_to_path
-from kpip.index.catalog_cache import (
-    load_summary,
-    load_summary_from,
-    read_summary,
-    record_summary_freshness,
-    summary_is_fresh,
-)
-from kpip.index.directory_index import (
+lazy from kpip.core.packaging import Requirement, canonicalize_name
+lazy from kpip.core.urls import WINDOWS, path_to_url, url_to_path
+lazy from kpip.index.catalog_cache import load_summary, load_summary_from, read_summary, record_summary_freshness, summary_is_fresh
+lazy from kpip.index.directory_index import (
     LocalSourceSnapshot,
     local_source_snapshot,
 )
-from kpip.index.links import SUPPORTED_EXTENSIONS, Link
-from kpip.index.page_parsing import IndexPageParser
-from kpip.index.source_models import ArtifactKind
-
-from typing import TYPE_CHECKING
+lazy from kpip.index.links import SUPPORTED_EXTENSIONS, Link
+lazy from kpip.index.page_parsing import IndexPageParser
+lazy from kpip.index.source_models import ArtifactKind
 
 if TYPE_CHECKING:
-    from concurrent.futures import Future, ThreadPoolExecutor
-
+    from concurrent.futures import Future
     from kpip.core.http_contracts import HttpSession
     from kpip.index.catalog_cache import CatalogSummary
-
 
 logger = logging.getLogger(__name__)
 
@@ -469,8 +461,6 @@ class SimpleIndexSource:
         with self.revalidation_lock:
             if project_url not in self.revalidating:
                 if self.revalidation_pool is None:
-                    from concurrent.futures import ThreadPoolExecutor
-
                     self.revalidation_pool = ThreadPoolExecutor(
                         max_workers=REFRESH_WORKERS,
                         thread_name_prefix="kpip-revalidate",
@@ -604,8 +594,6 @@ def refresh_pages(source: SimpleIndexSource, project_urls: list[str]) -> None:
 
     if not project_urls:
         return
-
-    from concurrent.futures import ThreadPoolExecutor
 
     def refresh(project_url: str) -> None:
         try:

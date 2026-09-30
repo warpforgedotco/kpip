@@ -1,46 +1,54 @@
 from __future__ import annotations
 
-import base64
-import configparser
-import contextlib
-import csv
-import email.parser
-import email.utils
-import fnmatch
-import hashlib
-import importlib
-import io
-import os
-import re
-import shlex
-import shutil
-import subprocess
-import tarfile
-import tempfile
-import threading
+lazy import atexit
+lazy import base64
+lazy import configparser
+lazy import contextlib
+lazy import csv
+lazy import email.parser
+lazy import email.utils
+lazy import fnmatch
+lazy import hashlib
+lazy import importlib
+lazy import io
+lazy import os
+lazy import re
+lazy import shlex
+lazy import shutil
+lazy import subprocess
+lazy import tarfile
+lazy import tempfile
+lazy import threading
+lazy import zipfile
+lazy from collections.abc import Callable, Iterable, Iterator
+lazy from tomllib import loads
+lazy from typing import Any
 
-from tomllib import loads
-
-import zipfile
-from collections.abc import Callable, Iterable, Iterator
-from typing import Any
-
-from kpip.core import run_options
-from kpip.core.temp_dir import build_directory
-from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
-from kpip.core.errors import BuildError
-from kpip.core.packaging import canonicalize_name, parse_requirement
-from kpip.core.versions import InvalidVersion, Version
-from kpip.core.subprocesses import call_subprocess
-from kpip.core.appdirs import command_cache_arguments
-from kpip.core.interpreter import (
+lazy from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
+lazy from kpip.core import run_options
+lazy from kpip.core.appdirs import command_cache_arguments
+lazy from kpip.core.errors import BuildError
+lazy from kpip.core.interpreter import (
     build_interpreter,
     is_compiled,
     is_own_interpreter,
     own_command,
 )
-from kpip.install.build_env.isolated_venv import CreatedVenv, create_isolated_venv
-
+lazy from kpip.core.metadata import installed_index
+lazy from kpip.core.packaging import (
+    canonicalize_name,
+    marker_applies,
+    parse_requirement,
+)
+lazy from kpip.core.subprocesses import call_subprocess
+lazy from kpip.core.temp_dir import build_directory
+lazy from kpip.core.versions import InvalidVersion, Version
+lazy from kpip.host.locations.sysconfig_scheme import get_scheme
+lazy from kpip.install.build_env.isolated_venv import (
+    CreatedVenv,
+    create_isolated_venv,
+    interpreter_identity,
+)
 
 LEGACY_SETUPTOOLS_REQUIREMENT = "setuptools>=40.8.0,<82"
 MINIMUM_PEP517_SETUPTOOLS = Version("40.8.0")
@@ -265,9 +273,6 @@ def check_build_requirements(
         # Only this interpreter's environment can be read from here.
         return
 
-    from kpip.core.metadata import installed_index
-    from kpip.core.packaging import marker_applies, parse_requirement
-
     installed = installed_index()
     missing: set[str] = set()
     conflicting: set[tuple[str, str]] = set()
@@ -418,9 +423,6 @@ def _environments_root() -> str:
     """A directory for this process's build environments, removed at exit."""
     with _prepared_environments_lock:
         if not _prepared_environments_root:
-            import atexit
-            import shutil
-
             root = tempfile.mkdtemp(prefix="pip-build-envs-")
 
             if not run_options.current.no_clean:
@@ -447,14 +449,12 @@ def _installs_build_requirements() -> bool:
 
 def _runs_like(venv: CreatedVenv) -> bool:
     """Whether ``venv``'s interpreter takes the wheels this kpip would pick."""
-    from kpip.install.build_env.isolated_venv import interpreter_identity
 
     return venv.identity is None or venv.identity == interpreter_identity()
 
 
 def _prefix_is_environment(env_path: str, venv: CreatedVenv) -> bool:
     """Whether ``--prefix env_path`` installs where ``venv`` imports from."""
-    from kpip.host.locations.sysconfig_scheme import get_scheme
 
     scheme = get_scheme("", prefix=env_path)
 

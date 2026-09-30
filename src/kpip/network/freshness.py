@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import marshal
-import os
-import time
-
-from kpip.core.digests import sha224_hexdigest
-from kpip.core.expiry import expiry_is_fresh
-
 from typing import TYPE_CHECKING
+lazy import email.utils
+lazy import marshal
+lazy import os
+lazy import time
+
+lazy from kpip.core.digests import sha224_hexdigest
+lazy from kpip.core.expiry import expiry_is_fresh
 
 if TYPE_CHECKING:
     from typing import Any
-
 
 COMBINED_MAGIC = b"kpip-http-cache:1\n"
 """Starts an entry holding its metadata and body in one file."""
@@ -123,8 +122,6 @@ def _cache_control_directives(headers: Any) -> dict[str, str | None]:
 def _http_date(value: Any) -> float | None:
     if not value:
         return None
-
-    import email.utils
 
     try:
         return email.utils.parsedate_to_datetime(value).timestamp()

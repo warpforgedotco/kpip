@@ -5,6 +5,10 @@ Reading, preferring from and writing a lock file, for ``cli.lock``.
 
 from __future__ import annotations
 
+lazy from kpip.core.names import canonicalize_name
+lazy from kpip.network.freshness import sha224_hexdigest
+lazy from kpip.resolution.files.pylock import tomllib
+
 LOCK_HEADER = ('created-by = "kpip"', 'lock-version = "1.0"', "")
 
 
@@ -59,8 +63,6 @@ def previous_lock_digest(previous: bytes | None, upgrade_packages: list[str]) ->
     if previous is None:
         return ""
 
-    from kpip.network.freshness import sha224_hexdigest
-
     return sha224_hexdigest(previous) + "\0" + "\0".join(sorted(upgrade_packages))
 
 
@@ -76,8 +78,6 @@ def lock_preferences(
 
     if previous is None:
         return {}
-
-    from kpip.core.names import canonicalize_name
 
     try:
         text = previous.decode("utf-8")
@@ -139,8 +139,6 @@ def _versions_as_written(text: str) -> list[tuple[str, str]] | None:
 
 
 def _versions_as_toml(text: str) -> list[tuple[str, str]]:
-    from kpip.resolution.files.pylock import tomllib
-
     try:
         lock = tomllib.loads(text)
     except ValueError:

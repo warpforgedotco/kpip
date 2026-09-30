@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+lazy import os
 
 
 class PathComponent(str):

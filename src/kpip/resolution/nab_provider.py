@@ -1,39 +1,40 @@
 from __future__ import annotations
 
-import logging
-import operator
-import os
-import sys
-from bisect import bisect_left, bisect_right
-from collections import deque
-from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
+lazy import logging
+lazy import operator
+lazy import os
+lazy import sys
+lazy from bisect import bisect_left, bisect_right
+lazy from collections import deque
+lazy from collections.abc import Callable, Mapping, Sequence
+lazy from urllib.parse import urlsplit
 
-from kpip._vendor.nab_resolver.ranges import Range
-from kpip._vendor.nab_resolver.types import (
+lazy from kpip._vendor.nab_resolver.ranges import Range
+lazy from kpip._vendor.nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
     RangeProtocol,
     Term,
 )
-from kpip.core.metadata import InstalledDistribution, find_installed
-from kpip.core.packaging import (
+lazy from kpip.core.errors import KpipError
+lazy from kpip.core.metadata import InstalledDistribution, find_installed
+lazy from kpip.core.packaging import (
     Requirement,
     SpecifierSet,
-    intersect_runs,
     canonicalize_name,
+    intersect_runs,
     marker_applies,
     parse_requirement,
 )
-from kpip.core.errors import KpipError
-from kpip.core.versions import InvalidVersion, Version, ZERO_VERSION
-from kpip.core.wheel import WheelCandidate
-from kpip.index.candidate_evaluators import CandidateEvaluator
-from kpip.index.provider import CandidateProvider
-from kpip.index.source_models import CandidateRecord
-from kpip.resolution.models import ResolutionConfig, canonical_url, url_name
-from kpip.resolution.nab_types import (
+lazy from kpip.core.versions import ZERO_VERSION, InvalidVersion, Version
+lazy from kpip.core.wheel import WheelCandidate
+lazy from kpip.index.candidate_evaluators import CandidateEvaluator
+lazy from kpip.index.provider import CandidateProvider
+lazy from kpip.index.source_models import CandidateRecord
+lazy from kpip.resolution.models import ResolutionConfig, canonical_url, url_name
+lazy from kpip.resolution.nab_observer import DecisionObserver
+lazy from kpip.resolution.nab_types import (
     _MIN_PINS_TO_DISAGREE,
     InstalledCandidate,
     _dependencies_or_none,
@@ -42,11 +43,11 @@ from kpip.resolution.nab_types import (
     _RecordingRequirements,
 )
 
+if TYPE_CHECKING:
+    from kpip._vendor.nab_resolver.resolver import ResolverObserver
 
 logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from kpip._vendor.nab_resolver.resolver import ResolverObserver
 
 logger = logging.getLogger(__name__)
 
@@ -1890,9 +1891,6 @@ class NabProvider:
 
     def decision_observer(self) -> ResolverObserver[str, Version]:
         """The observer through which the resolver reports its decisions."""
-        # Imported here as the resolver itself is: only a resolve needs it.
-        from kpip.resolution.nab_observer import DecisionObserver
-
         return DecisionObserver(self)
 
     def note_decision(self, package: str, version: Version, level: int) -> None:
