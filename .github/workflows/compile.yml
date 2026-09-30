@@ -65,6 +65,13 @@ jobs:
         env:
           KPIP_NUITKA_TESTS: "1"
         run: uv run --group tests pytest tests/test_nuitka_subinterpreters.py
+      - name: Compiled code shared by threads
+        # Races threads through a program compiled with the same Nuitka: with
+        # the GIL, it checks what applies to both builds (patches 0015, 0016).
+        if: runner.os == 'Linux'
+        env:
+          KPIP_NUITKA_TESTS: "1"
+        run: uv run --group tests pytest tests/test_nuitka_threads.py
       - name: Smoke test
         run: |
           # Where Nuitka's {CACHE_DIR} points on each system.
@@ -108,3 +115,32 @@ jobs:
             scripts/compile/build/kpip
             scripts/compile/build/kpip.exe
           if-no-files-found: error
+
+  threads-free-threaded:
+    # The same program compiled for a free-threaded Python, where compiled
+    # code runs on several threads at once (patch 0015).
+    name: Compiled threads / free-threaded 3.14
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: scripts/compile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: "3.14t"
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: scripts/compile/uv.lock
+      - name: Install patchelf
+        run: sudo apt-get update && sudo apt-get install --yes patchelf
+      - run: uv sync --locked --group tests --python "${{ steps.python.outputs.python-path }}"
+      - name: Compiled code shared by threads, without the GIL
+        env:
+          KPIP_NUITKA_TESTS: "1"
+        run: uv run --group tests pytest tests/test_nuitka_threads.py

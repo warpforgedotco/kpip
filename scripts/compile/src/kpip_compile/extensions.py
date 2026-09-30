@@ -97,7 +97,13 @@ def build_extensions(
             modules = cythonize(
                 extensions,
                 build_dir=str(Path(temp) / "c"),
-                compiler_directives={"language_level": 3},
+                # Their module state is set once, at import, before any other
+                # thread can reach it: declared safe, a free-threaded build keeps
+                # the GIL off when it imports them.
+                compiler_directives={
+                    "language_level": 3,
+                    "freethreading_compatible": True,
+                },
                 force=force,
                 quiet=True,
             )
