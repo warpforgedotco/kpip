@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Wed, 30 Sep 2026 23:00:00 -0400
+Subject: [PATCH] Name the frozendict type object as CPython names it
+
+Python 3.15 adds the builtin frozendict. A type used as a constant is
+written in C as "Py" + the capitalized type name + "_Type", with the types
+that are not spelled that way listed one by one. frozendict was not listed,
+so code comparing against it referred to PyFrozendict_Type, which does not
+exist; CPython's is PyFrozenDict_Type. Compiling msgspec for 3.15 stopped
+with:
+
+    module.msgspec.inspect.c: error: 'PyFrozendict_Type' undeclared
+    (first use in this function); did you mean 'PyFrozenDict_Type'?
+---
+ nuitka/Serialization.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/nuitka/Serialization.py b/nuitka/Serialization.py
+--- a/nuitka/Serialization.py
++++ b/nuitka/Serialization.py
+@@ -226,6 +226,8 @@
+                 return "(PyObject *)&PyEnum_Type"
+             elif constant is frozenset:
+                 return "(PyObject *)&PyFrozenSet_Type"
++            elif python_version >= 0x3F0 and constant is frozendict:
++                return "(PyObject *)&PyFrozenDict_Type"
+             elif python_version >= 0x270 and constant is memoryview:
+                 return "(PyObject *)&PyMemoryView_Type"
+             elif python_version < 0x300 and constant is basestring:
+-- 
+2.50.1
+
