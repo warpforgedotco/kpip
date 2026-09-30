@@ -297,7 +297,11 @@ def load_archive(entry_root: str, digest: str) -> CachedWheelArchive | None:
 
     entries = value[2]
 
-    if not valid_archive_entries(entries):
+    # The shape of its first entry, not the types of all of them: a manifest
+    # is only ever written whole by kpip, renamed into a bucket versioned by
+    # its format, and names its wheel's digest, checked above. Checking every
+    # entry cost a warm jupyter install 12,000 of them, twice.
+    if not valid_archive_entries(entries[:1]):
         return None
 
     return CachedWheelArchive(digest, tree, value[1], entries)
@@ -911,6 +915,16 @@ def prepare_cached_wheels(
     *,
     pycompile: bool = True,
 ) -> tuple[CachedWheelArchive, ...]:
+    # Loaded already, e.g. by the install's preparation, which found each
+    # cached: neither their digests nor their manifests are read again.
+    layouts = [loaded_layout(candidate) for candidate in candidates]
+    loaded = [layout for layout in layouts if isinstance(layout, CachedWheelArchive)]
+    if len(loaded) == len(candidates):
+        if pycompile:
+            for archive in loaded:
+                _ensure_pyc(archive)
+        return tuple(loaded)
+
     digests = prefetch_wheel_digests(candidates, cache_dir)
 
     # Cache hits are metadata reads and marshal decoding under the GIL. A
@@ -918,7 +932,10 @@ def prepare_cached_wheels(
     # that work parallel, so take the straight-line path when every digest
     # and archive are already present. Cold extraction remains threaded.
     cached_archives: list[CachedWheelArchive] = []
-    for digest in digests:
+    for layout, digest in zip(layouts, digests, strict=True):
+        if isinstance(layout, CachedWheelArchive):
+            cached_archives.append(layout)
+            continue
         if digest is None:
             break
         cached = load_archive(archive_entry_root(cache_dir, digest), digest)
