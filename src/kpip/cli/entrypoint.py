@@ -262,14 +262,7 @@ def handle_global_commands(
 
 
 def run_command(argv: list[str], spec: CommandSpec) -> int:
-    """Run a resolved command, giving the lock fast path its last chance."""
-
-    from kpip.cli import fast
-
-    status = fast.run_lock_after_startup(argv)
-
-    if status is not None:
-        return status
+    """Run a resolved command."""
 
     runner = spec.load_runner()
 

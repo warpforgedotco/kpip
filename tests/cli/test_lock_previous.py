@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kpip.cli.fast import parse_lock_arguments
+from kpip.cli.parsers.lock import create_parser
 from kpip.cli.lock_format import (
     lock_left_behind,
     lock_preferences,
@@ -80,10 +80,11 @@ def test_the_digest_tells_starting_points_apart() -> None:
     )
 
 
-def test_the_fast_path_reads_the_upgrade_options() -> None:
-    options = parse_lock_arguments(["demo", "-U", "-P", "a", "--upgrade-package=b"])
+def test_the_upgrade_options_are_read() -> None:
+    options = create_parser().parse_args(
+        ["demo", "-U", "-P", "a", "--upgrade-package=b"]
+    )
 
-    assert options is not None
     assert options.upgrade
     assert options.upgrade_packages == ["a", "b"]
 

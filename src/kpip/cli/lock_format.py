@@ -159,22 +159,3 @@ def _versions_as_toml(text: str) -> list[tuple[str, str]]:
                 found.append((name, version))
 
     return found
-
-
-def render_wheel_lock(packages: list[tuple[str, str, str, str, str]]) -> str:
-    lines = list(LOCK_HEADER)
-    for name, version, wheel_name, wheel_url, digest in packages:
-        lines.extend(
-            (
-                "[[packages]]",
-                f"name = {toml_string(name)}",
-                f"version = {toml_string(version)}",
-                "[[packages.wheels]]",
-                f"name = {toml_string(wheel_name)}",
-                f"url = {toml_string(wheel_url)}",
-                "[packages.wheels.hashes]",
-                f"sha256 = {toml_string(digest)}",
-                "",
-            ),
-        )
-    return "\n".join(lines)

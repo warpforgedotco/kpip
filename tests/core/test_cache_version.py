@@ -16,7 +16,7 @@ import os
 import re
 
 import pytest
-from kpip.cli import fast, fast_install
+from kpip.cli import fast_install
 from kpip.core.appdirs import (
     ARCHIVE_CACHE_BUCKET,
     cache_root,
@@ -43,7 +43,6 @@ STORAGE_NAMES = (
     metadata_cache.NAME,
     candidate_metadata_cache.NAME,
     release_facts_cache.NAME,
-    fast.FAST_LOCK_PLAN_BUCKET,
     fast_install.NAME,
     fast_install.TREE_CACHE_BUCKET,
     ARCHIVE_CACHE_BUCKET,

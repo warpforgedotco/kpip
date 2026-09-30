@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 
-from kpip.cli.fast import read_requirements
 from kpip.cli.lock_format import (
     LOCK_HEADER,
     lock_left_behind,
@@ -25,7 +25,7 @@ from kpip.cli.lock_replay import (
     save_record,
     stale_pages,
 )
-from kpip.cli.parsers.lock import parse_lock_options
+from kpip.cli.parsers.lock import create_parser
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.expiry import refresh_since
 from kpip.core.errors import CommandError, KpipError
@@ -111,12 +111,18 @@ def applies_to_target(requirement: str | InstallRequirement) -> bool:
 
 def read_requirement_lines(filename: str) -> list[str]:
     """Read requirement lines, raising ``CommandError`` if the file is unreadable."""
-    values = read_requirements(filename)
+    try:
+        with open(filename, encoding="utf-8") as requirement_file:
+            text = requirement_file.read()
 
-    if values is None:
-        raise CommandError(f"Could not read requirement file: {filename}")
+    except OSError:
+        raise CommandError(f"Could not read requirement file: {filename}") from None
 
-    return values
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
 
 
 def remote_hashed_wheel(candidate: object) -> dict[str, object] | None:
@@ -331,9 +337,9 @@ def replay_after_revalidation(
 ) -> bool:
     """Replay the recorded lock once every page it read has been revalidated.
 
-    The fast path already replays a lock whose pages are all fresh. After
-    the index's ``max-age`` they are stale, and resolving would revalidate
-    them one dependency level at a time as it walked the graph; asking about
+    A lock whose pages are all fresh is replayed as it stands. After the
+    index's ``max-age`` they are stale, and resolving would revalidate them
+    one dependency level at a time as it walked the graph; asking about
     every recorded page at once costs one round of mostly-304 answers, and
     if none changed the recorded lock is still the answer. If one did, the
     resolve that follows finds every page fresh in the cache.
@@ -421,7 +427,8 @@ def record_replayable_lock(
 
 
 def run_lock(args: list[str]) -> int:
-    options = parse_lock_options(args)
+    # As pip: requirements may be given before, between and after options.
+    options = create_parser().parse_intermixed_args(args)
 
     resolvers: list[ResolutionEngine] = []
 
@@ -496,8 +503,15 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     quiet_environment = os.environ.get("KPIP_QUIET")
 
+    root_logger = logging.getLogger()
+
+    logging_level = root_logger.level
+
     if options.quiet:
         os.environ["KPIP_QUIET"] = "1"
+
+        # As pip's -q: warnings and errors are still reported.
+        root_logger.setLevel(max(logging_level, logging.WARNING))
 
     format_control = None
 
@@ -931,5 +945,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     else:
         os.environ["KPIP_QUIET"] = quiet_environment
+
+    root_logger.setLevel(logging_level)
 
     return 0

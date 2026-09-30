@@ -28,13 +28,12 @@ The console script, `kpip.__init__:main` and `python -m kpip` all reach
 cli.entrypoint:main
   +--> handle_global_commands      help, --version, --require-virtualenv gate, unknown commands
   +--> cli.fast:run_before_startup  cheap argv recognizers, before any startup work
-  |      +--> run_lock
   |      +--> cli.fast_install:run_cached_remote   missing target + exact remote pins, warm receipt
   |      +--> cli.fast_install:run_local_fallback  non-empty local target, --no-index wheelhouse
   |      +--> cli.fast_install:run                 empty target, --no-index wheelhouse
   |      `--> run_satisfied_install                 plain names, all already installed
   +--> execution context, logging, temp dir (per CommandSpec flags)
-  +--> cli.fast:run_install_after_startup / run_lock_after_startup
+  +--> cli.fast:run_install_after_startup
   `--> run_command -> CommandSpec.load_runner
 ```
 
@@ -44,8 +43,8 @@ Rules:
   or an early exit inside that implementation is fine; a second implementation
   of the same behaviour is not. The recognizers still in `cli/fast.py` and
   `cli/fast_install.py` predate this rule and are being folded into their
-  commands: do not add to them, and do not add new ones. `list` and `freeze`
-  have none.
+  commands: do not add to them, and do not add new ones. `list`, `freeze` and
+  `lock` have none.
 - The registry stores module paths and imports a command on first use. Startup
   gating belongs in `CommandSpec` flags (`needs_logging`, `needs_tempdir`,
   `needs_execution_context`), not in command-name tests.
@@ -178,7 +177,6 @@ has never written; the old one is inert until a purge.
 | `index/metadata_cache.py` | `metadata-v1.sqlite` | parsed headers of local wheel files and of installed `METADATA` files, and SHA-256 of local wheels, by path, size, mtime |
 | `index/candidate_metadata_cache.py` | `candidate-metadata-v1.sqlite` | dependency metadata reused during resolution |
 | `index/release_facts_cache.py` | `release-facts-v1-<interp>.marshal` | deterministic release rejection reasons |
-| `cli/fast.py` | `fast-lock-plan-v2/` | rendered lock output, keyed on `core/code_identity.py` so an upgraded kpip never replays it, and on the lock it started from |
 | `cli/lock_replay.py` | `lock-replay-v1/` | an index lock of hashed wheels, keyed on its inputs, interpreter, `code_identity` and the lock it started from (`cli/lock_format.py:previous_lock_digest`), with the ETag/Last-Modified of every project page it read; replayed while each is unchanged -- by the fast path when all are fresh, else after `cli/lock.py:replay_after_revalidation` revalidates the stale ones in one concurrent wave |
 | `cli/fast_install.py` | `fast-install-v1-<interp>.marshal`, `fast-install-trees-v1-<interp>/` | fast-path plans, metadata, cloneable completed targets |
 | `install/wheel_archive_cache.py` | `archive-v1-<interp>/` | validated unpacked wheel trees by digest, and their byte-compiled `pyc/` sibling |
