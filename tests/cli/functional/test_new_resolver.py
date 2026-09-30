@@ -1065,7 +1065,8 @@ def test_new_resolver_build_directory_error_zazo_19(
         "pkg-a",
         "pkg-b",
     )
-    script.assert_installed(pkg_a="2.0.0", pkg_b="2.0.0")
+    # As pip resolves it: pkg-a was named first, so pkg-b gives way.
+    script.assert_installed(pkg_a="3.0.0", pkg_b="1.0.0")
 
 
 def test_new_resolver_upgrade_same_version(script: KpipTestEnvironment) -> None:
