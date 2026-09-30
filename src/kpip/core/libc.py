@@ -12,8 +12,13 @@ Detection is ordered by cost, and stops as soon as it has an answer:
    answers on every glibc system, which is nearly all of them;
 2. ``gnu_get_libc_version`` through ctypes, for a glibc that does not publish
    the confstr;
-3. the ELF ``PT_INTERP`` of the running interpreter, and if that names musl,
+3. the ELF ``PT_INTERP`` of the target interpreter, and if that names musl,
    the loader is run to print its version banner.
+
+The ELF facts are read from the interpreter kpip installs for, not from
+``sys.executable``: compiled, that is a ``python`` beside the binary that does
+not exist. With no interpreter to install for, a compiled kpip reads its own
+binary, which is linked against the same C library.
 
 Only step 3 costs a subprocess, and only on musl. Everything is memoized for
 the life of the process.
@@ -36,6 +41,8 @@ except ImportError:
 
 
 from kpip.core.caches import memoized
+from kpip.core.interpreter import is_compiled, own_command
+from kpip.host.interpreter_facts import target_interpreter
 
 if TYPE_CHECKING:
     from typing import IO
@@ -171,24 +178,40 @@ def _open_elf(path: str) -> _ELFFile | None:
         return None
 
 
-@memoized(1)
-def _interpreter_elf_facts() -> tuple[int, int, int, int] | None:
-    """``(capacity, encoding, machine, flags)`` for the running interpreter."""
+def _interpreter_executable() -> str:
+    """The ELF file that stands for the target interpreter."""
+    interpreter = target_interpreter(installing=False)
+    if interpreter.is_own and is_compiled():
+        return own_command()[0]
+    return interpreter.executable
+
+
+@memoized(4)
+def _elf_facts(executable: str) -> tuple[int, int, int, int] | None:
     try:
-        with open(sys.executable, "rb") as handle:
+        with open(executable, "rb") as handle:
             elf = _ELFFile(handle)
             return (elf.capacity, elf.encoding, elf.machine, elf.flags)
     except OSError, TypeError, ValueError:
         return None
 
 
-@memoized(1)
-def _interpreter_elf_interpreter() -> str | None:
+@memoized(4)
+def _elf_interpreter(executable: str) -> str | None:
     try:
-        with open(sys.executable, "rb") as handle:
+        with open(executable, "rb") as handle:
             return _ELFFile(handle).interpreter
     except OSError, TypeError, ValueError:
         return None
+
+
+def _interpreter_elf_facts() -> tuple[int, int, int, int] | None:
+    """``(capacity, encoding, machine, flags)`` for the target interpreter."""
+    return _elf_facts(_interpreter_executable())
+
+
+def _interpreter_elf_interpreter() -> str | None:
+    return _elf_interpreter(_interpreter_executable())
 
 
 def manylinux_arch_supported(arch: str) -> bool:
@@ -196,7 +219,7 @@ def manylinux_arch_supported(arch: str) -> bool:
 
     For most architectures the tag carries no ABI claim beyond the
     architecture itself. ``i686`` and ``armv7l`` do, and the claim is checked
-    against the interpreter's own ELF header.
+    against the target interpreter's ELF header.
     """
     if arch in MANYLINUX_ARCHES:
         return True

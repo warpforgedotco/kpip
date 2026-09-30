@@ -10,6 +10,9 @@ versions rather than enumerating every tag the host satisfies.
 
 from __future__ import annotations
 
+import struct
+from pathlib import Path
+
 import pytest
 from kpip.core import libc, wheel
 from kpip.core.utils import CURRENT_PYTHON_VERSION_DIGITS
@@ -189,3 +192,40 @@ def test_detect_is_none_off_linux() -> None:
 
     if not sys.platform.startswith("linux"):
         assert libc.detect() is None
+
+
+def _i386_elf(path: Path) -> str:
+    """The ELF header of a 32-bit little-endian i386 executable, alone."""
+    ident = b"\x7fELF" + bytes((1, 1, 1)) + bytes(9)
+    header = struct.pack("<HHIIIIIHHH", 2, 3, 1, 0, 52, 0, 0, 52, 32, 0)
+    path.write_bytes(ident + header + bytes(8))
+    return str(path)
+
+
+class _Target:
+    def __init__(self, executable: str, *, is_own: bool) -> None:
+        self.executable = executable
+        self.is_own = is_own
+
+
+def test_the_elf_header_is_the_target_interpreters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Not sys.executable's: compiled, no file is there."""
+    target = _Target(_i386_elf(tmp_path / "python"), is_own=False)
+    monkeypatch.setattr(libc, "target_interpreter", lambda **_: target)
+
+    assert libc.manylinux_arch_supported("i686")
+    assert not libc.manylinux_arch_supported("armv7l")
+
+
+def test_a_compiled_kpip_without_a_target_reads_its_own_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    binary = _i386_elf(tmp_path / "kpip")
+    missing = _Target(str(tmp_path / "python"), is_own=True)
+    monkeypatch.setattr(libc, "target_interpreter", lambda **_: missing)
+    monkeypatch.setattr(libc, "is_compiled", lambda: True)
+    monkeypatch.setattr(libc, "own_command", lambda: [binary])
+
+    assert libc.manylinux_arch_supported("i686")
