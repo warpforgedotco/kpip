@@ -212,3 +212,43 @@ def test_another_pythons_egg_links_are_found_on_its_path(
     [view] = metadata.InstalledDistributionStore(paths=[str(project)]).iter()
 
     assert view.editable_project_location == str(project)
+
+
+def test_a_checkout_goes_under_the_target_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compiled, sys.prefix is kpip's own bundle: no place for a checkout."""
+    from kpip.install import metadata
+
+    fetched = tmp_path / "fetched"
+    fetched.mkdir()
+    (fetched / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    locator = types.SimpleNamespace(ensure_local=lambda url: str(fetched))
+    monkeypatch.setattr(metadata, "ArtifactLocator", lambda: locator)
+    monkeypatch.setattr(metadata, "release_checkout", lambda path: None)
+    other = types.SimpleNamespace(prefix=str(tmp_path / "env"))
+    monkeypatch.setattr(metadata, "target_interpreter", lambda: other)
+
+    source, _, _ = metadata.prepare_editable_source(
+        "git+https://example.invalid/demo.git#egg=demo", prepare_metadata=False
+    )
+
+    assert source == str(tmp_path / "env" / "src" / "demo")
+    assert (tmp_path / "env" / "src" / "demo" / "pyproject.toml").is_file()
+
+
+def test_the_site_configuration_is_the_target_environments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip.cli import config
+
+    other = types.SimpleNamespace(prefix=str(tmp_path / "env"))
+    monkeypatch.setattr(config, "target_interpreter", lambda **_: other)
+
+    [site] = [
+        location.path
+        for location in config.config_locations()
+        if location.kind == "site"
+    ]
+
+    assert site == str(tmp_path / "env" / config.CONFIG_BASENAME)
