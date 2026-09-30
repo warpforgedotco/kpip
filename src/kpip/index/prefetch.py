@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Hashable
-from threading import RLock
+from math import ceil
+from threading import Condition, RLock
 from typing import Callable, Generic, TypeVar
+
+from kpip.core import latency
 
 TYPE_CHECKING = False
 
@@ -41,13 +44,76 @@ class PrefetchPolicy:
         return (self.yield_count.get(key, 0.0) + 1.0) / max(latency, 1e-6)
 
 
+_CPU_PER_FETCH = 0.0025
+"""Interpreter time one fetch takes to handle, headers to parsed page, in
+seconds: what a request's wait has to cover for another to be worth running
+alongside it."""
+
+_FEWEST_AT_ONCE = 4
+
+
+def fetches_at_once(ceiling: int) -> int:
+    """How many fetches to run at once, from how long the index takes.
+
+    As many as keep the interpreter busy while requests are out: the time one
+    takes, over the time handling one takes. A cold jupyter lock ran 16%
+    faster with 4 at once than 32 on a link answering in 10 ms -- every extra
+    thread only took turns under the interpreter lock -- and 2.3 times slower
+    on one adding 100 ms, where it is the waiting that the threads overlap.
+    Until the link is known, all of them.
+    """
+    seen = latency.typical()
+
+    if seen is None:
+        return ceiling
+
+    return max(_FEWEST_AT_ONCE, min(ceiling, ceil(seen / _CPU_PER_FETCH)))
+
+
+class _Gate:
+    """Lets :func:`fetches_at_once` tasks of a pool run at a time.
+
+    The pool keeps all its threads; those over the limit wait here, asleep,
+    rather than contend for the interpreter lock -- woken when a running one
+    finishes, not polling, which would contend for it again. The limit is
+    read again each time, as the link becomes known.
+    """
+
+    __slots__ = ("ceiling", "condition", "running")
+
+    def __init__(self, ceiling: int) -> None:
+        self.ceiling = ceiling
+        self.condition = Condition()
+        self.running = 0
+
+    def __enter__(self) -> None:
+        with self.condition:
+            while self.running >= fetches_at_once(self.ceiling):
+                # A finishing task wakes one; the timeout only lets a limit
+                # raised by a slower link be noticed without one.
+                self.condition.wait(1.0)
+
+            self.running += 1
+
+    def __exit__(self, *exc_info: object) -> None:
+        with self.condition:
+            self.running -= 1
+            self.condition.notify()
+
+
 class Prefetcher(Generic[T, V]):
     """Submit each keyed task once and consume it deterministically."""
 
     def __init__(self, loader: Callable[[V], T], max_workers: int) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
-        self.loader = loader
+        gate = _Gate(max_workers)
+
+        def gated(value: V) -> T:
+            with gate:
+                return loader(value)
+
+        self.loader = gated
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.futures: dict[Hashable, Future[T]] = {}
         self.lock = RLock()

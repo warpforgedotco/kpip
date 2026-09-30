@@ -4,7 +4,7 @@ import threading
 import time
 
 import pytest
-from kpip.index.prefetch import Prefetcher, PrefetchPolicy
+from kpip.index.prefetch import Prefetcher, PrefetchPolicy, fetches_at_once
 
 
 def test_prefetch_policy_prefers_fast_high_yield_sources() -> None:
@@ -59,3 +59,67 @@ def test_prefetcher_propagates_loader_errors() -> None:
             prefetcher.take("failure").result()
     finally:
         prefetcher.close()
+
+
+@pytest.fixture
+def link(monkeypatch: pytest.MonkeyPatch):
+    """A link answering in ``seconds``, as the network session would note it."""
+    from kpip.core import latency
+
+    latency.reset()
+
+    def answering_in(seconds: float) -> None:
+        latency.reset()
+        for _ in range(8):
+            latency.observe(seconds)
+
+    yield answering_in
+    latency.reset()
+
+
+def test_fetches_at_once_follow_how_long_the_index_takes(link) -> None:
+    assert fetches_at_once(32) == 32  # nothing seen yet: all of them
+
+    link(0.010)
+    assert fetches_at_once(32) == 4
+
+    link(0.050)
+    assert 4 < fetches_at_once(32) < 32
+
+    link(0.200)
+    assert fetches_at_once(32) == 32
+
+
+@pytest.mark.parametrize("seconds, expected", [(0.005, 4), (0.5, 16)])
+def test_a_pool_runs_only_as_many_fetches_as_the_link_calls_for(
+    link, seconds: float, expected: int
+) -> None:
+    link(seconds)
+    lock = threading.Lock()
+    running = 0
+    peak = 0
+    started = threading.Barrier(expected, timeout=5)
+
+    def load(value: int) -> int:
+        nonlocal running, peak
+        with lock:
+            running += 1
+            peak = max(peak, running)
+        try:
+            # The first ``expected`` meet here, so the peak is reached.
+            if value < expected:
+                started.wait()
+            time.sleep(0.02)
+        finally:
+            with lock:
+                running -= 1
+        return value
+
+    prefetcher = Prefetcher(load, max_workers=16)
+    for value in range(16):
+        prefetcher.submit(value, value)
+    results = [prefetcher.take(value).result(timeout=10) for value in range(16)]
+    prefetcher.close()
+
+    assert results == list(range(16))
+    assert peak == expected
