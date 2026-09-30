@@ -1429,6 +1429,12 @@ def run_install(args: list[str]) -> int:
                         ),
                         candidates=install_order,
                         cache_dir=execution.cache_dir,
+                        # pip does not warn for --target or --prefix.
+                        warn_script_location=not (
+                            execution.options.no_warn_script_location
+                            or execution.options.target
+                            or execution.options.prefix
+                        ),
                     )
 
                 except InstallationError as exc:

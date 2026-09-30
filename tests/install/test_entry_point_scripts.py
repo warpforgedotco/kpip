@@ -11,8 +11,18 @@ from pathlib import Path
 
 import pytest
 from kpip.core.errors import InstallationError
-from kpip.install.wheel_scripts import generate_entry_point_files, windows_launcher
-from pip._internal.operations.install.wheel import PipScriptMaker
+from kpip.install.wheel_scripts import (
+    entry_point_scripts,
+    generate_entry_point_files,
+    scripts_not_on_path_message,
+    warn_about_scripts_not_on_path,
+    windows_launcher,
+)
+from pip._internal.operations.install.wheel import (
+    PipScriptMaker,
+    get_console_script_specs,
+    message_about_scripts_not_on_PATH,
+)
 
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX scripts")
 
@@ -120,3 +130,101 @@ def test_a_windows_launcher_carries_its_shebang_before_the_script(
     assert rest.startswith(head)
     with zipfile.ZipFile(io.BytesIO(rest[len(head) :])) as archive:
         assert archive.read("__main__.py") == b"print(1)\n"
+
+
+@pytest.mark.parametrize(
+    "ensurepip", [None, "install", "altinstall"], ids=["plain", "install", "altinstall"]
+)
+def test_pip_and_easy_install_get_this_pythons_versioned_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ensurepip: str | None
+) -> None:
+    if ensurepip is None:
+        monkeypatch.delenv("ENSUREPIP_OPTIONS", raising=False)
+    else:
+        monkeypatch.setenv("ENSUREPIP_OPTIONS", ensurepip)
+    console = {
+        "pip": "pip._internal.cli.main:main",
+        "pip3": "pip._internal.cli.main:main",
+        "pip3.8": "pip._internal.cli.main:main",
+        "easy_install": "setuptools.command.easy_install:main",
+        "easy_install-3.8": "setuptools.command.easy_install:main",
+        "other": "other:main",
+    }
+    entry_points = tmp_path / "entry_points.txt"
+    entry_points.write_text(
+        "[console_scripts]\n"
+        + "".join(f"{name} = {target}\n" for name, target in console.items())
+        + "[gui_scripts]\nwindowed = other:gui\n"
+    )
+
+    scripts = entry_point_scripts(str(entry_points))
+
+    expected = dict(spec.split(" = ", 1) for spec in get_console_script_specs(console))
+    assert {name: target for name, (target, gui) in scripts.items() if not gui} == (
+        expected
+    )
+    assert scripts["windowed"] == ("other:gui", True)
+
+
+@pytest.mark.parametrize(
+    "scripts, path",
+    [
+        (["/opt/tools/bin/one"], "/usr/bin"),
+        (
+            ["/opt/tools/bin/one", "/opt/tools/bin/two", "/srv/bin/three"],
+            "~/bin:/usr/bin",
+        ),
+        (["/usr/bin/one"], "/usr/bin"),
+        ([], "/usr/bin"),
+    ],
+    ids=["one", "several", "on-path", "none"],
+)
+def test_the_not_on_path_warning_is_pips(
+    monkeypatch: pytest.MonkeyPatch, scripts: list[str], path: str
+) -> None:
+    monkeypatch.setenv("PATH", path)
+    monkeypatch.setattr(sys, "executable", "/env/bin/python")
+
+    assert scripts_not_on_path_message(
+        scripts, "/env/bin/python"
+    ) == message_about_scripts_not_on_PATH(scripts)
+
+
+def entry_point_wheel(path: Path) -> str:
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "tool-1.0.dist-info/entry_points.txt",
+            "[console_scripts]\ntool = tool:main\n[gui_scripts]\nwindowed = tool:gui\n",
+        )
+    return str(path)
+
+
+def test_a_wheel_whose_scripts_land_off_path_is_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin")
+    wheel = entry_point_wheel(tmp_path / "tool-1.0-py3-none-any.whl")
+    scripts = tmp_path / "bin"
+
+    with caplog.at_level("WARNING"):
+        warn_about_scripts_not_on_path([wheel], str(scripts), "/env/bin/python")
+
+    suffix = ".exe" if os.name == "nt" else ""
+    assert caplog.messages == [
+        f"The script tool{suffix} is installed in '{scripts.resolve()}' which is not "
+        "on PATH.\nConsider adding this directory to PATH or, if you prefer to "
+        "suppress this warning, use --no-warn-script-location."
+    ]
+
+
+def test_scripts_beside_the_interpreter_draw_no_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin")
+    wheel = entry_point_wheel(tmp_path / "tool-1.0-py3-none-any.whl")
+    scripts = tmp_path / "bin"
+
+    with caplog.at_level("WARNING"):
+        warn_about_scripts_not_on_path([wheel], str(scripts), str(scripts / "python"))
+
+    assert caplog.messages == []
