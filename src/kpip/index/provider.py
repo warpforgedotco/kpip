@@ -2600,8 +2600,11 @@ class CandidateProvider:
                     )
             return catalog
 
+        # Left in place: taken, a second caller arriving before the result is
+        # stored found neither a catalog nor a fetch in flight, and loaded the
+        # page again.
         future = (
-            self.prefetcher.take(cache_key) if self.prefetcher is not None else None
+            self.prefetcher.peek(cache_key) if self.prefetcher is not None else None
         )
 
         if future is not None:
@@ -2623,6 +2626,10 @@ class CandidateProvider:
                             ] = link.requires_python
                             break
             return prefetched_catalog
+
+        # Loaded here and now: a lookahead arriving meanwhile must not start
+        # the same page on a worker, to be fetched and stored a second time.
+        self.prefetch_settled.add(cache_key)
 
         return self.load_catalog(requirement, cache_key)
 
