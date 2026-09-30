@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-lazy import json
-lazy import logging
-lazy import os
+import json
+import logging
+import os
 
-lazy from kpip.core.appdirs import WHEEL_CACHE_BUCKET
-lazy from kpip.core.digests import sha256_hexdigest
+from kpip.core.appdirs import WHEEL_CACHE_BUCKET
+from kpip.core.digests import sha256_hexdigest
 
 logger = logging.getLogger(__name__)
 

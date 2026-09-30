@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-lazy import configparser
-lazy import logging
-lazy import os
+import configparser
+import logging
+import os
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.urls import path_to_url
-lazy from kpip.core.utils import display_path
+from kpip.core.errors import InstallationError
+from kpip.core.urls import path_to_url
+from kpip.core.utils import display_path
 
-lazy from .errors import BadCommand
-lazy from .subprocesses import make_command
-lazy from .support import HiddenText
-lazy from .versioncontrol import (
+from .errors import BadCommand
+from .subprocesses import make_command
+from .support import HiddenText
+from .versioncontrol import (
     RevOptions,
     VersionControl,
     find_path_to_project_root_from_repo_root,

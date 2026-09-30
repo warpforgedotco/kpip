@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-lazy import csv
-lazy import importlib.util
-lazy import ntpath
-lazy import os
-lazy import sys
-lazy import sysconfig
+import csv
+import importlib.util
+import ntpath
+import os
+import sys
+import sysconfig
 
-lazy from kpip.build.metadata import InstalledDistributionStore
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.install.transaction import InstallTransaction
+from kpip.build.metadata import InstalledDistributionStore
+from kpip.core.errors import InstallationError
+from kpip.install.transaction import InstallTransaction
 
 
 class DistributionUninstaller:

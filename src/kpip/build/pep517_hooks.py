@@ -8,13 +8,13 @@ execution in the interpreter selected by the build environment.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import json
-lazy import os
-lazy import subprocess
-lazy import tempfile
-lazy from contextlib import contextmanager
+import json
+import os
+import subprocess
+import tempfile
+from contextlib import contextmanager
 
-lazy from kpip.core.interpreter import build_interpreter
+from kpip.core.interpreter import build_interpreter
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

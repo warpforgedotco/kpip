@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import base64
-lazy import functools
-lazy import hashlib
-lazy import importlib.util
-lazy import os
-lazy import stat
+import base64
+import functools
+import hashlib
+import importlib.util
+import os
+import stat
 
-lazy from kpip.core.errors import InstallationError
+from kpip.core.errors import InstallationError
 
 if TYPE_CHECKING:
     import zipfile

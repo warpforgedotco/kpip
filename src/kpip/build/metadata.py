@@ -3,26 +3,26 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import configparser
-lazy import email.message
-lazy import email.parser
-lazy import os
-lazy import sys
-lazy from collections.abc import Collection
-lazy from types import SimpleNamespace
+import configparser
+import email.message
+import email.parser
+import os
+import sys
+from collections.abc import Collection
+from types import SimpleNamespace
 
-lazy from kpip.core.direct_url import DirectUrl
-lazy from kpip.core.egg_link import egg_link_path_from_sys_path
-lazy from kpip.core.metadata import find_installed, iter_installed_distributions
-lazy from kpip.core.packaging import (
+from kpip.core.direct_url import DirectUrl
+from kpip.core.egg_link import egg_link_path_from_sys_path
+from kpip.core.metadata import find_installed, iter_installed_distributions
+from kpip.core.packaging import (
     SpecifierSet,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-lazy from kpip.core.urls import url_to_path
-lazy from kpip.core.versions import Version
-lazy from kpip.core.wheel import read_wheel_archive_member, validate_wheel
+from kpip.core.urls import url_to_path
+from kpip.core.versions import Version
+from kpip.core.wheel import read_wheel_archive_member, validate_wheel
 
 if TYPE_CHECKING:
     import zipfile

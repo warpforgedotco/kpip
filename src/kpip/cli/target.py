@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-lazy import os
+import os
 
-lazy from kpip.host.locations.sysconfig_scheme import get_scheme
+from kpip.host.locations.sysconfig_scheme import get_scheme
 
 
 def target_prefix() -> str | None:

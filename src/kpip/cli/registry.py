@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-lazy from collections.abc import Callable
-lazy from importlib import import_module
+from collections.abc import Callable
+from importlib import import_module
 from typing import TYPE_CHECKING
 
-lazy from kpip.cli.parser import ArgumentParser
+from kpip.cli.parser import ArgumentParser
 
 if TYPE_CHECKING:
     from types import ModuleType

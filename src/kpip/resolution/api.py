@@ -3,29 +3,29 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import json
-lazy import os
-lazy import re
-lazy import sys
-lazy from collections.abc import Callable, Iterable, Mapping
+import json
+import os
+import re
+import sys
+from collections.abc import Callable, Iterable, Mapping
 
-lazy from kpip._vendor.nab_resolver.errors import ResolutionError
-lazy from kpip._vendor.nab_resolver.report import format_error
-lazy from kpip._vendor.nab_resolver.resolver import Resolver
-lazy from kpip.core import errors
-lazy from kpip.core.metadata import installed_index
-lazy from kpip.core.versions import ZERO_VERSION
-lazy from kpip.index.provider import CandidateProvider
-lazy from kpip.resolution.inputs import (
+from kpip._vendor.nab_resolver.errors import ResolutionError
+from kpip._vendor.nab_resolver.report import format_error
+from kpip._vendor.nab_resolver.resolver import Resolver
+from kpip.core import errors
+from kpip.core.metadata import installed_index
+from kpip.core.versions import ZERO_VERSION
+from kpip.index.provider import CandidateProvider
+from kpip.resolution.inputs import (
     coerce_requirements,
 )
-lazy from kpip.resolution.models import (
+from kpip.resolution.models import (
     ResolutionConfig,
     ResolutionResult,
     ResolvedRequirement,
 )
-lazy from kpip.resolution.nab_provider import NabProvider
-lazy from kpip.resolution.nab_types import InstalledCandidate
+from kpip.resolution.nab_provider import NabProvider
+from kpip.resolution.nab_types import InstalledCandidate
 
 if TYPE_CHECKING:
     from typing import Any

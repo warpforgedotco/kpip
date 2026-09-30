@@ -22,11 +22,11 @@ the life of the process.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import os
-lazy import re
-lazy import struct
-lazy import subprocess
-lazy import sys
+import os
+import re
+import struct
+import subprocess
+import sys
 
 try:
     import ctypes
@@ -35,7 +35,7 @@ except ImportError:
     ctypes = None  # ty: ignore[invalid-assignment]
 
 
-lazy from kpip.core.caches import memoized
+from kpip.core.caches import memoized
 
 if TYPE_CHECKING:
     from typing import IO

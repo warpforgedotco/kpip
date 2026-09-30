@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-lazy from .errors import CommandError
-lazy from .packaging import canonicalize_name
+from .errors import CommandError
+from .packaging import canonicalize_name
 
 RELEASE_CONTROL_KINDS = frozenset(("all_releases", "only_final"))
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-lazy import kpip
-lazy from kpip.core.utils import current_version
+import kpip
+from kpip.core.utils import current_version
 
 KPIP_DISTRIBUTION_NAME = "kpip"
 

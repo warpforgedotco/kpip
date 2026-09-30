@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-lazy import collections
-lazy import logging
-lazy import os
-lazy import re
-lazy import site
-lazy from collections.abc import Generator, Iterable
+import collections
+import logging
+import os
+import re
+import site
+from collections.abc import Generator, Iterable
 from typing import TYPE_CHECKING, NamedTuple
 
-lazy from kpip.build.metadata import InstalledDistributionStore
-lazy from kpip.cli.parsers.freeze import create_parser
-lazy from kpip.core.errors import CommandError, InstallationError
-lazy from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-lazy from kpip.core.metadata import stdlib_pkgs
-lazy from kpip.core.packaging import canonicalize_name
-lazy from kpip.core.versions import InvalidVersion
-lazy from kpip.resolution.files.parser import COMMENT_RE
-lazy from kpip.resolution.input_requirements import (
+from kpip.build.metadata import InstalledDistributionStore
+from kpip.cli.parsers.freeze import create_parser
+from kpip.core.errors import CommandError, InstallationError
+from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
+from kpip.core.metadata import stdlib_pkgs
+from kpip.core.packaging import canonicalize_name
+from kpip.core.versions import InvalidVersion
+from kpip.resolution.files.parser import COMMENT_RE
+from kpip.resolution.input_requirements import (
     install_req_from_editable,
     install_req_from_line,
 )
-lazy from kpip.vcs.errors import BadCommand
-lazy from kpip.vcs.versioncontrol import RemoteNotFoundError, RemoteNotValidError, vcs
+from kpip.vcs.errors import BadCommand
+from kpip.vcs.versioncontrol import RemoteNotFoundError, RemoteNotValidError, vcs
 
 logger = logging.getLogger(__name__)
 

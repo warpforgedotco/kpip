@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-lazy from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 MetadataHeaders = dict[str, list[str]]
 

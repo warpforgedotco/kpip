@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import email.utils
-lazy import marshal
-lazy import os
-lazy import time
+import email.utils
+import marshal
+import os
+import time
 
-lazy from kpip.core.digests import sha224_hexdigest
-lazy from kpip.core.expiry import expiry_is_fresh
+from kpip.core.digests import sha224_hexdigest
+from kpip.core.expiry import expiry_is_fresh
 
 if TYPE_CHECKING:
     from typing import Any

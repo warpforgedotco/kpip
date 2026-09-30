@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import os
-lazy import shutil
-lazy import tempfile
+import os
+import shutil
+import tempfile
 
-lazy from kpip.build.build import unpack_source
-lazy from kpip.build.build_backend import prepare_project_metadata
-lazy from kpip.cli.dependency_groups import group_items, parse_dependency_groups
-lazy from kpip.cli.lock_format import (
+from kpip.build.build import unpack_source
+from kpip.build.build_backend import prepare_project_metadata
+from kpip.cli.dependency_groups import group_items, parse_dependency_groups
+from kpip.cli.lock_format import (
     LOCK_HEADER,
     lock_left_behind,
     lock_preferences,
@@ -19,7 +19,7 @@ lazy from kpip.cli.lock_format import (
     toml_string,
     write_lock_output,
 )
-lazy from kpip.cli.lock_replay import (
+from kpip.cli.lock_replay import (
     FRESH,
     builds_unchanged,
     load_record,
@@ -29,24 +29,24 @@ lazy from kpip.cli.lock_replay import (
     save_record,
     stale_pages,
 )
-lazy from kpip.cli.package_finder import (
+from kpip.cli.package_finder import (
     apply_refresh,
     check_release_control,
     release_control,
     release_control_from,
 )
-lazy from kpip.cli.package_finder import format_control as selected_formats
-lazy from kpip.cli.parsers.lock import create_parser
-lazy from kpip.cli.requirement_command import check_only_deps, requested_source_urls
-lazy from kpip.cli.requirements import (
+from kpip.cli.package_finder import format_control as selected_formats
+from kpip.cli.parsers.lock import create_parser
+from kpip.cli.requirement_command import check_only_deps, requested_source_urls
+from kpip.cli.requirements import (
     build_options_from_requirements,
     config_settings,
     requirements_from_script,
 )
-lazy from kpip.core.appdirs import command_cache_dir
-lazy from kpip.core.errors import CommandError, KpipError
-lazy from kpip.core.hashes import file_hashes
-lazy from kpip.core.packaging import (
+from kpip.core.appdirs import command_cache_dir
+from kpip.core.errors import CommandError, KpipError
+from kpip.core.hashes import file_hashes
+from kpip.core.packaging import (
     canonicalize_name,
     marker_applies,
     normalize_python_version,
@@ -54,20 +54,20 @@ lazy from kpip.core.packaging import (
     set_target_python_version,
     target_python_version,
 )
-lazy from kpip.core.urls import path_to_url, url_to_path
-lazy from kpip.core.versions import InvalidVersion, Version
-lazy from kpip.core.wheel import TargetContext
-lazy from kpip.index.artifacts import ArtifactLocator
-lazy from kpip.index.catalog_cache import serve_summaries_from_snapshot
-lazy from kpip.index.config import DEFAULT_INDEX_URL
-lazy from kpip.index.provider import CandidateProvider
-lazy from kpip.index.source_locations import SimpleIndexSource, refresh_pages
-lazy from kpip.index.vcs import git_revision, materialize_vcs, release_checkout
-lazy from kpip.index.vcs_urls import vcs_reference
-lazy from kpip.network.deferred import DeferredNetworkSession
-lazy from kpip.resolution.api import ResolutionEngine
-lazy from kpip.resolution.files import parse_requirements
-lazy from kpip.resolution.input_requirements import install_req_from_line
+from kpip.core.urls import path_to_url, url_to_path
+from kpip.core.versions import InvalidVersion, Version
+from kpip.core.wheel import TargetContext
+from kpip.index.artifacts import ArtifactLocator
+from kpip.index.catalog_cache import serve_summaries_from_snapshot
+from kpip.index.config import DEFAULT_INDEX_URL
+from kpip.index.provider import CandidateProvider
+from kpip.index.source_locations import SimpleIndexSource, refresh_pages
+from kpip.index.vcs import git_revision, materialize_vcs, release_checkout
+from kpip.index.vcs_urls import vcs_reference
+from kpip.network.deferred import DeferredNetworkSession
+from kpip.resolution.api import ResolutionEngine
+from kpip.resolution.files import parse_requirements
+from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
     from argparse import Namespace

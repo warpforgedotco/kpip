@@ -4,8 +4,8 @@ from __future__ import annotations
 
 
 from typing import TYPE_CHECKING
-lazy from kpip._vendor.nab_resolver.resolver import ResolverObserver
-lazy from kpip.core.versions import Version
+from kpip._vendor.nab_resolver.resolver import ResolverObserver
+from kpip.core.versions import Version
 
 if TYPE_CHECKING:
     from typing import Any

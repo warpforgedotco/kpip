@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-lazy import datetime
+import datetime
 
 
 def parse_iso_datetime(isodate: str) -> datetime.datetime:

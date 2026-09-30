@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-lazy from kpip.cli import entrypoint
+from kpip.cli import entrypoint
 
 __version__ = "0.0.1"
 

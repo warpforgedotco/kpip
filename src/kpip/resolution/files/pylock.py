@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-lazy import os
-lazy import posixpath
-lazy import re
-lazy import tomllib
-lazy import urllib.parse
+import os
+import posixpath
+import re
+import tomllib
+import urllib.parse
 from typing import TYPE_CHECKING, Any
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.format_control import FormatControl
-lazy from kpip.core.packaging import SpecifierSet, marker_applies
-lazy from kpip.core.urls import path_to_url
-lazy from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
-lazy from kpip.core.versions import Version
-lazy from kpip.core.wheel import parse_wheel_file, parse_wheel_filename, wheel_tag_rank
-lazy from kpip.resolution.files.models import ParsedRequirement
+from kpip.core.errors import InstallationError
+from kpip.core.format_control import FormatControl
+from kpip.core.packaging import SpecifierSet, marker_applies
+from kpip.core.urls import path_to_url
+from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
+from kpip.core.versions import Version
+from kpip.core.wheel import parse_wheel_file, parse_wheel_filename, wheel_tag_rank
+from kpip.resolution.files.models import ParsedRequirement
 
 if TYPE_CHECKING:
     from kpip.resolution.files.contracts import RequirementSource

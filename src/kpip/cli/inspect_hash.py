@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-lazy import hashlib
-lazy import logging
+import hashlib
+import logging
 
-lazy from kpip.cli.parsers.inspection import create_hash_parser
+from kpip.cli.parsers.inspection import create_hash_parser
 
 logger = logging.getLogger(__name__)
 

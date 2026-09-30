@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-lazy import functools
-lazy import os
-lazy import sysconfig
+import functools
+import os
+import sysconfig
 
-lazy from kpip.core.appdirs import user_cache_dir
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.utils import CURRENT_PYTHON_VERSION
+from kpip.core.appdirs import user_cache_dir
+from kpip.core.errors import InstallationError
+from kpip.core.utils import CURRENT_PYTHON_VERSION
 
 USER_CACHE_DIR = user_cache_dir("kpip")
 

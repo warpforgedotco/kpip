@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-lazy import json
-lazy import urllib.parse
+import json
+import urllib.parse
 
 DIRECT_URL_METADATA_NAME = "direct_url.json"
 

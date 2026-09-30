@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-lazy from kpip.core.names import canonicalize_name
+from kpip.core.names import canonicalize_name
 
 if TYPE_CHECKING:
     from kpip.resolution.models import RequirementInput

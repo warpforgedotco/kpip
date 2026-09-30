@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-lazy import logging
-lazy import sys
+import logging
+import sys
 
-lazy from kpip.build import query
-lazy from kpip.build.metadata import InstalledDistributionStore
-lazy from kpip.cli.parsers.inspection import create_check_parser
-lazy from kpip.core import kpip_version, packaging, target_python
+from kpip.build import query
+from kpip.build.metadata import InstalledDistributionStore
+from kpip.cli.parsers.inspection import create_check_parser
+from kpip.core import kpip_version, packaging, target_python
 
 logger = logging.getLogger(__name__)
 

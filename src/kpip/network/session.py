@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
-lazy import os
-lazy import ssl
-lazy import sys
-lazy import threading
-lazy import time
-lazy import urllib.parse
-lazy import urllib.request
+import logging
+import os
+import ssl
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
 
-lazy from kpip._vendor import certifi, urllib3
-lazy from kpip._vendor.urllib3._collections import HTTPHeaderDict
-lazy from kpip._vendor.urllib3.exceptions import (
+from kpip._vendor import certifi, urllib3
+from kpip._vendor.urllib3._collections import HTTPHeaderDict
+from kpip._vendor.urllib3.exceptions import (
     MaxRetryError,
     NewConnectionError,
     ProtocolError,
@@ -23,23 +23,23 @@ lazy from kpip._vendor.urllib3.exceptions import (
     SSLError,
     TimeoutError,
 )
-lazy from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
-lazy from kpip._vendor.urllib3.util.ssl_ import create_urllib3_context
-lazy from kpip.core import latency
-lazy from kpip.core.errors import CommandError
-lazy from kpip.core.kpip_version import get_kpip_version
-lazy from kpip.core.urls import redact_auth_from_url, url_to_path
-lazy from kpip.core.utils import current_version
-lazy from kpip.network.auth import MultiDomainBasicAuth
-lazy from kpip.network.cache import SafeFileCache
-lazy from kpip.network.exceptions import (
+from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
+from kpip._vendor.urllib3.util.ssl_ import create_urllib3_context
+from kpip.core import latency
+from kpip.core.errors import CommandError
+from kpip.core.kpip_version import get_kpip_version
+from kpip.core.urls import redact_auth_from_url, url_to_path
+from kpip.core.utils import current_version
+from kpip.network.auth import MultiDomainBasicAuth
+from kpip.network.cache import SafeFileCache
+from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
     ProxyConnectionError,
     SSLVerificationError,
     TooManyRedirectsError,
 )
-lazy from kpip.network.freshness import (
+from kpip.network.freshness import (
     cached_response_is_fresh,
     decode_metadata,
     encode_metadata,
@@ -47,7 +47,7 @@ lazy from kpip.network.freshness import (
     has_cached_validator,
     metadata_is_fresh,
 )
-lazy from kpip.network.lazy_wheel import (
+from kpip.network.lazy_wheel import (
     HTTPRangeRequestUnsupported,
     metadata_text_from_wheel_url,
 )

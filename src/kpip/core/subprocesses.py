@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import locale
-lazy import logging
-lazy import os
-lazy import shlex
-lazy import subprocess
-lazy from os import PathLike
+import locale
+import logging
+import os
+import shlex
+import subprocess
+from os import PathLike
 
-lazy from .errors import DiagnosticKpipError
+from .errors import DiagnosticKpipError
 
 if TYPE_CHECKING:
     from typing import Any

@@ -3,32 +3,32 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import codecs
-lazy import locale
-lazy import logging
-lazy import os
-lazy import re
-lazy import shlex
-lazy import urllib.parse
+import codecs
+import locale
+import logging
+import os
+import re
+import shlex
+import urllib.parse
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.http_contracts import raise_for_status, response_text
-lazy from kpip.core.packaging import parse_requirement
-lazy from kpip.index.prefetch import Prefetcher
-lazy from kpip.network.session import trusted_host_key
-lazy from kpip.resolution.files.models import (
+from kpip.core.errors import InstallationError
+from kpip.core.http_contracts import raise_for_status, response_text
+from kpip.core.packaging import parse_requirement
+from kpip.index.prefetch import Prefetcher
+from kpip.network.session import trusted_host_key
+from kpip.resolution.files.models import (
     ParsedRequirement,
     RequirementsFileParseError,
 )
-lazy from kpip.resolution.files.options import (
+from kpip.resolution.files.options import (
     add_hash_option,
     expand_env_variables,
     merge_config_setting,
     normalize_reference,
     strip_matching_quotes,
 )
-lazy from kpip.resolution.files.pylock import is_pylock_reference, parse_pylock
-lazy from kpip.resolution.input_requirements import (
+from kpip.resolution.files.pylock import is_pylock_reference, parse_pylock
+from kpip.resolution.input_requirements import (
     install_req_from_editable,
     install_req_from_line,
 )

@@ -1,32 +1,32 @@
 from __future__ import annotations
 
-lazy import logging
-lazy import os
-lazy import platform
-lazy import re
-lazy import sys
-lazy import sysconfig
-lazy import zipfile
-lazy from collections.abc import Callable, Collection, Mapping
-lazy from email import parser
-lazy from functools import lru_cache
+import logging
+import os
+import platform
+import re
+import sys
+import sysconfig
+import zipfile
+from collections.abc import Callable, Collection, Mapping
+from email import parser
+from functools import lru_cache
 from typing import TYPE_CHECKING, Protocol
 
-lazy from kpip.core.archive import WheelArchive, WheelhouseUnavailable
-lazy from kpip.core.libc import GLIBC, MUSL, detect, manylinux_arch_supported
+from kpip.core.archive import WheelArchive, WheelhouseUnavailable
+from kpip.core.libc import GLIBC, MUSL, detect, manylinux_arch_supported
 
-lazy from .caches import bounded_put, memoized, register_table
-lazy from .errors import InstallationError, InvalidWheelFilename, UnsupportedWheel
-lazy from .light_metadata import LightMetadata, parse_metadata_text
-lazy from .packaging import (
+from .caches import bounded_put, memoized, register_table
+from .errors import InstallationError, InvalidWheelFilename, UnsupportedWheel
+from .light_metadata import LightMetadata, parse_metadata_text
+from .packaging import (
     Requirement,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-lazy from .utils import CURRENT_PYTHON_VERSION_DIGITS
-lazy from .versions import InvalidVersion, Version
-lazy from .wheel_metadata import (
+from .utils import CURRENT_PYTHON_VERSION_DIGITS
+from .versions import InvalidVersion, Version
+from .wheel_metadata import (
     metadata_paths,
     parse_metadata_member,
 )

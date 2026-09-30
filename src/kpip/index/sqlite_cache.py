@@ -17,10 +17,10 @@ that should hit disk just counts as a miss instead).
 
 from __future__ import annotations
 
-lazy import atexit
-lazy import os
-lazy import sqlite3
-lazy import threading
+import atexit
+import os
+import sqlite3
+import threading
 
 
 class SqliteBackedCache:

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-lazy import logging
-lazy import os.path
-lazy import stat
-lazy import tempfile
-lazy import traceback
-lazy from contextlib import ExitStack, contextmanager
+import logging
+import os.path
+import stat
+import tempfile
+import traceback
+from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, TypeVar
 
-lazy from kpip.core import run_options
-lazy from kpip.core.utils import enum
+from kpip.core import run_options
+from kpip.core.utils import enum
 
 logger = logging.getLogger(__name__)
 

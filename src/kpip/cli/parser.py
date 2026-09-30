@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import argparse
-lazy import re
-lazy import sys
+import argparse
+import re
+import sys
 
-lazy from kpip.cli.general_options import add_general_options, apply_general_options
+from kpip.cli.general_options import add_general_options, apply_general_options
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

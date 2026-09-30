@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import errno
-lazy import marshal
-lazy import os
-lazy import sys
+import errno
+import marshal
+import os
+import sys
 
 if TYPE_CHECKING:
     from typing import Any

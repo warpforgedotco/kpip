@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import os
+import os
 
-lazy from kpip.build.build_backend import prepare_project_metadata
-lazy from kpip.core.errors import BuildError
-lazy from kpip.core.versions import ZERO_VERSION, Version
-lazy from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
-lazy from kpip.index.directory_index import project_version_from_filename
-lazy from kpip.index.source_models import (
+from kpip.build.build_backend import prepare_project_metadata
+from kpip.core.errors import BuildError
+from kpip.core.versions import ZERO_VERSION, Version
+from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
+from kpip.index.directory_index import project_version_from_filename
+from kpip.index.source_models import (
     ArtifactKind,
     CandidateRecord,
     RejectedCandidate,
     RejectionReason,
 )
-lazy from kpip.index.vcs import materialize_vcs, release_checkout
+from kpip.index.vcs import materialize_vcs, release_checkout
 
 if TYPE_CHECKING:
     from collections.abc import Callable

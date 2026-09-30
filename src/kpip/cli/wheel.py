@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-lazy import logging
-lazy import os
-lazy import shutil
+import logging
+import os
+import shutil
 
-lazy from kpip.build.build import build_wheel_from_source
-lazy from kpip.cli.parsers.wheel import create_parser
-lazy from kpip.cli.requirement_command import prepare, resolve_requirements
-lazy from kpip.cli.requirements import apply_proxy_environment
-lazy from kpip.core.wheel import wheel_candidate_from_path
+from kpip.build.build import build_wheel_from_source
+from kpip.cli.parsers.wheel import create_parser
+from kpip.cli.requirement_command import prepare, resolve_requirements
+from kpip.cli.requirements import apply_proxy_environment
+from kpip.core.wheel import wheel_candidate_from_path
 
 logger = logging.getLogger(__name__)
 

@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
-lazy import os
-lazy import shutil
-lazy import stat
-lazy import sys
-lazy import tarfile
-lazy import zipfile
-lazy from zipfile import ZipInfo
+import logging
+import os
+import shutil
+import stat
+import sys
+import tarfile
+import zipfile
+from zipfile import ZipInfo
 
-lazy from kpip.core.archive import WheelArchive, WheelhouseUnavailable
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.utils import ensure_dir
-lazy from kpip.host.tar_reader import fast_untar
+from kpip.core.archive import WheelArchive, WheelhouseUnavailable
+from kpip.core.errors import InstallationError
+from kpip.core.utils import ensure_dir
+from kpip.host.tar_reader import fast_untar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

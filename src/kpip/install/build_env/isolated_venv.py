@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import json
-lazy import os
-lazy import subprocess
-lazy import sys
-lazy import sysconfig
+import json
+import os
+import subprocess
+import sys
+import sysconfig
 
-lazy from kpip.core.errors import DiagnosticKpipError
-lazy from kpip.core.interpreter import is_own_interpreter
+from kpip.core.errors import DiagnosticKpipError
+from kpip.core.interpreter import is_own_interpreter
 
 if TYPE_CHECKING:
     from typing import Any

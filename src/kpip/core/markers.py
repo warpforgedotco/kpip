@@ -47,14 +47,14 @@ per candidate during a resolve, and the parse is the expensive half.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import re
+import re
 
 # `packaging` and this module import each other, so each is imported whole
 # and its names are read when used.
-lazy from kpip.core import packaging
-lazy from kpip.core.caches import bounded_put, register_table
-lazy from kpip.core.names import canonicalize_name
-lazy from kpip.core.versions import InvalidVersion, Version
+from kpip.core import packaging
+from kpip.core.caches import bounded_put, register_table
+from kpip.core.names import canonicalize_name
+from kpip.core.versions import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

@@ -10,7 +10,7 @@ both commands report a failure identically.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import re
+import re
 
 if TYPE_CHECKING:
     from typing import Any

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-lazy import logging
+import logging
 
-lazy from kpip.build.metadata import InstalledMetadataDistribution
-lazy from kpip.core.names import canonicalize_name
-lazy from kpip.install.target import InstallTarget
-lazy from kpip.install.uninstall import DistributionUninstaller
-lazy from kpip.install.wheel_transaction import (
+from kpip.build.metadata import InstalledMetadataDistribution
+from kpip.core.names import canonicalize_name
+from kpip.install.target import InstallTarget
+from kpip.install.uninstall import DistributionUninstaller
+from kpip.install.wheel_transaction import (
     WheelInstaller,
 )
-lazy from kpip.resolution.req_install import InstallRequirement
+from kpip.resolution.req_install import InstallRequirement
 
 logger = logging.getLogger(__name__)
 

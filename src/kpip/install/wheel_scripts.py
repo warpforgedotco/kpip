@@ -6,20 +6,20 @@ Windows launcher and file-mode rules, byte for byte.
 
 from __future__ import annotations
 
-lazy import io
-lazy import logging
-lazy import os
-lazy import re
-lazy import struct
-lazy import sys
-lazy import sysconfig
-lazy import time
-lazy import zipfile
-lazy from importlib.resources import files
-lazy from pathlib import Path
+import io
+import logging
+import os
+import re
+import struct
+import sys
+import sysconfig
+import time
+import zipfile
+from importlib.resources import files
+from pathlib import Path
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.host.clone import replace_contents
+from kpip.core.errors import InstallationError
+from kpip.host.clone import replace_contents
 
 logger = logging.getLogger(__name__)
 

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-lazy import os
-lazy import os.path
-lazy from collections.abc import Callable, Generator
-lazy from contextlib import contextmanager
-lazy from functools import wraps
-lazy from tempfile import NamedTemporaryFile
-lazy from time import perf_counter, sleep
-lazy from typing import Any, BinaryIO, ParamSpec, TypeVar, cast
+import os
+import os.path
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from functools import wraps
+from tempfile import NamedTemporaryFile
+from time import perf_counter, sleep
+from typing import Any, BinaryIO, ParamSpec, TypeVar, cast
 
 P = ParamSpec("P")
 R = TypeVar("R")

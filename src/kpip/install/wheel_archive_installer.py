@@ -9,40 +9,40 @@ them into a real target directory.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import compileall
-lazy import csv
-lazy import errno
-lazy import importlib.util
-lazy import io
-lazy import logging
-lazy import marshal
-lazy import os
-lazy import shutil
-lazy import tempfile
-lazy import types
-lazy from collections.abc import Set as AbstractSet
-lazy from concurrent.futures import ThreadPoolExecutor
+import compileall
+import csv
+import errno
+import importlib.util
+import io
+import logging
+import marshal
+import os
+import shutil
+import tempfile
+import types
+from collections.abc import Set as AbstractSet
+from concurrent.futures import ThreadPoolExecutor
 
-lazy from kpip.build.metadata import InstalledDistributionStore
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.host.clone import clone_path
-lazy from kpip.install.wheel_archive import (
+from kpip.build.metadata import InstalledDistributionStore
+from kpip.core.errors import InstallationError
+from kpip.host.clone import clone_path
+from kpip.install.wheel_archive import (
     compiled_parts,
     mapped_parts,
     record_metadata_internal,
     validate_member_parts,
 )
-lazy from kpip.install.wheel_archive_cache import (
+from kpip.install.wheel_archive_cache import (
     INSTALL_WORKERS,
     prepare_cached_wheels,
     pyc_root,
 )
-lazy from kpip.install.wheel_scripts import (
+from kpip.install.wheel_scripts import (
     entry_point_scripts,
     generate_entry_point_files,
     rewrite_shebang,
 )
-lazy from kpip.install.wheel_state import discover_installed_wheels, existing_paths
+from kpip.install.wheel_state import discover_installed_wheels, existing_paths
 
 if TYPE_CHECKING:
     from types import CodeType

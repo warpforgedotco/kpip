@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-lazy from collections.abc import Mapping
-lazy from types import MappingProxyType
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
-lazy from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     from kpip.core.metadata import InstalledDistribution

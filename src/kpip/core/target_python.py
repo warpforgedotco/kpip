@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-lazy import sysconfig
-lazy from functools import lru_cache
+import sysconfig
+from functools import lru_cache
 
-lazy from .wheel import TargetContext, WheelTag, supported_wheel_tags
+from .wheel import TargetContext, WheelTag, supported_wheel_tags
 
 
 def expand_manylinux(platform: str) -> list[str]:

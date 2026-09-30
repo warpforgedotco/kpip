@@ -10,19 +10,19 @@ than re-hashes, an existing tree's contents against the recorded entries.
 
 from __future__ import annotations
 
-lazy import hashlib
-lazy import json
-lazy import marshal
-lazy import os
-lazy import tempfile
-lazy import time
-lazy from types import MappingProxyType
+import hashlib
+import json
+import marshal
+import os
+import tempfile
+import time
+from types import MappingProxyType
 
-lazy from kpip.core.packaging import parse_requirement
-lazy from kpip.core.utils import key_bytes, versioned_bucket
-lazy from kpip.core.versions import Version
-lazy from kpip.core.wheel import WheelCandidate
-lazy from kpip.install.wheel_archive_cache import (
+from kpip.core.packaging import parse_requirement
+from kpip.core.utils import key_bytes, versioned_bucket
+from kpip.core.versions import Version
+from kpip.core.wheel import WheelCandidate
+from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
     archive_entry_root,
     load_archive,
@@ -30,7 +30,7 @@ lazy from kpip.install.wheel_archive_cache import (
     valid_sha256,
     wheel_digest,
 )
-lazy from kpip.resolution.models import ResolutionResult
+from kpip.resolution.models import ResolutionResult
 
 RESOLUTION_CACHE_BUCKET = versioned_bucket("resolution", 1, interpreter=True)
 

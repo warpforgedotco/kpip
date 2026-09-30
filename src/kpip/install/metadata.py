@@ -3,29 +3,29 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import json
-lazy import logging
-lazy import os
-lazy import shutil
-lazy import sys
+import json
+import logging
+import os
+import shutil
+import sys
 
-lazy from kpip.build.build_backend import BackendSpec, prepare_project_metadata
-lazy from kpip.build.metadata import InstalledMetadataDistribution, MetadataDistribution
-lazy from kpip.core.direct_url import ArchiveInfo, DirectUrl, DirInfo, VcsInfo
-lazy from kpip.core.errors import BuildError, CommandError, InstallationError
-lazy from kpip.core.hashes import file_hashes
-lazy from kpip.core.packaging import (
+from kpip.build.build_backend import BackendSpec, prepare_project_metadata
+from kpip.build.metadata import InstalledMetadataDistribution, MetadataDistribution
+from kpip.core.direct_url import ArchiveInfo, DirectUrl, DirInfo, VcsInfo
+from kpip.core.errors import BuildError, CommandError, InstallationError
+from kpip.core.hashes import file_hashes
+from kpip.core.packaging import (
     SpecifierSet,
     canonicalize_name,
     canonicalize_requirement,
 )
-lazy from kpip.core.urls import path_to_url, url_to_path
-lazy from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
-lazy from kpip.index.artifacts import ArtifactLocator
-lazy from kpip.index.links import Link
-lazy from kpip.index.vcs import release_checkout
-lazy from kpip.resolution.input_requirements import install_req_from_editable
-lazy from kpip.vcs.versioncontrol import vcs
+from kpip.core.urls import path_to_url, url_to_path
+from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
+from kpip.index.artifacts import ArtifactLocator
+from kpip.index.links import Link
+from kpip.index.vcs import release_checkout
+from kpip.resolution.input_requirements import install_req_from_editable
+from kpip.vcs.versioncontrol import vcs
 
 if TYPE_CHECKING:
     from kpip.build.build_backend import ProjectMetadata

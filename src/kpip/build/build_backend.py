@@ -1,50 +1,50 @@
 from __future__ import annotations
 
-lazy import atexit
-lazy import base64
-lazy import configparser
-lazy import contextlib
-lazy import csv
-lazy import email.parser
-lazy import email.utils
-lazy import fnmatch
-lazy import hashlib
-lazy import importlib
-lazy import io
-lazy import os
-lazy import re
-lazy import shlex
-lazy import shutil
-lazy import subprocess
-lazy import tarfile
-lazy import tempfile
-lazy import threading
-lazy import zipfile
-lazy from collections.abc import Callable, Iterable, Iterator
-lazy from tomllib import loads
-lazy from typing import Any
+import atexit
+import base64
+import configparser
+import contextlib
+import csv
+import email.parser
+import email.utils
+import fnmatch
+import hashlib
+import importlib
+import io
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import threading
+import zipfile
+from collections.abc import Callable, Iterable, Iterator
+from tomllib import loads
+from typing import Any
 
-lazy from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
-lazy from kpip.core import run_options
-lazy from kpip.core.appdirs import command_cache_arguments
-lazy from kpip.core.errors import BuildError
-lazy from kpip.core.interpreter import (
+from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
+from kpip.core import run_options
+from kpip.core.appdirs import command_cache_arguments
+from kpip.core.errors import BuildError
+from kpip.core.interpreter import (
     build_interpreter,
     is_compiled,
     is_own_interpreter,
     own_command,
 )
-lazy from kpip.core.metadata import installed_index
-lazy from kpip.core.packaging import (
+from kpip.core.metadata import installed_index
+from kpip.core.packaging import (
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-lazy from kpip.core.subprocesses import call_subprocess
-lazy from kpip.core.temp_dir import build_directory
-lazy from kpip.core.versions import InvalidVersion, Version
-lazy from kpip.host.locations.sysconfig_scheme import get_scheme
-lazy from kpip.install.build_env.isolated_venv import (
+from kpip.core.subprocesses import call_subprocess
+from kpip.core.temp_dir import build_directory
+from kpip.core.versions import InvalidVersion, Version
+from kpip.host.locations.sysconfig_scheme import get_scheme
+from kpip.install.build_env.isolated_venv import (
     CreatedVenv,
     create_isolated_venv,
     interpreter_identity,

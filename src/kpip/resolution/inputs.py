@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-lazy import os
-lazy from collections.abc import Iterable
-lazy from typing import cast
-lazy from urllib.parse import unquote, urlsplit
+import os
+from collections.abc import Iterable
+from typing import cast
+from urllib.parse import unquote, urlsplit
 
-lazy from kpip.core.direct_url import ArchiveInfo, DirInfo
-lazy from kpip.core.hashes import file_hashes
-lazy from kpip.core.packaging import (
+from kpip.core.direct_url import ArchiveInfo, DirInfo
+from kpip.core.hashes import file_hashes
+from kpip.core.packaging import (
     EMPTY_FROZENSET,
     Requirement,
     SpecifierSet,
     parse_requirement,
 )
-lazy from kpip.core.urls import path_to_url, url_to_path
-lazy from kpip.index.links import Link
-lazy from kpip.install.requirement_set import RequirementSet
-lazy from kpip.resolution.req_install import (
+from kpip.core.urls import path_to_url, url_to_path
+from kpip.index.links import Link
+from kpip.install.requirement_set import RequirementSet
+from kpip.resolution.req_install import (
     DownloadInfo,
     InstallRequirement,
     VcsInfo,

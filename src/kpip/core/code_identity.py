@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-lazy import os
-lazy import sys
-lazy from hashlib import sha256
+import os
+import sys
+from hashlib import sha256
 
 _identity: tuple[object, ...] | None = None
 

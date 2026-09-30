@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-lazy import logging
+import logging
 
-lazy from kpip.build import query
-lazy from kpip.cli.parsers.inspection import create_show_parser
-lazy from kpip.core import packaging
+from kpip.build import query
+from kpip.cli.parsers.inspection import create_show_parser
+from kpip.core import packaging
 
 logger = logging.getLogger(__name__)
 

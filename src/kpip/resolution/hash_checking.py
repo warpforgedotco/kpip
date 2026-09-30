@@ -2,14 +2,14 @@ from __future__ import annotations
 
 
 from typing import TYPE_CHECKING
-lazy from kpip.core.errors import (
+from kpip.core.errors import (
     DirectoryUrlHashUnsupported,
     HashError,
     HashMissing,
     HashUnpinned,
     VcsHashUnsupported,
 )
-lazy from kpip.core.packaging import parse_requirement
+from kpip.core.packaging import parse_requirement
 
 if TYPE_CHECKING:
     from collections.abc import Container, Iterable

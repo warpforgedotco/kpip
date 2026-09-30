@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-lazy import logging
-lazy import os
-lazy import subprocess
-lazy from collections.abc import Iterable, Mapping, Sequence
+import logging
+import os
+import subprocess
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.subprocesses import CommandArg, CommandArgs, command_args_to_argv
+from kpip.core.errors import InstallationError
+from kpip.core.subprocesses import CommandArg, CommandArgs, command_args_to_argv
 
-lazy from .support import HiddenText
+from .support import HiddenText
 
 if TYPE_CHECKING:
     from typing import Any, Literal

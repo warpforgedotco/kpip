@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-lazy import logging
-lazy import os
-lazy import shutil
-lazy import sys
-lazy import urllib.parse
-lazy from collections.abc import Iterable, Iterator, Mapping
-lazy from concurrent.futures import ThreadPoolExecutor
+import logging
+import os
+import shutil
+import sys
+import urllib.parse
+from collections.abc import Iterable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 
-lazy from kpip.core.errors import InstallationError
-lazy from kpip.core.subprocesses import CommandArgs, format_command_args
-lazy from kpip.core.utils import AuthInfo, display_path
+from kpip.core.errors import InstallationError
+from kpip.core.subprocesses import CommandArgs, format_command_args
+from kpip.core.utils import AuthInfo, display_path
 
-lazy from .errors import BadCommand
-lazy from .subprocesses import call_subprocess, make_command
-lazy from .support import (
+from .errors import BadCommand
+from .subprocesses import call_subprocess, make_command
+from .support import (
     HiddenText,
     ask_path_exists,
     hide_url,
