@@ -49,3 +49,27 @@ def test_unmet_specifier_still_resolves(
     )
     assert "Requirement already satisfied" not in result.stdout
     result.did_create(script.site_packages / "simplewheel-2.0.dist-info")
+
+
+def test_an_installed_name_skipped_for_its_markers_is_not_satisfied(
+    script: KpipTestEnvironment,
+) -> None:
+    """A requirement whose markers do not match is ignored, installed or not:
+    it is logged as ignored and never reported as already satisfied."""
+    script.kpip_install_local("simplewheel==2.0")
+    requirements = script.scratch_path / "requirements.txt"
+    requirements.write_text('simplewheel; sys_platform == "xyz"\n')
+
+    result = script.kpip("install", "--no-index", "-r", requirements)
+
+    assert "Requirement already satisfied" not in result.stdout, result.stdout
+    assert (
+        "Ignoring simplewheel: markers 'sys_platform == \"xyz\"' don't match "
+        "your environment"
+    ) in result.stderr
+    assert not result.files_created
+
+    result = script.kpip("install", "--quiet", "--no-index", "-r", requirements)
+
+    assert result.stdout == "", result.stdout
+    assert result.stderr == "", result.stderr
