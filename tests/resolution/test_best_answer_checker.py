@@ -84,6 +84,20 @@ def test_checker_respects_its_limit(tmp_path: Path) -> None:
     assert report.best
 
 
+def test_checker_counts_dependencies_past_the_roots(tmp_path: Path) -> None:
+    wheelhouse = build_wheelhouse(tmp_path, SAME_DEPTH)
+    roots = ["r"]
+
+    report = check_best(
+        wheelhouse_resolver(wheelhouse, roots),
+        roots,
+        {"r": "1", "y": "2", "x": "1"},
+        dependencies=1,
+    )
+
+    assert report.checked == ["r", "y"]
+
+
 def test_checker_refuses_an_answer_that_is_not_a_solution(tmp_path: Path) -> None:
     wheelhouse = build_wheelhouse(tmp_path, TWO_ROOTS)
     roots = ["a", "b"]

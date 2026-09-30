@@ -70,6 +70,9 @@ class Report:
     inconclusive: list[tuple[str, str]] = field(default_factory=list)
     # In the answer, but not reached from the roots at these versions.
     unreached: list[str] = field(default_factory=list)
+    # Reached, but given no version by the answer (a URL or VCS requirement
+    # fixes its own): neither constrained nor asked about.
+    unpinned: list[str] = field(default_factory=list)
 
     @property
     def best(self) -> bool:
@@ -143,12 +146,14 @@ def check_best(
     pins: Mapping[str, str],
     *,
     limit: int | None = None,
+    dependencies: int | None = None,
     time_limit: float | None = None,
     query_timeout: float | None = None,
 ) -> Report:
     """Look for a valid answer that beats ``pins``.
 
-    ``limit`` bounds how many packages, in order, are asked about;
+    ``limit`` bounds how many packages, in order, are asked about, and
+    ``dependencies`` how many past the roots;
     ``time_limit`` stops asking once that many seconds have gone by, though
     never before every root has been asked about; ``query_timeout`` abandons
     a single re-resolve (the main thread of a POSIX process only).
@@ -161,17 +166,25 @@ def check_best(
 
     base_pins = pins_of(baseline)
     wrong = {
-        name: (pins.get(name), version)
+        name: (pins[name], version)
         for name, version in base_pins.items()
-        if pins.get(name) != version
+        if name in pins and pins[name] != version
     }
     if wrong:
-        raise InvalidAnswer(f"the answer is missing or contradicts {wrong}")
+        raise InvalidAnswer(f"the answer contradicts what it resolves to: {wrong}")
 
     order = solution_order(roots, baseline)
-    report = Report(order=order, unreached=sorted(set(pins) - set(order)))
+    unpinned = [package for package in order if package not in pins]
+    report = Report(
+        order=order,
+        unreached=sorted(set(pins) - set(order)),
+        unpinned=unpinned,
+    )
     root_count = len({root_name(root) for root in roots} & set(order))
     started = time.monotonic()
+    if dependencies is not None:
+        bound = root_count + dependencies
+        limit = bound if limit is None else min(limit, bound)
 
     for position, package in enumerate(order):
         if limit is not None and position >= limit:
@@ -182,8 +195,11 @@ def check_best(
             and time.monotonic() - started > time_limit
         ):
             break
+        if package not in pins:
+            continue
         version = pins[package]
-        constraints = [f"{earlier}=={pins[earlier]}" for earlier in order[:position]]
+        earlier_pinned = [name for name in order[:position] if name in pins]
+        constraints = [f"{earlier}=={pins[earlier]}" for earlier in earlier_pinned]
         constraints.append(newer_than(package, version))
         report.checked.append(package)
         try:
@@ -198,7 +214,7 @@ def check_best(
         better = witness.get(package)
         moved = [
             earlier
-            for earlier in order[:position]
+            for earlier in earlier_pinned
             if witness.get(earlier) != pins[earlier]
         ]
         if moved:
@@ -320,6 +336,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--lock", required=True, help="the pylock.toml to check")
     parser.add_argument("--cache-dir")
     parser.add_argument("--limit", type=int, help="packages to ask about, in order")
+    parser.add_argument(
+        "--dependencies", type=int, help="packages to ask about past the roots"
+    )
     parser.add_argument("--time-limit", type=float, help="seconds, past the roots")
     parser.add_argument("--query-timeout", type=float, help="seconds per re-resolve")
     parser.add_argument("--json", action="store_true")
@@ -336,6 +355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         roots,
         _lock_pins(options.lock),
         limit=options.limit,
+        dependencies=options.dependencies,
         time_limit=options.time_limit,
         query_timeout=options.query_timeout,
     )
@@ -356,6 +376,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ],
                 "inconclusive": report.inconclusive,
                 "unreached": report.unreached,
+                "unpinned": report.unpinned,
             },
             sys.stdout,
             indent=1,
