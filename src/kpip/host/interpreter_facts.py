@@ -249,7 +249,27 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     else the ``python3`` or ``python`` on ``PATH``. A compiled kpip that finds
     none can still resolve -- for the CPython it was built with -- but not
     install: ``installing`` says which the caller needs.
+
+    The answer is kept for as long as what it was found from is unchanged:
+    callers ask once per module, and finding it again stats ``PATH``.
     """
+    environ = os.environ
+    key = (
+        "target",
+        installing,
+        is_compiled(),
+        environ.get("KPIP_PYTHON"),
+        environ.get("VIRTUAL_ENV"),
+        environ.get("CONDA_PREFIX"),
+        environ.get("PATH"),
+    )
+    found = _interpreters.get(key)
+    if found is None:
+        found = _interpreters[key] = _find_target(installing=installing)
+    return found
+
+
+def _find_target(*, installing: bool) -> Interpreter:
     python = os.environ.get("KPIP_PYTHON")
     if python:
         return probe(identify(python))
@@ -271,4 +291,6 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     )
 
 
-_interpreters: dict[str | None, Interpreter] = register_table({})
+# Interpreters by the realpath of their executable, this process's under
+# None, and the target by what it was found from.
+_interpreters: dict[object, Interpreter] = register_table({})
