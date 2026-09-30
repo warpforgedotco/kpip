@@ -20,6 +20,7 @@ from kpip.index.cache import origin_hashes
 from kpip.index.candidate_evaluators import CandidateEvaluator
 from kpip.index.candidate_materialization import CandidateMaterializer
 from kpip.index.candidates import InstallationCandidate
+from kpip.index.catalog_cache import cache_key as catalog_cache_key
 from kpip.index.catalog_cache import save_links
 from kpip.index.directory_index import (
     local_source_snapshot,
@@ -320,6 +321,108 @@ def test_warm_catalog_stream_constructs_only_consumed_links(
     assert records is not None
     assert next(records).version == Version("2.0")
     assert constructed == ["https://files.invalid/demo-2.0-py3-none-any.whl"]
+    provider.close()
+
+
+def _cache_with_a_summary_and_no_catalog(tmp_path: Path, page_url: str) -> str:
+    """A cache directory whose page has its summary, its catalog gone."""
+    directory = os.fspath(tmp_path / "cache")
+    cache = SafeFileCache(directory)
+    save_links(
+        cache,
+        page_url,
+        [
+            Link.from_url(
+                f"https://files.invalid/demo-{version}-py3-none-any.whl",
+                source_url=page_url,
+            )
+            for version in ("1.0", "2.0")
+        ],
+    )
+    cache.delete(catalog_cache_key(page_url))
+    return directory
+
+
+def test_a_catalog_gone_from_the_cache_is_compiled_again_from_its_page(
+    tmp_path: Path,
+) -> None:
+    """A summary outliving its catalog lists releases with no artifact to
+    give; the resolver then settled for an answer without the project."""
+    page_url = "https://index.invalid/simple/demo/"
+    directory = _cache_with_a_summary_and_no_catalog(tmp_path, page_url)
+
+    class Session:
+        def __init__(self) -> None:
+            # Another object than the one that stored the page: nothing of
+            # the catalog is left in memory either.
+            self.cache = SafeFileCache(directory)
+            self.requested: list[str] = []
+
+        @staticmethod
+        def has_fresh_cached_response(url: str) -> bool:
+            del url
+            return True
+
+        def get(self, url: str, headers: object = None) -> HttpResponse:
+            del headers
+            self.requested.append(url)
+            return make_response(
+                status=200,
+                reason="OK",
+                url=url,
+                headers={"Content-Type": "text/html"},
+                body=(
+                    b'<a href="https://files.invalid/demo-1.0-py3-none-any.whl">a</a>'
+                    b'<a href="https://files.invalid/demo-2.0-py3-none-any.whl">b</a>'
+                ),
+            )
+
+    session = Session()
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=session,
+    )
+
+    assert [
+        candidate.version
+        for candidate in provider.applicable_candidate_records(
+            parse_requirement("demo")
+        )
+    ] == [Version("2.0"), Version("1.0")]
+    assert session.requested == [page_url]
+    provider.close()
+
+
+def test_a_catalog_that_cannot_be_compiled_again_is_reported(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    page_url = "https://index.invalid/simple/demo/"
+    directory = _cache_with_a_summary_and_no_catalog(tmp_path, page_url)
+
+    class Session:
+        def __init__(self) -> None:
+            self.cache = SafeFileCache(directory)
+
+        @staticmethod
+        def has_fresh_cached_response(url: str) -> bool:
+            del url
+            return True
+
+        def get(self, url: str, headers: object = None) -> HttpResponse:
+            del headers
+            raise OSError(f"offline: {url}")
+
+    provider = CandidateProvider.from_options(
+        index_url="https://index.invalid/simple",
+        session=Session(),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="kpip.index.provider"):
+        records = list(provider.applicable_candidate_records(parse_requirement("demo")))
+
+    assert records == []
+    assert page_url in caplog.text
     provider.close()
 
 

@@ -10,6 +10,7 @@ import urllib.parse
 from functools import lru_cache
 
 from kpip.core.packaging import Requirement, canonicalize_name
+from kpip.core.logger import get_logger
 from kpip.core.urls import WINDOWS, path_to_url, url_to_path
 from kpip.index.catalog_cache import (
     load_summary,
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from kpip.core.http_contracts import HttpSession
     from kpip.index.catalog_cache import CatalogSummary
 
+
+logger = get_logger(__name__)
 
 SUPPORTED_SCHEMES = frozenset(("http", "https", "file", "ftp"))
 
@@ -410,6 +413,36 @@ class SimpleIndexSource:
             parser.links_from_content(content, project_url)
 
         return False
+
+    def restore_catalog(self, project_url: str) -> bool:
+        """Store one project page's catalog again; whether it could be.
+
+        For a catalog that is gone -- evicted, or removed by hand -- while
+        the summary compiled from it is still read: the page is compiled
+        again, from the cached response if that is fresh, as a fetch during
+        resolution would.
+        """
+
+        if self.session is None or not project_url.startswith(("http://", "https://")):
+            return False
+
+        parser = IndexPageParser(
+            trusted_hosts=self.trusted_hosts,
+            session=self.session,
+        )
+
+        try:
+            content = parser.read(project_url)
+
+        except Exception:
+            logger.debug("Could not read %s again", project_url, exc_info=True)
+
+            return False
+
+        if parser.summary_from_content(content, project_url) is None:
+            parser.links_from_content(content, project_url)
+
+        return True
 
     def stale_summary(self, project_url: str) -> CatalogSummary | None:
         """A stale page's summary now, its revalidation in the background.
