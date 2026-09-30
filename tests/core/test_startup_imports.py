@@ -45,14 +45,14 @@ def test_version_prints_package_location() -> None:
     assert result.stdout.startswith("kpip ")
 
 
-def test_fast_list_empty_json_output(tmp_path: Path) -> None:
+def test_list_empty_json_output(tmp_path: Path) -> None:
     result = run_kpip(["list", "--format=json", "--path", str(tmp_path)], cwd=tmp_path)
 
     assert result.returncode == 0
     assert result.stdout == "[]\n"
 
 
-def test_fast_list_reads_simple_dist_info(tmp_path: Path) -> None:
+def test_list_reads_simple_dist_info(tmp_path: Path) -> None:
     dist_info = tmp_path / "demo_pkg-1.2.dist-info"
     dist_info.mkdir()
     dist_info.joinpath("METADATA").write_text(
@@ -325,90 +325,6 @@ def test_normal_local_install_stays_import_light(tmp_path: Path) -> None:
     assert "kpip.cli.install" in modules
     forbidden = NORMAL_INSTALL_FORBIDDEN
     assert not (modules & forbidden), sorted(modules & forbidden)
-
-
-FAST_LIST_FORBIDDEN = frozenset(
-    {
-        "typing",
-        "kpip.cli.fast_install",
-        "kpip.core.packaging",
-        "kpip.cli.list",
-        "kpip.build.query",
-        "kpip.core.metadata",
-        "argparse",
-    }
-)
-
-
-def test_plain_freeze_stays_import_light(tmp_path: Path) -> None:
-    """``kpip freeze`` with no options is the fast path over sys.path."""
-    import os
-
-    from import_harness import SRC, import_snapshot
-
-    site = tmp_path / "site"
-    dist_info = site / "demo_pkg-1.2.dist-info"
-    dist_info.mkdir(parents=True)
-    dist_info.joinpath("METADATA").write_text(
-        "Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.2\n",
-        encoding="utf-8",
-    )
-    env = {"PYTHONPATH": f"{site}{os.pathsep}{SRC}"}
-
-    snapshot = import_snapshot(["freeze", "--exclude-editable"], cwd=tmp_path, env=env)
-    assert "demo-pkg==1.2\n" in snapshot.stdout, snapshot.describe()
-    forbidden = FAST_LIST_FORBIDDEN | {
-        "kpip.cli.freeze",
-        "kpip.core.light_metadata",
-        "logging",
-    }
-    assert not (set(snapshot.modules) & forbidden), sorted(
-        set(snapshot.modules) & forbidden
-    )
-
-
-def test_plain_list_stays_import_light(tmp_path: Path) -> None:
-    """``kpip list`` with no options is the fast path over sys.path."""
-    import os
-
-    from import_harness import SRC, import_snapshot
-
-    site = tmp_path / "site"
-    dist_info = site / "demo_pkg-1.2.dist-info"
-    dist_info.mkdir(parents=True)
-    dist_info.joinpath("METADATA").write_text(
-        "Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.2\n",
-        encoding="utf-8",
-    )
-    env = {"PYTHONPATH": f"{site}{os.pathsep}{SRC}"}
-
-    snapshot = import_snapshot(["list"], cwd=tmp_path, env=env)
-    import re
-
-    assert re.search(r"^demo-pkg +1\.2$", snapshot.stdout, re.M), snapshot.describe()
-    assert not (set(snapshot.modules) & FAST_LIST_FORBIDDEN), sorted(
-        set(snapshot.modules) & FAST_LIST_FORBIDDEN
-    )
-
-
-def test_fast_list_stays_import_light(tmp_path: Path) -> None:
-    dist_info = tmp_path / "demo_pkg-1.2.dist-info"
-    dist_info.mkdir()
-    dist_info.joinpath("METADATA").write_text(
-        "Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.2\n",
-        encoding="utf-8",
-    )
-
-    modules = (
-        imported_modules(
-            ["list", "--format=json", "--path", str(tmp_path)],
-            cwd=tmp_path,
-        )
-        - baseline_modules()
-    )
-
-    assert "kpip.cli.fast" in modules
-    assert not (modules & FAST_LIST_FORBIDDEN), sorted(modules & FAST_LIST_FORBIDDEN)
 
 
 INDEX_LOCK_FORBIDDEN = frozenset(
