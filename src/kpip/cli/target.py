@@ -1,9 +1,4 @@
-"""Where a ``--target`` install writes.
-
-Split out of ``cli.common`` so that ``platform.locations.sysconfig`` -- which
-loads the interpreter's ``_sysconfigdata`` module -- is paid for only by the
-commands that resolve target paths.
-"""
+"""Where a ``--target`` install writes."""
 
 from __future__ import annotations
 

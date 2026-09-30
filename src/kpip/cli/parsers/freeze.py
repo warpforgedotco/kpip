@@ -1,8 +1,4 @@
-"""Argument parser for ``kpip freeze``.
-
-Kept apart from the command module so that ``kpip freeze --help`` builds a
-parser without loading the machinery that runs the command.
-"""
+"""Argument parser for ``kpip freeze``."""
 
 from __future__ import annotations
 

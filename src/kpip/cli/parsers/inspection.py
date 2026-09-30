@@ -1,9 +1,4 @@
-"""Argument parsers for ``kpip check``, ``hash``, ``show``, and ``inspect``.
-
-Kept apart from the command module so that ``--help`` on any of them builds a
-parser without loading the machinery that runs the command.  One module hosts
-all four because one command module implements all four.
-"""
+"""Argument parsers for ``kpip check``, ``hash``, ``show``, and ``inspect``."""
 
 from __future__ import annotations
 

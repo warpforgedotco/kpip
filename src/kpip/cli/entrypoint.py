@@ -1,4 +1,4 @@
-"""Canonical, dependency-light process entrypoint for kpip."""
+"""Process entrypoint for kpip."""
 
 from __future__ import annotations
 

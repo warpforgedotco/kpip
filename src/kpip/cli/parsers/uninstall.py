@@ -1,8 +1,4 @@
-"""Argument parser for ``kpip uninstall``.
-
-Kept apart from the command module so that ``kpip uninstall --help`` builds a
-parser without loading the machinery that runs the command.
-"""
+"""Argument parser for ``kpip uninstall``."""
 
 from __future__ import annotations
 

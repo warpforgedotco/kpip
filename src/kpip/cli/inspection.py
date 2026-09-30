@@ -1,12 +1,4 @@
-"""Implementation of the ``kpip inspect`` subcommand.
-
-``check``, ``hash``, and ``show`` used to live in this file too, but their
-import needs diverge sharply -- ``hash`` touches only ``hashlib``, while this
-command and ``check`` need most of the metadata stack.  Each now has its own
-module (``cli/inspect_check.py``, ``cli/inspect_hash.py``,
-``cli/inspect_show.py``) and its own ``CommandSpec`` entry in
-``cli/registry.py``, so each pays only for what it reaches.
-"""
+"""Implementation of the ``kpip inspect`` subcommand."""
 
 from __future__ import annotations
 

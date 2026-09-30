@@ -1,8 +1,4 @@
-"""Implementation of the ``kpip check`` subcommand.
-
-Split out of ``cli/inspect.py`` so its cost (the full installed-metadata and
-dependency-query stack) is not paid by the other three inspection commands.
-"""
+"""Implementation of the ``kpip check`` subcommand."""
 
 from __future__ import annotations
 
