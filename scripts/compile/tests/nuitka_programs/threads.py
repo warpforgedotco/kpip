@@ -491,11 +491,37 @@ def walrus_dependencies(values):
     )
 
 
+async def walrus_source():
+    yield 1
+    yield 2
+
+
+async def walrus_asynchronous():
+    # Asynchronous generator expressions are generator expressions too: one
+    # with the target, and one around a plain one with it.
+    direct = (first async for value in walrus_source() if (first := value + 100))
+    around = (tuple((second := v) for v in (1, 2)) async for _ in walrus_source())
+
+    return (
+        [item async for item in direct],
+        first,
+        [item async for item in around],
+        second,
+    )
+
+
 def case_walrus_genexpr_scope():
     values = ["a%d" % i for i in range(4)] + ["x%d" % i for i in range(20)]
     expected = tuple("a%d" % i for i in range(4))
     assert walrus_dependencies(values) == expected
     assert "requirement" not in globals(), "assignment expression target leaked"
+
+    coroutine = walrus_asynchronous()
+    try:
+        coroutine.send(None)
+    except StopIteration as stop:
+        assert stop.value == ([101, 102], 102, [(1, 2), (1, 2)], 2), stop.value
+    assert "first" not in globals() and "second" not in globals()
 
     def body(index):
         mine = ["t%d-%d" % (index, i) for i in range(4)] + [
