@@ -478,24 +478,45 @@ def _relocate_data(stage: str, archive: CachedWheelArchive) -> None:
 
 def _write_new_file(path: str, contents: bytes) -> tuple[str, str]:
     """Write ``contents`` as a new regular file; returns its RECORD row's
-    hash and size, computed from the bytes in hand rather than read back."""
+    hash and size, computed from the bytes in hand rather than read back.
+
+    Created exclusively, in the one ``open`` it usually takes: what is in the
+    way -- a file of the wheel's, a directory, a link -- is removed, and a
+    missing directory made, only when the first attempt finds one.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
 
     try:
-        if os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path)
+        descriptor = os.open(path, flags, 0o666)
 
-        else:
-            os.unlink(path)
+    except FileExistsError:
+        _remove_existing(path)
+        descriptor = os.open(path, flags, 0o666)
+
+    except FileNotFoundError:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        descriptor = os.open(path, flags, 0o666)
+
+    with open(descriptor, "wb") as file:
+        file.write(contents)
+
+    return record_metadata_internal(contents)
+
+
+def _remove_existing(path: str) -> None:
+    """Remove what is at ``path``, a directory whole; nothing there is fine."""
+    try:
+        os.unlink(path)
 
     except FileNotFoundError:
         pass
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    except (IsADirectoryError, PermissionError):
+        # Unlinking a directory fails with EISDIR on Linux, EPERM elsewhere.
+        if not os.path.isdir(path) or os.path.islink(path):
+            raise
 
-    with open(path, "wb") as file:
-        file.write(contents)
-
-    return record_metadata_internal(contents)
+        shutil.rmtree(path)
 
 
 def _file_metadata(path: str) -> tuple[str, str]:
@@ -734,38 +755,21 @@ def _finalize_wheel(
     scripts_root = os.path.join(stage, "Scripts" if os.name == "nt" else "bin")
 
     for name in generated_names:
-        path = os.path.join(scripts_root, name)
-
-        try:
-            if os.path.isdir(path) and not os.path.islink(path):
-                shutil.rmtree(path)
-
-            else:
-                os.unlink(path)
-
-        except FileNotFoundError:
-            pass
+        _remove_existing(os.path.join(scripts_root, name))
 
     generated_paths: list[str] = []
 
     if plan.scripts:
-        import tempfile
-
-        with tempfile.TemporaryDirectory(prefix=".kpip-scripts-", dir=stage) as temp:
-            generated = generate_entry_point_files(
+        # Written in place: the stage is private to this install, and removed
+        # whole if it fails.
+        generated_paths.extend(
+            path
+            for path, _ in generate_entry_point_files(
                 plan.scripts,
-                temp,
+                scripts_root,
                 script_executable,
             )
-
-            os.makedirs(scripts_root, exist_ok=True)
-
-            for source, _ in generated:
-                destination = os.path.join(scripts_root, os.path.basename(source))
-
-                os.rename(source, destination)
-
-                generated_paths.append(destination)
+        )
 
     compiled_rows = (
         _materialize_pyc(stage, install_root, archive, skip=plan.loses)

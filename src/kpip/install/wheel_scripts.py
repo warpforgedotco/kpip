@@ -136,7 +136,11 @@ def generate_entry_point_files(
     destination: str,
     executable: str | None = None,
 ) -> tuple[tuple[str, int], ...]:
-    """Generate console entry points and return their paths and modes."""
+    """Generate console entry points; the paths written, with their modes.
+
+    Only what it wrote: ``destination`` may be a scripts directory shared
+    with other wheels' scripts, which are not this call's to report.
+    """
 
     if not scripts:
         return ()
@@ -156,6 +160,8 @@ def generate_entry_point_files(
 
     explicit_modes: dict[str, int] = {}
 
+    written: list[str] = []
+
     for name, (target_ref, gui) in scripts.items():
         if os.path.basename(name) != name or name in {".", ".."}:
             raise InstallationError(
@@ -171,6 +177,8 @@ def generate_entry_point_files(
                     script_text(target_ref, executable),
                     gui=gui,
                 )
+
+                written.append(path)
 
             else:
                 path = os.path.join(destination, name)
@@ -191,6 +199,8 @@ def generate_entry_point_files(
 
                 explicit_modes[path] = mode
 
+                written.append(path)
+
         else:
             maker = script_maker_type(None, destination)
 
@@ -201,7 +211,9 @@ def generate_entry_point_files(
             if executable is not None:
                 maker.executable = executable
 
-            maker.make(f"{name} = {target_ref}", options={"gui": gui})
+            written.extend(
+                maker.make(f"{name} = {target_ref}", options={"gui": gui}) or ()
+            )
 
             if os.name == "nt":
                 path = os.path.join(destination, name)
@@ -222,20 +234,12 @@ def generate_entry_point_files(
 
                 explicit_modes[path] = mode
 
-    with os.scandir(destination) as entries:
-        generated = tuple(
-            (
-                os.path.join(destination, entry.name),
-                explicit_modes.get(
-                    os.path.join(destination, entry.name),
-                    entry.stat(follow_symlinks=False).st_mode,
-                ),
-            )
-            for entry in entries
-            if entry.is_file(follow_symlinks=False)
-        )
+                written.append(path)
 
-    return generated
+    return tuple(
+        (path, explicit_modes.get(path) or os.stat(path).st_mode)
+        for path in dict.fromkeys(written)
+    )
 
 
 def script_matches(
