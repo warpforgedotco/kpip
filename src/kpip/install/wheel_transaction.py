@@ -10,7 +10,6 @@ lazy import csv
 lazy import io
 lazy import logging
 lazy import os
-lazy import stat
 lazy import tempfile
 lazy import zipfile
 lazy from collections.abc import Iterable
@@ -52,10 +51,9 @@ lazy from kpip.install.wheel_archive_installer import install_wheels_from_archiv
 lazy from kpip.install.wheel_archive_runtime import CachedWheelInfo, open_wheel_archive
 lazy from kpip.install.wheel_scripts import (
     entry_point_scripts,
+    generate_entry_point_files,
     rewrite_shebang,
     script_matches,
-    script_text,
-    write_windows_script,
 )
 lazy from kpip.install.wheel_state import (
     InstalledTargetInventory,
@@ -69,10 +67,6 @@ lazy from kpip.install.wheel_transaction_direct import (
     install_wheels_directly,
 )
 
-try:
-    from distlib.scripts import ScriptMaker
-except ImportError:
-    ScriptMaker = None  # ty: ignore[invalid-assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -531,56 +525,9 @@ def install_wheel_internal(
             }
             staged = [item for item in staged if item[1] not in script_destinations]
         script_stage = os.path.join(stage_root_text, ".kpip-scripts")
-        script_maker_type = ScriptMaker
-        script_modes: dict[str, int] = {}
-        if scripts:
-            os.makedirs(script_stage, exist_ok=True)
-        for name, (target_ref, gui) in scripts.items():
-            if os.path.basename(name) != name or name in {".", ".."}:
-                raise InstallationError(
-                    f"console script {name!r} is outside the scripts directory",
-                )
-            if script_maker_type is None:
-                if os.name == "nt":
-                    source = os.path.join(script_stage, f"{name}.exe")
-                    write_windows_script(
-                        source,
-                        script_text(target_ref, script_executable),
-                        gui=gui,
-                    )
-                else:
-                    source = os.path.join(script_stage, name)
-                    with open(source, "w", encoding="utf-8") as file:
-                        file.write(script_text(target_ref, script_executable))
-                        file.flush()
-                        mode = (
-                            os.fstat(file.fileno()).st_mode
-                            | stat.S_IXUSR
-                            | stat.S_IXGRP
-                            | stat.S_IXOTH
-                        )
-                    os.chmod(source, mode)
-                    script_modes[source] = mode
-            else:
-                maker = script_maker_type(None, script_stage)
-                maker.clobber = True
-                maker.variants = {""}
-                if script_executable is not None:
-                    maker.executable = script_executable
-                maker.make(f"{name} = {target_ref}", options={"gui": gui})
-                if os.name == "nt":
-                    source = os.path.join(script_stage, name)
-                    with open(source, "w", encoding="utf-8") as file:
-                        file.write(script_text(target_ref, script_executable))
-                        file.flush()
-                        mode = (
-                            os.fstat(file.fileno()).st_mode
-                            | stat.S_IXUSR
-                            | stat.S_IXGRP
-                            | stat.S_IXOTH
-                        )
-                    os.chmod(source, mode)
-                    script_modes[source] = mode
+        script_modes = dict(
+            generate_entry_point_files(scripts, script_stage, script_executable),
+        )
 
         if scripts:
             with os.scandir(script_stage) as entries:

@@ -1,21 +1,41 @@
-"""Entry-point script generation for installed wheels."""
+"""Entry-point script generation for installed wheels.
+
+The scripts are the ones pip writes: pip's template with distlib's shebang,
+Windows launcher and file-mode rules, byte for byte.
+"""
 
 from __future__ import annotations
 
 lazy import io
 lazy import os
-lazy import stat
+lazy import re
+lazy import struct
 lazy import sys
+lazy import sysconfig
+lazy import time
 lazy import zipfile
 lazy from importlib.resources import files
 
 lazy from kpip.core.errors import InstallationError
 lazy from kpip.host.clone import replace_contents
 
-try:
-    from distlib.scripts import ScriptMaker
-except ImportError:
-    ScriptMaker = None  # ty: ignore[invalid-assignment]
+# pip's template: distlib's, without the ``re`` import.
+SCRIPT_TEMPLATE = (
+    "import sys\n"
+    "from %(module)s import %(import_name)s\n"
+    "if __name__ == '__main__':\n"
+    "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
+    "    sys.exit(%(func)s())\n"
+)
+
+# distlib's pattern for ``name = module:callable [flags]``.
+ENTRY_POINT = re.compile(
+    r"""(?P<name>([^\[]\S*))
+    \s*=\s*(?P<callable>(\w+)([:\.]\w+)*)
+    \s*(\[\s*(?P<flags>[\w-]+(=\w+)?(,\s*\w+(=\w+)?)*)\s*\])?
+    """,
+    re.VERBOSE,
+)
 
 
 def script_python() -> str:
@@ -97,41 +117,88 @@ def entry_point_scripts(path: str) -> dict[str, tuple[str, bool]]:
     return result
 
 
-def script_text(target_ref: str, executable: str | None) -> str:
-    module, _, attribute = target_ref.partition(":")
+def script_callable(name: str, target_ref: str) -> tuple[str, str]:
+    """The module and callable an entry point runs, where pip accepts it."""
+    specification = f"{name} = {target_ref}"
+    match = ENTRY_POINT.search(specification)
+    if match is None or match.group("callable").count(":") > 1:
+        raise InstallationError(f"Invalid script entry point: {specification}")
+    module, colon, callable_ = match.group("callable").partition(":")
+    if not colon:
+        raise InstallationError(
+            f"Invalid script entry point: {specification} - A callable "
+            "suffix is required. See https://packaging.python.org/"
+            "specifications/entry-points/#use-for-scripts for more "
+            "information."
+        )
+    return module, callable_
 
-    entry = attribute or "main"
 
+def script_body(module: str, callable_: str) -> bytes:
     return (
-        f"#!{executable or script_python()}\n"
-        "import re\nimport sys\n"
-        f"from {module} import {entry}\n\n"
-        "if __name__ == '__main__':\n"
-        "    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
-        f"    sys.exit({entry}())\n"
-    )
+        SCRIPT_TEMPLATE
+        % {
+            "module": module,
+            "import_name": callable_.split(".")[0],
+            "func": callable_,
+        }
+    ).encode("utf-8")
 
 
-def write_windows_script(path: str, script: str, *, gui: bool) -> None:
-    """Create a distlib-compatible Windows launcher without importing distlib."""
+def shebang(executable: str | None, *, gui: bool) -> bytes:
+    """distlib's shebang for ``executable``, or for the default interpreter.
 
-    machine = os.environ.get("PROCESSOR_ARCHITECTURE", "").lower()
+    An interpreter named for the scripts is used as given; the default one
+    is quoted when its path has a space. On POSIX, a path with a space, or
+    one too long for the kernel to read, is run through ``/bin/sh``.
+    """
+    named = executable or os.environ.get("KPIP_SCRIPT_PYTHON")
+    interpreter = named or sys.executable
+    if gui and os.name == "nt":
+        directory, name = os.path.split(interpreter)
+        interpreter = os.path.join(directory, name.replace("python", "pythonw"))
+    if not named and " " in interpreter and not interpreter.startswith('"'):
+        interpreter = f'"{interpreter}"'
+    encoded = interpreter.encode("utf-8")
 
-    suffix = "-arm" if "arm" in machine else ""
+    if os.name != "posix":
+        simple = True
+    elif getattr(sys, "cross_compiling", False):
+        simple = False
+    else:
+        # "#!" and the newline count towards the kernel's limit.
+        limit = 512 if sys.platform == "darwin" else 127
+        simple = b" " not in encoded and len(encoded) + 3 <= limit
 
-    bits = "64" if sys.maxsize > 2**32 else "32"
+    if simple:
+        return b"#!" + encoded + b"\n"
+    return b"#!/bin/sh\n'''exec' " + encoded + b' "$0" "$@"\n' + b"' '''\n"
 
-    launcher_name = f"{'w' if gui else 't'}{bits}{suffix}.exe"
 
-    launcher = (files("kpip._launchers") / launcher_name).read_bytes()
+def windows_launcher(body: bytes, head: bytes, *, gui: bool) -> bytes:
+    """A launcher ``.exe`` that runs ``body`` with the interpreter ``head`` names.
+
+    The launcher reads the shebang between itself and the zip archive it
+    runs as ``__main__.py``.
+    """
+    bits = "64" if struct.calcsize("P") == 8 else "32"
+    arm = "-arm" if sysconfig.get_platform() == "win-arm64" else ""
+    name = f"{'w' if gui else 't'}{bits}{arm}.exe"
+    launcher = (files("kpip._launchers") / name).read_bytes()
 
     archive = io.BytesIO()
-
     with zipfile.ZipFile(archive, "w") as package:
-        package.writestr("__main__.py", script.encode("utf-8"))
+        source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+        if source_date_epoch:
+            member = zipfile.ZipInfo(
+                "__main__.py",
+                date_time=time.gmtime(int(source_date_epoch))[:6],
+            )
+            package.writestr(member, body)
+        else:
+            package.writestr("__main__.py", body)
 
-    with open(path, "wb") as file:
-        file.write(launcher + archive.getvalue())
+    return launcher + head + archive.getvalue()
 
 
 def generate_entry_point_files(
@@ -139,110 +206,49 @@ def generate_entry_point_files(
     destination: str,
     executable: str | None = None,
 ) -> tuple[tuple[str, int], ...]:
-    """Generate console entry points; the paths written, with their modes.
+    """Write the entry points' scripts; the paths written, with their modes.
 
     Only what it wrote: ``destination`` may be a scripts directory shared
     with other wheels' scripts, which are not this call's to report.
     """
-
     if not scripts:
         return ()
 
     os.makedirs(destination, exist_ok=True)
 
-    script_maker_type = ScriptMaker
-
-    explicit_modes: dict[str, int] = {}
-
-    written: list[str] = []
+    written: list[tuple[str, int]] = []
 
     for name, (target_ref, gui) in scripts.items():
-        if os.path.basename(name) != name or name in {".", ".."}:
+        if os.path.basename(name) != name or name in {"", ".", ".."}:
             raise InstallationError(
-                f"console script {name!r} is outside the scripts directory",
+                f"Invalid script entry point name {name!r}: the script would "
+                f"be installed outside the scripts directory ({destination}).",
             )
 
-        if script_maker_type is None:
-            if os.name == "nt":
-                path = os.path.join(destination, f"{name}.exe")
+        body = script_body(*script_callable(name, target_ref))
+        head = shebang(executable, gui=gui)
+        path = os.path.join(destination, name)
 
-                write_windows_script(
-                    path,
-                    script_text(target_ref, executable),
-                    gui=gui,
-                )
-
-                written.append(path)
-
-            else:
-                path = os.path.join(destination, name)
-
-                with open(path, "w", encoding="utf-8") as file:
-                    file.write(script_text(target_ref, executable))
-
-                    file.flush()
-
-                    mode = (
-                        os.fstat(file.fileno()).st_mode
-                        | stat.S_IXUSR
-                        | stat.S_IXGRP
-                        | stat.S_IXOTH
-                    )
-
-                os.chmod(path, mode)
-
-                explicit_modes[path] = mode
-
-                written.append(path)
-
+        if os.name == "nt":
+            path += ".exe"
+            with open(path, "wb") as file:
+                file.write(windows_launcher(body, head, gui=gui))
+            written.append((path, os.stat(path).st_mode))
         else:
-            maker = script_maker_type(None, destination)
+            with open(path, "wb") as file:
+                file.write(head + body)
+            os.chmod(path, (os.stat(path).st_mode | 0o555) & 0o7777)
+            written.append((path, os.stat(path).st_mode))
 
-            maker.clobber = True
-
-            maker.variants = {""}
-
-            if executable is not None:
-                maker.executable = executable
-
-            written.extend(
-                maker.make(f"{name} = {target_ref}", options={"gui": gui}) or ()
-            )
-
-            if os.name == "nt":
-                path = os.path.join(destination, name)
-
-                with open(path, "w", encoding="utf-8") as file:
-                    file.write(script_text(target_ref, executable))
-
-                    file.flush()
-
-                    mode = (
-                        os.fstat(file.fileno()).st_mode
-                        | stat.S_IXUSR
-                        | stat.S_IXGRP
-                        | stat.S_IXOTH
-                    )
-
-                os.chmod(path, mode)
-
-                explicit_modes[path] = mode
-
-                written.append(path)
-
-    return tuple(
-        (path, explicit_modes.get(path) or os.stat(path).st_mode)
-        for path in dict.fromkeys(written)
-    )
+    return tuple(written)
 
 
 def script_matches(
     path: str,
     scripts: dict[str, tuple[str, bool]],
 ) -> bool:
-    path_text = os.fspath(path)
-
-    basename = os.path.basename(path_text)
+    """Whether ``path`` is the script one of ``scripts`` would write."""
+    basename = os.path.basename(os.fspath(path))
 
     is_executable = basename.lower().endswith(".exe")
 
@@ -253,11 +259,10 @@ def script_matches(
     if script is None:
         return False
 
-    target_ref, _ = script
-
-    module, _, attribute = target_ref.partition(":")
-
-    entry = attribute or "main"
+    try:
+        module, callable_ = script_callable(name, script[0])
+    except InstallationError:
+        return False
 
     try:
         if is_executable:
@@ -278,4 +283,4 @@ def script_matches(
     except OSError, KeyError, UnicodeDecodeError:
         return False
 
-    return f"from {module} import {entry}" in text
+    return f"from {module} import {callable_.split('.')[0]}" in text

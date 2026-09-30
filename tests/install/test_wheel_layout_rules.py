@@ -192,7 +192,7 @@ def test_scripts_run_with_the_python_a_parent_kpip_names(
 ) -> None:
     """A build environment's scripts run with its own Python: the kpip that
     installs them may run under another, or be a compiled binary."""
-    from kpip.install.wheel_scripts import script_text
+    from kpip.install.wheel_scripts import shebang
 
     monkeypatch.setenv("KPIP_SCRIPT_PYTHON", "/env/bin/python")
     script = tmp_path / "tool"
@@ -201,6 +201,6 @@ def test_scripts_run_with_the_python_a_parent_kpip_names(
     rewrite_shebang(str(script), None)
 
     assert script.read_bytes() == b"#!/env/bin/python\nprint(1)\n"
-    assert script_text("tool:main", None).startswith("#!/env/bin/python\n")
+    assert shebang(None, gui=False) == b"#!/env/bin/python\n"
     # A named interpreter still wins.
-    assert script_text("tool:main", "/opt/py").startswith("#!/opt/py\n")
+    assert shebang("/opt/py", gui=False) == b"#!/opt/py\n"
