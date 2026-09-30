@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import logging
+lazy import hashlib
+lazy import logging
+
+lazy from kpip.cli.parsers.inspection import create_hash_parser
 
 logger = logging.getLogger(__name__)
 
 
 def run_hash(args: list[str]) -> int:
-    import hashlib
-
-    from kpip.cli.parsers.inspection import create_hash_parser
-
     options = create_hash_parser().parse_args(args)
     for filename in options.files:
         digest = hashlib.new(options.algorithm)

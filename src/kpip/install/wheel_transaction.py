@@ -6,21 +6,26 @@ filesystem transaction engine. It deliberately does not invoke kpip again.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+lazy import csv
+lazy import io
+lazy import logging
+lazy import os
+lazy import stat
+lazy import tempfile
+lazy import zipfile
+lazy from collections.abc import Iterable
+lazy from concurrent.futures import ThreadPoolExecutor
+lazy from contextlib import nullcontext
+lazy from threading import Lock
+from typing import TYPE_CHECKING, Protocol
 
-import csv
-import io
-import os
-import stat
-import tempfile
-import zipfile
-from collections.abc import Iterable
-from contextlib import nullcontext
-from threading import Lock
-
-from kpip.core.errors import InstallationError, UnsupportedWheel
-from kpip.core.names import canonicalize_name
-from kpip.core.wheel import (
+lazy from kpip.build.metadata import (
+    InstalledDistributionStore,
+    InstalledMetadataDistribution,
+)
+lazy from kpip.core.errors import InstallationError, UnsupportedWheel
+lazy from kpip.core.names import canonicalize_name
+lazy from kpip.core.wheel import (
     WheelCandidate,
     root_is_purelib_from_text,
     validate_wheel,
@@ -28,51 +33,52 @@ from kpip.core.wheel import (
     wheel_candidate,
     wheel_candidate_from_path,
 )
-from kpip.install.target import InstallTarget
-from kpip.install.transaction import InstallTransaction, normalized_internal
-from kpip.install.wheel_archive import (
+lazy from kpip.host.clone import clone_path
+lazy from kpip.host.lock import environment_write_lock
+lazy from kpip.install.target import InstallTarget
+lazy from kpip.install.transaction import InstallTransaction, normalized_internal
+lazy from kpip.install.wheel_archive import (
     DestinationCache,
+    MemberPaths,
     ResolvedRoots,
     copy_member_with_metadata,
-    MemberPaths,
     destination_internal_parts_text,
     record_metadata_internal,
     validate_member_parts,
     zip_mode,
 )
-from kpip.install.wheel_archive_cache import INSTALL_WORKERS, CachedWheelArchive
-from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
-from kpip.install.wheel_archive_runtime import CachedWheelInfo, open_wheel_archive
-from kpip.install.wheel_scripts import (
+lazy from kpip.install.wheel_archive_cache import INSTALL_WORKERS, CachedWheelArchive
+lazy from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
+lazy from kpip.install.wheel_archive_runtime import CachedWheelInfo, open_wheel_archive
+lazy from kpip.install.wheel_scripts import (
     entry_point_scripts,
     rewrite_shebang,
     script_matches,
     script_text,
     write_windows_script,
 )
-from kpip.install.wheel_state import (
+lazy from kpip.install.wheel_state import (
     InstalledTargetInventory,
+    InstalledWheelDistribution,
     compiled_files,
     existing_paths,
 )
-from kpip.install.wheel_transaction_direct import (
+lazy from kpip.install.wheel_transaction_direct import (
     DIRECT_CONTENT_BATCH_LIMIT,
     direct_batch_preflight,
     install_wheels_directly,
 )
-from kpip.host.clone import clone_path
 
-import logging
+try:
+    from distlib.scripts import ScriptMaker
+except ImportError:
+    ScriptMaker = None  # ty: ignore[invalid-assignment]
 
 logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from typing import Protocol
-
-    from kpip.build.metadata import InstalledMetadataDistribution
     from kpip.core.direct_url import DirectUrl
-    from kpip.install.wheel_state import InstalledWheelDistribution
 
     ExistingDistribution = InstalledMetadataDistribution | InstalledWheelDistribution
 
@@ -219,8 +225,6 @@ def install_wheel_internal(
         if target_inventory is not None:
             existing = target_inventory.find(candidate.canonical_name)
         elif _target_has_distribution_metadata(target):
-            from kpip.build.metadata import InstalledDistributionStore
-
             existing = InstalledDistributionStore(
                 paths=[os.fspath(root) for root in target.library_roots],
             ).find(candidate.name)
@@ -313,7 +317,7 @@ def install_wheel_internal(
                 record_text = archive.read(f"{validated_dist_info}/RECORD").decode(
                     "utf-8",
                 )
-            except (KeyError, UnicodeDecodeError):
+            except KeyError, UnicodeDecodeError:
                 pass
             else:
                 for row in csv.reader(io.StringIO(record_text)):
@@ -527,16 +531,10 @@ def install_wheel_internal(
             }
             staged = [item for item in staged if item[1] not in script_destinations]
         script_stage = os.path.join(stage_root_text, ".kpip-scripts")
-        script_maker_type = None
+        script_maker_type = ScriptMaker
         script_modes: dict[str, int] = {}
         if scripts:
             os.makedirs(script_stage, exist_ok=True)
-            try:
-                from distlib.scripts import ScriptMaker
-            except ImportError:
-                pass
-            else:
-                script_maker_type = ScriptMaker
         for name, (target_ref, gui) in scripts.items():
             if os.path.basename(name) != name or name in {".", ".."}:
                 raise InstallationError(
@@ -709,7 +707,7 @@ def wheel_root_is_purelib(archive: MemberReader, dist_info: str) -> bool:
     """
     try:
         raw = archive.read(f"{dist_info}/WHEEL")
-    except (KeyError, OSError):
+    except KeyError, OSError:
         return True
     try:
         return root_is_purelib_or_default(raw.decode())
@@ -796,7 +794,6 @@ def install_wheels_transactionally(
     Candidate planning stays outside the lock: parsing each wheel's metadata
     touches nothing in the target and would otherwise serialize too.
     """
-    from kpip.host.lock import environment_write_lock
 
     requests = tuple(items)
     planned_candidates = (
@@ -932,8 +929,6 @@ def _install_wheels_locked(
 
             try:
                 if parallel:
-                    from concurrent.futures import ThreadPoolExecutor
-
                     futures = []
                     staged_results = []
                     try:

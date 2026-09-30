@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+lazy import json
+lazy import site
+
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.cli.parsers.inspection import create_inspect_parser
+lazy from kpip.core import kpip_version, packaging, urls
+lazy from kpip.core.metadata import stdlib_pkgs
+
 
 def run_inspect(args: list[str]) -> int:
-    from kpip.cli.parsers.inspection import create_inspect_parser
-
     options = create_inspect_parser().parse_args(args)
-
-    import json
-    import site
-
-    from kpip.build.metadata import InstalledDistributionStore
-    from kpip.core import kpip_version, packaging, urls
-    from kpip.core.metadata import stdlib_pkgs
 
     distributions = InstalledDistributionStore(
         paths=options.path or None,

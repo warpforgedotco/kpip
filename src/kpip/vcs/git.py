@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-import os.path
-import re
-import urllib.parse
+from typing import TYPE_CHECKING
+lazy import logging
+lazy import os.path
+lazy import re
+lazy import urllib.parse
+lazy import urllib.request
 
-import logging
-from kpip.core import run_options
-from kpip.core.errors import InstallationError
-from kpip.core.urls import path_to_url
-from kpip.core.utils import AuthInfo, display_path
+lazy from kpip.core import run_options
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.urls import path_to_url
+lazy from kpip.core.utils import AuthInfo, display_path
 
-from .errors import BadCommand
-from .subprocesses import make_command
-from .support import HiddenText, hide_url
-from .versioncontrol import (
+lazy from .errors import BadCommand
+lazy from .subprocesses import make_command
+lazy from .support import HiddenText, hide_url
+lazy from .versioncontrol import (
     RemoteNotFoundError,
     RemoteNotValidError,
     RevOptions,
@@ -21,8 +23,6 @@ from .versioncontrol import (
     find_path_to_project_root_from_repo_root,
     vcs,
 )
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
@@ -616,8 +616,6 @@ class Git(VersionControl):
         scheme, netloc, path, query, fragment = urlsplit(url)
 
         if scheme.endswith("file"):
-            import urllib.request
-
             initial_slashes = path[: -len(path.lstrip("/"))]
 
             newpath = initial_slashes + urllib.request.url2pathname(path).replace(

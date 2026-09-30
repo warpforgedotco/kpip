@@ -12,55 +12,62 @@ caches, fetching while the solve runs), so it calls the steps
 
 from __future__ import annotations
 
-import logging
-import os
-
 from typing import TYPE_CHECKING
+lazy import logging
+lazy import os
 
-from kpip.cli.config import load_source_config
-from kpip.cli.dependency_groups import group_items, parse_dependency_groups
-from kpip.cli.package_finder import (
+lazy from kpip.cli.config import load_source_config
+lazy from kpip.cli.dependency_groups import group_items, parse_dependency_groups
+lazy from kpip.cli.package_finder import (
     apply_refresh,
     check_release_control,
     format_control,
     release_control,
 )
-from kpip.cli.requirements import (
+lazy from kpip.cli.requirements import (
     build_options_from_requirements,
     bundle_install_requirements,
     collect_requirements,
     config_settings,
     requirements_from_script,
 )
-from kpip.cli.resolution_errors import resolution_error_message
-from kpip.core.appdirs import command_cache_dir
-from kpip.core.errors import (
+lazy from kpip.cli.resolution_errors import resolution_error_message
+lazy from kpip.core.appdirs import command_cache_dir
+lazy from kpip.core.errors import (
     CommandError,
     DistributionNotFound,
     HashMismatch,
     InstallationError,
     ResolutionError,
 )
-from kpip.core.format_control import FormatControl
-from kpip.core.hashes import Hashes, file_hashes
-from kpip.core.packaging import (
+lazy from kpip.core.format_control import FormatControl
+lazy from kpip.core.hashes import Hashes, file_hashes
+lazy from kpip.core.metadata import use_header_cache
+lazy from kpip.core.packaging import (
     canonicalize_name,
     normalize_python_version,
     parse_requirement,
 )
-from kpip.core.urls import url_to_path
-from kpip.core.utils import CURRENT_PYTHON_VERSION_DIGITS, CURRENT_PYTHON_VERSION_FULL
-from kpip.core.wheel import TargetContext
-from kpip.index.links import Link
-from kpip.index.provider import CandidateProvider
-from kpip.resolution.api import ResolutionEngine
-from kpip.resolution.input_requirements import install_req_from_line
+lazy from kpip.core.urls import url_to_path
+lazy from kpip.core.utils import (
+    CURRENT_PYTHON_VERSION_DIGITS,
+    CURRENT_PYTHON_VERSION_FULL,
+)
+lazy from kpip.core.wheel import TargetContext
+lazy from kpip.index.links import Link
+lazy from kpip.index.metadata_cache import get_wheel_metadata_cache
+lazy from kpip.index.provider import CandidateProvider
+lazy from kpip.resolution.api import ResolutionEngine
+lazy from kpip.resolution.hash_checking import (
+    enforce_dependency_hashes,
+    enforce_hash_checking,
+)
+lazy from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
     import argparse
     from collections.abc import Callable, Iterable
     from typing import Any
-
     from kpip.resolution.models import ResolutionResult
     from kpip.resolution.req_install import InstallRequirement
 
@@ -241,9 +248,6 @@ def prepare(
     config = load_source_config(command)
 
     if cache_dir is not None:
-        from kpip.core.metadata import use_header_cache
-        from kpip.index.metadata_cache import get_wheel_metadata_cache
-
         use_header_cache(get_wheel_metadata_cache(cache_dir))
 
     parsed_config_settings = config_settings(getattr(options, "config_settings", []))
@@ -449,7 +453,6 @@ def requested_requirements(
         # wrote, and one that happens to be installed already must not
         # escape the pin and digest rules just because nothing would be
         # fetched for it.
-        from kpip.resolution.hash_checking import enforce_hash_checking
 
         enforce_hash_checking(
             [*requirements, *editable_requirements(bundle)],
@@ -600,8 +603,6 @@ def check_dependency_hashes(
 
     if not bundle.require_hashes:
         return
-
-    from kpip.resolution.hash_checking import enforce_dependency_hashes
 
     enforce_dependency_hashes(
         plan.candidates,

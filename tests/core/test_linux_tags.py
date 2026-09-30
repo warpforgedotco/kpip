@@ -28,7 +28,7 @@ def linux_host(monkeypatch: pytest.MonkeyPatch):
 
     def configure(platform_tag: str, detected: tuple[str, int, int] | None):
         monkeypatch.setattr(wheel, "current_platform_tag", lambda: platform_tag)
-        monkeypatch.setattr(libc, "detect", lambda: detected)
+        monkeypatch.setattr(wheel, "detect", lambda: detected)
         wheel.current_platform_tags.cache_clear()
         wheel.supported_wheel_tags.cache_clear()
         return wheel.supported_wheel_tags()

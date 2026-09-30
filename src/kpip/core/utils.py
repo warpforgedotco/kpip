@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import errno
-import marshal
-import os
-import sys
-
 from typing import TYPE_CHECKING
+lazy import errno
+lazy import marshal
+lazy import os
+lazy import sys
 
 if TYPE_CHECKING:
     from typing import Any
-
 
 AuthInfo = tuple[str | None, str | None]
 
@@ -161,7 +159,7 @@ def load_snapshot(path: str | os.PathLike[str]) -> object | None:
     try:
         with open(path, "rb") as stream:
             return marshal.load(stream)
-    except (EOFError, OSError, TypeError, ValueError):
+    except EOFError, OSError, TypeError, ValueError:
         return None
 
 
@@ -177,7 +175,7 @@ def save_snapshot(path: str | os.PathLike[str], payload: object) -> bool:
             marshal.dump(payload, stream)  # ty: ignore[invalid-argument-type]
         os.replace(temporary, path)
         return True
-    except (OSError, TypeError, ValueError):
+    except OSError, TypeError, ValueError:
         try:
             os.unlink(temporary)
         except OSError:

@@ -2,35 +2,48 @@
 
 from __future__ import annotations
 
-import io
-import os
-import re
-import urllib.parse
-from itertools import chain, islice
-from threading import RLock
+from typing import TYPE_CHECKING
+lazy import hashlib
+lazy import io
+lazy import json
+lazy import logging
+lazy import os
+lazy import re
+lazy import urllib.parse
+lazy import zipfile
+lazy from concurrent.futures import ThreadPoolExecutor
+lazy from itertools import chain, islice
+lazy from threading import RLock
 
-from kpip.core import run_options
-from kpip.core.temp_dir import build_directory
-from kpip.build.build import build_wheel_from_source, unpack_source_internal
-import logging
-from kpip.core.errors import (
+lazy from kpip.build.build import build_wheel_from_source, unpack_source_internal
+lazy from kpip.build.build_backend import BackendSpec, prepare_project_metadata
+lazy from kpip.core import run_options
+lazy from kpip.core.appdirs import archive_entry_root
+lazy from kpip.core.archive import WheelArchive, WheelhouseUnavailable
+lazy from kpip.core.digests import valid_sha256
+lazy from kpip.core.errors import (
     BuildError,
     HashMismatch,
     InstallationError,
     KpipError,
     UnsupportedWheel,
 )
-from kpip.core.hashes import file_hashes
-from kpip.core.http_contracts import HttpStatusError, raise_for_status, response_text
-from kpip.core.packaging import (
+lazy from kpip.core.hashes import file_hashes
+lazy from kpip.core.http_contracts import (
+    HttpStatusError,
+    raise_for_status,
+    response_text,
+)
+lazy from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
     marker_applies,
     parse_requirement,
     target_python_version,
 )
-from kpip.core.versions import Version, ZERO_VERSION
-from kpip.core.wheel import (
+lazy from kpip.core.temp_dir import build_directory
+lazy from kpip.core.versions import ZERO_VERSION, Version
+lazy from kpip.core.wheel import (
     LazyWheelLayout,
     WheelCandidate,
     validate_wheel_with_metadata,
@@ -38,46 +51,39 @@ from kpip.core.wheel import (
     wheel_candidate_from_path,
     wheel_dist_info_dir,
 )
-from kpip.core.wheel_metadata import parse_metadata_headers
-from kpip.index.artifacts import ArtifactLocator
-from kpip.index.candidate_cache import (
+lazy from kpip.core.wheel_metadata import parse_metadata_headers
+lazy from kpip.index.artifacts import ArtifactLocator
+lazy from kpip.index.candidate_cache import (
     built_wheel_cache_key,
-    cache_built_wheel as store_cached_wheel,
-)
-from kpip.index.candidate_cache import (
     cached_wheel_for_link,
     emit_build_message,
 )
-from kpip.index.candidate_metadata_cache import (
+lazy from kpip.index.candidate_cache import (
+    cache_built_wheel as store_cached_wheel,
+)
+lazy from kpip.index.candidate_metadata_cache import (
     CacheKey,
     CandidateMetadataCache,
     get_candidate_metadata_cache,
 )
-from kpip.index.candidate_stream import CandidateStream
-from kpip.index.metadata_cache import get_wheel_metadata_cache
-from kpip.index.prefetch import Prefetcher
-from kpip.index.release_facts_cache import get_release_facts_cache
-from kpip.index.source_models import (
+lazy from kpip.index.candidate_stream import CandidateStream
+lazy from kpip.index.metadata_cache import get_wheel_metadata_cache
+lazy from kpip.index.prefetch import Prefetcher
+lazy from kpip.index.release_facts_cache import get_release_facts_cache
+lazy from kpip.index.source_models import (
     SOURCE_ARTIFACT_KINDS,
     ArtifactKind,
     CandidateMetadata,
     CandidateRecord,
     LazyCandidateMetadata,
 )
-from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_scheme
-from kpip.core.archive import WheelArchive, WheelhouseUnavailable
-
-from typing import TYPE_CHECKING
+lazy from kpip.index.vcs import git_revision as revision
+lazy from kpip.index.vcs import release_checkout as release
+lazy from kpip.index.vcs import resolve_git_commit as resolve
+lazy from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_scheme
 
 if TYPE_CHECKING:
     import tempfile
-    import zipfile
-
-    from kpip.core.hashes import Hashes
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    from kpip.index.links import Link
     from collections.abc import (
         Callable,
         Generator,
@@ -87,8 +93,9 @@ if TYPE_CHECKING:
         Sequence,
     )
     from typing import Any
-
+    from kpip.core.hashes import Hashes
     from kpip.core.http_contracts import HttpSession
+    from kpip.index.links import Link
 
 
 # Forwarded rather than imported: ``kpip.index.vcs`` reaches ``shutil`` and
@@ -96,20 +103,14 @@ if TYPE_CHECKING:
 # repository. Reading a VCS *URL* stays free -- that is ``vcs_urls`` above,
 # and it is the question every candidate asks.
 def release_checkout(path: str) -> None:
-    from kpip.index.vcs import release_checkout as release
-
     release(path)
 
 
 def git_revision(source_dir: str) -> str:
-    from kpip.index.vcs import git_revision as revision
-
     return revision(source_dir)
 
 
 def resolve_git_commit(url: str, *, prompting: bool = True) -> str | None:
-    from kpip.index.vcs import resolve_git_commit as resolve
-
     return resolve(url, prompting=prompting)
 
 
@@ -238,8 +239,6 @@ class _ResolverWheelArchive:
             return self._archive.read(name)
 
         except WheelhouseUnavailable as exc:
-            import zipfile
-
             raise zipfile.BadZipFile(f"Bad archive member {name!r}: {exc}") from exc
 
     def namelist(self) -> list[str]:
@@ -275,11 +274,6 @@ def _open_resolver_wheel_archive(
     ask for.  A caller that keeps the layout needs the whole directory.
     """
 
-    # Imported here rather than at module scope: ``zipfile`` reaches
-    # ``zipfile._path`` and through it ``pathlib``, and a resolve whose
-    # metadata is all cached never opens a wheel at all.
-    import zipfile
-
     try:
         file = open(path_text, "rb", buffering=0)  # noqa: SIM115
 
@@ -290,7 +284,7 @@ def _open_resolver_wheel_archive(
 
             return zipfile.ZipFile(path_text)
 
-    except (OSError, ValueError, WheelhouseUnavailable):
+    except OSError, ValueError, WheelhouseUnavailable:
         try:
             file.close()
 
@@ -780,13 +774,11 @@ class CandidateMaterializer:
         if hashes is None or not hashes.allowed_internal:
             return
 
-        import hashlib
-
         gots = {}
         for name in hashes.allowed_internal:
             try:
                 gots[name] = hashlib.new(name)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
 
         with open(path, "rb") as file:
@@ -937,7 +929,7 @@ class CandidateMaterializer:
 
                 cached = file_hashes(local)
 
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 return None
 
             self.source_hash_cache[link.url] = cached
@@ -1396,11 +1388,6 @@ class CandidateMaterializer:
             pool = self.source_build_pool
 
             if pool is None:
-                # Imported here rather than at module scope, as everywhere
-                # else that builds a pool: only a resolve that has to read a
-                # source distribution ever reaches this.
-                from concurrent.futures import ThreadPoolExecutor
-
                 pool = ThreadPoolExecutor(
                     max_workers=_SOURCE_BUILD_WORKERS,
                     thread_name_prefix="kpip-metadata",
@@ -1570,8 +1557,6 @@ class CandidateMaterializer:
                 persistent_cache = None
 
             if candidate.link.kind in SOURCE_ARTIFACT_KINDS:
-                from kpip.build.build_backend import prepare_project_metadata
-
                 # Neither the index nor a sibling wheel could answer, so this
                 # release is about to be built. From here the resolve is one
                 # that pays for builds, and starting the next ones early is
@@ -1775,7 +1760,7 @@ class CandidateMaterializer:
                 requested_extras,
             )
 
-        except (KeyError, OSError, TypeError, ValueError):
+        except KeyError, OSError, TypeError, ValueError:
             return None
 
     def ranged_wheel_metadata(
@@ -1823,7 +1808,7 @@ class CandidateMaterializer:
                 requested_extras,
             )
 
-        except (KeyError, OSError, TypeError, ValueError):
+        except KeyError, OSError, TypeError, ValueError:
             return None
 
     def metadata_from_headers(
@@ -1942,7 +1927,7 @@ class CandidateMaterializer:
 
                 headers = parse_metadata_headers(response_text(response))
 
-            except (HttpStatusError, KeyError, OSError, TypeError, ValueError):
+            except HttpStatusError, KeyError, OSError, TypeError, ValueError:
                 # An advertised sidecar that does not answer is the index's
                 # problem, not a reason to fail: the next wheel, or the
                 # build, still has the answer.
@@ -2040,8 +2025,6 @@ class CandidateMaterializer:
 
             raise_for_status(response)
 
-            import json
-
             data = json.loads(response_text(response))
 
             info = data["info"]
@@ -2093,7 +2076,7 @@ class CandidateMaterializer:
                 requires_python=requires_python,
             )
 
-        except (KeyError, OSError, TypeError, ValueError):
+        except KeyError, OSError, TypeError, ValueError:
             self.release_metadata_cache[release_key] = None
 
             return None
@@ -2151,9 +2134,6 @@ class CandidateMaterializer:
         if not isinstance(digest, str):
             return False
 
-        from kpip.core.appdirs import archive_entry_root
-        from kpip.core.digests import valid_sha256
-
         return valid_sha256(digest) and os.path.isdir(
             archive_entry_root(os.fspath(self.wheel_cache_dir), digest.lower())
         )
@@ -2176,7 +2156,7 @@ class CandidateMaterializer:
                     wheel_metadata_text=wheel_metadata_text,
                 ).wheel_layout
 
-        except (OSError, UnsupportedWheel, InstallationError):
+        except OSError, UnsupportedWheel, InstallationError:
             return None
 
     def iter_materialize(
@@ -2255,8 +2235,6 @@ class CandidateMaterializer:
                 and local_path is not None
             ):
                 try:
-                    import hashlib
-
                     with open(local_path, "rb") as file:
                         source_hashes["sha256"] = hashlib.sha256(
                             file.read(),
@@ -2549,6 +2527,4 @@ class CandidateMaterializer:
 
 
 def validate_build_requirements(source: str | os.PathLike[str]) -> None:
-    from kpip.build.build_backend import BackendSpec
-
     BackendSpec.from_project(source)

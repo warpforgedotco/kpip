@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import re
-import sys
-
+lazy import os
+lazy import re
+lazy import sys
 
 _EGG_LINK_NAME_NORMALIZER: re.Pattern[str] | None = None
 

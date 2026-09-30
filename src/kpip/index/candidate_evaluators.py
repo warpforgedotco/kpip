@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
-import sys
-from collections.abc import Sequence
-from typing import TypeVar
+lazy import sys
+lazy from collections.abc import Sequence
+lazy from typing import TypeVar
 
-from kpip.core.versions import ZERO_VERSION, Version
-from kpip.core.errors import InvalidWheelFilename
-from kpip.core.hashes import Hashes
-from kpip.core.caches import memoized
-from kpip.core.packaging import Requirement, SpecifierSet, target_python_version
-from kpip.core.release_control import ReleaseControl
-from kpip.core.target_python import get_supported
-from kpip.core.wheel import TargetContext, Wheel, WheelTag, legacy_build_tag
-from kpip.index.candidate_filters import (
+lazy from kpip.core.caches import memoized
+lazy from kpip.core.errors import InvalidWheelFilename
+lazy from kpip.core.hashes import Hashes
+lazy from kpip.core.packaging import Requirement, SpecifierSet, target_python_version
+lazy from kpip.core.release_control import ReleaseControl
+lazy from kpip.core.target_python import get_supported
+lazy from kpip.core.versions import ZERO_VERSION, Version
+lazy from kpip.core.wheel import TargetContext, Wheel, WheelTag, legacy_build_tag
+lazy from kpip.index.candidate_filters import (
     allowed_hashes,
     filter_unallowed_hashes,
     supported_tag_ranks,
 )
-from kpip.index.candidates import BestCandidateResult, InstallationCandidate
-from kpip.index.links import Link
-from kpip.index.source_models import (
+lazy from kpip.index.candidates import BestCandidateResult, InstallationCandidate
+lazy from kpip.index.links import Link
+lazy from kpip.index.source_models import (
     INSTALLABLE_ARTIFACT_KINDS,
     SOURCE_ARTIFACT_KINDS,
     ArtifactKind,

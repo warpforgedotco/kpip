@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
-import logging
-import os
-import sys
-
-from kpip.core import run_options
-from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
-from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
-
 from typing import TYPE_CHECKING
+lazy import atexit
+lazy import errno
+lazy import gc
+lazy import logging
+lazy import os
+lazy import sys
+lazy import traceback
+
+lazy import kpip
+lazy from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
+lazy from kpip.cli.logging_config import (
+    BrokenStdoutLoggingError,
+    configure_logging,
+    set_log_file,
+)
+lazy from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
+lazy from kpip.core import run_options
+lazy from kpip.core.errors import KpipError
+lazy from kpip.core.temp_dir import global_tempdir_manager
+lazy from kpip.core.utils import configure
+lazy from kpip.host.virtualenv import running_under_virtualenv
 
 if TYPE_CHECKING:
     from typing import NoReturn
@@ -173,9 +186,7 @@ def print_help() -> None:
 
 def print_version(version: str | None, location: str | None) -> None:
     if version is None:
-        from kpip import __version__
-
-        version = __version__
+        version = kpip.__version__
 
     if location is None:
         location = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -251,8 +262,6 @@ def handle_global_commands(
         return 0
 
     if require_virtualenv:
-        from kpip.host.virtualenv import running_under_virtualenv
-
         if not running_under_virtualenv():
             logging.getLogger(__name__).critical(
                 "Could not find an activated virtualenv (required)."
@@ -331,7 +340,6 @@ def pause_collection(command: str) -> bool:
     Returns whether it turned collection off, for ``main`` to turn it back
     on for an in-process caller. ``KPIP_GC=default`` leaves it on.
     """
-    import gc
 
     if (
         command not in _UNCOLLECTED_COMMANDS
@@ -373,8 +381,6 @@ def collect_less_often() -> tuple[int, int, int] | None:
     if os.environ.get("KPIP_GC") == "default":
         return None
 
-    import gc
-
     previous = gc.get_threshold()
 
     young = previous[0] and max(previous[0], _YOUNG_GENERATION_THRESHOLD)
@@ -411,7 +417,6 @@ def main(
 
         # Before anything can fail; the command sets it up again with the
         # -v and -q it is given itself.
-        from kpip.cli.logging_config import configure_logging, set_log_file
 
         set_log_file(log_file)
 
@@ -457,8 +462,6 @@ def main(
         if version is not None and (
             spec.needs_execution_context and spec.needs_tempdir
         ):
-            from kpip.core.utils import configure
-
             configure(version=version)
 
         # Given before the command, -v and -q mean what they mean after it.
@@ -471,8 +474,6 @@ def main(
         restore_switch_interval = switch_threads_less_often()
 
         if spec.needs_tempdir:
-            from kpip.core.temp_dir import global_tempdir_manager
-
             with global_tempdir_manager():
                 status = run_command(argv, spec)
 
@@ -484,8 +485,6 @@ def main(
         return status
 
     except OSError as exc:
-        import errno
-
         if not isinstance(exc, BrokenPipeError) and exc.errno not in {
             errno.EINVAL,
             errno.EBADF,
@@ -505,10 +504,6 @@ def main(
         print("ERROR: Pipe to stdout was broken", file=sys.stderr)
 
         if verbosity > 0:
-            import traceback
-
-            from kpip.cli.logging_config import BrokenStdoutLoggingError
-
             if isinstance(exc, BrokenStdoutLoggingError):
                 traceback.print_exc(file=sys.stderr)
 
@@ -535,8 +530,6 @@ def main(
         return 1
 
     except Exception as exc:
-        from kpip.core.errors import KpipError
-
         if not isinstance(exc, KpipError) or run_options.current.debug:
             raise
 
@@ -553,15 +546,11 @@ def main(
                 os.environ[name] = previous
 
         if restore_thresholds is not None:
-            import gc
-
             gc.set_threshold(*restore_thresholds)
 
         # Turning collection back on schedules one over everything the command
         # allocated, which a process that exits next would only throw away.
         if collection_paused and not keep_collection_paused:
-            import gc
-
             gc.enable()
 
         if restore_switch_interval is not None:
@@ -587,8 +576,6 @@ def exit_without_teardown(status: int) -> NoReturn:
     if os.environ.get("KPIP_EXIT") == "full":
         sys.exit(status)
 
-    import atexit
-
     # Private, but it is what interpreter shutdown calls: it joins non-daemon
     # threads and runs the callbacks concurrent.futures registers there. A
     # command that never imported ``threading`` started no thread to wait for.
@@ -604,7 +591,7 @@ def exit_without_teardown(status: int) -> NoReturn:
             continue
         try:
             stream.flush()
-        except (OSError, ValueError):
+        except OSError, ValueError:
             status = _FLUSH_FAILED
 
     os._exit(status)

@@ -1,31 +1,35 @@
 from __future__ import annotations
 
-import copy
-import datetime
-import operator
-import os
-import stat
-import time
-import urllib.parse
-from bisect import bisect_left, bisect_right
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from itertools import chain
-from threading import RLock
-from types import MappingProxyType
+from typing import TYPE_CHECKING
+lazy import copy
+lazy import datetime
+lazy import logging
+lazy import operator
+lazy import os
+lazy import stat
+lazy import time
+lazy import urllib.parse
+lazy from bisect import bisect_left, bisect_right
+lazy from collections.abc import Callable, Iterator, Mapping, Sequence
+lazy from concurrent.futures import ThreadPoolExecutor
+lazy from itertools import chain
+lazy from threading import RLock
+lazy from types import MappingProxyType
 
-from kpip.core.digests import sha256_hexdigest
-from kpip.core.errors import InstallationError
-import logging
-from kpip.core.hashes import Hashes
-from kpip.core.packaging import Requirement
-from kpip.core.versions import Version
-from kpip.core.release_control import ReleaseControl
-from kpip.core.urls import path_to_url, url_to_path
-from kpip.core.wheel import supported_wheel_tags, wheel_tag_rank
-from kpip.index.candidate_evaluators import CandidateEvaluator
-from kpip.index.candidate_materialization import CandidateMaterializer
-from kpip.index.candidates import InstallationCandidate
-from kpip.index.catalog_cache import (
+lazy from kpip.core.digests import sha256_hexdigest
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.hashes import Hashes
+lazy from kpip.core.http_contracts import raise_for_status, response_text
+lazy from kpip.core.packaging import Requirement
+lazy from kpip.core.release_control import ReleaseControl
+lazy from kpip.core.urls import path_to_url, url_to_path
+lazy from kpip.core.versions import Version
+lazy from kpip.core.wheel import supported_wheel_tags, wheel_tag_rank
+lazy from kpip.core.wheel_metadata import parse_metadata_headers
+lazy from kpip.index.candidate_evaluators import CandidateEvaluator
+lazy from kpip.index.candidate_materialization import CandidateMaterializer
+lazy from kpip.index.candidates import InstallationCandidate
+lazy from kpip.index.catalog_cache import (
     RECORD_REQUIRES_PYTHON,
     RECORD_YANKED,
     SDIST_RECORD,
@@ -38,15 +42,15 @@ from kpip.index.catalog_cache import (
     save_choices,
     wheel_file_from_record,
 )
-from kpip.index.config import DEFAULT_INDEX_URL
-from kpip.index.links import Link
-from kpip.index.prefetch import Prefetcher, PrefetchPolicy
-from kpip.index.source_locations import (
+lazy from kpip.index.config import DEFAULT_INDEX_URL
+lazy from kpip.index.links import Link
+lazy from kpip.index.prefetch import Prefetcher, PrefetchPolicy
+lazy from kpip.index.source_locations import (
     FindLinksSource,
     SimpleIndexSource,
     is_remote_source_location,
 )
-from kpip.index.source_models import (
+lazy from kpip.index.source_models import (
     INSTALLABLE_ARTIFACT_KINDS,
     SOURCE_ARTIFACT_KINDS,
     ArtifactKind,
@@ -59,18 +63,14 @@ from kpip.index.source_models import (
     UniformRecords,
 )
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
-    from kpip.index.source_models import PackageSource
-    from concurrent.futures import Future, ThreadPoolExecutor
+    from concurrent.futures import Future
     from typing import Any
-
     from kpip.core.format_control import FormatControl
     from kpip.core.http_contracts import HttpSession
     from kpip.core.wheel import TargetContext, WheelFile
     from kpip.index.candidate_materialization import CandidateStream
-
+    from kpip.index.source_models import PackageSource
 
 logger = logging.getLogger(__name__)
 
@@ -1205,11 +1205,6 @@ class CandidateProvider:
             )
 
         if self.index_executor is None:
-            # Imported here rather than at module scope: `concurrent.futures`
-            # is the single most expensive import on the startup path, and
-            # only a resolve with more than one index ever builds this pool.
-            from concurrent.futures import ThreadPoolExecutor
-
             self.index_executor = ThreadPoolExecutor(
                 max_workers=min(8, len(self.index_sources)),
             )
@@ -3124,9 +3119,6 @@ class CandidateProvider:
 
         def ready(done: Future[Any]) -> None:
             try:
-                from kpip.core.http_contracts import raise_for_status, response_text
-                from kpip.core.wheel_metadata import parse_metadata_headers
-
                 response = done.result()
 
                 raise_for_status(response)

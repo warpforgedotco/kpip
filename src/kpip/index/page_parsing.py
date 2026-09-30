@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+lazy import json
+lazy import os
+lazy import urllib.parse
+lazy from collections.abc import Callable
+lazy from html.parser import HTMLParser
 
-import json
-import os
-import urllib.parse
-from collections.abc import Callable
-
-from kpip.core.errors import InstallationError
-from kpip.core.http_contracts import raise_for_status, response_text
-from kpip.index.artifacts import ArtifactLocator
-from kpip.index.catalog_cache import (
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.http_contracts import raise_for_status, response_text
+lazy from kpip.core.packaging import canonicalize_name
+lazy from kpip.core.urls import split_auth_from_netloc
+lazy from kpip.core.versions import InvalidVersion, Version
+lazy from kpip.core.wheel import parse_wheel_file_once
+lazy from kpip.index import typed_pages
+lazy from kpip.index.artifacts import ArtifactLocator
+lazy from kpip.index.catalog_cache import (
+    RECORD_REQUIRES_PYTHON,
+    RECORD_YANKED,
     WHEEL_RECORD,
     artifact_identity,
     compile_groups,
@@ -26,25 +33,24 @@ from kpip.index.catalog_cache import (
     save_links,
     url_path_tail,
 )
-from kpip.index import typed_pages
-from kpip.index.dates import parse_iso_datetime
-from kpip.index.hashes import SUPPORTED_RECORD_HASHES
-from kpip.core.wheel import parse_wheel_file_once
-from kpip.index.links import PLAIN_URL, Link
-from kpip.index.source_models import ArtifactKind
-from kpip.core.urls import split_auth_from_netloc
-from kpip.index.paths import PathComponent
-from kpip.index.source_models import MetadataFile
+lazy from kpip.index.dates import parse_iso_datetime
+lazy from kpip.index.hashes import SUPPORTED_RECORD_HASHES
+lazy from kpip.index.links import PLAIN_URL, SOURCE_ARCHIVE_SUFFIXES, Link
+lazy from kpip.index.paths import PathComponent
+lazy from kpip.index.source_models import ArtifactKind, MetadataFile
+
+if TYPE_CHECKING:
+    from typing import Any
+    from kpip.core.http_contracts import HttpSession
+
+try:
+    from kpip.index import _page_catalog
+except ImportError:
+    _page_catalog = None  # ty: ignore[invalid-assignment]
 
 LinkFactory = Callable[..., Link]
 
 _FROM_URL_FUNCTION = Link.from_url.__func__
-
-
-if TYPE_CHECKING:
-    from typing import Any
-
-    from kpip.core.http_contracts import HttpSession
 
 
 class IndexContent:
@@ -156,7 +162,7 @@ class IndexPageParser:
         link_factory = self.link_factory
         if getattr(link_factory, "__func__", None) is _FROM_URL_FUNCTION:
             link_factory = Link.from_index_page
-        parser = link_parser_class()(url, link_factory, base_url)
+        parser = LinkParser(url, link_factory, base_url)
         parser.feed(body)
         return parser.links
 
@@ -208,9 +214,8 @@ class IndexPageParser:
                 meta.get("api-version") if isinstance(meta, dict) else None, url
             )
             base_url = base_url or ensure_trailing_slash(url)
-            compiled = _compiled_page_catalog(self)
-            if compiled is not None:
-                return compiled.compile_files(page.files, base_url, url, unset)
+            if _page_catalog is not None:
+                return _page_catalog.compile_files(page.files, base_url, url, unset)
             record_from_fields = self.record_from_fields
             for entry in page.files:
                 file_url = entry.url
@@ -282,8 +287,8 @@ class IndexPageParser:
             metadata,
         )
 
+    @staticmethod
     def record_from_fields(
-        self,
         base_url: str,
         source_url: str,
         file_url: str,
@@ -417,159 +422,80 @@ class IndexPageParser:
         return links
 
 
-_LINK_PARSER: type | None = None
+class LinkParser(HTMLParser):
+    def __init__(
+        self,
+        page_url: str,
+        link_factory: LinkFactory,
+        base_url: str | None = None,
+    ) -> None:
+        super().__init__(convert_charrefs=True)
+        self.page_url = page_url
+        # The URL the body came from, after redirects: what a relative
+        # <base href> resolves against, as the page's own links do.
+        self.document_url = base_url or page_url
+        self.base_url_internal = base_url or ensure_trailing_slash(page_url)
+        self.saw_base_internal = False
+        self.link_factory = link_factory
+        self.links: list[Link] = []
+        self.current_internal: dict[str, str | None] | None = None
+        self.text_internal: list[str] = []
 
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "meta":
+            values = dict(attrs)
+            if values.get("name") == "pypi:repository-version":
+                check_api_version(values.get("content"), self.page_url)
+            return
+        if tag == "base":
+            # The first <base> that carries an href wins, even an empty
+            # one -- which selects the page URL and still rules out a
+            # later <base>, as the reference parser does. The href is
+            # used as given: appending a slash would turn
+            # <base href="https://cdn/files"> into a directory it does
+            # not name.
+            if not self.saw_base_internal:
+                href = dict(attrs).get("href")
+                if href is not None:
+                    self.saw_base_internal = True
+                    if href:
+                        self.base_url_internal = join_index_url(
+                            self.document_url,
+                            href,
+                        )
+            return
+        if tag != "a":
+            return
+        self.current_internal = dict(attrs)
+        self.text_internal = []
 
-def link_parser_class() -> type:
-    """The HTML link parser, built on first use.
+    def handle_data(self, data: str) -> None:
+        if self.current_internal is not None:
+            self.text_internal.append(data)
 
-    html.parser is imported only here: a JSON Simple API response or a
-    find-links directory never needs it, and importing it costs more than
-    parsing a small page.
-    """
-    global _LINK_PARSER
-    if _LINK_PARSER is not None:
-        return _LINK_PARSER
-
-    from html.parser import HTMLParser
-
-    class LinkParser(HTMLParser):
-        def __init__(
-            self,
-            page_url: str,
-            link_factory: LinkFactory,
-            base_url: str | None = None,
-        ) -> None:
-            super().__init__(convert_charrefs=True)
-            self.page_url = page_url
-            # The URL the body came from, after redirects: what a relative
-            # <base href> resolves against, as the page's own links do.
-            self.document_url = base_url or page_url
-            self.base_url_internal = base_url or ensure_trailing_slash(page_url)
-            self.saw_base_internal = False
-            self.link_factory = link_factory
-            self.links: list[Link] = []
-            self.current_internal: dict[str, str | None] | None = None
-            self.text_internal: list[str] = []
-
-        def handle_starttag(
-            self, tag: str, attrs: list[tuple[str, str | None]]
-        ) -> None:
-            if tag == "meta":
-                values = dict(attrs)
-                if values.get("name") == "pypi:repository-version":
-                    check_api_version(values.get("content"), self.page_url)
-                return
-            if tag == "base":
-                # The first <base> that carries an href wins, even an empty
-                # one -- which selects the page URL and still rules out a
-                # later <base>, as the reference parser does. The href is
-                # used as given: appending a slash would turn
-                # <base href="https://cdn/files"> into a directory it does
-                # not name.
-                if not self.saw_base_internal:
-                    href = dict(attrs).get("href")
-                    if href is not None:
-                        self.saw_base_internal = True
-                        if href:
-                            self.base_url_internal = join_index_url(
-                                self.document_url,
-                                href,
-                            )
-                return
-            if tag != "a":
-                return
-            self.current_internal = dict(attrs)
-            self.text_internal = []
-
-        def handle_data(self, data: str) -> None:
-            if self.current_internal is not None:
-                self.text_internal.append(data)
-
-        def handle_endtag(self, tag: str) -> None:
-            if tag != "a" or self.current_internal is None:
-                return
-            href = self.current_internal.get("href")
-            if href:
-                self.links.append(
-                    self.link_factory(
-                        join_index_url(self.base_url_internal, href),
-                        source_url=self.page_url,
-                        text="".join(self.text_internal).strip(),
-                        requires_python=self.current_internal.get(
-                            "data-requires-python"
-                        ),
-                        # A bare ``data-yanked`` (PEP 592 lets it have no
-                        # value) still yanks; the parser reads it as None.
-                        yanked_reason=(
-                            self.current_internal.get("data-yanked") or ""
-                            if "data-yanked" in self.current_internal
-                            else None
-                        ),
-                        metadata_file=metadata_file_from_attrs(self.current_internal),
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self.current_internal is None:
+            return
+        href = self.current_internal.get("href")
+        if href:
+            self.links.append(
+                self.link_factory(
+                    join_index_url(self.base_url_internal, href),
+                    source_url=self.page_url,
+                    text="".join(self.text_internal).strip(),
+                    requires_python=self.current_internal.get("data-requires-python"),
+                    # A bare ``data-yanked`` (PEP 592 lets it have no
+                    # value) still yanks; the parser reads it as None.
+                    yanked_reason=(
+                        self.current_internal.get("data-yanked") or ""
+                        if "data-yanked" in self.current_internal
+                        else None
                     ),
-                )
-            self.current_internal = None
-            self.text_internal = []
-
-    _LINK_PARSER = LinkParser
-    return LinkParser
-
-
-def __getattr__(name: str) -> object:
-    if name == "LinkParser":
-        return link_parser_class()
-    raise AttributeError(name)
-
-
-_page_catalog: Any = None
-"""The compiled page loop once installed, False when there is none."""
-
-
-def _compiled_page_catalog(parser: IndexPageParser) -> Any:
-    """``kpip.index._page_catalog``, given the rules it defers to, or None.
-
-    Only an extension: its source only runs compiled. ``record_from_fields``
-    does not read the parser, so any parser's serves every page.
-    """
-    global _page_catalog
-    if _page_catalog is None:
-        try:
-            from kpip.index import _page_catalog as module
-
-            from kpip.core.packaging import canonicalize_name
-            from kpip.core.versions import InvalidVersion, Version
-            from kpip.index.catalog_cache import (
-                RECORD_REQUIRES_PYTHON,
-                RECORD_YANKED,
-            )
-            from kpip.index.links import SOURCE_ARCHIVE_SUFFIXES
-
-            module._install(
-                join_index_url,
-                parser.record_from_fields,
-                identity_for,
-                Version,
-                InvalidVersion,
-                canonicalize_name,
-                PLAIN_URL,
-                (
-                    ArtifactKind.WHEEL,
-                    ArtifactKind.METADATA,
-                    ArtifactKind.ATTESTATION,
-                    ArtifactKind.SDIST,
-                    ArtifactKind.UNKNOWN,
+                    metadata_file=metadata_file_from_attrs(self.current_internal),
                 ),
-                SOURCE_ARCHIVE_SUFFIXES,
-                (WHEEL_RECORD, RECORD_REQUIRES_PYTHON, RECORD_YANKED),
             )
-        except (ImportError, TypeError):
-            # No extension, or one built from an older source whose
-            # _install takes other arguments: keep the Python loop.
-            _page_catalog = False
-        else:
-            _page_catalog = module
-    return _page_catalog or None
+        self.current_internal = None
+        self.text_internal = []
 
 
 def metadata_file_from_attrs(attrs: dict[str, str | None]) -> MetadataFile | None:
@@ -758,3 +684,39 @@ def check_api_version(version: object, url: str) -> None:
 
 def ensure_trailing_slash(url: str) -> str:
     return url if url.endswith("/") else url + "/"
+
+
+def _installed_page_catalog() -> Any:
+    """``kpip.index._page_catalog``, given the rules it defers to, or None.
+
+    Only an extension: its source only runs compiled.
+    """
+    if _page_catalog is None:
+        return None
+    try:
+        _page_catalog._install(
+            join_index_url,
+            IndexPageParser.record_from_fields,
+            identity_for,
+            Version,
+            InvalidVersion,
+            canonicalize_name,
+            PLAIN_URL,
+            (
+                ArtifactKind.WHEEL,
+                ArtifactKind.METADATA,
+                ArtifactKind.ATTESTATION,
+                ArtifactKind.SDIST,
+                ArtifactKind.UNKNOWN,
+            ),
+            SOURCE_ARCHIVE_SUFFIXES,
+            (WHEEL_RECORD, RECORD_REQUIRES_PYTHON, RECORD_YANKED),
+        )
+    except TypeError:
+        # One built from an older source, whose _install takes other
+        # arguments: keep the Python loop.
+        return None
+    return _page_catalog
+
+
+_page_catalog = _installed_page_catalog()

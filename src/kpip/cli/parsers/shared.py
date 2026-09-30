@@ -8,12 +8,13 @@ their requirements. Each function here adds one such group to a parser.
 
 from __future__ import annotations
 
-import argparse
-import datetime
-import os
-import re
-
 from typing import TYPE_CHECKING
+lazy import argparse
+lazy import datetime
+lazy import os
+lazy import re
+
+lazy from kpip.core.packaging import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -69,8 +70,6 @@ class RefreshPackage(argparse.Action):
         values: Any,
         option_string: str | None = None,
     ) -> None:
-        from kpip.core.packaging import canonicalize_name
-
         existing = set(getattr(namespace, self.dest))
         new = str(values).split(",")
 

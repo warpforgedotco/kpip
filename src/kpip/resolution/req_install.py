@@ -1,33 +1,35 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Iterable
+lazy import logging
+lazy import os
+lazy import tempfile
+lazy from collections.abc import Iterable
+lazy from tomllib import loads
 from typing import TYPE_CHECKING, Any, Protocol
 
-from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
-import logging
-from kpip.core.direct_url import ArchiveInfo, DirInfo
-from kpip.core.errors import (
+lazy from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
+lazy from kpip.core.direct_url import ArchiveInfo, DirInfo
+lazy from kpip.core.errors import (
     DiagnosticKpipError,
     InstallationError,
 )
-from kpip.core.hashes import Hashes
-from kpip.core.packaging import (
+lazy from kpip.core.hashes import Hashes
+lazy from kpip.core.interpreter import build_interpreter
+lazy from kpip.core.packaging import (
     Requirement as ParsedRequirement,
 )
-from kpip.core.packaging import (
+lazy from kpip.core.packaging import (
     SpecifierSet,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-from kpip.core.versions import Version
-from kpip.index.links import Link
-from kpip.resolution.input_paths import looks_like_path
+lazy from kpip.core.versions import Version
+lazy from kpip.index.links import Link
+lazy from kpip.resolution.input_paths import looks_like_path
 
 if TYPE_CHECKING:
     import email.message
-
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +93,6 @@ class DownloadInfo:
 class NoOpBuildEnvironment_internal:
     @property
     def python_executable(self) -> str:
-        from kpip.core.interpreter import build_interpreter
-
         return build_interpreter()
 
     def __enter__(self) -> NoOpBuildEnvironment_internal:
@@ -344,8 +344,6 @@ class InstallRequirement:
         return marker_applies(self.markers, extras=extras_requested)
 
     def ensure_build_location(self, parent_dir: str) -> str:
-        import tempfile
-
         root = os.path.realpath(os.path.dirname(parent_dir))
 
         return tempfile.mkdtemp("-build", "kpip-", dir=root)
@@ -465,8 +463,6 @@ class InstallRequirement:
         )
 
     def load_pyproject_toml(self) -> dict[str, object]:
-        from tomllib import loads
-
         if self.source_dir is None:
             raise InstallationError("Install requirement has no source directory")
 
@@ -625,8 +621,6 @@ class InstallRequirement:
 
         if self.source_dir is None or self.pep517_backend is None:
             raise InstallationError(f"Cannot prepare metadata for {self}")
-
-        import tempfile
 
         metadata_root = tempfile.mkdtemp(prefix="kpip-modern-metadata-")
 

@@ -2,23 +2,24 @@
 
 from __future__ import annotations
 
-import atexit
-import os
-import posixpath
-import urllib.parse
-
-from kpip.core.digests import sha256_hexdigest
-import logging
-from kpip.core.errors import InstallationError
-from kpip.core.urls import url_to_path
-from kpip.index.artifact_cache import ArtifactCache, materialize_cached_artifact
-from kpip.index.vcs_urls import vcs_scheme
-
 from typing import TYPE_CHECKING
+lazy import atexit
+lazy import logging
+lazy import os
+lazy import posixpath
+lazy import shutil
+lazy import tempfile
+lazy import urllib.parse
+
+lazy from kpip.core.digests import sha256_hexdigest
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.urls import url_to_path
+lazy from kpip.index.artifact_cache import ArtifactCache, materialize_cached_artifact
+lazy from kpip.index.vcs import materialize_vcs
+lazy from kpip.index.vcs_urls import vcs_scheme
 
 if TYPE_CHECKING:
     from typing import Any
-
     from kpip.core.http_contracts import HttpSession
 
 logger = logging.getLogger(__name__)
@@ -31,9 +32,6 @@ def download_dir_internal() -> str:
     global DOWNLOAD_DIR
 
     if DOWNLOAD_DIR is None:
-        import shutil
-        import tempfile
-
         DOWNLOAD_DIR = tempfile.mkdtemp(prefix="kpip-index-downloads-")
 
         atexit.register(shutil.rmtree, DOWNLOAD_DIR, ignore_errors=True)
@@ -98,7 +96,6 @@ class ArtifactLocator:
         if is_vcs:
             # Only a URL that turned out to name a repository pays for the
             # machinery that clones one.
-            from kpip.index.vcs import materialize_vcs
 
             prompting = True
 
@@ -197,8 +194,6 @@ class ArtifactLocator:
             if cached_body is not None:
                 try:
                     os.makedirs(os.path.dirname(target), exist_ok=True)
-
-                    import shutil
 
                     with open(target, "wb") as file:
                         shutil.copyfileobj(cached_body, file)

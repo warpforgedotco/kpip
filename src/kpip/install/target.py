@@ -10,10 +10,10 @@ than calculating individual scheme paths.
 
 from __future__ import annotations
 
-import os
+lazy import os
 
-from kpip.host.locations.sysconfig_scheme import get_scheme
-from kpip.host.scheme import Scheme
+lazy from kpip.host.locations.sysconfig_scheme import get_scheme
+lazy from kpip.host.scheme import Scheme
 
 
 class InstallTarget:

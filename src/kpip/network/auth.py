@@ -6,24 +6,25 @@ providing credentials in the context of network requests.
 
 from __future__ import annotations
 
-import getpass
-import importlib.util
-import json
-import logging
-import netrc
-import os
-import shutil
-import sys
-import sysconfig
-import typing
-import urllib.parse
-from abc import ABC, abstractmethod
-from functools import cache
-from os.path import commonpath
-from typing import NamedTuple
+lazy import getpass
+lazy import importlib.util
+lazy import json
+lazy import logging
+lazy import netrc
+lazy import os
+lazy import shutil
+lazy import subprocess
+lazy import sys
+lazy import sysconfig
+lazy import typing
+lazy import urllib.parse
+lazy from abc import ABC, abstractmethod
+lazy from functools import cache
+lazy from os.path import commonpath
+lazy from typing import NamedTuple
 
-from kpip.core.urls import remove_auth_from_url, split_auth_netloc_from_url
-from kpip.core.utils import AuthInfo
+lazy from kpip.core.urls import remove_auth_from_url, split_auth_netloc_from_url
+lazy from kpip.core.utils import AuthInfo
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ KEYRING_DISABLED = False
 def load_netrc(netrc_path: str | None) -> netrc.netrc | None:
     try:
         return netrc.netrc(netrc_path)
-    except (FileNotFoundError, OSError, netrc.NetrcParseError):
+    except FileNotFoundError, OSError, netrc.NetrcParseError:
         return None
 
 
@@ -106,6 +107,9 @@ class KeyRingPythonProvider(KeyRingBaseProvider):
     has_keyring = True
 
     def __init__(self) -> None:
+        # Imported only when this provider is chosen: keyring is optional, a
+        # plugin host whose import can fail in any way, and not wanted at all
+        # with --keyring-provider disabled or subprocess.
         import keyring
 
         self.keyring = keyring
@@ -154,8 +158,6 @@ class KeyRingCliProvider(KeyRingBaseProvider):
         if self.keyring is None:
             return None
 
-        import subprocess
-
         cmd = [self.keyring, "--mode=creds", "--output=json", "get", service_name]
         if username is not None:
             cmd.append(username)
@@ -195,7 +197,6 @@ class KeyRingCliProvider(KeyRingBaseProvider):
         """Mirror the implementation of keyring.set_password using cli"""
         if self.keyring is None:
             return
-        import subprocess
 
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
@@ -253,7 +254,7 @@ def get_keyring_provider(provider: str) -> KeyRingBaseProvider:
                 if path is None:
                     try:
                         path = os.confstr("CS_PATH")
-                    except (AttributeError, ValueError):
+                    except AttributeError, ValueError:
                         path = os.defpath
 
                 return path

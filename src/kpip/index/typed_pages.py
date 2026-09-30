@@ -15,38 +15,32 @@ typed ``Any``, so an odd value is passed through for the record builder to
 judge exactly as it judges one read by ``json``.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import Any
 
-UNSET: object = object()
-"""A field the entry does not have; msgspec's own marker once it is loaded."""
+try:
+    import msgspec
+except ImportError:
+    msgspec = None  # ty: ignore[invalid-assignment]
 
-_decoder: "Callable[[Any], Any] | None" = None
+UNSET: object
+"""A field the entry does not have: msgspec's own marker, when it is there."""
 
-_errors: "tuple[type[BaseException], ...]" = ()
+_decoder: Callable[[Any], Any] | None
 
-_loaded = False
+_errors: tuple[type[BaseException], ...]
 
-
-def _load() -> None:
-    global UNSET, _decoder, _errors, _loaded
-
-    try:
-        import msgspec
-    except ImportError:
-        _loaded = True
-        return
-
-    # Read when msgspec evaluates the structs' annotations.
-    from typing import Any  # noqa: F401
-
+if msgspec is None:
+    UNSET = object()
+    _decoder = None
+    _errors = ()
+else:
     # Built with defstruct, from field types rather than annotations: from
-    # 3.14 a class's annotations are a function evaluated on demand, closing
-    # over this function's names, and a compiled kpip's closures are not the
-    # cells annotationlib needs -- the Nuitka binary failed on its first page.
+    # 3.14 a class's annotations are a function evaluated on demand, and a
+    # compiled kpip's are not what annotationlib needs -- the Nuitka binary
+    # failed on its first page.
     File = msgspec.defstruct(
         "File",
         [
@@ -82,21 +76,13 @@ def _load() -> None:
     # ValidationError is a DecodeError.
     _errors = (msgspec.DecodeError,)
 
-    # Last, so a thread that sees it sees the decoder too.
-    _loaded = True
 
-
-def decode_page(body: "str | bytes") -> "Any | None":
+def decode_page(body: str | bytes) -> Any | None:
     """``body`` as a page of file structs, or None to read it with ``json``."""
-    if not _loaded:
-        _load()
-
-    decoder = _decoder
-
-    if decoder is None:
+    if _decoder is None:
         return None
 
     try:
-        return decoder(body)
+        return _decoder(body)
     except _errors:
         return None

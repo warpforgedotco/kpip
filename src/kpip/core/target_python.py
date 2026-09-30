@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from functools import lru_cache
+lazy import sysconfig
+lazy from functools import lru_cache
 
-from .wheel import TargetContext, WheelTag, supported_wheel_tags
+lazy from .wheel import TargetContext, WheelTag, supported_wheel_tags
 
 
 def expand_manylinux(platform: str) -> list[str]:
@@ -52,8 +53,6 @@ def get_supported_internal(
             abis=tuple(abis or ()),
         )
     supported = supported_wheel_tags(target)
-
-    import sysconfig
 
     soabi = sysconfig.get_config_var("SOABI")
     if soabi and "-" in soabi:

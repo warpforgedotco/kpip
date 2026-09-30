@@ -1,30 +1,25 @@
 from __future__ import annotations
 
-import os
+from typing import TYPE_CHECKING
+lazy import os
 
-from kpip.core.versions import ZERO_VERSION
-from kpip.core.errors import BuildError
-from kpip.core.versions import Version
-from kpip.core.wheel import (
-    parse_wheel_file,
-    supported_wheel_tags,
-    wheel_tag_rank,
-)
-from kpip.index.directory_index import project_version_from_filename
-from kpip.index.source_models import (
+lazy from kpip.build.build_backend import prepare_project_metadata
+lazy from kpip.core.errors import BuildError
+lazy from kpip.core.versions import ZERO_VERSION, Version
+lazy from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
+lazy from kpip.index.directory_index import project_version_from_filename
+lazy from kpip.index.source_models import (
     ArtifactKind,
     CandidateRecord,
     RejectedCandidate,
     RejectionReason,
 )
-
-from typing import TYPE_CHECKING
+lazy from kpip.index.vcs import materialize_vcs, release_checkout
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from kpip.core.wheel import TargetContext, WheelFile
     from kpip.index.links import Link
-
 
 _vcs_candidates: dict[str, InstallationCandidate] = {}
 """VCS URL -> its candidate, for the life of the process; see from_vcs."""
@@ -130,8 +125,6 @@ class InstallationCandidate(CandidateRecord):
                 "source tree is not local",
             )
 
-        from kpip.build.build_backend import prepare_project_metadata
-
         try:
             metadata = prepare_project_metadata(source_dir)
 
@@ -214,19 +207,12 @@ class InstallationCandidate(CandidateRecord):
         if cached is not None:
             return cached
 
-        # Imported here rather than at module scope: ``kpip.index.vcs``
-        # reaches ``shutil`` and ``tempfile``, and a resolve that meets no
-        # VCS link -- nearly every one -- never needs either.
-        from kpip.index.vcs import materialize_vcs, release_checkout
-
         if lookup is not None:
             persisted = lookup(link)
             if persisted is not None:
                 candidate = cls(name=persisted[0], version=persisted[1], link=link)
                 _vcs_candidates[link.url] = candidate
                 return candidate
-
-        from kpip.build.build_backend import prepare_project_metadata
 
         local = None
 
@@ -235,7 +221,7 @@ class InstallationCandidate(CandidateRecord):
             metadata = prepare_project_metadata(local)
             version = Version(metadata.version)
 
-        except (BuildError, ValueError):
+        except BuildError, ValueError:
             return RejectedCandidate(
                 link,
                 RejectionReason.INVALID_VERSION,

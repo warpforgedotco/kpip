@@ -21,18 +21,24 @@ the life of the process.
 
 from __future__ import annotations
 
-import os
-import re
-import struct
-import sys
-
-from kpip.core.caches import memoized
-
 from typing import TYPE_CHECKING
+lazy import os
+lazy import re
+lazy import struct
+lazy import subprocess
+lazy import sys
+
+try:
+    import ctypes
+except ImportError:
+    # An interpreter built without libffi.
+    ctypes = None  # ty: ignore[invalid-assignment]
+
+
+lazy from kpip.core.caches import memoized
 
 if TYPE_CHECKING:
     from typing import IO
-
 
 GLIBC = "glibc"
 MUSL = "musl"
@@ -161,7 +167,7 @@ def _open_elf(path: str) -> _ELFFile | None:
     try:
         with open(path, "rb") as handle:
             return _ELFFile(handle)
-    except (OSError, TypeError, ValueError):
+    except OSError, TypeError, ValueError:
         return None
 
 
@@ -172,7 +178,7 @@ def _interpreter_elf_facts() -> tuple[int, int, int, int] | None:
         with open(sys.executable, "rb") as handle:
             elf = _ELFFile(handle)
             return (elf.capacity, elf.encoding, elf.machine, elf.flags)
-    except (OSError, TypeError, ValueError):
+    except OSError, TypeError, ValueError:
         return None
 
 
@@ -181,7 +187,7 @@ def _interpreter_elf_interpreter() -> str | None:
     try:
         with open(sys.executable, "rb") as handle:
             return _ELFFile(handle).interpreter
-    except (OSError, TypeError, ValueError):
+    except OSError, TypeError, ValueError:
         return None
 
 
@@ -220,7 +226,7 @@ _MUSL_VERSION_RE = re.compile(r"Version (\d+)\.(\d+)")
 def _glibc_version_from_confstr() -> tuple[int, int] | None:
     try:
         text = os.confstr("CS_GNU_LIBC_VERSION")
-    except (AttributeError, OSError, ValueError):
+    except AttributeError, OSError, ValueError:
         return None
     if not text:
         return None
@@ -233,13 +239,11 @@ def _glibc_version_from_confstr() -> tuple[int, int] | None:
 
 
 def _glibc_version_from_ctypes() -> tuple[int, int] | None:
-    try:
-        import ctypes
-    except ImportError:
+    if ctypes is None:
         return None
     try:
         namespace = ctypes.CDLL(None)
-    except (OSError, TypeError):
+    except OSError, TypeError:
         # A statically linked or musl interpreter: dlopen(NULL) fails.
         return None
     try:
@@ -262,7 +266,6 @@ def _musl_version() -> tuple[int, int] | None:
     loader = _interpreter_elf_interpreter()
     if loader is None or "musl" not in loader:
         return None
-    import subprocess
 
     try:
         completed = subprocess.run(  # noqa: S603
@@ -273,7 +276,7 @@ def _musl_version() -> tuple[int, int] | None:
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     lines = [
         line for line in (raw.strip() for raw in completed.stderr.splitlines()) if line

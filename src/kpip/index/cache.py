@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import os
+lazy import json
+lazy import logging
+lazy import os
 
-from kpip.core.digests import sha256_hexdigest
-import logging
-from kpip.core.appdirs import WHEEL_CACHE_BUCKET
+lazy from kpip.core.appdirs import WHEEL_CACHE_BUCKET
+lazy from kpip.core.digests import sha256_hexdigest
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +29,9 @@ def origin_hashes(
     try:
         with open(path, encoding="utf-8") as file:
             data = json.load(file)
-    except (FileNotFoundError, IsADirectoryError):
+    except FileNotFoundError, IsADirectoryError:
         return None
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except OSError, UnicodeError, json.JSONDecodeError:
         logger.warning("Ignoring invalid cache entry origin file %s", path)
         return None
     if not isinstance(data, dict):

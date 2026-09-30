@@ -16,17 +16,25 @@ faster, it is never the reason one fails.
 
 from __future__ import annotations
 
-import os
-import queue
-import sys
-import threading
 from typing import TYPE_CHECKING
+lazy import atexit
+lazy import os
+lazy import queue
+lazy import subprocess
+lazy import sys
+lazy import threading
 
-from kpip.core.utils import default_worker_count
+lazy from kpip.core.interpreter import is_compiled, own_command
+lazy from kpip.core.utils import default_worker_count
+lazy from kpip.install._compile_worker import WORKER_ARGUMENT
 
 if TYPE_CHECKING:
-    import subprocess
     from collections.abc import Iterable
+
+try:
+    import _interpreters
+except ImportError:
+    _interpreters = None  # ty: ignore[invalid-assignment]
 
 CompileJob = tuple[str, str, str]
 """A module to compile: source path, ``.pyc`` path, and the name to record
@@ -88,7 +96,7 @@ class _Worker:
                 for line in iter(stdout.readline, ""):
                     self._lines.put(line)
 
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass
 
         # A sentinel, so a waiting caller learns the worker is gone instead of
@@ -120,7 +128,7 @@ class _Worker:
 
             stdin.flush()
 
-        except (BrokenPipeError, OSError, ValueError):
+        except BrokenPipeError, OSError, ValueError:
             return False
 
         echoed = self._readline(COMPILE_TIMEOUT)
@@ -161,11 +169,8 @@ def _worker_command() -> list[str]:
     beside the binary that does not exist: no worker ever started, and it
     compiled every module in the main process, one at a time.
     """
-    from kpip.core.interpreter import is_compiled, own_command
 
     if is_compiled():
-        from kpip.install._compile_worker import WORKER_ARGUMENT
-
         return [*own_command(), WORKER_ARGUMENT]
 
     return [sys.executable, _worker_script()]
@@ -173,7 +178,6 @@ def _worker_command() -> list[str]:
 
 def _spawn() -> _Worker | None:
     """Start one worker, or ``None`` if it will not answer."""
-    import subprocess
 
     try:
         process = subprocess.Popen(  # noqa: S603
@@ -187,7 +191,7 @@ def _spawn() -> _Worker | None:
             close_fds=True,
         )
 
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
     worker = _Worker(process)
@@ -429,8 +433,6 @@ def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
 
     with _POOL_LOCK:
         if _POOL is None:
-            import atexit
-
             _POOL = CompilePool(MAX_WORKERS)
 
             atexit.register(shutdown)
@@ -451,10 +453,7 @@ def _in_subinterpreter() -> bool:
     Nor does it need them. It is one of several unpacking side by side, each
     with a lock of its own, so compiling in it is already in parallel.
     """
-    try:
-        import _interpreters
-
-    except ImportError:
+    if _interpreters is None:
         return False
 
     return _interpreters.get_current()[0] != _interpreters.get_main()[0]

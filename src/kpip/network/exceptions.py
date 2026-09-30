@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+lazy from typing import Literal
 
-from kpip.core.errors import KpipError, DiagnosticKpipError
+lazy from kpip.core.errors import DiagnosticKpipError, KpipError
 
 
 class IncompleteDownloadError(KpipError):

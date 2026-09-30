@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from enum import Enum
+lazy from collections.abc import Callable, Iterator, Mapping
+lazy from enum import Enum
+from typing import TYPE_CHECKING, Protocol
 
-from kpip.core.packaging import Requirement, canonicalize_name
-from kpip.core.versions import Version
-from kpip.core.wheel import CandidateMetadata, legacy_build_tag
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import Callable, Protocol
-
-    from kpip.core.wheel import WheelFile
-    from kpip.index.links import Link
+lazy from kpip.core.packaging import Requirement, canonicalize_name
+lazy from kpip.core.versions import Version
+lazy from kpip.core.wheel import CandidateMetadata, legacy_build_tag
 
 
 class ArtifactKind(Enum):
@@ -373,6 +366,9 @@ class PackageCatalog:
 
 
 if TYPE_CHECKING:
+    from kpip.core.wheel import WheelFile
+    from kpip.index.links import Link
+
     # Only ever named in annotations: defining a Protocol imports ``typing``.
     class PackageSource(Protocol):
         def collect_links(self, requirement: Requirement) -> list[Link]: ...

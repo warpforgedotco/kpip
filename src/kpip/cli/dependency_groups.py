@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
+lazy import os
+lazy import tomllib
+lazy from typing import Any
 
-from kpip.core.errors import InstallationError
-from kpip.core.names import canonicalize_name
-
-from typing import Any
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.names import canonicalize_name
 
 
 def group_items(values: list[str]) -> list[tuple[str, str]]:
@@ -32,23 +32,7 @@ def parse_dependency_groups(items: list[tuple[str, str]]) -> list[str]:
     return requirements
 
 
-def toml_module() -> Any:
-    """The TOML parser, imported on first use: only a --group install reads
-    TOML, and the import is not free."""
-    import tomllib
-
-    return tomllib
-
-
-def __getattr__(name: str) -> Any:
-    if name == "tomllib":
-        return toml_module()
-    raise AttributeError(name)
-
-
 def resolve_group_file(path: str, group_name: str) -> list[str]:
-    tomllib = toml_module()
-
     try:
         with open(path, "rb") as handle:
             data = tomllib.load(handle)

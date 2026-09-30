@@ -1185,7 +1185,7 @@ def need_executable(name: str, check_cmd: tuple[str, ...]) -> Callable[[Test], T
     def wrapper(fn: Test) -> Test:
         try:
             subprocess.check_output(check_cmd)
-        except (OSError, subprocess.CalledProcessError):
+        except OSError, subprocess.CalledProcessError:
             return pytest.mark.skip(reason=f"{name} is not available")(fn)
         return fn
 

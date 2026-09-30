@@ -2,30 +2,34 @@
 
 from __future__ import annotations
 
-import email.message
-import logging
-import mimetypes
-import os
-import shutil
-from collections.abc import Iterable, Mapping
-from http import HTTPStatus
-from typing import BinaryIO
+lazy import email.message
+lazy import logging
+lazy import mimetypes
+lazy import os
+lazy import shutil
+lazy from collections.abc import Iterable, Mapping
+lazy from http import HTTPStatus
+lazy from typing import BinaryIO
 
-from kpip._vendor.urllib3.exceptions import HTTPError
-from kpip.core.http_contracts import HttpResponse, HttpStatusError, raise_for_status
-from kpip.core.urls import redact_auth_from_url
-from kpip.index.links import Link
-from kpip.index.paths import PathComponent
-from kpip.network.exceptions import (
+lazy from kpip._vendor.urllib3.exceptions import HTTPError
+lazy from kpip.core.http_contracts import (
+    HttpResponse,
+    HttpStatusError,
+    raise_for_status,
+)
+lazy from kpip.core.urls import redact_auth_from_url
+lazy from kpip.host.filesystem import format_size
+lazy from kpip.index.links import Link
+lazy from kpip.index.paths import PathComponent
+lazy from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
     IncompleteDownloadError,
     ProxyConnectionError,
     SSLVerificationError,
 )
-from kpip.network.freshness import encode_metadata
-from kpip.network.session import NetworkSession
-from kpip.host.filesystem import format_size
+lazy from kpip.network.freshness import encode_metadata
+lazy from kpip.network.session import NetworkSession
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +53,7 @@ def get_http_response_size(resp: HttpResponse) -> int | None:
     try:
         size = int(resp.headers["content-length"])
 
-    except (ValueError, KeyError, TypeError):
+    except ValueError, KeyError, TypeError:
         return None
 
     if size < 0:

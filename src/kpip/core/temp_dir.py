@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+lazy import logging
+lazy import os.path
+lazy import stat
+lazy import tempfile
+lazy import traceback
+lazy from contextlib import ExitStack, contextmanager
+from typing import TYPE_CHECKING, TypeVar
 
-import os.path
-import stat
-import tempfile
-from contextlib import ExitStack, contextmanager
-
-import logging
-from kpip.core import run_options
-from kpip.core.utils import enum
+lazy from kpip.core import run_options
+lazy from kpip.core.utils import enum
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
-    from typing import Any, TypeVar
+    from typing import Any
 
     # Bounded only where the bound is read. A string bound is a lazily
     # evaluated annotation, and building one imports ``annotationlib`` --
@@ -146,8 +146,6 @@ class TempDirectory:
             self.cleanup()
 
     def create_internal(self, kind: str) -> str:
-        import tempfile
-
         path = os.path.realpath(tempfile.mkdtemp(prefix=f"kpip-{kind}-"))
         logger.debug("Created temporary directory: %s", path)
         return path
@@ -163,8 +161,6 @@ class TempDirectory:
         else:
             return
         errors: list[BaseException] = []
-
-        import traceback
 
         def onerror(
             func: Callable[..., Any],

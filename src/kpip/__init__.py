@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+lazy from kpip.cli import entrypoint
+
 __version__ = "0.0.1"
 
 
@@ -8,7 +10,5 @@ def main(args: list[str] | None = None) -> int:
 
     For additional details, see https://github.com/pypa/pip/issues/7498.
     """
-
-    from kpip.cli import entrypoint
 
     return entrypoint.main(args, version=None, location=__file__)

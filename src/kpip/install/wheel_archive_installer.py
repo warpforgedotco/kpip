@@ -8,39 +8,44 @@ them into a real target directory.
 
 from __future__ import annotations
 
-import csv
-import errno
-import io
-import os
-import shutil
-from collections.abc import Set as AbstractSet
 from typing import TYPE_CHECKING
+lazy import compileall
+lazy import csv
+lazy import errno
+lazy import importlib.util
+lazy import io
+lazy import logging
+lazy import marshal
+lazy import os
+lazy import shutil
+lazy import tempfile
+lazy import types
+lazy from collections.abc import Set as AbstractSet
+lazy from concurrent.futures import ThreadPoolExecutor
 
-from kpip.core.errors import InstallationError
-import logging
-from kpip.install.wheel_archive import (
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.host.clone import clone_path
+lazy from kpip.install.wheel_archive import (
     compiled_parts,
     mapped_parts,
     record_metadata_internal,
     validate_member_parts,
 )
-from kpip.install.wheel_archive_cache import (
+lazy from kpip.install.wheel_archive_cache import (
     INSTALL_WORKERS,
     prepare_cached_wheels,
     pyc_root,
 )
-from kpip.install.wheel_scripts import (
+lazy from kpip.install.wheel_scripts import (
     entry_point_scripts,
     generate_entry_point_files,
     rewrite_shebang,
 )
-from kpip.host.clone import clone_path
-
-logger = logging.getLogger(__name__)
+lazy from kpip.install.wheel_state import discover_installed_wheels, existing_paths
 
 if TYPE_CHECKING:
     from types import CodeType
-
     from kpip.build.metadata import InstalledMetadataDistribution
     from kpip.core.direct_url import DirectUrl
     from kpip.install.target import InstallTarget
@@ -51,6 +56,8 @@ if TYPE_CHECKING:
         WheelRequest,
     )
     from kpip.install.wheel_state import InstalledWheelDistribution
+
+logger = logging.getLogger(__name__)
 
 
 _CLONE_WORKERS = min(INSTALL_WORKERS, 4)
@@ -511,7 +518,7 @@ def _remove_existing(path: str) -> None:
     except FileNotFoundError:
         pass
 
-    except (IsADirectoryError, PermissionError):
+    except IsADirectoryError, PermissionError:
         # Unlinking a directory fails with EISDIR on Linux, EPERM elsewhere.
         if not os.path.isdir(path) or os.path.islink(path):
             raise
@@ -557,8 +564,6 @@ def _timestamp_pyc(code: CodeType, source: os.stat_result) -> bytes:
     Byte-for-byte what ``compileall`` would have written next to a source with
     ``source``'s mtime and size, so the interpreter validates it the same way.
     """
-    import importlib.util
-    import marshal
 
     return b"".join(
         (
@@ -594,8 +599,6 @@ def _materialize_pyc(
     learned to compile, a module that would not compile, a mismatched
     interpreter magic -- fall back to compiling in the stage.
     """
-    import marshal
-    import types
 
     code_type = types.CodeType
 
@@ -604,8 +607,6 @@ def _materialize_pyc(
     rows: list[tuple[str, str, str]] = []
 
     uncached: list[tuple[str, tuple[str, ...]]] = []
-
-    import importlib.util
 
     magic = importlib.util.MAGIC_NUMBER
 
@@ -645,7 +646,7 @@ def _materialize_pyc(
 
             body = _timestamp_pyc(code, os.stat(source))
 
-        except (EOFError, OSError, ValueError, TypeError):
+        except EOFError, OSError, ValueError, TypeError:
             uncached.append((source, target))
 
             continue
@@ -671,8 +672,6 @@ def _compile_uncached(
     """Compile members the archive cache had no ``.pyc`` for, in the stage."""
     if not members:
         return []
-
-    import compileall
 
     rows: list[tuple[str, str, str]] = []
 
@@ -992,8 +991,6 @@ def install_wheels_from_archive_cache(
 
     os.makedirs(parent, exist_ok=True)
 
-    import tempfile
-
     staging_parent = tempfile.mkdtemp(prefix=".kpip-install-", dir=parent)
 
     stage = os.path.join(staging_parent, "target")
@@ -1012,12 +1009,6 @@ def install_wheels_from_archive_cache(
         destinations_by_plan: dict[_WheelInstallPlan, set[str]] = {}
 
         if root_existed:
-            from kpip.build.metadata import InstalledDistributionStore
-            from kpip.install.wheel_state import (
-                discover_installed_wheels,
-                existing_paths,
-            )
-
             names = {plan.candidate.canonical_name for plan in plans}
 
             existing = discover_installed_wheels((root,), names=names)
@@ -1119,8 +1110,6 @@ def install_wheels_from_archive_cache(
         active_archives = tuple(plan.archive for plan in active_plans)
 
         if len(archives) >= 4 or len(plans) >= 4:
-            from concurrent.futures import ThreadPoolExecutor
-
             pool = ThreadPoolExecutor(
                 max_workers=min(
                     _CLONE_WORKERS,

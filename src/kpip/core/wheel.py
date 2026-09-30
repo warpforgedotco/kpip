@@ -1,29 +1,39 @@
 from __future__ import annotations
 
-import os
-import re
-import sys
-from collections.abc import Callable, Collection, Mapping
-from functools import lru_cache
+lazy import logging
+lazy import os
+lazy import platform
+lazy import re
+lazy import sys
+lazy import sysconfig
+lazy import zipfile
+lazy from collections.abc import Callable, Collection, Mapping
+lazy from email import parser
+lazy from functools import lru_cache
+from typing import TYPE_CHECKING, Protocol
 
-from .caches import bounded_put, memoized, register_table
-from .errors import InstallationError, InvalidWheelFilename, UnsupportedWheel
-from .light_metadata import LightMetadata, parse_metadata_text
-from .packaging import Requirement, canonicalize_name, marker_applies, parse_requirement
-from .versions import InvalidVersion, Version
-from .utils import CURRENT_PYTHON_VERSION_DIGITS
-from .wheel_metadata import (
+lazy from kpip.core.archive import WheelArchive, WheelhouseUnavailable
+lazy from kpip.core.libc import GLIBC, MUSL, detect, manylinux_arch_supported
+
+lazy from .caches import bounded_put, memoized, register_table
+lazy from .errors import InstallationError, InvalidWheelFilename, UnsupportedWheel
+lazy from .light_metadata import LightMetadata, parse_metadata_text
+lazy from .packaging import (
+    Requirement,
+    canonicalize_name,
+    marker_applies,
+    parse_requirement,
+)
+lazy from .utils import CURRENT_PYTHON_VERSION_DIGITS
+lazy from .versions import InvalidVersion, Version
+lazy from .wheel_metadata import (
     metadata_paths,
     parse_metadata_member,
 )
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
-    import zipfile
-    from email import parser
     from email.message import Message
-    from typing import IO, Any, NoReturn, Protocol
+    from typing import IO, Any, NoReturn
 
     class ZipEntryInfo(Protocol):
         """The subset of ``zipfile.ZipInfo`` these functions read.
@@ -151,8 +161,6 @@ def Parser() -> parser.Parser:
     The import is deferred as well: few installs parse a METADATA file this
     way.
     """
-
-    from email import parser
 
     return parser.Parser()
 
@@ -814,8 +822,6 @@ def macos_product_version() -> str | None:
 
 def current_platform_tag() -> str:
     if sys.platform == "darwin":
-        import platform
-
         release = macos_product_version()
 
         if release is None:
@@ -828,8 +834,6 @@ def current_platform_tag() -> str:
             minor = 0 if major >= 11 else int(mac_version[1])
             machine = platform.machine().replace("-", "_").replace(".", "_")
             return f"macosx_{major}_{minor}_{machine}"
-
-    import sysconfig
 
     return sysconfig.get_platform().replace("-", "_").replace(".", "_")
 
@@ -854,8 +858,6 @@ def current_platform_tags() -> tuple[str, ...]:
 
     if not platform_tag.startswith("linux_"):
         return (platform_tag,)
-
-    from kpip.core.libc import GLIBC, MUSL, detect, manylinux_arch_supported
 
     arch = platform_tag[len("linux_") :]
     libc = detect()
@@ -1002,7 +1004,7 @@ def wheel_archive_identity(
 
         return path_key, stat.st_size, stat.st_mtime_ns
 
-    except (KeyError, OSError):
+    except KeyError, OSError:
         return None
 
 
@@ -1197,10 +1199,6 @@ def read_core_metadata_headers(
 
 
 def read_metadata_message(path: str):
-    import zipfile
-
-    from kpip.core.archive import WheelArchive, WheelhouseUnavailable
-
     try:
         with open(path, "rb", buffering=0) as file:
             archive = WheelArchive(file, metadata_only=True)
@@ -1324,8 +1322,6 @@ def wheel_dist_info_dir(source: ZipArchiveSource, name: str) -> str:
 
 
 def read_wheel_archive_member(source: ZipArchiveSource, path: str) -> bytes:
-    import zipfile
-
     try:
         return source.read(path)
 
@@ -1417,8 +1413,6 @@ def check_compatibility(version: tuple[int, ...], name: str) -> None:
         )
 
     if version > VERSION_COMPATIBLE:
-        import logging
-
         logging.getLogger(__name__).warning(
             "Installing from a newer Wheel-Version (%s)",
             ".".join(map(str, version)),
@@ -1498,7 +1492,6 @@ def wheel_candidate_from_path(
     identity match here means we can skip both without losing any structural
     validation that wasn't already going to happen again downstream.
     """
-    import zipfile
 
     requested_extras = frozenset(extras or ())
 

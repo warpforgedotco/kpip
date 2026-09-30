@@ -2,26 +2,25 @@
 
 from __future__ import annotations
 
-import importlib.util
-import os
+from typing import TYPE_CHECKING
+lazy import importlib.util
+lazy import os
+lazy from concurrent.futures import ThreadPoolExecutor
 
-from kpip.core.errors import InstallationError
-from kpip.core.wheel import WheelCandidate
-from kpip.install.target import InstallTarget
-from kpip.install.transaction import InstallTransaction
-from kpip.install.wheel_archive_cache import INSTALL_WORKERS
-from kpip.install.wheel_archive import (
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.wheel import WheelCandidate
+lazy from kpip.install.target import InstallTarget
+lazy from kpip.install.transaction import InstallTransaction
+lazy from kpip.install.wheel_archive import (
     DestinationCache,
     ResolvedRoots,
     destination_internal_parts_text,
     validate_member_parts,
 )
-
-from typing import TYPE_CHECKING
+lazy from kpip.install.wheel_archive_cache import INSTALL_WORKERS
 
 if TYPE_CHECKING:
     from typing import Any
-
     from kpip.core.direct_url import DirectUrl
 
 DIRECT_CONTENT_BATCH_LIMIT = 4 * 1024 * 1024
@@ -146,8 +145,6 @@ def install_wheels_directly(
         staged_results: list[tuple[int, InstallTransaction, WheelCandidate]] = []
         try:
             if parallel:
-                from concurrent.futures import ThreadPoolExecutor
-
                 with ThreadPoolExecutor(
                     max_workers=min(INSTALL_WORKERS, len(requests))
                 ) as pool:

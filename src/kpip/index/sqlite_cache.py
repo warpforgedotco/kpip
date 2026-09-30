@@ -17,14 +17,10 @@ that should hit disk just counts as a miss instead).
 
 from __future__ import annotations
 
-import atexit
-import os
-import threading
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import sqlite3
+lazy import atexit
+lazy import os
+lazy import sqlite3
+lazy import threading
 
 
 class SqliteBackedCache:
@@ -64,7 +60,6 @@ class SqliteBackedCache:
 
     def _writer(self) -> sqlite3.Connection:
         """Return the connection, opening the database on first real use."""
-        import sqlite3
 
         if self.conn is not None:
             return self.conn
@@ -85,7 +80,6 @@ class SqliteBackedCache:
 
     def _open(self) -> sqlite3.Connection:
         """Open a WAL-mode connection and ensure this cache's schema exists."""
-        import sqlite3
 
         conn = sqlite3.connect(self.path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -97,10 +91,6 @@ class SqliteBackedCache:
         if not self.dirty:
             return
 
-        # Imported here, not with the module: a run that finds nothing to
-        # write or read never pays for ``sqlite3``.
-        import sqlite3
-
         with self.lock:
             try:
                 conn = self._writer()
@@ -108,7 +98,7 @@ class SqliteBackedCache:
                 conn.commit()
                 self._clear_pending()
                 self.dirty = False
-            except (sqlite3.Error, ValueError, TypeError, OSError):
+            except sqlite3.Error, ValueError, TypeError, OSError:
                 if self.conn is not None:
                     try:
                         self.conn.rollback()

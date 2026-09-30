@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import compileall
-import csv
-import importlib.util
-import os
-import stat
-from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING
+lazy import compileall
+lazy import csv
+lazy import importlib.util
+lazy import os
+lazy import stat
+lazy from collections.abc import Iterable, Mapping
 
-from kpip.build.metadata import InstalledDistributionStore
-from kpip.core.names import (
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.names import (
     canonicalize_installed_name,
     installed_name_might_match,
 )
-from kpip.core.versions import version_of
-from kpip.core.errors import InstallationError
-
-from typing import TYPE_CHECKING
+lazy from kpip.core.versions import version_of
 
 if TYPE_CHECKING:
     from kpip.build.metadata import InstalledMetadataDistribution
@@ -88,7 +87,7 @@ def _wheel_metadata_identity(path: str) -> tuple[str, str] | None:
                 if name and version:
                     return name, version
 
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
     return None

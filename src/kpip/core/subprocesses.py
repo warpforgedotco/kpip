@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import locale
-import logging
-import os
-import shlex
-from os import PathLike
-
-from .errors import DiagnosticKpipError
-
 from typing import TYPE_CHECKING
+lazy import locale
+lazy import logging
+lazy import os
+lazy import shlex
+lazy import subprocess
+lazy from os import PathLike
+
+lazy from .errors import DiagnosticKpipError
 
 if TYPE_CHECKING:
     from typing import Any
@@ -79,8 +79,6 @@ def call_subprocess(
     cwd: str | None = None,
     extra_environ: dict[str, str] | None = None,
 ) -> str:
-    import subprocess
-
     log_level = logging.INFO if show_stdout else VERBOSE
     subprocess_logger.log(log_level, "Running command %s", format_command_args(cmd))
     command = command_args_to_argv(cmd)

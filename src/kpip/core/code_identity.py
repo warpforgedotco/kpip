@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import Any
+lazy import os
+lazy import sys
+lazy from hashlib import sha256
 
 _identity: tuple[object, ...] | None = None
 
@@ -31,21 +27,6 @@ def code_identity() -> tuple[object, ...]:
         _identity = _compute()
 
     return _identity
-
-
-def _sha256() -> Any:
-    # The interpreter's own SHA-2, not ``hashlib``: that loads OpenSSL, and a
-    # lock replayed from the cache would spend more on that import than on
-    # identifying the code.  The digests are the same.
-    try:
-        from _sha2 import sha256  # ty: ignore[unresolved-import]
-    except ImportError:
-        try:
-            from _sha256 import sha256  # ty: ignore[unresolved-import]
-        except ImportError:
-            from hashlib import sha256
-
-    return sha256()
 
 
 def _installed_record(root: str) -> bytes | None:
@@ -81,7 +62,7 @@ def _compute() -> tuple[object, ...]:
 
 def _source_identity(root: str) -> tuple[object, ...]:
     prefix = len(root) + 1
-    digest = _sha256()
+    digest = sha256()
 
     for directory, subdirectories, files in os.walk(root):
         subdirectories[:] = sorted(

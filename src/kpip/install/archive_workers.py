@@ -20,17 +20,26 @@ returns None and wheels unpack on threads as before.
 
 from __future__ import annotations
 
-import _imp
-import os
-import sys
-import threading
-
 from typing import TYPE_CHECKING
+lazy import _imp
+lazy import os
+lazy import sys
+lazy import threading
+lazy from concurrent.futures import InterpreterPoolExecutor
+
+lazy from kpip.core.interpreter import is_compiled
+lazy from kpip.install.wheel_archive_cache import (
+    CachedWheelArchive,
+    _ensure_pyc,
+    archive_entry_root,
+    load_archive,
+    loaded_layout,
+    prepare_cached_wheel,
+    wheel_digest,
+)
 
 if TYPE_CHECKING:
     from concurrent.futures import Executor
-
-    from kpip.install.wheel_archive_cache import CachedWheelArchive
 
 WORKERS = 4
 """Subinterpreters unpacking at once; each is an interpreter lock of its own."""
@@ -66,15 +75,17 @@ class _Wheel:
 
 def unpack_in_worker(path: str, sha256: str, cache_dir: str, pycompile: bool) -> str:
     """Fill the wheel's archive cache entry; its directory. Runs in a worker."""
-    from kpip.install.wheel_archive_cache import prepare_cached_wheel
 
     archive = prepare_cached_wheel(_Wheel(path, sha256), cache_dir, pycompile=pycompile)
     return os.path.dirname(archive.tree)
 
 
 def _import_kpip() -> None:
-    """Import what a job needs, so a worker is ready before its first wheel."""
-    import kpip.install.wheel_archive_cache  # noqa: F401
+    """Get a worker ready before its first wheel.
+
+    There is nothing to run: a worker imports this module to call it, and
+    with it what a job needs.
+    """
 
 
 def _available() -> bool:
@@ -88,8 +99,6 @@ def _available() -> bool:
 
     if sys.version_info < (3, 14) or sys.implementation.name != "cpython":
         return False
-
-    from kpip.core.interpreter import is_compiled
 
     # A compiled kpip's modules are compiled into the binary, where a new
     # interpreter cannot import them; it could not even start, for want of
@@ -117,8 +126,6 @@ class ArchiveWorkers:
         with self._lock:
             if self._executor is None and not self._closed:
                 try:
-                    from concurrent.futures import InterpreterPoolExecutor
-
                     executor = InterpreterPoolExecutor(max_workers=WORKERS)
 
                     # Each worker imports kpip before its first wheel.
@@ -142,15 +149,6 @@ class ArchiveWorkers:
         pycompile: bool,
     ) -> CachedWheelArchive:
         """``prepare_cached_wheel(candidate, cache_dir)``, unpacked in a worker."""
-        from kpip.install.wheel_archive_cache import (
-            CachedWheelArchive,
-            _ensure_pyc,
-            archive_entry_root,
-            load_archive,
-            loaded_layout,
-            prepare_cached_wheel,
-            wheel_digest,
-        )
 
         archive = None
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import functools
-import os
+lazy import functools
+lazy import os
+lazy import sysconfig
 
-from kpip.core.appdirs import user_cache_dir
-from kpip.core.errors import InstallationError
-from kpip.core.utils import CURRENT_PYTHON_VERSION
+lazy from kpip.core.appdirs import user_cache_dir
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.utils import CURRENT_PYTHON_VERSION
 
 USER_CACHE_DIR = user_cache_dir("kpip")
 
@@ -44,6 +45,4 @@ def change_root(new_root: str, pathname: str) -> str:
 
 @functools.cache
 def is_osx_framework() -> bool:
-    import sysconfig
-
     return bool(sysconfig.get_config_var("PYTHONFRAMEWORK"))

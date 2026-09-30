@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-import builtins
-import fnmatch
-import glob
-import os
+lazy import builtins
+lazy import fnmatch
+lazy import glob
+lazy import logging
+lazy import os
 
-from kpip.cli.parsers.cache import create_parser
-from kpip.core.appdirs import (
+lazy from kpip.cli.parsers.cache import create_parser
+lazy from kpip.core.appdirs import (
     WHEEL_CACHE_BUCKET,
     cache_root,
     http_cache_path,
     versioned_cache_dir,
 )
-from kpip.core.errors import CommandError
-
-import logging
+lazy from kpip.core.errors import CommandError
 
 logger = logging.getLogger(__name__)
 

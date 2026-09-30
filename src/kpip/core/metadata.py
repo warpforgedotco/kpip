@@ -1,27 +1,28 @@
 from __future__ import annotations
 
-import os
-import site
-import sys
-from collections.abc import Collection, Iterable
+lazy import importlib.metadata
+lazy import os
+lazy import pathlib
+lazy import site
+lazy import sys
+lazy import sysconfig
+lazy from collections.abc import Collection, Iterable
+lazy from importlib.machinery import PathFinder
+from typing import TYPE_CHECKING, Protocol
 
-from .packaging import (
+lazy from .names import installed_name_might_match
+lazy from .packaging import (
     Requirement,
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-from .names import installed_name_might_match
-from .versions import Version, version_of
-from .wheel_metadata import parse_metadata_headers
-
-from typing import TYPE_CHECKING
+lazy from .versions import Version, version_of
+lazy from .wheel_metadata import parse_metadata_headers
 
 if TYPE_CHECKING:
-    import importlib.metadata
-    import pathlib
     from email.message import Message
-    from typing import Protocol, TypeGuard
+    from typing import TypeGuard
 
     HeaderIdentity = tuple[str, int, int]
 
@@ -131,16 +132,11 @@ class PathDistribution:
         return _read_text_file(os.path.join(self._path, filename))
 
     def locate_file(self, path: str | os.PathLike[str]) -> pathlib.Path:
-        import pathlib
-
         return pathlib.Path(os.path.dirname(self._path), path)
 
     @property
     def stdlib(self) -> importlib.metadata.PathDistribution:
         if self._stdlib is None:
-            import importlib.metadata
-            import pathlib
-
             self._stdlib = importlib.metadata.PathDistribution(pathlib.Path(self._path))
 
         return self._stdlib
@@ -265,8 +261,6 @@ class InstalledDistribution:
 
 
 def default_lib_path() -> str:
-    import sysconfig
-
     return sysconfig.get_paths()["purelib"]
 
 
@@ -304,14 +298,10 @@ def _iter_raw_distributions(
     """
 
     if paths is None:
-        from importlib.machinery import PathFinder
-
         if any(
             finder is not PathFinder and hasattr(finder, "find_distributions")
             for finder in sys.meta_path
         ):
-            import importlib.metadata
-
             yield from importlib.metadata.distributions()
 
             return
@@ -327,15 +317,11 @@ def _iter_raw_distributions(
 
         except OSError:
             if os.path.isfile(root):
-                import importlib.metadata
-
                 yield from importlib.metadata.distributions(path=[root])
 
             continue
 
         if os.path.basename(root).lower().endswith(".egg"):
-            import importlib.metadata
-
             yield from importlib.metadata.distributions(path=[root])
 
             continue

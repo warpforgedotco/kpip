@@ -7,26 +7,39 @@ an installation target with copy-on-write semantics.
 
 from __future__ import annotations
 
-import base64
-import csv
-import errno
-import hashlib
-import io
-import marshal
-import os
-import shutil
-import threading
-import time
-from collections.abc import Iterable
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Generator
+lazy import base64
+lazy import csv
+lazy import errno
+lazy import hashlib
+lazy import io
+lazy import marshal
+lazy import os
+lazy import py_compile
+lazy import shutil
+lazy import struct
+lazy import tempfile
+lazy import threading
+lazy import time
+lazy import zipfile
+lazy import zlib
+lazy from collections.abc import Generator, Iterable
+lazy from concurrent.futures import ThreadPoolExecutor
+lazy from contextlib import contextmanager
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
-from kpip.core.appdirs import archive_entry_root
-from kpip.core.digests import valid_sha256
-from kpip.core.errors import InstallationError
-from kpip.core.utils import default_worker_count
-from kpip.core.wheel import validate_wheel
-from kpip.install.wheel_archive import (
+lazy from kpip.core.appdirs import archive_entry_root
+lazy from kpip.core.digests import valid_sha256
+lazy from kpip.core.direct_url import DirectUrl
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.core.utils import default_worker_count
+lazy from kpip.core.wheel import validate_wheel
+lazy from kpip.index.metadata_cache import (
+    MetadataIdentity,
+    get_wheel_metadata_cache,
+    metadata_identity,
+)
+lazy from kpip.install.bytecode import compile_jobs
+lazy from kpip.install.wheel_archive import (
     compiled_parts,
     copy_member_with_metadata,
     mapped_parts,
@@ -35,10 +48,6 @@ from kpip.install.wheel_archive import (
 )
 
 if TYPE_CHECKING:
-    import zipfile
-    from typing import Protocol, TypeVar
-
-    from kpip.core.direct_url import DirectUrl
 
     class WheelInstallCandidate(Protocol):
         """Read-only candidate boundary required by the archive installer."""
@@ -182,11 +191,6 @@ def prefetch_wheel_digests(
     cache_dir: str,
 ) -> tuple[str | None, ...]:
     """Load and return known digests with one database read for the batch."""
-    from kpip.index.metadata_cache import (
-        MetadataIdentity,
-        get_wheel_metadata_cache,
-        metadata_identity,
-    )
 
     candidates = tuple(candidates)
     cache = get_wheel_metadata_cache(cache_dir)
@@ -230,11 +234,6 @@ def wheel_digest(candidate: WheelInstallCandidate, cache_dir: str | None = None)
     identity = None
 
     if cache_dir is not None:
-        from kpip.index.metadata_cache import (
-            get_wheel_metadata_cache,
-            metadata_identity,
-        )
-
         identity = metadata_identity(candidate.path)
 
         if identity is not None:
@@ -283,7 +282,7 @@ def load_archive(entry_root: str, digest: str) -> CachedWheelArchive | None:
         with open(manifest, "rb") as file:
             value = marshal.load(file)
 
-    except (EOFError, OSError, TypeError, ValueError):
+    except EOFError, OSError, TypeError, ValueError:
         return None
 
     if not (
@@ -376,7 +375,7 @@ def _record_metadata(
     try:
         text = archive.read(f"{dist_info}/RECORD").decode("utf-8")
 
-    except (KeyError, UnicodeDecodeError):
+    except KeyError, UnicodeDecodeError:
         return {}
 
     result: dict[str, tuple[str, str]] = {}
@@ -425,9 +424,6 @@ def _extract_member_lean(fd: int, item: _MemberWork) -> ArchiveEntry | None:
     encrypted, oversized or otherwise compressed member) returns None for the
     ``zipfile`` path.
     """
-    import struct
-    import zipfile
-    import zlib
 
     member, relative, destination, hint = item
 
@@ -550,8 +546,6 @@ def _extract_members_threaded(
     the handle that produced them. Decompression drops the GIL, so the
     threads do overlap.
     """
-    import zipfile
-    from concurrent.futures import ThreadPoolExecutor
 
     local = threading.local()
 
@@ -649,8 +643,6 @@ def _compile_archive_pyc(
             ),
         )
 
-    from kpip.install.bytecode import compile_jobs
-
     for source, output, display in compile_jobs(jobs):
         _compile_one(source, output, display)
 
@@ -659,7 +651,6 @@ def _compile_archive_pyc(
 
 def _compile_one(source: str, output: str, display: str) -> None:
     """Compile one module in this process, for whatever a worker declined."""
-    import py_compile
 
     try:
         py_compile.compile(
@@ -670,7 +661,7 @@ def _compile_one(source: str, output: str, display: str) -> None:
             quiet=2,
         )
 
-    except (OSError, ValueError, RecursionError, MemoryError):
+    except OSError, ValueError, RecursionError, MemoryError:
         pass
 
 
@@ -683,8 +674,6 @@ def _extract_archive(
 ) -> CachedWheelArchive:
     shard = os.path.dirname(entry_root)
 
-    import tempfile
-
     temporary = tempfile.mkdtemp(prefix=f".{digest[:12]}-", dir=shard)
 
     tree = os.path.join(temporary, "tree")
@@ -692,8 +681,6 @@ def _extract_archive(
     os.mkdir(tree)
 
     try:
-        import zipfile
-
         with zipfile.ZipFile(candidate.path) as archive:
             layout = loaded_layout(candidate)
 
@@ -891,8 +878,6 @@ def _ensure_pyc(archive: CachedWheelArchive) -> None:
     if os.path.isdir(target):
         return
 
-    import tempfile
-
     try:
         temporary = tempfile.mkdtemp(prefix=".pyc-", dir=entry_root)
     except OSError:
@@ -953,8 +938,6 @@ def prepare_cached_wheels(
             prepare_cached_wheel(candidate, cache_dir, pycompile=pycompile)
             for candidate in candidates
         )
-
-    from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(
         max_workers=min(EXTRACT_WORKERS, len(candidates)),

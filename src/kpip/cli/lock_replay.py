@@ -11,25 +11,23 @@ The lock command asks this before anything that resolves.
 
 from __future__ import annotations
 
-import marshal
-import os
-import sys
-import time
+lazy import marshal
+lazy import os
+lazy import sys
+lazy import time
+from typing import TYPE_CHECKING, Protocol
 
-from kpip.core.appdirs import http_cache_path
-from kpip.core.code_identity import code_identity
-from kpip.core.utils import key_bytes, versioned_bucket
-from kpip.network.freshness import (
+lazy from kpip.core.appdirs import http_cache_path
+lazy from kpip.core.code_identity import code_identity
+lazy from kpip.core.utils import key_bytes, load_snapshot, versioned_bucket
+lazy from kpip.network.freshness import (
     CacheMetadataReader,
     decode_metadata,
     metadata_is_fresh,
 )
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
-    from typing import Protocol
 
     class MetadataCache(Protocol):
         def get(self, key: str) -> bytes | None: ...
@@ -144,7 +142,7 @@ def resolution_environment() -> tuple[object, ...]:
     if confstr is not None:
         try:
             libc = confstr("CS_GNU_LIBC_VERSION") or ""
-        except (OSError, ValueError):
+        except OSError, ValueError:
             libc = ""
 
     return (
@@ -236,7 +234,7 @@ def load_record(cache_dir: str, key: bytes) -> ReplayRecord | None:
     try:
         with open(record_path(cache_dir, key), "rb") as file:
             stored_key, pages, rendered, builds = marshal.loads(file.read())
-    except (OSError, EOFError, TypeError, ValueError):
+    except OSError, EOFError, TypeError, ValueError:
         return None
 
     if (
@@ -267,7 +265,7 @@ def save_record(
             file.write(marshal.dumps((key, pages, rendered, builds)))
 
         os.replace(temporary, path)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         try:
             os.unlink(temporary)
         except OSError:
@@ -358,7 +356,7 @@ def builds_unchanged(builds: Iterable[BuildCheck]) -> bool:
         try:
             if marshal.loads(blob) != value:
                 return False
-        except (EOFError, TypeError, ValueError):
+        except EOFError, TypeError, ValueError:
             return False
 
     return True
@@ -366,8 +364,6 @@ def builds_unchanged(builds: Iterable[BuildCheck]) -> bool:
 
 def _read_snapshot(path: str) -> Mapping[object, object] | None:
     """A candidate-metadata snapshot's entries, or None when it cannot be read."""
-
-    from kpip.core.utils import load_snapshot
 
     loaded = load_snapshot(path)
 

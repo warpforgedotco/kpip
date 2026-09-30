@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import os
-import os.path
-from collections.abc import Generator
-from contextlib import contextmanager
-from functools import wraps
-from time import perf_counter, sleep
-from typing import Any, BinaryIO, Callable, ParamSpec, TypeVar, cast
-
+lazy import os
+lazy import os.path
+lazy from collections.abc import Callable, Generator
+lazy from contextlib import contextmanager
+lazy from functools import wraps
+lazy from tempfile import NamedTemporaryFile
+lazy from time import perf_counter, sleep
+lazy from typing import Any, BinaryIO, ParamSpec, TypeVar, cast
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -64,10 +64,6 @@ def adjacent_tmp_file(
     kwargs will be passed to tempfile.NamedTemporaryFile to control
     the way the temporary file will be opened.
     """
-    # Imported here rather than at module scope: this writes a cache entry,
-    # and a command that only reads the cache never reaches it.
-    from tempfile import NamedTemporaryFile
-
     with NamedTemporaryFile(
         delete=False,
         dir=os.path.dirname(path),

@@ -160,9 +160,7 @@ def test_the_compiled_loop_is_the_one_compiling_when_built() -> None:
     above compare it with ``json``."""
     from kpip.index import page_parsing
 
-    compiled = page_parsing._compiled_page_catalog(
-        IndexPageParser.__new__(IndexPageParser)
-    )
+    compiled = page_parsing._page_catalog
     try:
         import kpip.index._page_catalog  # noqa: F401
     except ImportError:

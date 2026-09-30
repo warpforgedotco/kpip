@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+lazy import logging
+lazy import os
+lazy import site
 
-import os
-
-from kpip.build.build import build_editable_from_source
-from kpip.build.metadata import InstalledDistributionStore
-from kpip.cli.parsers.install import create_parser
-from kpip.cli.requirement_command import (
+lazy from kpip.build.build import build_editable_from_source
+lazy from kpip.build.metadata import InstalledDistributionStore
+lazy from kpip.build.query import (
+    check_package_set,
+    installed_dependencies_by_name,
+    package_set_from_dependencies,
+)
+lazy from kpip.cli.lock_replay import (
+    FRESH,
+    open_http_cache,
+    page_state,
+    page_validators,
+    resolution_environment,
+)
+lazy from kpip.cli.parsers.install import create_parser
+lazy from kpip.cli.requirement_command import (
     PreparedRequirements,
     check_dependency_hashes,
     check_local_archive_hashes,
@@ -21,36 +34,43 @@ from kpip.cli.requirement_command import (
     warn_about_yanked,
     without_user_requested,
 )
-from kpip.cli.requirements import build_options_from_requirements
-from kpip.cli.target import target_prefix
-from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-from kpip.core.errors import (
+lazy from kpip.cli.requirements import build_options_from_requirements
+lazy from kpip.cli.target import target_prefix
+lazy from kpip.core.code_identity import code_identity
+lazy from kpip.core.errors import (
     CommandError,
     InstallationError,
     ResolutionError,
 )
-from kpip.core.metadata import find_installed, installed_index, user_lib_path
-from kpip.core.packaging import (
+lazy from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
+lazy from kpip.core.metadata import find_installed, installed_index, user_lib_path
+lazy from kpip.core.packaging import (
     canonicalize_name,
     marker_applies,
     parse_requirement,
 )
-from kpip.core.wheel import TargetContext, wheel_candidate_from_path
-from kpip.install.metadata import (
+lazy from kpip.core.wheel import TargetContext, wheel_candidate_from_path
+lazy from kpip.host.environment_checks import (
+    check_externally_managed,
+    warn_if_run_as_root,
+)
+lazy from kpip.host.virtualenv import running_under_virtualenv
+lazy from kpip.index.candidate_materialization import LazyWheelCandidate
+lazy from kpip.install.archive_workers import start_archive_workers
+lazy from kpip.install.metadata import (
     ReportItem,
     direct_url_from_link,
     prepare_editable_source,
     write_install_report,
 )
-from kpip.install.archive_workers import start_archive_workers
-from kpip.install.output import (
+lazy from kpip.install.output import (
     WheelPrefetch,
     installation_order,
     prepare_install_candidates,
 )
-from kpip.install.target import InstallTarget
-from kpip.install.wheel_archive_cache import prepare_cached_wheel
-from kpip.install.wheel_install_plan_cache import (
+lazy from kpip.install.target import InstallTarget
+lazy from kpip.install.wheel_archive_cache import prepare_cached_wheel
+lazy from kpip.install.wheel_install_plan_cache import (
     REMOTE_EXACT_CONTEXT,
     exact_install_plan_key,
     load_cached_install_plan,
@@ -59,31 +79,23 @@ from kpip.install.wheel_install_plan_cache import (
     save_cached_install_plan,
     save_plan_pages,
 )
-from kpip.install.wheel_transaction import (
+lazy from kpip.install.wheel_transaction import (
     WheelInstaller,
     install_wheels_transactionally,
 )
-from kpip.host.environment_checks import (
-    check_externally_managed,
-    warn_if_run_as_root,
-)
-from kpip.host.virtualenv import running_under_virtualenv
-from kpip.resolution.api import ResolutionEngine
-from kpip.resolution.input_requirements import install_req_from_line
-
-import logging
-
-logger = logging.getLogger(__name__)
-
+lazy from kpip.resolution.api import ResolutionEngine
+lazy from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
     import argparse
     from collections.abc import Mapping
     from typing import Any
-
     from kpip.core.metadata import InstalledDistribution
     from kpip.resolution.models import ResolutionResult
     from kpip.resolution.req_install import InstallRequirement
+
+logger = logging.getLogger(__name__)
+
 
 INDEX_URL_OPTIONS = frozenset(("-i", "--index-url"))
 
@@ -396,8 +408,6 @@ def prepare_install(args: list[str], parser: Any) -> PreparedRequirements:
 
 
 def validate_user_install(options: argparse.Namespace) -> None:
-    import site
-
     if not site.ENABLE_USER_SITE:
         if running_under_virtualenv():
             raise InstallationError(
@@ -536,9 +546,6 @@ def replayable_install_plan_key(
     if not _plan_cacheable(options, bundle):
         return None
 
-    from kpip.cli.lock_replay import resolution_environment
-    from kpip.core.code_identity import code_identity
-
     return plain_install_plan_key(
         tuple(requirements),
         (
@@ -558,8 +565,6 @@ def load_replayable_install_plan(cache_dir: str, key: str) -> ResolutionResult |
 
     if pages is None:
         return None
-
-    from kpip.cli.lock_replay import FRESH, open_http_cache, page_state
 
     if page_state(open_http_cache(cache_dir), pages) != FRESH:
         return None
@@ -585,8 +590,6 @@ def record_replayable_install_plan(
 
     if not urls:
         return
-
-    from kpip.cli.lock_replay import open_http_cache, page_validators
 
     validators = page_validators(open_http_cache(cache_dir), urls)
 
@@ -638,12 +641,6 @@ def install_candidate(
 
 
 def warn_about_install_conflicts(changed_names: set[str]) -> None:
-    from kpip.build.query import (
-        check_package_set,
-        installed_dependencies_by_name,
-        package_set_from_dependencies,
-    )
-
     distributions = InstalledDistributionStore().iter(skip=KPIP_DISTRIBUTION_NAMES)
     distributions_by_name = {dist.canonical_name: dist for dist in distributions}
     dependencies_by_name = installed_dependencies_by_name(distributions)
@@ -1210,7 +1207,6 @@ def run_install(args: list[str]) -> int:
             providers.append(provider)
 
             if prefetch is not None:
-                from kpip.index.candidate_materialization import LazyWheelCandidate
 
                 def on_likely(requirement: Any, record: Any) -> None:
                     prefetch(

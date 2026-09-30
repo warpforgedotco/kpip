@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 
-from kpip.core import run_options
+from typing import TYPE_CHECKING
+lazy from kpip.cli.logging_config import configure_logging
+lazy from kpip.core import run_options
 
 if TYPE_CHECKING:
     import argparse
@@ -56,7 +57,6 @@ def add_general_options(parser: argparse.ArgumentParser) -> None:
 
 def apply_general_options(options: argparse.Namespace) -> None:
     """Make the parsed general options the running command's."""
-    from kpip.cli.logging_config import configure_logging
 
     configure_logging(int(options.verbose) - int(options.quiet))
 

@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import json
-import os
-import sysconfig
+lazy import json
+lazy import logging
+lazy import os
+lazy import shutil
+lazy import sysconfig
+lazy import tempfile
 
-from kpip.core.digests import sha256_hexdigest
-import logging
-from kpip.core.hashes import file_hashes
-from kpip.core.utils import CACHE_INTERPRETER_TAG
-from kpip.core.versions import ZERO_VERSION
-from kpip.core.wheel import WheelCandidate, wheel_candidate_from_path
-from kpip.index.artifacts import ArtifactLocator
-from kpip.index.cache import origin_hashes, wheel_cache_path
-from kpip.index.links import Link
-from kpip.index.source_models import ArtifactKind, CandidateRecord
-from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_reference
+lazy from kpip.core.digests import sha256_hexdigest
+lazy from kpip.core.hashes import file_hashes
+lazy from kpip.core.utils import CACHE_INTERPRETER_TAG
+lazy from kpip.core.versions import ZERO_VERSION
+lazy from kpip.core.wheel import WheelCandidate, wheel_candidate_from_path
+lazy from kpip.index.artifacts import ArtifactLocator
+lazy from kpip.index.cache import origin_hashes, wheel_cache_path
+lazy from kpip.index.links import Link
+lazy from kpip.index.source_models import ArtifactKind, CandidateRecord
+lazy from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_reference
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,7 @@ def _json_cache_value(value: object) -> object:
 def _constraint_identity(value: str) -> object:
     try:
         local = ArtifactLocator().local_path(value)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return value
 
     if local is None:
@@ -162,8 +164,6 @@ def built_wheel_cache_key(
 
 
 def _discard_invalid_entry(path: str) -> None:
-    import shutil
-
     try:
         shutil.rmtree(path)
     except OSError:
@@ -266,9 +266,6 @@ def cache_built_wheel(
     entry_dir_text = wheel_cache_path(os.fspath(wheel_cache_dir), cache_key)
     parent = os.path.dirname(entry_dir_text)
     temporary = ""
-
-    import shutil
-    import tempfile
 
     try:
         os.makedirs(parent, exist_ok=True)

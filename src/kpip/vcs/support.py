@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
-import urllib.parse
-from collections.abc import Iterable
+lazy import logging
+lazy import os
+lazy import urllib.parse
+lazy from collections.abc import Iterable
 
-from kpip.core import run_options
-from kpip.core.urls import split_auth_from_netloc
-
-import logging
+lazy from kpip.core import run_options
+lazy from kpip.core.urls import split_auth_from_netloc
 
 logger = logging.getLogger(__name__)
 

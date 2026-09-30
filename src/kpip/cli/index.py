@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
+lazy import json
+lazy import logging
 
-from kpip.cli.config import load_source_config, resolve_sources
-from kpip.cli.package_finder import excludes_prereleases, package_finder
-from kpip.cli.parsers.index import create_parser
-from kpip.cli.requirement_command import target_context
-from kpip.core.errors import DistributionNotFound
-from kpip.core.packaging import parse_requirement
-
-import logging
+lazy from kpip.cli.config import load_source_config, resolve_sources
+lazy from kpip.cli.package_finder import excludes_prereleases, package_finder
+lazy from kpip.cli.parsers.index import create_parser
+lazy from kpip.cli.requirement_command import target_context
+lazy from kpip.core.errors import DistributionNotFound
+lazy from kpip.core.packaging import parse_requirement
 
 logger = logging.getLogger(__name__)
 

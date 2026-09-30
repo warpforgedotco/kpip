@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import base64
-import functools
-import os
-import stat
-
-from kpip.core.errors import InstallationError
-
 from typing import TYPE_CHECKING
+lazy import base64
+lazy import functools
+lazy import hashlib
+lazy import importlib.util
+lazy import os
+lazy import stat
+
+lazy from kpip.core.errors import InstallationError
 
 if TYPE_CHECKING:
     import zipfile
-
     from kpip.install.target import InstallTarget
 
 DestinationCache = dict[tuple[str, str], str]
@@ -99,8 +99,6 @@ def compiled_parts(mapped: tuple[str, ...]) -> tuple[str, ...] | None:
     """
     if not mapped[-1].endswith(".py") or mapped[0] in {"bin", "Scripts"}:
         return None
-
-    import importlib.util
 
     compiled = importlib.util.cache_from_source("/".join(mapped))
 
@@ -347,8 +345,6 @@ def record_metadata_internal(contents: bytes) -> tuple[str, str]:
     if not contents:
         return EMPTY_RECORD_METADATA
 
-    import hashlib
-
     digest = base64.urlsafe_b64encode(hashlib.sha256(contents).digest())
     return f"sha256={digest.rstrip(b'=').decode('ascii')}", str(len(contents))
 
@@ -366,7 +362,6 @@ def copy_member_with_metadata(
     ``creation_mode`` is the mode a new ``destination`` is created with,
     before the umask, instead of ``open``'s 0o666.
     """
-    import hashlib
 
     opener = (
         None

@@ -99,10 +99,9 @@ def test_a_compiled_kpip_uses_workers_only_with_their_bytecode(
     """A compiled kpip's modules are inside the binary, where a new
     interpreter cannot import them; workers start only when the binary also
     carries their bytecode, in its frozen table."""
-    from kpip.core import interpreter
 
     monkeypatch.delenv("KPIP_SUBINTERPRETERS", raising=False)
-    monkeypatch.setattr(interpreter, "is_compiled", lambda: True)
+    monkeypatch.setattr(archive_workers, "is_compiled", lambda: True)
     monkeypatch.setattr(
         archive_workers._imp,
         "is_frozen",

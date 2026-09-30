@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from kpip.cli.parser import ArgumentParser
+lazy import hashlib
+
+lazy from kpip.cli.parser import ArgumentParser
 
 
 def create_check_parser() -> ArgumentParser:
@@ -10,8 +12,6 @@ def create_check_parser() -> ArgumentParser:
 
 
 def create_hash_parser() -> ArgumentParser:
-    import hashlib
-
     parser = ArgumentParser(prog="kpip hash")
     parser.add_argument("files", nargs="+")
     parser.add_argument(

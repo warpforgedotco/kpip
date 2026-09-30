@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import errno
-import os
-import shutil
-import stat
-import tempfile
-from collections.abc import Iterable
+lazy import errno
+lazy import logging
+lazy import os
+lazy import shutil
+lazy import stat
+lazy import tempfile
+lazy from collections.abc import Iterable
 
-from kpip.core.errors import InstallationError
-import logging
-from kpip.host.clone import clone_path
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.host.clone import clone_path
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ class InstallTransaction:
             destination_text = item.destination_text
             try:
                 destination_lstat = os.lstat(destination_text)
-            except (FileNotFoundError, NotADirectoryError):
+            except FileNotFoundError, NotADirectoryError:
                 destination_exists = False
                 destination_visible = False
                 destination_is_file = False

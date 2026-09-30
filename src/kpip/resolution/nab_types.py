@@ -6,13 +6,13 @@ adapter's stateful decision/candidate-selection logic in nab_provider.py.
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+lazy from urllib.parse import urlsplit
 
-from kpip._vendor.nab_resolver.ranges import Range
-from kpip.core.errors import KpipError
-from kpip.core.metadata import InstalledDistribution
-from kpip.core.packaging import Requirement, SpecifierSet, canonicalize_name
-from kpip.core.versions import Version
+lazy from kpip._vendor.nab_resolver.ranges import Range
+lazy from kpip.core.errors import KpipError
+lazy from kpip.core.metadata import InstalledDistribution
+lazy from kpip.core.packaging import Requirement, SpecifierSet, canonicalize_name
+lazy from kpip.core.versions import Version
 
 
 class InstalledCandidate:
@@ -59,7 +59,7 @@ def _dependencies_or_none(candidate: object) -> tuple[Requirement, ...] | None:
     """
     try:
         return tuple(getattr(candidate, "dependencies", ()))
-    except (KpipError, OSError, ValueError):
+    except KpipError, OSError, ValueError:
         return None
 
 

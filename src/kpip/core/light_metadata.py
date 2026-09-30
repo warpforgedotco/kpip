@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 _NORMALIZED_METADATA_KEYS = {
     name: name.lower()
     for name in (

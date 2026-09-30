@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-import io
-import os
-import stat
-import sys
+lazy import io
+lazy import os
+lazy import stat
+lazy import sys
+lazy import zipfile
+lazy from importlib.resources import files
 
-from kpip.core.errors import InstallationError
-from kpip.host.clone import replace_contents
+lazy from kpip.core.errors import InstallationError
+lazy from kpip.host.clone import replace_contents
+
+try:
+    from distlib.scripts import ScriptMaker
+except ImportError:
+    ScriptMaker = None  # ty: ignore[invalid-assignment]
 
 
 def script_python() -> str:
@@ -63,7 +70,7 @@ def entry_point_scripts(path: str) -> dict[str, tuple[str, bool]]:
         with open(path, encoding="utf-8") as file:
             lines = file.read().splitlines()
 
-    except (FileNotFoundError, IsADirectoryError):
+    except FileNotFoundError, IsADirectoryError:
         return {}
 
     active = False
@@ -116,11 +123,7 @@ def write_windows_script(path: str, script: str, *, gui: bool) -> None:
 
     launcher_name = f"{'w' if gui else 't'}{bits}{suffix}.exe"
 
-    from importlib.resources import files
-
     launcher = (files("kpip._launchers") / launcher_name).read_bytes()
-
-    import zipfile
 
     archive = io.BytesIO()
 
@@ -147,16 +150,7 @@ def generate_entry_point_files(
 
     os.makedirs(destination, exist_ok=True)
 
-    script_maker_type = None
-
-    try:
-        from distlib.scripts import ScriptMaker
-
-    except ImportError:
-        pass
-
-    else:
-        script_maker_type = ScriptMaker
+    script_maker_type = ScriptMaker
 
     explicit_modes: dict[str, int] = {}
 
@@ -246,8 +240,6 @@ def script_matches(
     path: str,
     scripts: dict[str, tuple[str, bool]],
 ) -> bool:
-    import zipfile
-
     path_text = os.fspath(path)
 
     basename = os.path.basename(path_text)
@@ -283,7 +275,7 @@ def script_matches(
             with open(path, encoding="utf-8") as file:
                 text = file.read()
 
-    except (OSError, KeyError, UnicodeDecodeError):
+    except OSError, KeyError, UnicodeDecodeError:
         return False
 
     return f"from {module} import {entry}" in text
