@@ -73,14 +73,17 @@ def mapped_parts(relative: str) -> tuple[str, ...]:
     return parts[2:]
 
 
-def compiled_parts(mapped: tuple[str, ...]) -> tuple[str, ...] | None:
+def compiled_parts(
+    mapped: tuple[str, ...], *, own: bool = False
+) -> tuple[str, ...] | None:
     """Where byte-compiling ``mapped`` lands its ``.pyc``, as path parts, or
     ``None`` when the member is not byte-compiled.
 
     One answer for the path reserved in the collision trie, the path
     preflighted against the target, the path the archive cache writes at
     fill time and the path the installer materializes. The name is the
-    target interpreter's (:func:`~kpip.install.bytecode.pyc_name`); the
+    target interpreter's (:func:`~kpip.install.bytecode.pyc_name`), or this
+    process's, ``own``, in the archive cache; the
     directory is ``__pycache__`` beside the module, where an installer puts
     it whatever ``sys.pycache_prefix`` says. Scripts under ``bin``/``Scripts``
     are not modules and are left alone, and nothing is compiled for an
@@ -89,7 +92,7 @@ def compiled_parts(mapped: tuple[str, ...]) -> tuple[str, ...] | None:
     if not mapped[-1].endswith(".py") or mapped[0] in {"bin", "Scripts"}:
         return None
 
-    name = pyc_name(mapped[-1])
+    name = pyc_name(mapped[-1], own=own)
 
     if name is None:
         return None

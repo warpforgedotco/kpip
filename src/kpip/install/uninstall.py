@@ -10,7 +10,7 @@ from kpip.build.metadata import InstalledDistributionStore
 from kpip.core.errors import InstallationError
 from kpip.host.interpreter_facts import search_path, target_interpreter
 from kpip.host.locations.sysconfig_scheme import get_scheme
-from kpip.install.bytecode import pyc_name
+from kpip.install.bytecode import pyc_path
 from kpip.install.transaction import InstallTransaction
 
 
@@ -152,13 +152,9 @@ def uninstall_distribution(
             if os.path.splitext(path_text)[1] == ".py":
                 recorded_paths.update({f"{path_text}c", f"{path_text[:-3]}.pyo"})
                 # The target interpreter's, which RECORD may not list.
-                compiled_name = pyc_name(os.path.basename(path_text))
-                if compiled_name is not None:
-                    recorded_paths.add(
-                        os.path.join(
-                            os.path.dirname(path_text), "__pycache__", compiled_name
-                        )
-                    )
+                compiled = pyc_path(path_text)
+                if compiled is not None:
+                    recorded_paths.add(compiled)
 
     elif distribution.info_location and distribution.info_location.endswith(
         ".egg-info",

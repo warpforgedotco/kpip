@@ -15,7 +15,7 @@ from kpip.core.names import (
     installed_name_might_match,
 )
 from kpip.core.versions import version_of
-from kpip.install.bytecode import CompileJob, compile_modules, pyc_name
+from kpip.install.bytecode import CompileJob, compile_modules, pyc_path
 
 if TYPE_CHECKING:
     from kpip.build.metadata import InstalledMetadataDistribution
@@ -204,18 +204,13 @@ def compiled_files(
     jobs: list[CompileJob] = []
 
     for source, destination in python_files:
-        name = pyc_name(os.path.basename(os.fspath(source)))
+        output = pyc_path(os.fspath(source))
+        compiled_destination = pyc_path(os.fspath(destination))
 
-        if name is None:
+        if output is None or compiled_destination is None:
             continue
 
-        output = os.path.join(os.path.dirname(os.fspath(source)), "__pycache__", name)
-
-        os.makedirs(os.path.dirname(output), exist_ok=True)
-
-        planned.append(
-            (output, os.path.join(os.path.dirname(destination), "__pycache__", name))
-        )
+        planned.append((output, compiled_destination))
 
         jobs.append((os.fspath(source), output, os.fspath(destination)))
 

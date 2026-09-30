@@ -177,19 +177,35 @@ def compiles_as_this_process() -> bool:
     )
 
 
-def pyc_name(module: str) -> str | None:
+def pyc_name(module: str, *, own: bool = False) -> str | None:
     """The file name of the ``.pyc`` the target interpreter reads for the
-    module file ``module``, or ``None`` if it reads none.
+    module file ``module``, or ``None`` if it reads none; this process's,
+    ``own``, for the archive cache, which keeps only this process's bytecode.
 
     ``cache_from_source`` would answer for this process: its cache tag, and
     its ``-O`` level, where kpip compiles unoptimized.
     """
-    cache_tag = target_interpreter(installing=False).cache_tag
+    cache_tag = (
+        sys.implementation.cache_tag
+        if own
+        else target_interpreter(installing=False).cache_tag
+    )
 
     if cache_tag is None:
         return None
 
     return f"{module[:-3]}.{cache_tag}.pyc"
+
+
+def pyc_path(module_path: str) -> str | None:
+    """Where the target interpreter reads the bytecode of the module at
+    ``module_path``: ``__pycache__`` beside it, whatever
+    ``sys.pycache_prefix`` says. ``None`` if it reads none."""
+    directory, module = os.path.split(module_path)
+
+    name = pyc_name(module)
+
+    return None if name is None else os.path.join(directory, "__pycache__", name)
 
 
 def compile_in_process(job: CompileJob) -> None:

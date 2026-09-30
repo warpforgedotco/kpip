@@ -620,7 +620,7 @@ def _compile_archive_pyc(
     for entry in entries:
         mapped = mapped_parts(entry[0])
 
-        target = compiled_parts(mapped)
+        target = compiled_parts(mapped, own=True)
 
         if target is None:
             continue

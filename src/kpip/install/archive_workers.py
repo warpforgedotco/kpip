@@ -151,7 +151,8 @@ class ArchiveWorkers:
         """``prepare_cached_wheel(candidate, cache_dir)``, unpacked in a worker.
 
         ``pycompile`` asks for the archive cache's bytecode, which is this
-        process's: callers ask only when the target compiles as it does.
+        process's, under its names: callers skip it when the target does
+        not compile as this process does, since that install cannot use it.
         """
 
         archive = None

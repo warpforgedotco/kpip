@@ -690,9 +690,8 @@ def _compile_uncached(
     jobs: list[CompileJob] = []
 
     for source, mapped, target in members:
+        # py_compile makes the output's directory.
         output = os.path.join(stage, *target)
-
-        os.makedirs(os.path.dirname(output), exist_ok=True)
 
         outputs.append((output, target))
 
