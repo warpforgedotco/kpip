@@ -8,7 +8,7 @@ import sys
 import sysconfig
 
 from kpip.core.errors import DiagnosticKpipError
-from kpip.core.interpreter import is_own_interpreter
+from kpip.core.compiled import is_own_interpreter
 
 if TYPE_CHECKING:
     from typing import Any

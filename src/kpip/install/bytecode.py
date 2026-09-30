@@ -24,7 +24,7 @@ import subprocess
 import sys
 import threading
 
-from kpip.core.interpreter import is_compiled, own_command
+from kpip.core.compiled import is_compiled, own_command
 from kpip.core.utils import default_worker_count
 from kpip.install._compile_worker import WORKER_ARGUMENT
 

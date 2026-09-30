@@ -41,7 +41,7 @@ except ImportError:
 
 
 from kpip.core.caches import memoized
-from kpip.core.interpreter import is_compiled, own_command
+from kpip.core.compiled import is_compiled, own_command
 from kpip.host.interpreter_facts import target_interpreter
 
 if TYPE_CHECKING:

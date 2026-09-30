@@ -110,7 +110,7 @@ def test_another_interpreter_creates_its_own_build_environment(
     """The environment comes from that interpreter, not this process's venv module."""
     from kpip.install.build_env import isolated_venv
 
-    monkeypatch.setattr(interpreter, "is_own_interpreter", lambda executable: False)
+    monkeypatch.setattr(isolated_venv, "is_own_interpreter", lambda executable: False)
 
     def unexpected(*args: object, **kwargs: object) -> None:
         pytest.fail("created the environment in-process")

@@ -815,6 +815,6 @@ def test_an_interpreter_describes_itself_as_kpip_sees_it() -> None:
 
 
 def test_kpip_runs_again_as_itself() -> None:
-    from kpip.core.interpreter import own_command
+    from kpip.core.compiled import own_command
 
     assert own_command() == [sys.executable, "-m", "kpip"]

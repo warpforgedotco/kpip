@@ -11,7 +11,7 @@ Compiled, kpip has no Python of its own that it can use:
 
 - `sys.executable` is a `python` beside the binary that does not exist. Never
   run it, open it or read facts from it. To start kpip again, use
-  `core.interpreter.own_command()`; to run a build backend,
+  `core.compiled.own_command()`; to run a build backend,
   `core.interpreter.build_interpreter()`.
 - `sys.prefix`, `sys.path`, `site`, in-process `sysconfig` and
   `importlib.metadata.distributions()` describe the bundle, not an
@@ -29,7 +29,7 @@ ABI, platform and markers. That holds for an interpreted kpip too, since
 `--python` names another interpreter. Reach for `sys`, `site` or `sysconfig`
 directly only for facts about the kpip process itself.
 
-Branch on `core.interpreter.is_compiled()` only where the two builds must
+Branch on `core.compiled.is_compiled()` only where the two builds must
 genuinely differ; prefer code that asks the target interpreter and is then
 the same for both. When adding a code path, ask what it does compiled, with
 no Python on `PATH`, and with `--python` naming a different version.

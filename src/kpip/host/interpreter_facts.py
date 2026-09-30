@@ -20,7 +20,7 @@ import sys
 
 from kpip.core.caches import register_table
 from kpip.core.errors import CommandError
-from kpip.core.interpreter import is_compiled, is_own_interpreter
+from kpip.core.compiled import is_compiled, is_own_interpreter
 
 PROBE = r"""
 import json

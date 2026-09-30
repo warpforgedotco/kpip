@@ -28,12 +28,8 @@ from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
 from kpip.core import run_options
 from kpip.core.appdirs import command_cache_arguments
 from kpip.core.errors import BuildError
-from kpip.core.interpreter import (
-    build_interpreter,
-    is_compiled,
-    is_own_interpreter,
-    own_command,
-)
+from kpip.core.compiled import is_compiled, is_own_interpreter, own_command
+from kpip.core.interpreter import build_interpreter
 from kpip.core.metadata import installed_index
 from kpip.core.packaging import (
     canonicalize_name,

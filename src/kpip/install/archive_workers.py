@@ -27,7 +27,7 @@ import sys
 import threading
 from concurrent.futures import InterpreterPoolExecutor
 
-from kpip.core.interpreter import is_compiled
+from kpip.core.compiled import is_compiled
 from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
     _ensure_pyc,
