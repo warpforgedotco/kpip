@@ -730,3 +730,54 @@ def test_a_cold_install_never_compiles_in_the_stage(tmp_path: Path) -> None:
         f"{len(fell_back)} modules were compiled in the stage, so the cache "
         "had no bytecode ready when the install ran"
     )
+
+
+def test_a_wheel_built_from_an_sdist_installs_from_the_archive_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A batch holding one wheel built from a source archive took the staging
+    route whole. The built wheel is hashed from its own bytes -- the sdist's
+    hash names the archive, not the wheel -- and installs as any wheel does."""
+    import filecmp
+
+    from kpip.install import wheel_archive_installer, wheel_transaction
+    from kpip.install.wheel_transaction import install_wheels_transactionally
+
+    built = _make_wheel(tmp_path, "builtpkg", shared_module="builtpkg.py")
+    plain = _make_wheel(tmp_path, "plainpkg", shared_module="plainpkg.py")
+    candidates = [
+        wheel_candidate(built).copy_with(
+            source_kind="sdist", source_hashes={"sha256": "0" * 64}
+        ),
+        wheel_candidate(plain).copy_with(source_kind="wheel"),
+    ]
+    routes: list[str] = []
+    real = wheel_archive_installer.install_wheels_from_archive_cache
+
+    def spy(*args, **kwargs):
+        result = real(*args, **kwargs)
+        routes.append("archive" if result is not None else "declined")
+        return result
+
+    monkeypatch.setattr(wheel_transaction, "install_wheels_from_archive_cache", spy)
+    requests = [(built, True, None), (plain, True, None)]
+
+    install_wheels_transactionally(
+        requests,
+        target=InstallTarget.from_options("builtpkg", target=str(tmp_path / "cached")),
+        pycompile=False,
+        candidates=candidates,
+        cache_dir=str(tmp_path / "cache"),
+    )
+    install_wheels_transactionally(
+        requests,
+        target=InstallTarget.from_options("builtpkg", target=str(tmp_path / "staged")),
+        pycompile=False,
+        candidates=candidates,
+    )
+
+    assert routes == ["archive"]
+    comparison = filecmp.dircmp(tmp_path / "cached", tmp_path / "staged")
+    assert not comparison.left_only
+    assert not comparison.right_only
+    assert (tmp_path / "cached" / "builtpkg.py").read_text() == "# from builtpkg\n"

@@ -761,6 +761,10 @@ def validate_wheel_batch(
     return tuple(candidates)
 
 
+_ARCHIVE_SOURCE_KINDS = frozenset({None, "wheel", "sdist"})
+"""What a candidate's wheel may have come from to install from the archive cache."""
+
+
 def install_wheels_transactionally(
     items: Iterable[tuple[str, bool, DirectUrl | None]],
     *,
@@ -829,8 +833,14 @@ def _install_wheels_locked(
         script_executable=script_executable,
     )
     destination_cache: DestinationCache = {}
+    # A wheel built from a source archive is a wheel like any other by now,
+    # hashed from its own bytes (``supplied_wheel_digest`` trusts only a
+    # wheel's index hash): one sdist in a batch used to send all of it down
+    # the staging route, 0.4 s of a 0.6 s warm trio install. A source tree
+    # -- a directory or a checkout -- still goes that way.
     if cache_dir is not None and all(
-        candidate.source_kind in {None, "wheel"} for candidate in planned_candidates
+        candidate.source_kind in _ARCHIVE_SOURCE_KINDS
+        for candidate in planned_candidates
     ):
         cached_result = install_wheels_from_archive_cache(
             requests,
