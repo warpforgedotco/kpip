@@ -6,22 +6,10 @@ import os
 import shutil
 
 from kpip.build.build import build_wheel_from_source
-from kpip.cli.config import load_source_config, resolve_sources
-from kpip.cli.dependency_groups import group_items, parse_dependency_groups
 from kpip.cli.parsers.wheel import create_parser
-from kpip.cli.requirements import (
-    apply_proxy_environment,
-    build_options_from_requirements,
-    bundle_install_requirements,
-    collect_requirements,
-    config_settings,
-)
-from kpip.core.errors import CommandError
-from kpip.core.format_control import FormatControl
+from kpip.cli.requirement_command import prepare, resolve_requirements
+from kpip.cli.requirements import apply_proxy_environment
 from kpip.core.wheel import wheel_candidate_from_path
-from kpip.index.provider import CandidateProvider
-from kpip.resolution.api import ResolutionEngine
-from kpip.resolution.input_requirements import install_req_from_line
 
 import logging
 
@@ -29,70 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 def run_wheel(args: list[str]) -> int:
-    options = create_parser().parse_args([arg for arg in args if arg])
-
-    sources = resolve_sources(options, load_source_config("wheel"))
-
-    parsed_config_settings = config_settings(options.config_settings)
-
-    grouped_requirements = parse_dependency_groups(group_items(options.groups))
-
-    bundle = collect_requirements(
-        requirements=[*options.requirements, *grouped_requirements],
-        requirement_files=options.requirement_files,
-        constraint_files=options.constraint_files,
-        editables=options.editables,
-        requirement_config_settings={
-            requirement: dict(parsed_config_settings)
-            for requirement in options.requirements
-        },
-        editable_config_settings={
-            editable: dict(parsed_config_settings) for editable in options.editables
-        },
-        find_links=sources.find_links,
-        index_url=sources.index_url,
-        extra_index_urls=sources.extra_index_urls,
-        no_index=sources.no_index,
-        format_control=FormatControl(),
-        proxy=options.proxy,
-    )
+    parser = create_parser()
+    options = parser.parse_args([arg for arg in args if arg])
 
     apply_proxy_environment(options.proxy)
 
-    raw_requirements = [*bundle.requirements, *bundle.editables]
-
-    if not raw_requirements and not options.requirement_files and not options.groups:
-        raise CommandError(
-            'You must give at least one requirement to wheel (see "kpip help wheel")',
-        )
-
-    requirements = bundle_install_requirements(bundle)
-    for editable in bundle.editables:
-        item = install_req_from_line(editable)
-        item.editable = True
-        item.config_settings = bundle.editable_config_settings.get(editable, {})
-        requirements.append(item)
-
-    build_options = build_options_from_requirements(requirements)
-
-    provider = CandidateProvider.from_options(
-        find_links=bundle.find_links,
-        index_url=bundle.index_url,
-        extra_index_urls=bundle.extra_index_urls,
-        no_index=bundle.no_index,
-        format_control=bundle.format_control,
-        build_options=build_options,
-        build_constraints=options.build_constraint_files,
-        trusted_hosts=options.trusted_hosts,
-        session=bundle.session,
-        build_isolation=not options.no_build_isolation,
+    resolved = resolve_requirements(
+        prepare("wheel", options, parser), with_editables=True
     )
-
-    plan = ResolutionEngine(
-        provider=provider,
-        no_deps=options.no_deps,
-        constraints=bundle.constraints,
-    ).resolve(requirements)
+    plan = resolved.plan
+    build_options = resolved.build_options
 
     wheel_dir = os.fspath(options.wheel_dir)
 
