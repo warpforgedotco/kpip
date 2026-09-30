@@ -16,7 +16,7 @@ that embeds the Python version it was compiled with. Pick another interpreter
 with `--python`, and pass extra Nuitka options after `--`:
 
 ```console
-uv run kpip-compile build --python /opt/homebrew/bin/python3.14 -- --report=report.xml
+uv run kpip-compile build --python /opt/homebrew/bin/python3.15 -- --report=report.xml
 ```
 
 ## Compiled modules
@@ -37,7 +37,7 @@ build`), or pass `--no-extensions` for a binary that runs the pure-Python code.
 To use them from a source checkout, build them in place:
 
 ```console
-uv run --python 3.14 kpip-compile extensions
+uv run --python 3.15 kpip-compile extensions
 ```
 
 They land beside their sources, where kpip's import finds them, and
