@@ -15,16 +15,16 @@ handles that one entry by its own rules -- a copy, a verdict on the device
 pair, or the exception -- then resumes.
 """
 
-lazy import cython
+import cython
 
 if not cython.compiled:
     raise ImportError("kpip.host._link_tree only works compiled")
 
-lazy from cython.cimports.libc.errno import ENAMETOOLONG, errno
-lazy from cython.cimports.libc.stdlib import free, malloc
-lazy from cython.cimports.libc.string import memcpy
-lazy from cython.cimports.posix.stat import chmod, mkdir
-lazy from cython.cimports.posix.unistd import link
+from cython.cimports.libc.errno import ENAMETOOLONG, errno
+from cython.cimports.libc.stdlib import free, malloc
+from cython.cimports.libc.string import memcpy
+from cython.cimports.posix.stat import chmod, mkdir
+from cython.cimports.posix.unistd import link
 
 _PATH_CAPACITY = cython.declare(cython.Py_ssize_t, 4096)
 _SEPARATOR = cython.declare(cython.char, 47)  # "/"

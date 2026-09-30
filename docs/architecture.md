@@ -46,7 +46,9 @@ Rules:
   registering themselves), and `keyring`, which is imported only when that
   provider is chosen. A compiled kpip imports eagerly (Nuitka does not
   implement PEP 810), so modules must also import cleanly without laziness;
-  an import only annotations use stays under `TYPE_CHECKING`.
+  an import only annotations use stays under `TYPE_CHECKING`. The Cython
+  sources (`index/_page_catalog.py`, `host/_link_tree.py`) import plainly:
+  Cython does not parse `lazy`.
 - The registry stores module paths and imports a command on first use. Startup
   gating belongs in `CommandSpec` flags (`needs_tempdir`,
   `needs_execution_context`), not in command-name tests.
