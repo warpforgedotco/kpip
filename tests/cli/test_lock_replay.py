@@ -660,7 +660,6 @@ class TestSourceMetadata:
     VALUE = ("demo", "1.0", ("idna>=2",), (), None)
 
     def snapshot(self, tmp_path: Path, stored: dict[object, bytes]) -> str:
-
         from kpip.core.utils import save_snapshot
 
         path = str(tmp_path / "candidate-metadata.snapshot")
