@@ -145,3 +145,70 @@ def test_another_pythons_distributions_are_read_from_its_path(
     ]
 
     assert names == ["demo"]
+
+
+def _other_python(prefix: Path) -> Interpreter:
+    """This Python's facts, as if it lived at ``prefix``."""
+    namespace: dict = {"__name__": "kpip_interpreter_probe"}
+    exec(interpreter_facts.PROBE, namespace)  # noqa: S102
+    facts = namespace["facts"]()
+    facts["executable"] = str(prefix / "bin" / "python")
+    facts["prefix"] = facts["base_prefix"] = str(prefix)
+    for name in ("base", "platbase", "installed_base", "installed_platbase"):
+        facts["config"][name] = str(prefix)
+    return Interpreter(facts)
+
+
+def test_another_pythons_distributions_are_local_to_its_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip.build import metadata
+
+    inside = tmp_path / "env" / "site-packages"
+    outside = tmp_path / "elsewhere"
+    for site, name in ((inside, "inside"), (outside, "outside")):
+        info = site / f"{name}-1.0.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n"
+        )
+    other = types.SimpleNamespace(prefix=str(tmp_path / "env"))
+    monkeypatch.setattr(metadata, "target_interpreter", lambda: other)
+
+    store = metadata.InstalledDistributionStore(paths=[str(inside), str(outside)])
+    names = [view.canonical_name for view in store.iter(local_only=True)]
+
+    assert names == ["inside"]
+
+
+def test_another_pythons_scripts_may_be_uninstalled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip.install import uninstall
+
+    other = _other_python(tmp_path / "env")
+    monkeypatch.setattr(uninstall, "target_interpreter", lambda: other)
+    scripts = os.path.normcase(os.path.realpath(tmp_path / "env" / "bin"))
+    if os.name == "nt":
+        scripts = os.path.normcase(os.path.realpath(tmp_path / "env" / "Scripts"))
+
+    assert scripts in uninstall._script_directories(str(tmp_path / "unrelated"))
+
+
+def test_another_pythons_egg_links_are_found_on_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip.build import metadata
+
+    site = tmp_path / "site-packages"
+    project = tmp_path / "project"
+    info = project / "demo.egg-info"
+    info.mkdir(parents=True)
+    (info / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n")
+    site.mkdir()
+    (site / "demo.egg-link").write_text(f"{project}\n.\n")
+    monkeypatch.setattr(metadata, "search_path", lambda: [str(site)])
+
+    [view] = metadata.InstalledDistributionStore(paths=[str(project)]).iter()
+
+    assert view.editable_project_location == str(project)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 
 _EGG_LINK_NAME_NORMALIZER: re.Pattern[str] | None = None
 
@@ -24,9 +23,11 @@ def egg_link_names(raw_name: str) -> tuple[str, str]:
     )
 
 
-def egg_link_path_from_sys_path(raw_name: str) -> str | None:
-    """Find the first matching egg-link while preserving ``sys.path`` order."""
-    for path_item in sys.path:
+def egg_link_path(raw_name: str, search_path: list[str]) -> str | None:
+    """Find the first matching egg-link, in ``search_path`` order: the target
+    interpreter's ``sys.path``, which is not this process's when kpip is
+    compiled or runs for another interpreter."""
+    for path_item in search_path:
         for egg_link_name in egg_link_names(raw_name):
             egg_link = os.path.join(path_item, egg_link_name)
             if os.path.isfile(egg_link):

@@ -7,12 +7,11 @@ import configparser
 import email.message
 import email.parser
 import os
-import sys
 from collections.abc import Collection
 from types import SimpleNamespace
 
 from kpip.core.direct_url import DirectUrl
-from kpip.core.egg_link import egg_link_path_from_sys_path
+from kpip.core.egg_link import egg_link_path
 from kpip.core.metadata import find_installed, iter_installed_distributions
 from kpip.core.packaging import (
     SpecifierSet,
@@ -23,6 +22,7 @@ from kpip.core.packaging import (
 from kpip.core.urls import url_to_path
 from kpip.core.versions import Version
 from kpip.core.wheel import read_wheel_archive_member, validate_wheel
+from kpip.host.interpreter_facts import search_path, target_interpreter
 
 if TYPE_CHECKING:
     import zipfile
@@ -335,7 +335,7 @@ class InstalledMetadataDistribution:
                 if lines:
                     return lines[0]
 
-            egg_link = egg_link_path_from_sys_path(self.raw_name)
+            egg_link = egg_link_path(self.raw_name, search_path())
 
             if egg_link is not None:
                 with open(egg_link, encoding="utf-8") as file:
@@ -348,7 +348,7 @@ class InstalledMetadataDistribution:
 
     @property
     def local(self) -> bool:
-        return self.location.startswith(sys.prefix)
+        return self.location.startswith(target_interpreter().prefix)
 
     @property
     def requires_python(self) -> SpecifierSet:

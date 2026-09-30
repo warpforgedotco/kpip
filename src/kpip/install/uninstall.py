@@ -6,11 +6,11 @@ import csv
 import importlib.util
 import ntpath
 import os
-import sys
-import sysconfig
 
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.core.errors import InstallationError
+from kpip.host.interpreter_facts import search_path, target_interpreter
+from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.install.transaction import InstallTransaction
 
 
@@ -33,7 +33,7 @@ def _script_directories(root: str) -> frozenset[str]:
     Accepting any parent directory merely *named* ``bin`` would let a crafted
     RECORD reach ``/tmp/anywhere/bin/x``.
 
-    The candidates are the scripts path of the running interpreter, and the
+    The candidates are the scripts path of the target interpreter, and the
     ones implied by the layouts kpip installs into: ``<root>/bin`` for a
     ``--target`` directory, ``<prefix>/Scripts`` beside a Windows
     ``Lib/site-packages``, and ``<prefix>/bin`` above a POSIX
@@ -48,9 +48,7 @@ def _script_directories(root: str) -> frozenset[str]:
     posix_prefix = os.path.dirname(windows_prefix)
     candidates.append(os.path.join(posix_prefix, "bin"))
 
-    scripts = sysconfig.get_path("scripts")
-    if scripts:
-        candidates.append(scripts)
+    candidates.append(get_scheme("", interpreter=target_interpreter()).scripts)
 
     return frozenset(
         os.path.normcase(os.path.realpath(candidate)) for candidate in candidates
@@ -204,7 +202,7 @@ def uninstall_distribution(
 
         egg_links: list[str] = []
 
-        for path_entry in (egg_link_root, *sys.path):
+        for path_entry in (egg_link_root, *search_path()):
             try:
                 with os.scandir(path_entry) as children:
                     egg_links.extend(
