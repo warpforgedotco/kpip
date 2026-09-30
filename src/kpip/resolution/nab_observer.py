@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from kpip._vendor.nab_resolver.resolver import ResolverObserver
 from kpip.core.versions import Version
-
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from typing import Any

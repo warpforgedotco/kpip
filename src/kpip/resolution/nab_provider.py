@@ -42,7 +42,6 @@ from kpip.resolution.nab_types import (
     _RecordingRequirements,
 )
 
-import logging
 
 logger = logging.getLogger(__name__)
 
