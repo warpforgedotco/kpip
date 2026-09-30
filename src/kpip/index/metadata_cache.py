@@ -12,7 +12,7 @@ from collections.abc import Iterable
 
 from kpip.index.sqlite_cache import SqliteBackedCache
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import sqlite3

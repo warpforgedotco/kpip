@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import json
 import os
 import urllib.parse
@@ -38,7 +40,6 @@ LinkFactory = Callable[..., Link]
 
 _FROM_URL_FUNCTION = Link.from_url.__func__
 
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from typing import Any

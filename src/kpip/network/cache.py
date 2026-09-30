@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import marshal
 import os
 import struct
@@ -51,8 +53,6 @@ _PROCESS_UMASK: int | None = None
 
 """Directory under the cache directory holding the HTTP page cache."""
 
-
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator

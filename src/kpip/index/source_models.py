@@ -7,7 +7,7 @@ from kpip.core.packaging import Requirement, canonicalize_name
 from kpip.core.versions import Version
 from kpip.core.wheel import CandidateMetadata, legacy_build_tag
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Callable, Protocol

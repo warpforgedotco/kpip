@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any

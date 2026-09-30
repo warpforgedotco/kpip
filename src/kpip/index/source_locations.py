@@ -10,7 +10,7 @@ import urllib.parse
 from functools import lru_cache
 
 from kpip.core.packaging import Requirement, canonicalize_name
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.urls import WINDOWS, path_to_url, url_to_path
 from kpip.index.catalog_cache import (
     load_summary,
@@ -27,7 +27,7 @@ from kpip.index.links import SUPPORTED_EXTENSIONS, Link
 from kpip.index.page_parsing import IndexPageParser
 from kpip.index.source_models import ArtifactKind
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from concurrent.futures import Future, ThreadPoolExecutor
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from kpip.index.catalog_cache import CatalogSummary
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 SUPPORTED_SCHEMES = frozenset(("http", "https", "file", "ftp"))
 

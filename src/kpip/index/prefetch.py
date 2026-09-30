@@ -9,7 +9,7 @@ from typing import Callable, Generic, TypeVar
 
 from kpip.core import latency
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from concurrent.futures import Future

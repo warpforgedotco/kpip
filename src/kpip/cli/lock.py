@@ -51,7 +51,7 @@ from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.files import parse_requirements
 from kpip.resolution.input_requirements import install_req_from_line
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from argparse import Namespace

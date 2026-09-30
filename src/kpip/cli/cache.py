@@ -16,9 +16,9 @@ from kpip.core.appdirs import (
 )
 from kpip.core.errors import CommandError
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _match_expression(pattern: str) -> str:

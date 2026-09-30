@@ -7,7 +7,7 @@ import threading
 from kpip.core.appdirs import http_cache_path
 from kpip.network.freshness import cached_response_is_fresh, has_cached_validator
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any

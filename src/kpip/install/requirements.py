@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 from kpip.build.metadata import InstalledMetadataDistribution
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.names import canonicalize_name
 from kpip.install.target import InstallTarget
 from kpip.install.uninstall import DistributionUninstaller
@@ -13,7 +13,7 @@ from kpip.install.wheel_transaction import (
 )
 from kpip.resolution.req_install import InstallRequirement
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class RequirementInstaller:

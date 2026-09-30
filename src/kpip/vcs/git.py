@@ -4,7 +4,7 @@ import os.path
 import re
 import urllib.parse
 
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.errors import InstallationError
 from kpip.core.urls import path_to_url
 from kpip.core.utils import AuthInfo, display_path
@@ -21,7 +21,7 @@ from .versioncontrol import (
     vcs,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
@@ -31,7 +31,7 @@ urlsplit = urllib.parse.urlsplit
 urlunsplit = urllib.parse.urlunsplit
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 GIT_VERSION_REGEX = re.compile(

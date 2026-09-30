@@ -15,7 +15,7 @@ from types import MappingProxyType
 
 from kpip.core.digests import sha256_hexdigest
 from kpip.core.errors import InstallationError
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.hashes import Hashes
 from kpip.core.packaging import Requirement
 from kpip.core.versions import Version
@@ -59,7 +59,7 @@ from kpip.index.source_models import (
     UniformRecords,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from kpip.index.source_models import PackageSource
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from kpip.index.candidate_materialization import CandidateStream
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 PYPI_HOSTS = frozenset(("pypi.org", "pypi.python.org"))
 

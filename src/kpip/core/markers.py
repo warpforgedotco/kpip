@@ -57,7 +57,7 @@ from kpip.core.names import canonicalize_name
 from kpip.core.packaging import Specifier
 from kpip.core.versions import InvalidVersion, Version
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

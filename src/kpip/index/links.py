@@ -20,7 +20,7 @@ from kpip.index.hashes import SUPPORTED_HASHES
 from kpip.index.paths import PathComponent
 from kpip.index.source_models import ArtifactKind, MetadataFile
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

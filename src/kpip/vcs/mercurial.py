@@ -3,7 +3,7 @@ from __future__ import annotations
 import configparser
 import os
 
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.errors import InstallationError
 from kpip.core.urls import path_to_url
 from kpip.core.utils import display_path
@@ -18,7 +18,7 @@ from .versioncontrol import (
     vcs,
 )
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class Mercurial(VersionControl):

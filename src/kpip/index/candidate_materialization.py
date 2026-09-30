@@ -10,7 +10,7 @@ from itertools import chain, islice
 from threading import RLock
 
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.errors import (
     BuildError,
     HashMismatch,
@@ -65,7 +65,7 @@ from kpip.index.source_models import (
 from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_scheme
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import tempfile
@@ -111,7 +111,7 @@ def resolve_git_commit(url: str, *, prompting: bool = True) -> str | None:
     return resolve(url, prompting=prompting)
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 _EXTRA_MARKER_RE = re.compile(r"extra\s*(?:==|in)\s*['\"]([^'\"]+)['\"]")

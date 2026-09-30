@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import datetime
 import os
 import time
@@ -74,11 +76,10 @@ from kpip.host.virtualenv import running_under_virtualenv
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     import argparse

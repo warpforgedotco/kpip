@@ -32,10 +32,10 @@ import sys
 from collections.abc import Iterator
 
 from kpip.core.digests import sha256_hexdigest
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.appdirs import user_cache_dir
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def lock_dir() -> str:

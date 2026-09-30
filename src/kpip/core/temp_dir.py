@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import os.path
 import stat
 from contextlib import ExitStack, contextmanager
 
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.utils import enum
 
-logger = get_logger(__name__)
-TYPE_CHECKING = False
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator

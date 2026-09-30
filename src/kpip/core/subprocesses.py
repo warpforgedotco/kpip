@@ -8,7 +8,7 @@ from os import PathLike
 
 from .errors import DiagnosticKpipError
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any

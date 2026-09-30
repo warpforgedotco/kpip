@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from kpip.core.caches import register_table
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import re

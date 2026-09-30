@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from typing import Any
 
 import os
@@ -32,8 +34,6 @@ def __getattr__(name: str) -> Any:
         return _toml_module()
     raise AttributeError(name)
 
-
-TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from kpip.resolution.files.contracts import RequirementSource

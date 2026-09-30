@@ -7,7 +7,7 @@ import os
 import sysconfig
 
 from kpip.core.digests import sha256_hexdigest
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.hashes import file_hashes
 from kpip.core.utils import CACHE_INTERPRETER_TAG
 from kpip.core.versions import ZERO_VERSION
@@ -18,7 +18,7 @@ from kpip.index.links import Link
 from kpip.index.source_models import ArtifactKind, CandidateRecord
 from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_reference
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def source_hashes_for_link(

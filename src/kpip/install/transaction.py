@@ -10,10 +10,10 @@ import tempfile
 from collections.abc import Iterable
 
 from kpip.core.errors import InstallationError
-from kpip.core.logger import get_logger
+import logging
 from kpip.host.clone import clone_path
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _read_staged_source(path: str | None) -> bytes:

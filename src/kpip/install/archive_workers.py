@@ -25,7 +25,7 @@ import os
 import sys
 import threading
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from concurrent.futures import Executor

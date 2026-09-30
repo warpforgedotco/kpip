@@ -8,7 +8,7 @@ from kpip.core.errors import (
     VcsHashUnsupported,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Container, Iterable

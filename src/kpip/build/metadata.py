@@ -19,7 +19,7 @@ from kpip.core.packaging import (
 from kpip.core.versions import Version
 from kpip.core.urls import url_to_path
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import email.message

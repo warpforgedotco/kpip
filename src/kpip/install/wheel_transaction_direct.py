@@ -17,7 +17,7 @@ from kpip.install.wheel_archive import (
     validate_member_parts,
 )
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any

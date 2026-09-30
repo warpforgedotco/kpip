@@ -10,13 +10,13 @@ import tarfile
 import zipfile
 from zipfile import ZipInfo
 
-from kpip.core.logger import get_logger
+import logging
 from kpip.core.errors import InstallationError
 from kpip.core.utils import ensure_dir
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
 from kpip.host.tar_reader import fast_untar
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -36,7 +36,7 @@ TAR_EXTENSIONS: tuple[str, ...] = (".tar.gz", ".tgz", ".tar")
 _COPY_BUFSIZE = 1024 * 1024 if sys.platform == "win32" else 64 * 1024
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_EXTENSIONS = ZIP_EXTENSIONS + TAR_EXTENSIONS

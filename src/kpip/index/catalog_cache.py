@@ -25,7 +25,7 @@ from kpip.index.directory_index import project_version_from_filename
 from kpip.index.links import Link, split_plain_url
 from kpip.index.source_models import ArtifactKind, MetadataFile
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

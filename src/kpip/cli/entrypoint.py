@@ -9,7 +9,7 @@ import sys
 from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
 from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
 
-TYPE_CHECKING = False
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import NoReturn

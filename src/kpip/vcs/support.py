@@ -6,9 +6,9 @@ from collections.abc import Iterable
 
 from kpip.core.urls import split_auth_from_netloc
 
-from kpip.core.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class HiddenText:
