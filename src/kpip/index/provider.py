@@ -15,6 +15,7 @@ from types import MappingProxyType
 
 from kpip.core.digests import sha256_hexdigest
 from kpip.core.errors import InstallationError
+from kpip.core.logger import get_logger
 from kpip.core.hashes import Hashes
 from kpip.core.packaging import Requirement
 from kpip.core.versions import Version
@@ -70,6 +71,8 @@ if TYPE_CHECKING:
     from kpip.core.wheel import TargetContext, WheelFile
     from kpip.index.candidate_materialization import CandidateStream
 
+
+logger = get_logger(__name__)
 
 PYPI_HOSTS = frozenset(("pypi.org", "pypi.python.org"))
 
@@ -635,6 +638,18 @@ class CandidateProvider:
         if groups is None:
             loaded = load_catalog(persistent_cache, source_url)
 
+            if loaded is None and self._restore_catalog(catalog_key[0], source_url):
+                loaded = load_catalog(persistent_cache, source_url)
+
+            if loaded is None:
+                # Every release of the project is about to have no artifact,
+                # and the resolver to settle for an answer without it.
+                logger.warning(
+                    "The cached index page %s is incomplete and could not be "
+                    "read again; its releases are left out",
+                    source_url,
+                )
+
             groups = (
                 {}
                 if loaded is None
@@ -644,6 +659,16 @@ class CandidateProvider:
             self.catalog_artifact_group_cache[key] = groups
 
         return groups.get(version.public, [])
+
+    def _restore_catalog(self, name: str, source_url: str) -> bool:
+        """Have the source of ``source_url`` store its catalog again: the
+        summary naming it was read, and the catalog itself is gone."""
+
+        for source in self.index_sources:
+            if source.project_page_url(source.index_url, name) == source_url:
+                return source.restore_catalog(source_url)
+
+        return False
 
     def _checked_catalog_groups_for(
         self,
