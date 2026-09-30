@@ -56,8 +56,10 @@ def test_builds_beside_the_source_and_leaves_no_c(
     assert Path.cwd() == before
 
     suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
-    assert len(built) == len(EXTENSIONS)
-    for artifact, path in zip(built, EXTENSIONS.values()):
+    # Those this platform builds: Windows leaves out the POSIX-only ones.
+    selected = extensions_for()
+    assert len(built) == len(selected)
+    for artifact, path in zip(built, selected.values()):
         assert artifact.is_file()
         assert artifact.parent == (tmp_path / path).parent
         assert artifact.name.endswith(suffixes)
