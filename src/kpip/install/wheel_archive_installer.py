@@ -229,6 +229,44 @@ def _reserve_destination(
     return None
 
 
+def _top_destinations(
+    archive: CachedWheelArchive, *, pycompile: bool
+) -> tuple[list[tuple[str, str | None]], set[str]]:
+    """The top-level destination of each of ``archive``'s members, and of
+    its ``.pyc`` when that lands elsewhere; and the set of them all.
+
+    Only a top-level module's bytecode leaves its top-level name, for
+    ``__pycache__`` beside it.
+    """
+    pycache = os.path.normcase("__pycache__")
+
+    tops: list[tuple[str, str | None]] = []
+
+    for entry in archive.entries:
+        relative = entry[0]
+
+        top, separator, _ = relative.partition("/")
+
+        if top.endswith(".data"):
+            mapped = mapped_parts(relative)
+            top = mapped[0]
+            at_top_level = len(mapped) == 1
+        else:
+            at_top_level = not separator
+
+        compiled = (
+            pycache if pycompile and at_top_level and top.endswith(".py") else None
+        )
+
+        tops.append((os.path.normcase(top), compiled))
+
+    names = {top for top, _ in tops}
+
+    names.update(compiled for _, compiled in tops if compiled is not None)
+
+    return tops, names
+
+
 def _build_plans(
     requests: tuple[WheelRequest, ...],
     candidates: tuple[WheelInstallCandidate, ...],
@@ -244,10 +282,52 @@ def _build_plans(
     # after its members are claimed.
     shared: list[tuple[_WheelInstallPlan, int, str]] = []
 
+    scripts_by_owner = [
+        entry_point_scripts(
+            os.path.join(archive.tree, archive.dist_info, "entry_points.txt"),
+        )
+        for archive in archives
+    ]
+
+    # Two wheels can only install the same path under a top-level name they
+    # both use -- "bin", "__pycache__", a namespace package. Under any other,
+    # a wheel's members are its own, and claiming them one by one, 12,000 for
+    # a jupyter install, only found that out: they are claimed only under a
+    # name shared. A wheel can still collide with itself, listing a member
+    # twice or, compiled, shipping the bytecode compiling would write: such a
+    # one is claimed whole.
+    tops_by_owner = [
+        _top_destinations(archive, pycompile=pycompile) for archive in archives
+    ]
+
+    owners_by_top: dict[str, int] = {}
+
+    scripts_top = os.path.normcase("Scripts" if os.name == "nt" else "bin")
+
+    for owner, (_, names) in enumerate(tops_by_owner):
+        if scripts_by_owner[owner]:
+            names = names | {scripts_top}
+
+        for name in names:
+            owners_by_top[name] = owners_by_top.get(name, 0) + 1
+
+    shared_tops = {name for name, owners in owners_by_top.items() if owners > 1}
+
     for owner, (request, candidate, archive) in enumerate(
         zip(requests, candidates, archives, strict=True),
     ):
-        for entry in archive.entries:
+        entry_tops = tops_by_owner[owner][0]
+
+        whole = len({entry[0] for entry in archive.entries}) != len(
+            archive.entries
+        ) or (
+            pycompile and any("__pycache__/" in entry[0] for entry in archive.entries)
+        )
+
+        for entry, (top, compiled_top) in zip(archive.entries, entry_tops, strict=True):
+            if not whole and top not in shared_tops and compiled_top not in shared_tops:
+                continue
+
             relative = entry[0]
 
             mapped = mapped_parts(relative)
@@ -293,9 +373,7 @@ def _build_plans(
                     member=relative if clonable else None,
                 )
 
-        scripts = entry_point_scripts(
-            os.path.join(archive.tree, archive.dist_info, "entry_points.txt"),
-        )
+        scripts = scripts_by_owner[owner]
 
         for name in scripts:
             if os.path.basename(name) != name or name in {".", ".."}:
@@ -706,14 +784,27 @@ def _finalize_wheel(
     rows: list[tuple[str, str, str]] = []
 
     for relative, digest, size, _ in archive.entries:
-        mapped = mapped_parts(relative)
+        top = relative.partition("/")[0]
 
-        installed_relative = "/".join(mapped)
+        if top.endswith(".data"):
+            mapped = mapped_parts(relative)
+
+            installed_relative = "/".join(mapped)
+
+            first, last = mapped[0], mapped[-1]
+
+        else:
+            # The manifest keeps a member as its validated parts joined, which
+            # outside ".data" is where it lands: no mapping to compute, for
+            # each of a wheel's thousands of members.
+            installed_relative = relative
+
+            first, last = top, relative.rpartition("/")[2]
 
         if installed_relative in managed:
             continue
 
-        if mapped[0] in {"bin", "Scripts"} and mapped[-1] in generated_names:
+        if first in {"bin", "Scripts"} and last in generated_names:
             continue
 
         if installed_relative == record_relative:
@@ -721,10 +812,8 @@ def _finalize_wheel(
 
             continue
 
-        path = os.path.join(stage, installed_relative)
-
         if installed_relative in script_members:
-            digest, size = _file_metadata(path)
+            digest, size = _file_metadata(os.path.join(stage, installed_relative))
 
         rows.append((installed_relative, digest, size))
 

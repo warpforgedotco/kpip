@@ -781,3 +781,70 @@ def test_a_wheel_built_from_an_sdist_installs_from_the_archive_cache(
     assert not comparison.left_only
     assert not comparison.right_only
     assert (tmp_path / "cached" / "builtpkg.py").read_text() == "# from builtpkg\n"
+
+
+def test_members_are_claimed_only_under_a_name_two_wheels_share(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two wheels sharing a namespace package can collide only inside it:
+    only its members are claimed one by one, and both land."""
+    from kpip.install import wheel_archive_installer
+
+    cache_dir = tmp_path / "cache"
+    first = _make_wheel_with_members(
+        tmp_path,
+        "first_pkg",
+        {"first_only/a.py": "", "first_only/b.py": "", "shared_ns/first.py": ""},
+    )
+    second = _make_wheel_with_members(
+        tmp_path,
+        "second_pkg",
+        {"second_only/c.py": "", "shared_ns/second.py": ""},
+    )
+    candidates = _prevalidated_candidates_for(tmp_path, cache_dir, first, second)
+    claimed: list[tuple[str, ...]] = []
+    reserve = wheel_archive_installer._reserve_destination
+
+    def counting(trie, parts, *args, **kwargs):
+        claimed.append(parts)
+        return reserve(trie, parts, *args, **kwargs)
+
+    monkeypatch.setattr(wheel_archive_installer, "_reserve_destination", counting)
+    target = tmp_path / "target"
+
+    install_wheels_from_archive_cache(
+        [(first, True, None), (second, True, None)],
+        candidates,
+        target=InstallTarget.from_options("first-pkg", target=str(target)),
+        cache_dir=str(cache_dir),
+        pycompile=False,
+    )
+
+    assert sorted(parts for parts in claimed if parts[0] != "bin") == [
+        ("shared_ns", "first.py"),
+        ("shared_ns", "second.py"),
+    ]
+    for landed in ("first_only/b.py", "second_only/c.py", "shared_ns/second.py"):
+        assert (target / landed).is_file()
+
+
+def test_archives_the_install_loaded_are_not_read_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The install's preparation hands over the archives it loaded; neither
+    their manifests nor their digests are read a second time."""
+    from kpip.install import wheel_archive_cache
+
+    cache_dir = tmp_path / "cache"
+    wheel = _make_wheel_with_members(tmp_path, "loaded_pkg", {"loaded/a.py": ""})
+    candidates = _prevalidated_candidates_for(tmp_path, cache_dir, wheel)
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        raise AssertionError("read again")
+
+    monkeypatch.setattr(wheel_archive_cache, "load_archive", unexpected)
+    monkeypatch.setattr(wheel_archive_cache, "prefetch_wheel_digests", unexpected)
+
+    archives = prepare_cached_wheels(candidates, str(cache_dir), pycompile=False)
+
+    assert archives == (candidates[0].wheel_layout,)
