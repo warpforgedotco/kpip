@@ -7,6 +7,7 @@ Windows launcher and file-mode rules, byte for byte.
 from __future__ import annotations
 
 lazy import io
+lazy import logging
 lazy import os
 lazy import re
 lazy import struct
@@ -15,9 +16,12 @@ lazy import sysconfig
 lazy import time
 lazy import zipfile
 lazy from importlib.resources import files
+lazy from pathlib import Path
 
 lazy from kpip.core.errors import InstallationError
 lazy from kpip.host.clone import replace_contents
+
+logger = logging.getLogger(__name__)
 
 # pip's template: distlib's, without the ``re`` import.
 SCRIPT_TEMPLATE = (
@@ -86,35 +90,139 @@ def _windowed(executable: str) -> str:
 
 
 def entry_point_scripts(path: str) -> dict[str, tuple[str, bool]]:
+    """The scripts an ``entry_points.txt`` asks for, by name, as pip writes
+    them: each target, and whether it is a GUI script."""
     try:
         with open(path, encoding="utf-8") as file:
-            lines = file.read().splitlines()
+            text = file.read()
 
     except FileNotFoundError, IsADirectoryError:
         return {}
 
-    active = False
+    return parse_entry_point_scripts(text)
 
-    result: dict[str, tuple[str, bool]] = {}
 
-    gui = False
+def parse_entry_point_scripts(text: str) -> dict[str, tuple[str, bool]]:
+    """:func:`entry_point_scripts`, from the file's text."""
+    console: dict[str, str] = {}
 
-    for raw_line in lines:
+    gui: dict[str, str] = {}
+
+    section: dict[str, str] | None = None
+
+    for raw_line in text.splitlines():
         line = raw_line.strip()
 
         if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1].strip()
+            section = {"console_scripts": console, "gui_scripts": gui}.get(
+                line[1:-1].strip()
+            )
 
-            active = section in {"console_scripts", "gui_scripts"}
-
-            gui = section == "gui_scripts"
-
-        elif active and "=" in line and not line.startswith("#"):
+        elif section is not None and "=" in line and not line.startswith("#"):
             name, target = line.split("=", 1)
 
-            result[name.strip()] = (target.strip(), gui)
+            section[name.strip()] = target.strip()
 
+    result = {name: (target, False) for name, target in versioned(console).items()}
+    result.update((name, (target, True)) for name, target in gui.items())
     return result
+
+
+def versioned(console: dict[str, str]) -> dict[str, str]:
+    """pip's console scripts for ``console``: pip's and easy_install's own
+    under this Python's version, as pip writes them.
+
+    Their wheels are universal, so a version baked into a script name at
+    build time can be the wrong one. ``ENSUREPIP_OPTIONS`` picks which
+    names ensurepip installs.
+    """
+    console = dict(console)
+    result: dict[str, str] = {}
+    ensurepip = os.environ.get("ENSUREPIP_OPTIONS")
+    major, minor = sys.version_info[:2]
+
+    pip_script = console.pop("pip", None)
+    if pip_script:
+        if ensurepip is None:
+            result["pip"] = pip_script
+        if ensurepip != "altinstall":
+            result[f"pip{major}"] = pip_script
+        result[f"pip{major}.{minor}"] = pip_script
+        for name in [name for name in console if re.match(r"pip(\d+(\.\d+)?)?$", name)]:
+            del console[name]
+
+    easy_install_script = console.pop("easy_install", None)
+    if easy_install_script:
+        if ensurepip is None:
+            result["easy_install"] = easy_install_script
+        result[f"easy_install-{major}.{minor}"] = easy_install_script
+        for name in [
+            name for name in console if re.match(r"easy_install(-\d+\.\d+)?$", name)
+        ]:
+            del console[name]
+
+    result.update(console)
+    return result
+
+
+def quiet_directories(interpreter: str) -> list[Path]:
+    """Where a script draws no warning: ``PATH``, and beside ``interpreter``,
+    which is where an environment used without activating it keeps them."""
+    quiet = [
+        Path(entry).resolve() for entry in os.environ.get("PATH", "").split(os.pathsep)
+    ]
+    quiet.append(Path(interpreter).parent.resolve())
+    return quiet
+
+
+def scripts_not_on_path_message(scripts: list[str], interpreter: str) -> str | None:
+    """pip's warning about console scripts installed outside ``PATH``.
+
+    None when every script's directory is on ``PATH``, or beside
+    ``interpreter``: the scripts of an environment used without being
+    activated sit with its Python.
+    """
+    if not scripts:
+        return None
+
+    grouped: dict[Path, set[str]] = {}
+    for script in scripts:
+        path = Path(script)
+        grouped.setdefault(path.parent.resolve(), set()).add(path.name)
+
+    quiet = quiet_directories(interpreter)
+    warn_for = {
+        directory: names
+        for directory, names in grouped.items()
+        if directory not in quiet
+    }
+    if not warn_for:
+        return None
+
+    lines = []
+    for directory, names in warn_for.items():
+        ordered = sorted(names)
+        if len(ordered) == 1:
+            start = f"script {ordered[0]} is"
+        else:
+            start = f"scripts {', '.join(ordered[:-1])} and {ordered[-1]} are"
+        lines.append(f"The {start} installed in '{directory}' which is not on PATH.")
+
+    lines.append(
+        f"Consider adding {'this directory' if len(lines) == 1 else 'these directories'}"
+        " to PATH or, if you prefer to suppress this warning, use "
+        "--no-warn-script-location."
+    )
+    if any(
+        entry[0] == "~"
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry
+    ):
+        lines.append(
+            "NOTE: The current PATH contains path(s) starting with `~`, "
+            "which may not be expanded by all applications."
+        )
+    return "\n".join(lines)
 
 
 def script_callable(name: str, target_ref: str) -> tuple[str, str]:
@@ -284,3 +392,47 @@ def script_matches(
         return False
 
     return f"from {module} import {callable_.split('.')[0]}" in text
+
+
+def console_scripts_in_wheel(path: str) -> list[str]:
+    """The names of the console scripts the wheel at ``path`` installs."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            member = next(
+                (
+                    name
+                    for name in archive.namelist()
+                    if name.count("/") == 1
+                    and name.endswith(".dist-info/entry_points.txt")
+                ),
+                None,
+            )
+            if member is None:
+                return []
+            text = archive.read(member).decode("utf-8")
+    except OSError, KeyError, UnicodeDecodeError, zipfile.BadZipFile:
+        return []
+    return [
+        name for name, (_, gui) in parse_entry_point_scripts(text).items() if not gui
+    ]
+
+
+def warn_about_scripts_not_on_path(
+    wheels: list[str], scripts_directory: str, executable: str | None
+) -> None:
+    """pip's warning, per wheel, for console scripts installed off ``PATH``."""
+    interpreter = executable or script_python()
+    if Path(scripts_directory).resolve() in quiet_directories(interpreter):
+        # Every script lands there, so no wheel needs opening.
+        return
+    suffix = ".exe" if os.name == "nt" else ""
+    for wheel in wheels:
+        message = scripts_not_on_path_message(
+            [
+                os.path.join(scripts_directory, name + suffix)
+                for name in console_scripts_in_wheel(wheel)
+            ],
+            interpreter,
+        )
+        if message is not None:
+            logger.warning(message)

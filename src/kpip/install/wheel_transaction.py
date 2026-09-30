@@ -54,6 +54,7 @@ lazy from kpip.install.wheel_scripts import (
     generate_entry_point_files,
     rewrite_shebang,
     script_matches,
+    warn_about_scripts_not_on_path,
 )
 lazy from kpip.install.wheel_state import (
     InstalledTargetInventory,
@@ -732,8 +733,12 @@ def install_wheels_transactionally(
     lookup_existing: bool = True,
     candidates: Iterable[WheelCandidate] | None = None,
     cache_dir: str | None = None,
+    warn_script_location: bool = False,
 ) -> tuple[WheelCandidate, ...]:
     """Install a wheel batch with rollback across every wheel in the batch.
+
+    ``warn_script_location`` warns, as pip does, about console scripts
+    installed outside ``PATH``.
 
     The target-mutating phase -- the existing-state scan included -- runs
     under an advisory lock on the target, so concurrent kpip processes
@@ -755,7 +760,7 @@ def install_wheels_transactionally(
         raise ValueError("candidate count does not match wheel request count")
 
     with environment_write_lock(target.purelib):
-        return _install_wheels_locked(
+        installed = _install_wheels_locked(
             requests,
             planned_candidates,
             target=target,
@@ -766,6 +771,11 @@ def install_wheels_transactionally(
             lookup_existing=lookup_existing,
             cache_dir=cache_dir,
         )
+    if warn_script_location:
+        warn_about_scripts_not_on_path(
+            [path for path, _, _ in requests], target.scripts, script_executable
+        )
+    return installed
 
 
 def _install_wheels_locked(
