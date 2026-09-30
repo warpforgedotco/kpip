@@ -21,6 +21,7 @@ from kpip.cli.logging_config import (
 from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
 from kpip.core import run_options
 from kpip.core.errors import KpipError
+from kpip.core.compiled import own_binary
 from kpip.core.temp_dir import global_tempdir_manager
 from kpip.core.utils import configure
 from kpip.host.interpreter_facts import target_interpreter
@@ -188,10 +189,13 @@ def print_version(version: str | None, location: str | None) -> None:
     if version is None:
         version = kpip.__version__
 
+    # Compiled, the package is inside the binary, and the Python it names is
+    # the one it installs for: its own is only what it was built with.
+    location = own_binary() or location
     if location is None:
         location = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    python_version = target_interpreter(installing=False).major_minor
 
     print(
         f"kpip {version} from {os.path.realpath(location)} (python {python_version})",

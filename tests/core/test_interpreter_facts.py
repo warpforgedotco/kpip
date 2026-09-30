@@ -252,3 +252,22 @@ def test_the_site_configuration_is_the_target_environments(
     ]
 
     assert site == str(tmp_path / "env" / config.CONFIG_BASENAME)
+
+
+def test_a_compiled_kpip_names_its_binary_and_the_python_it_installs_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not a path inside its bundle, nor the Python it was built with."""
+    from kpip.cli import entrypoint
+
+    binary = tmp_path / "kpip"
+    binary.touch()
+    other = types.SimpleNamespace(major_minor="3.11")
+    monkeypatch.setattr(entrypoint, "own_binary", lambda: str(binary))
+    monkeypatch.setattr(entrypoint, "target_interpreter", lambda **_: other)
+
+    entrypoint.print_version("1.0", "/bundle/kpip/__init__.py")
+
+    assert capsys.readouterr().out == (
+        f"kpip 1.0 from {os.path.realpath(binary)} (python 3.11)\n"
+    )
