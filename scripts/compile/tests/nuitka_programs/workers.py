@@ -44,3 +44,16 @@ def hash_and_compare(seconds: float) -> tuple[int, int]:
             failures += 1
         rounds += 1
     return failures, rounds
+
+
+def loaded() -> list[tuple[str, str | None, bool]]:
+    """``(name, origin, is_alias)`` of this interpreter's modules, as
+    ``kpip_compile.workers`` reads a worker's."""
+    import sys
+
+    modules = []
+    for name, module in list(sys.modules.items()):
+        spec = getattr(module, "__spec__", None)
+        origin = getattr(module, "__file__", None) or getattr(spec, "origin", None)
+        modules.append((name, origin, getattr(module, "__name__", name) != name))
+    return modules

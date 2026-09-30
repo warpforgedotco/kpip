@@ -13,13 +13,14 @@ A job crosses as a path and a digest and comes back as the entry's path; the
 main interpreter reads the entry's manifest from the cache, as it would have
 after unpacking it itself. A job that fails for any reason is done again in the
 main interpreter, which raises what failed, so errors read as they always have.
-Without subinterpreters -- before 3.14, a compiled kpip, PyPy, or
-``KPIP_SUBINTERPRETERS=0`` -- :func:`start_archive_workers` returns None and
-wheels unpack on threads as before.
+Without subinterpreters -- before 3.14, PyPy, a compiled kpip built without
+bytecode for them, or ``KPIP_SUBINTERPRETERS=0`` -- :func:`start_archive_workers`
+returns None and wheels unpack on threads as before.
 """
 
 from __future__ import annotations
 
+import _imp
 import os
 import sys
 import threading
@@ -90,8 +91,11 @@ def _available() -> bool:
 
     from kpip.core.interpreter import is_compiled
 
-    # A compiled kpip's modules are not importable by a fresh interpreter.
-    return not is_compiled()
+    # A compiled kpip's modules are compiled into the binary, where a new
+    # interpreter cannot import them; it could not even start, for want of
+    # "encodings". A binary built for workers carries their bytecode in its
+    # frozen table (kpip_compile.workers), found by the standard import system.
+    return not is_compiled() or _imp.is_frozen(__name__)
 
 
 class ArchiveWorkers:

@@ -76,6 +76,7 @@ def nuitka_command(
     options: BuildOptions,
     version: str,
     interpreter: str = "cpython-314",
+    subinterpreter_modules: tuple[str, ...] = (),
 ) -> list[str]:
     is_windows = options.platform == "win32"
     command = [
@@ -109,6 +110,10 @@ def nuitka_command(
         # Leave out any extension a previous build left in the tree, so the
         # binary runs the pure-Python fallback it was asked for.
         command.extend(f"--nofollow-import-to={name}" for name in EXTENSIONS)
+    if subinterpreter_modules:
+        # Bytecode for the subinterpreters kpip unpacks wheels on, which
+        # cannot import compiled modules (kpip_compile.workers).
+        command.append("--subinterpreter-bytecode=" + ",".join(subinterpreter_modules))
     if is_windows:
         # Nuitka never treats ``.exe`` files as package data on its own.
         launchers = KPIP_PACKAGE / "_launchers"
@@ -127,7 +132,11 @@ def nuitka_command(
 def _run_nuitka(
     options: BuildOptions, nuitka_dir: Path, environ: dict[str, str], interpreter: str
 ) -> int:
-    command = nuitka_command(options, kpip_version(), interpreter)
+    from kpip_compile.workers import subinterpreter_modules
+
+    modules = tuple(subinterpreter_modules(options.python))
+    print(f"{len(modules)} modules for subinterpreters", flush=True)
+    command = nuitka_command(options, kpip_version(), interpreter, modules)
     env = dict(environ)
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(nuitka_dir), env.get("PYTHONPATH")))

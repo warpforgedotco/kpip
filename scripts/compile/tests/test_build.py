@@ -158,3 +158,18 @@ def test_extensions_are_built_for_the_same_python(
     prepare_extensions(BuildOptions(extensions=False), "cpython-399")
 
     assert built == [1]
+
+
+def test_subinterpreter_modules_are_named_in_one_argument() -> None:
+    command = nuitka_command(
+        BuildOptions(platform="linux"),
+        "1",
+        subinterpreter_modules=("encodings", "kpip.install.archive_workers"),
+    )
+
+    assert "--subinterpreter-bytecode=encodings,kpip.install.archive_workers" in command
+    assert command[-1] == str(KPIP_PACKAGE)
+    assert not any(
+        argument.startswith("--subinterpreter-bytecode")
+        for argument in nuitka_command(BuildOptions(platform="linux"), "1")
+    )

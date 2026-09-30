@@ -92,6 +92,30 @@ def test_workers_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
     assert archive_workers.start_archive_workers() is None
 
 
+@pytest.mark.parametrize("frozen", [False, True])
+def test_a_compiled_kpip_uses_workers_only_with_their_bytecode(
+    monkeypatch: pytest.MonkeyPatch, frozen: bool
+) -> None:
+    """A compiled kpip's modules are inside the binary, where a new
+    interpreter cannot import them; workers start only when the binary also
+    carries their bytecode, in its frozen table."""
+    from kpip.core import interpreter
+
+    monkeypatch.delenv("KPIP_SUBINTERPRETERS", raising=False)
+    monkeypatch.setattr(interpreter, "is_compiled", lambda: True)
+    monkeypatch.setattr(
+        archive_workers._imp,
+        "is_frozen",
+        lambda name: frozen and name == "kpip.install.archive_workers",
+    )
+
+    started = archive_workers.start_archive_workers()
+
+    assert (started is not None) is frozen
+    if started is not None:
+        started.close()
+
+
 def test_nothing_crosses_but_paths_and_a_digest(tmp_path: Path) -> None:
     """The job runs anywhere its module imports: with a path and a digest."""
     wheel = _wheel(tmp_path, "plainpkg", members=3)
