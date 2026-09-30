@@ -18,6 +18,7 @@ import re
 import pytest
 from kpip.cli import fast, fast_install
 from kpip.core.appdirs import (
+    ARCHIVE_CACHE_BUCKET,
     cache_root,
     command_cache_dir,
     resolve_cache_dir,
@@ -32,7 +33,7 @@ from kpip.index import (
     metadata_cache,
     release_facts_cache,
 )
-from kpip.install import wheel_archive_cache, wheel_install_plan_cache
+from kpip.install import wheel_install_plan_cache
 from kpip.core.appdirs import HTTP_CACHE_BUCKET
 
 STORAGE_NAMES = (
@@ -45,7 +46,7 @@ STORAGE_NAMES = (
     fast.FAST_LOCK_PLAN_BUCKET,
     fast_install.NAME,
     fast_install.TREE_CACHE_BUCKET,
-    wheel_archive_cache.ARCHIVE_CACHE_BUCKET,
+    ARCHIVE_CACHE_BUCKET,
     wheel_install_plan_cache.RESOLUTION_CACHE_BUCKET,
     wheel_install_plan_cache.REMOTE_EXACT_CONTEXT,
     catalog_cache.PREFIX,
@@ -110,7 +111,7 @@ _MARSHAL_STORES = (
     release_facts_cache.NAME,
     fast_install.NAME,
     fast_install.TREE_CACHE_BUCKET,
-    wheel_archive_cache.ARCHIVE_CACHE_BUCKET,
+    ARCHIVE_CACHE_BUCKET,
     wheel_install_plan_cache.RESOLUTION_CACHE_BUCKET,
 )
 

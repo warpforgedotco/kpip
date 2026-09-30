@@ -228,7 +228,8 @@ class WheelPrefetch:
         A warm install finds every wheel so, and fetching them again only
         took turns with the solve: one ``stat`` answers before any of that.
         """
-        from kpip.install.wheel_archive_cache import archive_entry_root, valid_sha256
+        from kpip.core.appdirs import archive_entry_root
+        from kpip.core.digests import valid_sha256
 
         digest = (getattr(candidate, "source_hashes", None) or {}).get("sha256")
 

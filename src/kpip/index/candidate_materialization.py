@@ -2133,6 +2133,31 @@ class CandidateMaterializer:
             wheel_layout=LazyWheelLayout(lambda: self.wheel_layout_for(path)),
         )
 
+    def unpacked_before(self, candidate: CandidateRecord) -> bool:
+        """Whether this wheel, named by its index digest, is in the archive cache.
+
+        An index wheel's metadata may come from the index (PEP 658) rather
+        than the file, so the file is opened to check the two agree and that
+        it is a valid wheel. The archive cache names an entry by the wheel's
+        digest, and fills it only after that check: finding the entry means
+        this very file passed it. A warm jupyter install reopened its 96
+        wheels to learn again what the resolve had loaded.
+        """
+        if self.wheel_cache_dir is None:
+            return False
+
+        digest = candidate.link.hashes.get("sha256")
+
+        if not isinstance(digest, str):
+            return False
+
+        from kpip.core.appdirs import archive_entry_root
+        from kpip.core.digests import valid_sha256
+
+        return valid_sha256(digest) and os.path.isdir(
+            archive_entry_root(os.fspath(self.wheel_cache_dir), digest.lower())
+        )
+
     @staticmethod
     def wheel_layout_for(path: str) -> object | None:
         """Read a wheel's layout the way eager materialization does."""
@@ -2369,7 +2394,9 @@ class CandidateMaterializer:
 
                     built = self.wheel_candidates.get(cache_key)
 
-                    if built is None and candidate.link.is_file:
+                    if built is None and (
+                        candidate.link.is_file or self.unpacked_before(candidate)
+                    ):
                         built = self.candidate_from_loaded_metadata(
                             candidate,
                             path,

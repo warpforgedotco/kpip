@@ -21,8 +21,10 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Generator
 
+from kpip.core.appdirs import archive_entry_root
+from kpip.core.digests import valid_sha256
 from kpip.core.errors import InstallationError
-from kpip.core.utils import default_worker_count, versioned_bucket
+from kpip.core.utils import default_worker_count
 from kpip.core.wheel import validate_wheel
 from kpip.install.wheel_archive import (
     compiled_parts,
@@ -69,8 +71,6 @@ if TYPE_CHECKING:
 else:
     WheelRequest = tuple[str, bool, object | None]
 
-
-ARCHIVE_CACHE_BUCKET = versioned_bucket("archive", 1, interpreter=True)
 
 PYC_CACHE_SUBDIR = "pyc"
 """Sibling of ``tree/`` holding the entry's byte-compiled modules.
@@ -134,9 +134,6 @@ ArchiveEntry = tuple[str, str, str, int]
 _MemberWork = tuple["zipfile.ZipInfo", str, str, "tuple[str, str] | None"]
 
 
-_HEX_DIGITS = "0123456789abcdefABCDEF"
-
-
 def loaded_layout(candidate: WheelInstallCandidate) -> object | None:
     """The candidate's layout if it is already known, without reading the
     wheel; a lazily computed layout reads as not yet known."""
@@ -145,10 +142,6 @@ def loaded_layout(candidate: WheelInstallCandidate) -> object | None:
 
 
 _UNKNOWN = object()
-
-
-def valid_sha256(value: object) -> bool:
-    return isinstance(value, str) and len(value) == 64 and not value.strip(_HEX_DIGITS)
 
 
 class CachedWheelArchive:
@@ -264,10 +257,6 @@ def wheel_digest(candidate: WheelInstallCandidate, cache_dir: str | None = None)
         cache.put_digest(identity, result)
 
     return result
-
-
-def archive_entry_root(cache_dir: str, digest: str) -> str:
-    return os.path.join(cache_dir, ARCHIVE_CACHE_BUCKET, digest[:2], digest)
 
 
 def valid_archive_entries(entries: object) -> bool:

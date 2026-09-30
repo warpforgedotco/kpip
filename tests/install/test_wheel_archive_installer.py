@@ -337,7 +337,7 @@ def test_archive_route_compiles_bytecode_and_records_it(tmp_path: Path) -> None:
 def test_transactional_install_with_compilation_takes_the_clone_route(
     tmp_path: Path,
 ) -> None:
-    from kpip.install.wheel_archive_cache import ARCHIVE_CACHE_BUCKET
+    from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
     from kpip.install.wheel_transaction import install_wheels_transactionally
 
     cache_dir = tmp_path / "cache"
@@ -526,8 +526,8 @@ def _loaded_code(pyc: Path) -> object:
 
 def test_archive_cache_byte_compiles_at_fill_time(tmp_path: Path) -> None:
     """The cache entry carries its own ``pyc/`` tree, laid out by mapped path."""
+    from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
     from kpip.install.wheel_archive_cache import (
-        ARCHIVE_CACHE_BUCKET,
         PYC_CACHE_SUBDIR,
     )
 
@@ -677,8 +677,8 @@ def test_install_falls_back_when_the_cache_has_no_bytecode(tmp_path: Path) -> No
     They must still install with bytecode, compiled in the stage."""
     import shutil as _shutil
 
+    from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
     from kpip.install.wheel_archive_cache import (
-        ARCHIVE_CACHE_BUCKET,
         PYC_CACHE_SUBDIR,
     )
 

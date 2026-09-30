@@ -26,6 +26,16 @@ def user_cache_dir(appname: str) -> str:
 # (network/freshness.py:encode_metadata).
 HTTP_CACHE_BUCKET = versioned_bucket("http", 3)
 WHEEL_CACHE_BUCKET = versioned_bucket("wheels", 2)
+ARCHIVE_CACHE_BUCKET = versioned_bucket("archive", 1, interpreter=True)
+
+
+def archive_entry_root(cache_dir: str, digest: str) -> str:
+    """The unpacked-wheel archive entry for sha256 ``digest`` under ``cache_dir``.
+
+    Written by ``install.wheel_archive_cache``; here so that the index, which
+    only asks whether a wheel was unpacked before, need not import install.
+    """
+    return os.path.join(cache_dir, ARCHIVE_CACHE_BUCKET, digest[:2], digest)
 
 
 def http_cache_path(cache_dir: str) -> str:

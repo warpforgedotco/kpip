@@ -89,3 +89,40 @@ def test_the_lazy_layout_matches_the_eager_one(
     assert isinstance(lazy, tuple)
     assert lazy == eager
     assert application.wheel_layout_if_loaded == eager
+
+
+def test_an_index_wheel_already_unpacked_is_not_reopened(tmp_path: Path) -> None:
+    """An index wheel's metadata may come from the index, not the file, so
+    the file is opened to check them against each other -- unless its digest
+    already names an archive cache entry, filled only after that check."""
+    from kpip.core.versions import Version
+    from kpip.index.candidate_materialization import CandidateMaterializer
+    from kpip.index.links import Link
+    from kpip.index.source_models import CandidateRecord
+    from kpip.core.appdirs import archive_entry_root
+
+    digest = "ab" * 32
+    record = CandidateRecord(
+        name="demo",
+        version=Version("1.0"),
+        link=Link.from_url(
+            f"https://files.example/demo-1.0-py3-none-any.whl#sha256={digest.upper()}",
+            source_url=None,
+        ),
+    )
+    unhashed = CandidateRecord(
+        name="demo",
+        version=Version("1.0"),
+        link=Link.from_url(
+            "https://files.example/demo-1.0-py3-none-any.whl", source_url=None
+        ),
+    )
+    materializer = CandidateMaterializer(wheel_cache_dir=str(tmp_path))
+
+    assert not materializer.unpacked_before(record)
+
+    Path(archive_entry_root(str(tmp_path), digest)).mkdir(parents=True)
+
+    assert materializer.unpacked_before(record)
+    assert not materializer.unpacked_before(unhashed)
+    assert not CandidateMaterializer().unpacked_before(record)
