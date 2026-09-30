@@ -128,7 +128,7 @@ def _simple_requirement_file(path: str) -> bytes | None:
     return "\n".join(requirements).encode("utf-8")
 
 
-def _environment() -> tuple[object, ...]:
+def resolution_environment() -> tuple[object, ...]:
     """Everything outside the inputs that markers or wheel tags can see."""
 
     if sys.platform == "win32":
@@ -206,7 +206,7 @@ def replay_key(
     key = (
         REPLAY_FORMAT,
         code_identity(),
-        _environment(),
+        resolution_environment(),
         tuple(index_urls),
         tuple(requirements),
         tuple(files[: len(requirement_files)]),

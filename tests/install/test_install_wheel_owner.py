@@ -951,3 +951,83 @@ def test_installed_wheel_distribution_versions_are_versions() -> None:
     )
     assert legacy.version is None
     assert legacy.raw_version == "1.0 beta"
+
+
+def _plain(value: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        req=parse_requirement(value),
+        link=None,
+        hash_options={},
+        config_settings={},
+        markers=None,
+    )
+
+
+def test_plain_install_plan_keys_take_unpinned_index_requirements() -> None:
+    from kpip.install.wheel_install_plan_cache import plain_install_plan_key
+
+    key = plain_install_plan_key((_plain("a>=1"), _plain("b")), ("context",))
+
+    assert key is not None
+    assert plain_install_plan_key((_plain("b"), _plain("a>=1")), ("context",)) == key
+    assert plain_install_plan_key((_plain("a>=2"), _plain("b")), ("context",)) != key
+    assert plain_install_plan_key((_plain("a>=1"), _plain("b")), ("other",)) != key
+    url = _plain("a @ https://example.invalid/a-1.0-py3-none-any.whl")
+    assert plain_install_plan_key((url,), ("context",)) is None
+
+
+@pytest.mark.parametrize(
+    "state, replayed", [("fresh", True), ("stale", False), ("changed", False)]
+)
+def test_a_plan_replays_only_while_its_pages_are_unchanged_and_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str, replayed: bool
+) -> None:
+    """Unchanged and fresh, the pages are what resolving again would read; a
+    stale one is revalidated by resolving, a changed one resolved from."""
+    from kpip.cli import install as install_cli
+    from kpip.cli import lock_replay
+
+    wheel = make_wheel_internal(tmp_path)
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    candidate = wheel_candidate(wheel).copy_with(
+        source_hashes={"sha256": digest}, source_kind="wheel"
+    )
+    cache = tmp_path / "cache"
+    install_wheels_transactionally(
+        [(wheel, True, None)],
+        target=InstallTarget.from_options("owner-demo", target=str(tmp_path / "t")),
+        pycompile=False,
+        lookup_existing=False,
+        candidates=[candidate],
+        cache_dir=str(cache),
+    )
+    pages = (("https://pypi.org/simple/owner-demo/", '"etag"', None),)
+    monkeypatch.setattr(lock_replay, "page_validators", lambda cache, urls: pages)
+    monkeypatch.setattr(lock_replay, "page_state", lambda cache, recorded: state)
+    provider = SimpleNamespace(
+        index_sources=[SimpleNamespace(pages_read={pages[0][0]})]
+    )
+    plan = SimpleNamespace(candidates=[candidate], graph={})
+    key = "ab" * 32
+
+    install_cli.record_replayable_install_plan(str(cache), key, plan, provider)
+    loaded = install_cli.load_replayable_install_plan(str(cache), key)
+
+    assert (loaded is not None) is replayed
+    if loaded is not None:
+        assert [item.name for item in loaded.candidates] == ["owner-demo"]
+
+
+def test_a_plan_whose_pages_cannot_be_checked_is_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip.cli import install as install_cli
+    from kpip.cli import lock_replay
+
+    monkeypatch.setattr(lock_replay, "page_validators", lambda cache, urls: None)
+    provider = SimpleNamespace(index_sources=[SimpleNamespace(pages_read={"u"})])
+    plan = SimpleNamespace(candidates=[], graph={})
+
+    install_cli.record_replayable_install_plan(str(tmp_path), "cd" * 32, plan, provider)
+
+    assert install_cli.load_replayable_install_plan(str(tmp_path), "cd" * 32) is None
