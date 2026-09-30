@@ -153,13 +153,31 @@ def _worker_script() -> str:
     )
 
 
+def _worker_command() -> list[str]:
+    """How to start a worker: this interpreter running the worker script, or
+    a compiled kpip, which has neither, as itself with the worker argument.
+
+    The compiled one used to be started as ``sys.executable``, a ``python``
+    beside the binary that does not exist: no worker ever started, and it
+    compiled every module in the main process, one at a time.
+    """
+    from kpip.core.interpreter import is_compiled, own_command
+
+    if is_compiled():
+        from kpip.install._compile_worker import WORKER_ARGUMENT
+
+        return [*own_command(), WORKER_ARGUMENT]
+
+    return [sys.executable, _worker_script()]
+
+
 def _spawn() -> _Worker | None:
     """Start one worker, or ``None`` if it will not answer."""
     import subprocess
 
     try:
         process = subprocess.Popen(  # noqa: S603
-            [sys.executable, _worker_script()],
+            _worker_command(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

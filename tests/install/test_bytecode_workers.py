@@ -157,3 +157,45 @@ def test_worker_script_runs_under_the_current_interpreter() -> None:
 
     assert result.stdout.splitlines()[:1] == ["Ready"]
     assert result.returncode == 0
+
+
+def test_kpip_itself_is_a_worker_given_the_worker_argument(tmp_path) -> None:
+    """How a compiled kpip, which has no worker script to run, starts one:
+    ``kpip/__main__.py`` hands the process to the worker loop."""
+    import subprocess
+    import sys
+
+    from kpip.install._compile_worker import WORKER_ARGUMENT
+
+    source = tmp_path / "module.py"
+    source.write_text("VALUE = 1\n")
+    destination = tmp_path / "module.pyc"
+    worker = subprocess.Popen(
+        [sys.executable, "-m", "kpip", WORKER_ARGUMENT],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert worker.stdout is not None
+        assert worker.stdin is not None
+        assert worker.stdout.readline().strip() == "Ready"
+        worker.stdin.write(f"{source}\t{destination}\tmodule.py\n")
+        worker.stdin.flush()
+        assert worker.stdout.readline().strip() == str(source)
+    finally:
+        worker.stdin.close()
+        worker.wait(timeout=30)
+
+    assert destination.is_file()
+
+
+def test_a_compiled_kpip_starts_itself_as_the_worker(monkeypatch) -> None:
+    from kpip.core import interpreter
+    from kpip.install import bytecode
+    from kpip.install._compile_worker import WORKER_ARGUMENT
+
+    monkeypatch.setattr(interpreter, "is_compiled", lambda: True)
+    monkeypatch.setattr(interpreter, "own_command", lambda: ["/opt/kpip"])
+
+    assert bytecode._worker_command() == ["/opt/kpip", WORKER_ARGUMENT]
