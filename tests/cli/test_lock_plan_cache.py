@@ -54,3 +54,32 @@ def test_a_repeated_lock_is_answered_from_the_plan_cache(
 
     assert fast.run_lock(args) == 0
     assert output.read_text(encoding="utf-8") == written
+
+
+def test_a_lock_lists_its_packages_by_name(tmp_path: Path) -> None:
+    """Whatever order the resolve pinned them in: that order depends on which
+    pages arrived first, and a lock whose entries move is a diff with
+    nothing in it."""
+    from kpip.cli.lock import run_lock
+
+    from ..wheel_helpers import make_wheel
+
+    wheelhouse = tmp_path / "wheels"
+    wheelhouse.mkdir()
+    make_wheel(wheelhouse, "zeta", "zeta", "1.0", requires=["alpha"])
+    make_wheel(wheelhouse, "alpha", "alpha", "1.0")
+    output = tmp_path / "pylock.toml"
+    common = ["--no-index", "--find-links", str(wheelhouse), "--output", str(output)]
+
+    for lock in (
+        lambda: fast.run_lock(["--quiet", "--no-cache-dir", *common, "zeta"]),
+        lambda: run_lock(["--quiet", "--no-cache-dir", *common, "zeta"]),
+    ):
+        assert lock() == 0
+        names = [
+            line.split('"')[1]
+            for line in output.read_text(encoding="utf-8").splitlines()
+            if line.startswith("name = ") and not line.endswith('.whl"')
+        ]
+        assert names == ["alpha", "zeta"], names
+        output.unlink()
