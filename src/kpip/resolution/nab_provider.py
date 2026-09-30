@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import operator
 from bisect import bisect_left, bisect_right
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
@@ -224,6 +225,8 @@ class NabProvider:
         self._active_positive_ranges: Mapping[str, RangeProtocol[Version]] = {}
         self._root_packages: set[str] = set()
         self._root_rank: dict[str, int] = {}
+        # The extras the roots themselves ask for; see ``requested_solution``.
+        self._root_extras: dict[str, frozenset[str]] = {}
         self._constrained_root_packages: set[str] = set()
         # A release's dependencies as the forward check reads them; see
         # ``_forward_dependencies``.
@@ -2021,6 +2024,118 @@ class NabProvider:
         self._dependency_cache[cache_key] = result
         return result
 
+    def requested_solution(
+        self,
+        pins: Mapping[str, Version],
+        edges: Sequence[tuple[str, str]],
+        roots: Sequence[str],
+    ) -> tuple[dict[str, Version], tuple[tuple[str, str], ...]]:
+        """The solver's pins and edges, less what only a stale extra required.
+
+        ``requirements`` keeps every extra any release ever asked of a
+        package, including releases the solve went on to reject: an extra
+        has to outlive the backtrack that undoes its dependent, or a package
+        decided before its dependent would be decided without the extra,
+        invalidated, and decided without it again. So the solver's answer is
+        complete but not minimal -- it satisfies an extra nothing in it asks
+        for, and that extra's dependencies ride along.
+
+        This walks the answer from the roots, giving each package only the
+        extras a root or a package already reached asks for, and drops the
+        dependencies that applied under the accumulated extras alone.
+        """
+        children: dict[str, list[str]] = {}
+        for parent, child in edges:
+            children.setdefault(parent, []).append(child)
+        root_extras = self._root_extras
+        extras: dict[str, frozenset[str]] = {
+            package: root_extras.get(package, frozenset()) for package in roots
+        }
+        walked: dict[str, frozenset[str]] = {}
+        stale: dict[str, frozenset[str]] = {}
+        queue = deque(roots)
+        while queue:
+            package = queue.popleft()
+            version = pins.get(package)
+            if version is None:
+                continue
+            asked = extras[package]
+            if walked.get(package) == asked:
+                continue
+            accumulated = self.requirements[package].extras
+            record_dependencies = self.records[(package, version)].dependencies
+            dropped: frozenset[str] = frozenset()
+            if asked == accumulated:
+                # Every accumulated extra is asked for: the solver's edges
+                # stand.
+                applying = [
+                    dependency
+                    for dependency in record_dependencies
+                    if dependency.extras
+                    and marker_applies(dependency.marker, extras=asked)
+                ]
+            else:
+                while True:
+                    applying = [
+                        dependency
+                        for dependency in record_dependencies
+                        if marker_applies(dependency.marker, extras=asked)
+                    ]
+                    # A release asks extras of itself: ``demo[all]`` is
+                    # spelled ``demo[fast,docs]; extra == "all"``.
+                    merged = asked.union(
+                        *(
+                            dependency.extras
+                            for dependency in applying
+                            if _key(dependency) == package
+                        )
+                    )
+                    if merged == asked:
+                        break
+                    asked = merged
+                extras[package] = asked
+                kept = {_key(dependency) for dependency in applying}
+                dropped = frozenset(
+                    key
+                    for dependency in record_dependencies
+                    if (key := _key(dependency)) not in kept
+                    and marker_applies(dependency.marker, extras=accumulated)
+                )
+            for dependency in applying:
+                if not dependency.extras:
+                    continue
+                child = _key(dependency)
+                known = extras.get(child, frozenset())
+                if not dependency.extras <= known:
+                    extras[child] = known | dependency.extras
+                    queue.append(child)
+            walked[package] = asked
+            stale[package] = dropped
+            for child in children.get(package, ()):
+                if child not in dropped and child not in extras:
+                    extras[child] = frozenset()
+                    queue.append(child)
+        if not any(stale.values()) and len(walked) == len(pins):
+            return dict(pins), tuple(edges)
+        unrequested = [package for package in pins if package not in walked]
+        if unrequested:
+            logger.debug(
+                "dropping packages only an unrequested extra required: %s",
+                ", ".join(unrequested),
+            )
+        return (
+            {
+                package: version
+                for package, version in pins.items()
+                if package in walked
+            },
+            tuple(
+                (parent, child)
+                for parent, child in edges
+                if parent in walked and child not in stale[parent]
+            ),
+        )
+
     def _edge_range(
         self,
         dependency_key: str,
@@ -2430,6 +2545,7 @@ class NabProvider:
                 raw=requirement.raw,
             )
         self.requirements[package] = requirement
+        self._root_extras[package] = requirement.extras
         versions = self._eligible_versions(package)
         return package, self._finite_range(versions)
 

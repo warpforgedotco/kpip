@@ -146,13 +146,15 @@ class ResolutionEngine:
                 )
                 raise errors.ResolutionError(message) from error
             raise
-        selected = solution.pins
+        selected, edges = adapter.requested_solution(
+            solution.pins, solution.edges, solution.roots
+        )
         selected_records = tuple(
             (package, adapter.records[(package, version)])
             for package, version in selected.items()
         )
         graph_children: dict[str, set[str]] = {package: set() for package in selected}
-        for package, dependency in solution.edges:
+        for package, dependency in edges:
             graph_children[package].add(dependency)
         graph = {
             package: frozenset(dependencies)
