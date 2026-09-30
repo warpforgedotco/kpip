@@ -27,12 +27,7 @@ The console script, `kpip.__init__:main` and `python -m kpip` all reach
 ```text
 cli.entrypoint:main
   +--> handle_global_commands      help, --version, --require-virtualenv gate, unknown commands
-  +--> cli.fast:run_before_startup  cheap argv recognizers, before any startup work
-  |      +--> cli.fast_install:run_cached_remote   missing target + exact remote pins, warm receipt
-  |      +--> cli.fast_install:run_local_fallback  non-empty local target, --no-index wheelhouse
-  |      `--> cli.fast_install:run                 empty target, --no-index wheelhouse
   +--> execution context, logging, temp dir (per CommandSpec flags)
-  +--> cli.fast:run_install_after_startup
   `--> run_command -> CommandSpec.load_runner
 ```
 
@@ -40,10 +35,8 @@ Rules:
 
 - One implementation per behaviour, and it follows pip's semantics. A cache
   or an early exit inside that implementation is fine; a second implementation
-  of the same behaviour is not. The recognizers still in `cli/fast.py` and
-  `cli/fast_install.py` predate this rule and are being folded into their
-  commands: do not add to them, and do not add new ones. `list`, `freeze`,
-  `lock` and an already-satisfied `install` have none.
+  of the same behaviour is not. There are no argv recognizers ahead of
+  command dispatch; do not add one.
 - The registry stores module paths and imports a command on first use. Startup
   gating belongs in `CommandSpec` flags (`needs_logging`, `needs_tempdir`,
   `needs_execution_context`), not in command-name tests.
@@ -56,7 +49,7 @@ re-deriving locally:
 | Config files, `KPIP_*` overrides, source selection | `cli/config.py` |
 | Requirement collection, `--config-settings`, proxy environment | `cli/requirements.py` |
 | `--group` and dependency-group files | `cli/dependency_groups.py` |
-| Lock serialization (imports nothing; shared with fast paths) | `cli/lock_format.py` |
+| Lock serialization | `cli/lock_format.py` |
 | Cache directory policy | `core/appdirs.py` |
 | Resolver report → CLI diagnostic | `cli/resolution_errors.py` |
 
@@ -73,8 +66,7 @@ cli.install:run_install
   -> plan: install.wheel_install_plan_cache:load_cached_install_plan (exact remote pins, warm)
            else ResolutionEngine.resolve
   -> install.output:prepare_install_candidates   materialize winners, prepare wheel archives
-  -> cli.fast_install:install_resolved_pure_wheels (empty-target pure-wheel hybrid)
-     else install.wheel_transaction:install_wheels_transactionally
+  -> install.wheel_transaction:install_wheels_transactionally
   -> save_cached_install_plan after a fresh exact-pin install
   -> conflict warnings; editables go through build.build:build_editable_from_source
 ```
@@ -89,14 +81,6 @@ batch rollback: `install_wheels_from_archive_cache` (clone cached immutable
 trees into a stage, swap the target), `install_wheels_directly` (after a full
 destination preflight), and the generic staged `WheelInstaller` /
 `InstallTransaction` path.
-
-The pure-wheel hybrid requires an empty explicit target. That is a safety
-precondition: it validates members with the lexical
-`cli/fast_install.py:is_safe_member`, which is sound only because every member
-is written as a regular file into an empty tree. The staged routes write into
-populated targets and therefore use `install/wheel_archive.py:validate_member_parts`
-plus a resolved-parent containment check. Relaxing the emptiness rule means
-adopting the resolving check.
 
 ## Resolution
 
@@ -118,9 +102,7 @@ resolver's error with `format_error` and restores the user's original specifier
 text.
 
 `resolve_wheelhouse` is only a constructor that pins the engine to local
-`find_links` with the index disabled; there is no second search. The separate
-minimal resolver in `cli/fast_install.py` exists for startup cost (see above)
-and must not grow an implementation arrow to this one.
+`find_links` with the index disabled; there is no second search.
 
 ## Index discovery and artifacts
 
@@ -177,7 +159,6 @@ has never written; the old one is inert until a purge.
 | `index/candidate_metadata_cache.py` | `candidate-metadata-v1.sqlite` | dependency metadata reused during resolution |
 | `index/release_facts_cache.py` | `release-facts-v1-<interp>.marshal` | deterministic release rejection reasons |
 | `cli/lock_replay.py` | `lock-replay-v1/` | an index lock of hashed wheels, keyed on its inputs, interpreter, `code_identity` and the lock it started from (`cli/lock_format.py:previous_lock_digest`), with the ETag/Last-Modified of every project page it read; replayed while each is unchanged -- by the fast path when all are fresh, else after `cli/lock.py:replay_after_revalidation` revalidates the stale ones in one concurrent wave |
-| `cli/fast_install.py` | `fast-install-v1-<interp>.marshal`, `fast-install-trees-v1-<interp>/` | fast-path plans, metadata, cloneable completed targets |
 | `install/wheel_archive_cache.py` | `archive-v1-<interp>/` | validated unpacked wheel trees by digest, and their byte-compiled `pyc/` sibling |
 | `install/wheel_install_plan_cache.py` | `resolution-v1-<interp>/` | short-lived exact-pin receipts over archive entries |
 
@@ -214,7 +195,7 @@ Invariants:
 | `vcs` | VCS URLs, revisions, source retrieval | wheel selection |
 | `resolution` | requirements, constraints, search adapter, result assembly | filesystem installation |
 | `install` | targets, inventories, wheel plans, transactions | index parsing |
-| `cli` | argument parsing, dispatch, presentation, fast paths | reusable mechanics |
+| `cli` | argument parsing, dispatch, presentation | reusable mechanics |
 
 Allowed first-party dependency edges (enforced by
 `tests/core/test_architecture_imports.py`):

@@ -1,7 +1,6 @@
 """Shared serialization and output for the lock commands.
 
-Imported by both ``cli.lock`` and the ``cli.fast.lock`` fast path, so this
-module deliberately imports nothing.
+Reading, preferring from and writing a lock file, for ``cli.lock``.
 """
 
 from __future__ import annotations

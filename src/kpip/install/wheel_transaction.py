@@ -225,7 +225,13 @@ def install_wheel_internal(
     if same_version and not force and not preserve_existing:
         return candidate
 
-    if existing is not None and (not same_version or force):
+    # A quiet install says nothing of what it replaces, as pip's does not.
+    reports_replacement = (
+        existing is not None
+        and (not same_version or force)
+        and not os.environ.get("KPIP_QUIET")
+    )
+    if reports_replacement:
         print(f"Uninstalling {existing.raw_name}-{existing.raw_version}")
     if direct and transaction is None:
         raise ValueError("direct wheel installation needs a transaction")
@@ -667,7 +673,7 @@ def install_wheel_internal(
                 active_transaction.commit(finalize=transaction_sink is None)
         if transaction_sink is not None and transaction is None:
             transaction_sink.append(active_transaction)
-        if existing is not None and (not same_version or force):
+        if reports_replacement:
             print(
                 f"Successfully uninstalled {existing.raw_name}-{existing.raw_version}",
             )

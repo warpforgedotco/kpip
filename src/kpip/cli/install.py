@@ -58,7 +58,7 @@ from kpip.install.output import (
     prepare_install_candidates,
 )
 from kpip.install.target import InstallTarget
-from kpip.install.wheel_archive_cache import CachedWheelArchive, prepare_cached_wheel
+from kpip.install.wheel_archive_cache import prepare_cached_wheel
 from kpip.install.wheel_install_plan_cache import (
     REMOTE_EXACT_CONTEXT,
     exact_install_plan_key,
@@ -1775,83 +1775,49 @@ def run_install(args: list[str]) -> int:
                 candidate_direct_urls[candidate.canonical_name] = direct_url
 
             if not options.dry_run:
-                hybrid_installed = False
                 target_is_empty = target_library_is_empty(batch_target)
-                prepared_archives = all(
-                    isinstance(candidate.wheel_layout_if_loaded, CachedWheelArchive)
-                    for candidate in plan.candidates
+
+                install_order = installation_order(
+                    plan.candidates,
+                    plan.graph,
+                    requested_roots,
+                    ignore_requires_python=execution.options.ignore_requires_python,
                 )
-
-                if (
-                    execution.options.target is not None
-                    and execution.options.ignore_installed
-                    and execution.options.no_compile
-                    and not execution.options.require_hashes
-                    and not execution.options.report
-                    and execution.options.root is None
-                    and not execution.options.user
-                    and execution.options.prefix is None
-                    and target_is_empty
-                    and not prepared_archives
-                    and all(
-                        candidate.source_kind == "wheel"
-                        for candidate in plan.candidates
-                    )
-                    and not any(
-                        candidate.source_url in requested_source_urls
-                        for candidate in plan.candidates
-                    )
-                ):
-                    from kpip.cli import fast_install
-
-                    hybrid_installed = fast_install.install_resolved_pure_wheels(
-                        plan.candidates,
-                        execution.options.target,
-                        requested_roots,
+                try:
+                    install_wheels_transactionally(
+                        [
+                            (
+                                candidate.path,
+                                candidate.canonical_name in requested_roots,
+                                candidate_direct_urls[candidate.canonical_name],
+                            )
+                            for candidate in install_order
+                        ],
+                        target=batch_target,
+                        pycompile=not execution.options.no_compile,
+                        force=reinstall,
+                        preserve_existing=execution.options.ignore_installed,
+                        lookup_existing=not (
+                            execution.options.target is not None
+                            and execution.options.ignore_installed
+                            and target_is_empty
+                        ),
+                        candidates=install_order,
+                        cache_dir=execution.cache_dir,
                     )
 
-                if not hybrid_installed:
-                    install_order = installation_order(
-                        plan.candidates,
-                        plan.graph,
-                        requested_roots,
-                        ignore_requires_python=execution.options.ignore_requires_python,
-                    )
-                    try:
-                        install_wheels_transactionally(
-                            [
-                                (
-                                    candidate.path,
-                                    candidate.canonical_name in requested_roots,
-                                    candidate_direct_urls[candidate.canonical_name],
+                except InstallationError as exc:
+                    prefix = "Cannot install "
+                    message = str(exc)
+                    if message.startswith(prefix):
+                        conflict_name = message[len(prefix) :].split(":", 1)[0]
+                        for candidate in plan.candidates:
+                            if candidate.canonical_name == conflict_name:
+                                print(
+                                    f"The user requested {candidate.canonical_name} "
+                                    f"{candidate.version}",
                                 )
-                                for candidate in install_order
-                            ],
-                            target=batch_target,
-                            pycompile=not execution.options.no_compile,
-                            force=reinstall,
-                            preserve_existing=execution.options.ignore_installed,
-                            lookup_existing=not (
-                                execution.options.target is not None
-                                and execution.options.ignore_installed
-                                and target_is_empty
-                            ),
-                            candidates=install_order,
-                            cache_dir=execution.cache_dir,
-                        )
-
-                    except InstallationError as exc:
-                        prefix = "Cannot install "
-                        message = str(exc)
-                        if message.startswith(prefix):
-                            conflict_name = message[len(prefix) :].split(":", 1)[0]
-                            for candidate in plan.candidates:
-                                if candidate.canonical_name == conflict_name:
-                                    print(
-                                        f"The user requested {candidate.canonical_name} "
-                                        f"{candidate.version}",
-                                    )
-                        raise
+                    raise
 
                 if (
                     resolved_fresh

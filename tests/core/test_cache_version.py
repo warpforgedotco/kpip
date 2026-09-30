@@ -16,7 +16,6 @@ import os
 import re
 
 import pytest
-from kpip.cli import fast_install
 from kpip.core.appdirs import (
     ARCHIVE_CACHE_BUCKET,
     cache_root,
@@ -43,8 +42,6 @@ STORAGE_NAMES = (
     metadata_cache.NAME,
     candidate_metadata_cache.NAME,
     release_facts_cache.NAME,
-    fast_install.NAME,
-    fast_install.TREE_CACHE_BUCKET,
     ARCHIVE_CACHE_BUCKET,
     wheel_install_plan_cache.RESOLUTION_CACHE_BUCKET,
     wheel_install_plan_cache.REMOTE_EXACT_CONTEXT,
@@ -108,8 +105,6 @@ def test_every_storage_name_carries_its_own_version(name: str) -> None:
 
 _MARSHAL_STORES = (
     release_facts_cache.NAME,
-    fast_install.NAME,
-    fast_install.TREE_CACHE_BUCKET,
     ARCHIVE_CACHE_BUCKET,
     wheel_install_plan_cache.RESOLUTION_CACHE_BUCKET,
 )

@@ -6,8 +6,7 @@ point at are named by hash, so their metadata cannot change underneath it.
 When none of that has changed the answer cannot have either, and a warm lock
 can write the answer it wrote last time instead of resolving again.
 
-Deliberately light: the pre-startup fast path asks this before anything that
-resolves, and a replay must not import the resolver or the HTTP client.
+The lock command asks this before anything that resolves.
 """
 
 from __future__ import annotations
@@ -179,10 +178,8 @@ def replay_key(
     ``previous_lock`` is ``previous_lock_digest`` of the lock this one starts
     from, whose versions it prefers.
 
-    The command line and the fast path both call this with the options as
-    given, so they agree without parsing requirement files the same way:
-    files are keyed on their bytes, and any file that does more than list
-    requirements is declined.
+    Called with the options as given: files are keyed on their bytes, and
+    any file that does more than list requirements is declined.
     """
 
     if not requirements and not requirement_files:

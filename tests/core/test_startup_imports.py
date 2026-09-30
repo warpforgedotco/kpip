@@ -87,60 +87,6 @@ def test_a_repeated_wheelhouse_lock_writes_its_output(tmp_path: Path) -> None:
     assert output.is_file()
 
 
-FAST_INSTALL_FORBIDDEN = frozenset(
-    {
-        "dataclasses",
-        "email.parser",
-        "hashlib",
-        "importlib.resources",
-        "inspect",
-        # ``urllib.parse`` reaches it, and an install from a wheelhouse has
-        # no URL to read.
-        "ipaddress",
-        "logging",
-        "tempfile",
-        "json",
-        "sqlite3",
-        "urllib.parse",
-        "zipfile",
-        "kpip.resolution.models",
-        "kpip.resolution.api",
-        "kpip.index.provider",
-        "kpip.cli.install",
-        "kpip.cli.requirements",
-    },
-)
-
-
-def test_fast_local_install_stays_import_light(tmp_path: Path) -> None:
-    import shutil
-
-    wheelhouse = tmp_path / "wheelhouse"
-    wheelhouse.mkdir()
-    shutil.copy2(SIMPLEWHEEL, wheelhouse / SIMPLEWHEEL.name)
-    target = tmp_path / "target"
-    args = [
-        "install",
-        "--no-index",
-        "--ignore-installed",
-        "--no-compile",
-        "--target",
-        str(target),
-        "--find-links",
-        str(wheelhouse),
-        "simplewheel==2.0",
-    ]
-    env = {"KPIP_CACHE_DIR": str(tmp_path / "cache")}
-
-    modules = imported_modules(args, cwd=tmp_path, env=env)
-
-    assert next(target.glob("simplewheel-2.0.dist-info"), None) is not None
-    assert "kpip.cli.fast_install" in modules
-    assert not (modules & FAST_INSTALL_FORBIDDEN), sorted(
-        modules & FAST_INSTALL_FORBIDDEN
-    )
-
-
 def test_default_install_scans_installed_state_without_importlib_metadata(
     tmp_path: Path,
 ) -> None:
