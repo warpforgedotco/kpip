@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,6 +24,7 @@ SOURCE_ROOT = REPO_ROOT / "src"
 EXTENSIONS = {
     "kpip._vendor.nab_resolver._cranges": "kpip/_vendor/nab_resolver/_cranges.py",
     "kpip.index._page_catalog": "kpip/index/_page_catalog.py",
+    "kpip.host._link_tree": "kpip/host/_link_tree.py",
 }
 """Module name to source path under ``SOURCE_ROOT``.
 
@@ -30,6 +32,18 @@ The name is spelled out rather than derived: ``kpip._vendor`` has no
 ``__init__.py``, and Cython, deriving it, names the module
 ``nab_resolver._cranges``, which then fails to import and to unpickle.
 """
+
+POSIX_ONLY = frozenset({"kpip.host._link_tree"})
+"""Extensions built from POSIX calls, left out of a Windows build."""
+
+
+def extensions_for(platform: str = sys.platform) -> dict[str, str]:
+    """The entries of ``EXTENSIONS`` that build on ``platform``."""
+    return {
+        name: path
+        for name, path in EXTENSIONS.items()
+        if platform != "win32" or name not in POSIX_ONLY
+    }
 
 
 def optimization_args(compiler_type: str) -> list[str]:
@@ -65,9 +79,10 @@ def build_extensions(
             super().build_extension(ext)
 
     source_root = source_root.resolve()
+    selected = extensions_for()
     extensions = [
         Extension(name, [path], define_macros=[("NDEBUG", None)])
-        for name, path in EXTENSIONS.items()
+        for name, path in selected.items()
     ]
 
     # Every path handed on is relative. Cython lays the C it generates out
@@ -101,7 +116,7 @@ def build_extensions(
             command.force = force
             command.finalize_options()
             command.run()
-            return [Path(command.get_ext_fullpath(name)) for name in EXTENSIONS]
+            return [Path(command.get_ext_fullpath(name)) for name in selected]
 
 
 @contextlib.contextmanager

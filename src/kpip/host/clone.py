@@ -19,7 +19,9 @@ import errno
 import os
 import stat
 import sys
+import threading
 import time
+from typing import Any
 
 TYPE_CHECKING = False
 
@@ -355,6 +357,287 @@ def _hardlink(
     return True
 
 
+class _PythonLinkTree:
+    """:mod:`kpip.host._link_tree`'s loops in Python, for when it is not built.
+
+    ``os.link``, ``os.mkdir`` and ``os.chmod`` release the GIL around their
+    syscall, so these loops link in parallel too, only with more interpreter
+    time between syscalls.
+    """
+
+    @staticmethod
+    def make_directories(root: bytes, names: list, modes: list) -> tuple:
+        for index, name in enumerate(names):
+            try:
+                os.mkdir(os.path.join(root, name), modes[index])
+
+            except OSError as exc:
+                return (exc.errno or errno.EIO, index)
+
+        return (0, len(names))
+
+    @staticmethod
+    def change_modes(root: bytes, names: list, modes: list) -> tuple:
+        for index, name in enumerate(names):
+            try:
+                os.chmod(os.path.join(root, name), modes[index])
+
+            except OSError as exc:
+                return (exc.errno or errno.EIO, index)
+
+        return (0, len(names))
+
+    @staticmethod
+    def link_files(
+        source_root: bytes, destination_root: bytes, names: list, start: int
+    ) -> tuple:
+        join = os.path.join
+
+        for index in range(start, len(names)):
+            name = names[index]
+
+            try:
+                os.link(join(source_root, name), join(destination_root, name))
+
+            except OSError as exc:
+                return (exc.errno or errno.EIO, index)
+
+        return (0, len(names))
+
+
+_link_tree: Any = None
+"""The link loops once chosen: the compiled module or :class:`_PythonLinkTree`.
+
+False keeps every tree on the per-file walk.
+"""
+
+
+def _link_tree_loops() -> Any:
+    """The compiled link loops, or their Python version when not built."""
+    global _link_tree
+
+    if _link_tree is None:
+        try:
+            from kpip.host import _link_tree as module
+
+        except ImportError:
+            _link_tree = _PythonLinkTree
+
+        else:
+            _link_tree = module
+
+    return _link_tree or None
+
+
+def _links_whole_trees(devices: Devices) -> bool:
+    """Whether a new directory's tree can be hard linked in one pass.
+
+    Only where the per-file walk would hard link every file anyway: hard link
+    mode on POSIX, a device pair that takes them, and -- on Linux, where the
+    walk tries a reflink first -- a pair it already knows it will not reflink.
+    """
+    return (
+        os.name == "posix"
+        and _configured_link_mode() == "hardlink"
+        and devices not in _hardlink_unsupported
+        and (
+            not sys.platform.startswith("linux")
+            or devices[1] in _reflink_unsupported
+            or devices[0] in _reflink_slow
+        )
+    )
+
+
+_SPLIT_FILES = 1024
+"""A tree with at least this many files is linked in slices, in parallel."""
+
+_SPLIT_WORKERS = 4
+
+_split_executor: Any = None
+
+_split_lock = threading.Lock()
+
+
+def _split_pool() -> Any:
+    """The threads a large tree's slices are linked on, started on first use.
+
+    Its own pool: the slices are submitted from the install's clone threads,
+    and queued behind them on that pool they would wait for themselves.
+    """
+    global _split_executor
+
+    with _split_lock:
+        if _split_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            _split_executor = ThreadPoolExecutor(
+                max_workers=_SPLIT_WORKERS,
+                thread_name_prefix="kpip-link",
+            )
+
+    return _split_executor
+
+
+def _link_new_directory(
+    link_tree: Any,
+    source: str,
+    destination: str,
+    source_mode: int,
+    devices: Devices,
+) -> None:
+    """Hard link ``source``'s tree into ``destination``, just created.
+
+    The tree is listed first, then its directories made and its files linked
+    in loops over the lists -- compiled, with the GIL released, when
+    :mod:`kpip.host._link_tree` is built. Installs clone one wheel tree per
+    thread, and one tree can hold most of an install's files -- 5,600 of
+    jupyter's 12,000 -- so a large tree's files are split into slices linked
+    on threads of their own, rather than leaving one thread to link them all
+    while the others sit idle.
+    """
+    import shutil
+
+    try:
+        source_root = os.fsencode(source)
+        destination_root = os.fsencode(destination)
+        directories, modes, files, symlinks = _list_tree(source_root)
+
+        # Writable and searchable while filled, as _clone_absent makes them.
+        error, index = link_tree.make_directories(
+            destination_root,
+            directories,
+            [mode | stat.S_IWUSR | stat.S_IXUSR for mode in modes],
+        )
+
+        if error:
+            raise OSError(
+                error,
+                os.strerror(error),
+                os.fsdecode(os.path.join(destination_root, directories[index])),
+            )
+
+        if len(files) < _SPLIT_FILES:
+            _link_files(link_tree, source_root, destination_root, files, devices)
+
+        else:
+            size = -(-len(files) // _SPLIT_WORKERS)
+            slices = [
+                _split_pool().submit(
+                    _link_files,
+                    link_tree,
+                    source_root,
+                    destination_root,
+                    files[start : start + size],
+                    devices,
+                )
+                for start in range(0, len(files), size)
+            ]
+
+            # Every slice finishes before the directory can be removed.
+            for piece in slices:
+                piece.exception()
+
+            for piece in slices:
+                piece.result()
+
+        for name in symlinks:
+            os.symlink(
+                os.readlink(os.path.join(source_root, name)),
+                os.path.join(destination_root, name),
+            )
+
+        # Children first: a parent made read-only would refuse the chmod of
+        # what is inside it.
+        directories.reverse()
+        modes.reverse()
+        error, index = link_tree.change_modes(destination_root, directories, modes)
+
+        if error:
+            raise OSError(
+                error,
+                os.strerror(error),
+                os.fsdecode(os.path.join(destination_root, directories[index])),
+            )
+
+        os.chmod(destination, source_mode)
+
+    except BaseException:
+        shutil.rmtree(destination, ignore_errors=True)
+
+        raise
+
+
+def _link_files(
+    link_tree: Any,
+    source_root: bytes,
+    destination_root: bytes,
+    files: list[bytes],
+    devices: Devices,
+) -> None:
+    """Link ``files`` with ``link_tree``'s loop, handling what it cannot.
+
+    A file the loop fails on is linked or copied the way the per-file walk
+    would -- :func:`_hardlink` judging the device pair -- before the loop
+    resumes after it; once the pair is judged, the rest are copied.
+    """
+    import shutil
+
+    start = 0
+
+    while start < len(files):
+        if devices not in _hardlink_unsupported:
+            error, start = link_tree.link_files(
+                source_root, destination_root, files, start
+            )
+
+            if not error:
+                return
+
+        file_source = os.fsdecode(os.path.join(source_root, files[start]))
+        file_destination = os.fsdecode(os.path.join(destination_root, files[start]))
+
+        if not _hardlink(file_source, file_destination, *devices):
+            shutil.copy2(file_source, file_destination, follow_symlinks=False)
+
+        start += 1
+
+
+def _list_tree(
+    root: bytes,
+) -> tuple[list[bytes], list[int], list[bytes], list[bytes]]:
+    """``root``'s directories with their modes, files and symlinks, by relative path.
+
+    A directory is listed before anything inside it.
+    """
+    directories: list[bytes] = []
+    modes: list[int] = []
+    files: list[bytes] = []
+    symlinks: list[bytes] = []
+    pending = [b""]
+
+    while pending:
+        relative = pending.pop()
+
+        with os.scandir(os.path.join(root, relative) if relative else root) as entries:
+            for entry in entries:
+                name = os.path.join(relative, entry.name) if relative else entry.name
+
+                if entry.is_dir(follow_symlinks=False):
+                    directories.append(name)
+                    modes.append(
+                        stat.S_IMODE(entry.stat(follow_symlinks=False).st_mode)
+                    )
+                    pending.append(name)
+
+                elif entry.is_symlink():
+                    symlinks.append(name)
+
+                else:
+                    files.append(name)
+
+    return directories, modes, files, symlinks
+
+
 Overlaps = tuple[frozenset[str], frozenset[str]]
 """Destination files a clone leaves alone, and ones it replaces."""
 
@@ -499,6 +782,14 @@ def _clone_absent(
 
         except FileExistsError:
             return _clone(source, destination, devices, overlaps)
+
+        if overlaps is None and _links_whole_trees(devices):
+            link_tree = _link_tree_loops()
+
+            if link_tree is not None:
+                return _link_new_directory(
+                    link_tree, source, destination, source_mode, devices
+                )
 
         import shutil
 

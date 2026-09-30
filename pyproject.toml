@@ -149,7 +149,11 @@ markers = [
 [tool.ty.src]
 # Cython pure-Python-mode sources (like _vendor's _cranges) type through
 # cython's own annotations, which ty does not read.
-exclude = ["src/kpip/_vendor/**", "src/kpip/index/_page_catalog.py"]
+exclude = [
+    "src/kpip/_vendor/**",
+    "src/kpip/index/_page_catalog.py",
+    "src/kpip/host/_link_tree.py",
+]
 
 [tool.ty.environment]
 python-version = "3.14"
