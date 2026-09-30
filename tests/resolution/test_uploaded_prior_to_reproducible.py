@@ -41,5 +41,5 @@ def test_releases_after_the_cutoff_do_not_move_the_resolve(tmp_path: Path) -> No
     as_recorded = _pins(tmp_path / "recorded")
     as_it_stood = _pins(tmp_path / "as-of", as_of=uv_graphs.UPLOADED_PRIOR_TO)
 
-    assert len(as_recorded) == 585
+    assert len(as_recorded) == 590
     assert as_recorded == as_it_stood

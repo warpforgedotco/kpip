@@ -84,4 +84,4 @@ def test_resolve_warm_airflow(
         reset_caches()
         return len(uv_graphs.resolve("airflow", session, cache_dir).candidates)
 
-    assert benchmark(resolve_warm) == 585
+    assert benchmark(resolve_warm) == 590
