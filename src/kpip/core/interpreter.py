@@ -47,6 +47,18 @@ def is_compiled() -> bool:
     return "__compiled__" in globals()
 
 
+def compiled_runtime_dir() -> str | None:
+    """A compiled kpip's runtime directory, or None for Python source.
+
+    The ``.dist`` folder of a standalone build, or where a onefile binary
+    unpacks: where the binary's files are, and where a new interpreter
+    started inside it looks for modules.
+    """
+    compiled = globals().get("__compiled__")
+
+    return None if compiled is None else compiled.python_runtime_dir
+
+
 def _environment_python(prefix: str) -> str:
     if os.name == "nt":
         return os.path.join(prefix, "Scripts", "python.exe")

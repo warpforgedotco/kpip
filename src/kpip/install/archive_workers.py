@@ -13,9 +13,10 @@ A job crosses as a path and a digest and comes back as the entry's path; the
 main interpreter reads the entry's manifest from the cache, as it would have
 after unpacking it itself. A job that fails for any reason is done again in the
 main interpreter, which raises what failed, so errors read as they always have.
-Without subinterpreters -- before 3.14, a compiled kpip, PyPy, or
-``KPIP_SUBINTERPRETERS=0`` -- :func:`start_archive_workers` returns None and
-wheels unpack on threads as before.
+Without subinterpreters -- before 3.14, PyPy, a compiled kpip built without
+the plain modules a worker loads, or ``KPIP_SUBINTERPRETERS=0`` --
+:func:`start_archive_workers` returns None and wheels unpack on threads as
+before.
 """
 
 from __future__ import annotations
@@ -33,6 +34,10 @@ if TYPE_CHECKING:
 
 WORKERS = 4
 """Subinterpreters unpacking at once; each is an interpreter lock of its own."""
+
+WORKER_MODULE_MARKER = ("kpip", "install", "archive_workers.pyc")
+"""Where a compiled kpip's plain copy of this module is, under its runtime
+directory, when the build shipped the modules a worker loads."""
 
 
 class _Wheel:
@@ -88,10 +93,19 @@ def _available() -> bool:
     if sys.version_info < (3, 14) or sys.implementation.name != "cpython":
         return False
 
-    from kpip.core.interpreter import is_compiled
+    from kpip.core.interpreter import compiled_runtime_dir
 
-    # A compiled kpip's modules are not importable by a fresh interpreter.
-    return not is_compiled()
+    runtime = compiled_runtime_dir()
+
+    # A compiled kpip's modules -- the standard library's among them -- are
+    # compiled into the binary, where a new interpreter, which starts with
+    # nothing but the import system, cannot see them: it fails to start at
+    # all, for want of ``encodings``. kpip-compile ships plain copies of what
+    # a worker loads beside the binary (kpip_compile.workers); without them,
+    # wheels unpack on threads.
+    return runtime is None or os.path.isfile(
+        os.path.join(runtime, *WORKER_MODULE_MARKER)
+    )
 
 
 class ArchiveWorkers:

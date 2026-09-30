@@ -92,6 +92,27 @@ def test_workers_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
     assert archive_workers.start_archive_workers() is None
 
 
+@pytest.mark.parametrize("shipped", [False, True])
+def test_a_compiled_kpip_uses_workers_only_with_their_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shipped: bool
+) -> None:
+    """A compiled kpip's modules are inside the binary, where a new
+    interpreter cannot import them; workers start only when the build shipped
+    plain copies beside it."""
+    from kpip.core import interpreter
+
+    monkeypatch.delenv("KPIP_SUBINTERPRETERS", raising=False)
+    monkeypatch.setattr(interpreter, "compiled_runtime_dir", lambda: str(tmp_path))
+    if shipped:
+        marker = tmp_path.joinpath(*archive_workers.WORKER_MODULE_MARKER)
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"")
+
+    started = archive_workers.start_archive_workers()
+
+    assert (started is not None) is shipped
+
+
 def test_nothing_crosses_but_paths_and_a_digest(tmp_path: Path) -> None:
     """The job runs anywhere its module imports: with a path and a digest."""
     wheel = _wheel(tmp_path, "plainpkg", members=3)

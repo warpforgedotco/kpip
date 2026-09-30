@@ -158,3 +158,12 @@ def test_extensions_are_built_for_the_same_python(
     prepare_extensions(BuildOptions(extensions=False), "cpython-399")
 
     assert built == [1]
+
+
+def test_worker_modules_ship_raw_at_the_runtime_root(tmp_path: Path) -> None:
+    command = nuitka_command(
+        BuildOptions(platform="linux"), "1", worker_modules=tmp_path
+    )
+
+    assert f"--include-raw-dir={tmp_path}=." in command
+    assert command[-1] == str(KPIP_PACKAGE)
