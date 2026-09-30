@@ -15,9 +15,6 @@ typed ``Any``, so an odd value is passed through for the record builder to
 judge exactly as it judges one read by ``json``.
 """
 
-# No ``from __future__ import annotations``: msgspec reads the structs'
-# annotations, which name classes local to ``_load``.
-
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
@@ -46,30 +43,37 @@ def _load() -> None:
     # Read when msgspec evaluates the structs' annotations.
     from typing import Any  # noqa: F401
 
-    class File(
-        msgspec.Struct,
+    # Built with defstruct, from field types rather than annotations: from
+    # 3.14 a class's annotations are a function evaluated on demand, closing
+    # over this function's names, and a compiled kpip's closures are not the
+    # cells annotationlib needs -- the Nuitka binary failed on its first page.
+    File = msgspec.defstruct(
+        "File",
+        [
+            ("url", Any, None),
+            ("filename", Any, None),
+            ("hashes", Any, None),
+            ("requires_python", Any, None),
+            ("yanked", Any, None),
+            ("upload_time", Any, None),
+            ("size", Any, None),
+            # Present and null is not absent: a null core-metadata hides an
+            # older dist-info-metadata beside it.
+            ("core_metadata", Any, msgspec.UNSET),
+            ("dist_info_metadata", Any, msgspec.UNSET),
+        ],
         rename={
             "requires_python": "requires-python",
             "upload_time": "upload-time",
             "core_metadata": "core-metadata",
             "dist_info_metadata": "dist-info-metadata",
         },
-    ):
-        url: Any = None
-        filename: Any = None
-        hashes: Any = None
-        requires_python: Any = None
-        yanked: Any = None
-        upload_time: Any = None
-        size: Any = None
-        # Present and null is not absent: a null core-metadata hides an
-        # older dist-info-metadata beside it.
-        core_metadata: Any = msgspec.UNSET
-        dist_info_metadata: Any = msgspec.UNSET
+    )
 
-    class Page(msgspec.Struct):
-        meta: Any = None
-        files: list[File] = []
+    Page = msgspec.defstruct(
+        "Page",
+        [("meta", Any, None), ("files", list[File], [])],  # ty: ignore[invalid-type-form]
+    )
 
     UNSET = msgspec.UNSET
 
