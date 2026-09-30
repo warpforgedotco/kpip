@@ -22,6 +22,7 @@ another platform or build of CPython, a format ``--only-binary`` or
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
@@ -402,12 +403,9 @@ def report_unsatisfied(requirement: str, parent: str | None, provider: Any) -> s
 
 def yanked_versions(name: str, provider: Any, versions: list[Any]) -> list[Any]:
     """The yanked releases that would otherwise fit, as pip lists them."""
-    allow_yanked = provider.allow_yanked
-    provider.allow_yanked = True
-    try:
-        selection = provider.evaluate_links(parse_requirement(name))
-    finally:
-        provider.allow_yanked = allow_yanked
+    selection = provider.with_yanked_policy(True).evaluate_links(
+        parse_requirement(name)
+    )
     return sorted(
         {
             candidate.version
@@ -508,12 +506,11 @@ def excluded_format_hint(requirement: Any, provider: Any) -> str | None:
     allow_binary, allow_source = provider.allowed_formats_internal(requirement)
     if allow_binary and allow_source:
         return None
-    format_control = provider.format_control
-    provider.format_control = None
-    try:
-        open_selection = provider.evaluate_links(requirement)
-    finally:
-        provider.format_control = format_control
+    # A view, as with_yanked_policy makes one: the provider's catalog
+    # prefetch may still be running, and must not see the rules lifted.
+    open_provider = copy.copy(provider)
+    open_provider.format_control = None
+    open_selection = open_provider.evaluate_links(requirement)
     if not open_selection.accepted:
         return None
     if not allow_source:
