@@ -86,6 +86,26 @@ def test_a_release_for_another_python(
     assert lines[0].endswith(" not in '>=3.99'")
 
 
+def test_a_release_for_the_python_version_asked_for(
+    wheelhouse: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # As pip's: the version --python-version names, as a full release.
+    lines = failure(
+        wheelhouse,
+        tmp_path,
+        capsys,
+        "--python-version",
+        "39",
+        "--only-binary",
+        ":all:",
+        "newpy",
+    )
+
+    assert lines == [
+        "ERROR: Package 'newpy' requires a different Python: 3.9.0 not in '>=3.99'"
+    ]
+
+
 def test_two_parents_that_conflict(
     wheelhouse: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

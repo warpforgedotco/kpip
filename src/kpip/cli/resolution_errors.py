@@ -33,6 +33,7 @@ from kpip.core.errors import KpipError
 from kpip.core.packaging import (
     SpecifierSet,
     canonicalize_name,
+    normalize_python_version,
     parse_requirement,
     requires_python_version,
 )
@@ -109,7 +110,7 @@ def resolution_error_message(
             _, requirement = group[0]
             return (
                 f"Package {requirement.name!r} requires a different Python: "
-                f"{requires_python_version()} not in {rejected_python[name]!r}"
+                f"{python_version_text(provider)} not in {rejected_python[name]!r}"
             )
 
     fitting: dict[str, list[Any]] = {
@@ -538,5 +539,5 @@ def rejection_version(rejected: Any) -> Any:
 def python_version_text(provider: Any) -> str:
     target = getattr(provider, "target", None)
     if target is not None and target.python_version:
-        return target.python_version
+        return normalize_python_version(target.python_version)
     return requires_python_version()
