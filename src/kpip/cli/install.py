@@ -1415,7 +1415,8 @@ def run_install(args: list[str]) -> int:
 
     plan: ResolutionResult | None = None
 
-    if execution.bundle.requirements:
+    # Nothing is resolved for requirements the environment already satisfies.
+    if execution.bundle.requirements and execution.requirements:
         plan_cache_key = cached_remote_plan_key(
             execution.options,
             execution.bundle,

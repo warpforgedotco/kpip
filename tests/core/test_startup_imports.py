@@ -173,25 +173,9 @@ def test_default_install_scans_installed_state_without_importlib_metadata(
         assert "importlib.metadata" not in modules
 
 
-SATISFIED_INSTALL_FORBIDDEN = frozenset(
-    {
-        "kpip.cli.install",
-        "kpip.cli.fast_install",
-        "kpip.cli.requirements",
-        "kpip.index.provider",
-        "kpip.resolution.api",
-        "logging",
-        "argparse",
-        "sqlite3",
-        "json",
-    },
-)
-
-
-def test_already_satisfied_install_answers_before_startup(tmp_path: Path) -> None:
-    """``kpip install <name>`` for names already installed in a release
-    version is answered by the pre-startup recognizer: the same lines the
-    normal path prints, without loading it."""
+def test_already_satisfied_install_reports_each_requirement(tmp_path: Path) -> None:
+    """``kpip install <name>`` for names already installed says so, and an
+    unmet specifier still goes to the index."""
     import os
     import shutil
 
@@ -232,9 +216,6 @@ def test_already_satisfied_install_answers_before_startup(tmp_path: Path) -> Non
         "Requirement already satisfied: simplewheel\n"
         "Requirement already satisfied: simplewheel>=1\n"
     ), snapshot.describe()
-    assert not (set(snapshot.modules) & SATISFIED_INSTALL_FORBIDDEN), sorted(
-        set(snapshot.modules) & SATISFIED_INSTALL_FORBIDDEN
-    )
 
     snapshot = import_snapshot(
         ["install", "--no-index", "--find-links", str(wheelhouse), "simplewheel>=3"],
@@ -244,7 +225,6 @@ def test_already_satisfied_install_answers_before_startup(tmp_path: Path) -> Non
     assert "Could not find a version that satisfies" in snapshot.stderr, (
         snapshot.describe()
     )
-    assert "kpip.cli.install" in snapshot.modules
 
 
 NORMAL_INSTALL_FORBIDDEN = frozenset(

@@ -30,8 +30,7 @@ cli.entrypoint:main
   +--> cli.fast:run_before_startup  cheap argv recognizers, before any startup work
   |      +--> cli.fast_install:run_cached_remote   missing target + exact remote pins, warm receipt
   |      +--> cli.fast_install:run_local_fallback  non-empty local target, --no-index wheelhouse
-  |      +--> cli.fast_install:run                 empty target, --no-index wheelhouse
-  |      `--> run_satisfied_install                 plain names, all already installed
+  |      `--> cli.fast_install:run                 empty target, --no-index wheelhouse
   +--> execution context, logging, temp dir (per CommandSpec flags)
   +--> cli.fast:run_install_after_startup
   `--> run_command -> CommandSpec.load_runner
@@ -43,8 +42,8 @@ Rules:
   or an early exit inside that implementation is fine; a second implementation
   of the same behaviour is not. The recognizers still in `cli/fast.py` and
   `cli/fast_install.py` predate this rule and are being folded into their
-  commands: do not add to them, and do not add new ones. `list`, `freeze` and
-  `lock` have none.
+  commands: do not add to them, and do not add new ones. `list`, `freeze`,
+  `lock` and an already-satisfied `install` have none.
 - The registry stores module paths and imports a command on first use. Startup
   gating belongs in `CommandSpec` flags (`needs_logging`, `needs_tempdir`,
   `needs_execution_context`), not in command-name tests.
