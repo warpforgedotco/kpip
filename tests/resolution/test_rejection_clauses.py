@@ -135,6 +135,9 @@ def test_the_clauses_reach_the_resolver_during_a_descent(
     for minor in range(12):
         make_wheel(wheelhouse, "parent", f"1.{minor}", requires=["child<2"])
     make_wheel(wheelhouse, "parent", "0.9", requires=["child>=1"])
+    # ``parent`` is reached through ``top``: named as a root it would be
+    # decided first, at its newest release, and ``child`` would give way.
+    make_wheel(wheelhouse, "top", "1.0", requires=["parent"])
 
     handed_over: list[Any] = []
     real = NabProvider.consume_pending_clauses
@@ -146,7 +149,7 @@ def test_the_clauses_reach_the_resolver_during_a_descent(
 
     monkeypatch.setattr(NabProvider, "consume_pending_clauses", counting)
 
-    result = resolve(wheelhouse, ["anchor", "parent"])
+    result = resolve(wheelhouse, ["anchor", "top"])
 
     assert result is not None
     assert result["parent"] == "0.9"
@@ -155,3 +158,47 @@ def test_the_clauses_reach_the_resolver_during_a_descent(
     assert len(handed_over) == 12
     assert rejected == {f"1.{minor}" for minor in range(12)}
     assert all(clause.terms[1].package == "child" for clause in handed_over)
+
+
+def test_a_named_package_keeps_its_newest_release_and_the_dependency_moves(
+    tmp_path: Path,
+) -> None:
+    """The same graph with ``parent`` named: pip answers parent 1.11, child 1.0."""
+    from benchmark_support import make_wheel, reset_caches
+
+    reset_caches()
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    make_wheel(wheelhouse, "child", "1.0")
+    make_wheel(wheelhouse, "child", "2.0")
+    make_wheel(wheelhouse, "anchor", "1.0", requires=["child"])
+    for minor in range(12):
+        make_wheel(wheelhouse, "parent", f"1.{minor}", requires=["child<2"])
+    make_wheel(wheelhouse, "parent", "0.9", requires=["child>=1"])
+
+    for roots in (["anchor", "parent"], ["parent", "anchor"]):
+        result = resolve(wheelhouse, roots)
+
+        assert result is not None
+        assert result["parent"] == "1.11"
+        assert result["child"] == "1.0"
+
+
+def test_the_earlier_named_package_wins_between_two_named(tmp_path: Path) -> None:
+    """Two named packages whose newest releases exclude each other."""
+    from benchmark_support import make_wheel, reset_caches
+
+    reset_caches()
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    for version in ("1.0", "2.0", "3.0"):
+        make_wheel(
+            wheelhouse, "many", version, requires=["few<2"] if version == "3.0" else []
+        )
+    for version in ("1.0", "2.0"):
+        make_wheel(
+            wheelhouse, "few", version, requires=["many<3"] if version == "2.0" else []
+        )
+
+    assert resolve(wheelhouse, ["many", "few"]) == {"many": "3.0", "few": "1.0"}
+    assert resolve(wheelhouse, ["few", "many"]) == {"many": "2.0", "few": "2.0"}
