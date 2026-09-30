@@ -3,7 +3,7 @@ from __future__ import annotations
 import operator
 import sys
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from kpip._vendor.nab_resolver.ranges import Range
@@ -191,6 +191,12 @@ class NabProvider:
             str, tuple[tuple[Version, ...], tuple[Version, ...], dict[Version, int]]
         ] = {}
         self.python_version = self.context.python_version
+        # Told of every release the solve decides on, as it decides: an
+        # install starts fetching that release's wheel while the solve goes
+        # on (``install.output.WheelPrefetch``).
+        self.on_decided: (
+            Callable[[WheelCandidate | InstalledCandidate], None] | None
+        ) = None
         self.records: dict[
             tuple[str, Version], WheelCandidate | InstalledCandidate
         ] = {}
@@ -1799,6 +1805,12 @@ class NabProvider:
     def get_dependencies(
         self, package: str, version: Version
     ) -> Mapping[str, Range[Version]]:
+        # Asked for right after the solve decides ``package==version``.
+        on_decided = self.on_decided
+        if on_decided is not None:
+            decided = self.records.get((package, version))
+            if decided is not None:
+                on_decided(decided)
         if self.no_deps:
             return {}
         cache_key = (package, version, self.requirements[package].extras)

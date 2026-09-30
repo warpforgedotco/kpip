@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import queue
+import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Protocol, TypeVar
@@ -120,12 +123,172 @@ def materialize_candidates(
     return _run_candidate_operation(candidates, materialize_candidate)
 
 
+_PREFETCH_WORKERS = 8
+"""Wheels fetched and unpacked at once while the solve goes on."""
+
+
+def _remote_wheel_url(candidate: object) -> str | None:
+    """The URL of a wheel still to be downloaded from an index, or None."""
+    if (
+        isinstance(candidate, LazyWheelCandidate)
+        and candidate.source_kind == "wheel"
+        and not candidate.record_internal.link.is_file
+    ):
+        return candidate.record_internal.link.url
+    return None
+
+
+class WheelPrefetch:
+    """Download and unpack wheels while the solve is still going.
+
+    An install used to resolve, then download every wheel it chose, then
+    unpack them, strictly in turn: a cold trio install spent 0.6 s resolving
+    before the first download began. This is told of wheels the install will
+    most likely want -- an exactly pinned release as soon as its page is read
+    (``CandidateProvider.on_likely``), and every release as the solve decides
+    on it (``ResolutionEngine(on_decided=...)``) -- and fetches and unpacks
+    each into the artifact and archive caches in the background.
+
+    It only warms those caches, which are keyed by content: the install
+    still prepares exactly the candidates it ends up with, as before, and
+    finds them there. A wheel fetched for a release the solve backtracked
+    from, or that failed, costs time and nothing else; the install fetches
+    it again and reports what fails.
+    """
+
+    def __init__(
+        self,
+        cache_dir: str,
+        prepare_archive: Callable[[WheelCandidate, str], object],
+    ) -> None:
+        self._cache_dir = cache_dir
+
+        self._prepare_archive = prepare_archive
+
+        self._lock = threading.Lock()
+
+        self._futures: dict[str, Future[None]] = {}
+
+        # Daemon threads, not a ThreadPoolExecutor: an install that fails
+        # after the solve must not wait at exit for wheels it no longer
+        # wants, and every cache write is a rename, so one cut short leaves
+        # nothing behind.
+        self._queue: queue.SimpleQueue[tuple[Future[None], WheelCandidate] | None] = (
+            queue.SimpleQueue()
+        )
+
+        self._workers = 0
+
+        self._closed = False
+
+    def __call__(self, candidate: object) -> None:
+        url = _remote_wheel_url(candidate)
+
+        if url is None or self._unpacked(candidate):
+            return
+
+        with self._lock:
+            if self._closed or url in self._futures:
+                return
+
+            future: Future[None] = Future()
+
+            self._futures[url] = future
+
+            if self._workers < _PREFETCH_WORKERS:
+                self._workers += 1
+
+                threading.Thread(
+                    target=self._work,
+                    name="kpip-prefetch",
+                    daemon=True,
+                ).start()
+
+        self._queue.put((future, candidate))  # ty: ignore[invalid-argument-type]
+
+    def _work(self) -> None:
+        while (item := self._queue.get()) is not None:
+            future, candidate = item
+
+            if not future.set_running_or_notify_cancel():
+                continue
+
+            try:
+                self._fetch(candidate)
+
+            except BaseException as exc:
+                future.set_exception(exc)
+
+            else:
+                future.set_result(None)
+
+    def _unpacked(self, candidate: object) -> bool:
+        """Whether the wheel, named by its index digest, is unpacked already.
+
+        A warm install finds every wheel so, and fetching them again only
+        took turns with the solve: one ``stat`` answers before any of that.
+        """
+        from kpip.install.wheel_archive_cache import archive_entry_root, valid_sha256
+
+        digest = (getattr(candidate, "source_hashes", None) or {}).get("sha256")
+
+        return (
+            isinstance(digest, str)
+            and valid_sha256(digest)
+            and os.path.isdir(archive_entry_root(self._cache_dir, digest))
+        )
+
+    def _fetch(self, candidate: WheelCandidate) -> None:
+        self._prepare_archive(materialize_candidate(candidate), self._cache_dir)
+
+    def wait(self, candidates: Sequence[object]) -> None:
+        """Let any fetch of one of ``candidates`` finish, however it ends, so
+        the install does not fetch the same wheel alongside it."""
+        with self._lock:
+            futures = [
+                future
+                for candidate in candidates
+                if (url := _remote_wheel_url(candidate)) is not None
+                and (future := self._futures.get(url)) is not None
+            ]
+
+        for future in futures:
+            try:
+                future.result()
+
+            except BaseException:  # noqa: BLE001 - redone, and reported, by the install
+                pass
+
+    def close(self) -> None:
+        """Drop what was never started; what is running finishes on its own."""
+        with self._lock:
+            self._closed = True
+
+            futures = list(self._futures.values())
+
+            workers = self._workers
+
+        for future in futures:
+            future.cancel()
+
+        for _ in range(workers):
+            self._queue.put(None)
+
+
 def prepare_install_candidates(
     candidates: Sequence[WheelCandidate],
     cache_dir: str | None,
     prepare_archive: Callable[[WheelCandidate, str], object] | None = None,
+    prefetched: WheelPrefetch | None = None,
 ) -> list[WheelCandidate]:
-    """Materialize winners and pipeline completed wheels into archive storage."""
+    """Materialize winners and pipeline completed wheels into archive storage.
+
+    With ``prefetched``, its fetches of these candidates finish first; each is
+    then prepared as without it, finding the caches it warmed.
+    """
+
+    if prefetched is not None:
+        prefetched.wait(candidates)
 
     if cache_dir is None or not candidates or prepare_archive is None:
         return materialize_candidates(candidates)
@@ -143,11 +306,7 @@ def prepare_install_candidates(
     local: list[tuple[int, WheelCandidate]] = []
 
     for index, candidate in enumerate(candidates):
-        if (
-            isinstance(candidate, LazyWheelCandidate)
-            and candidate.source_kind == "wheel"
-            and not candidate.record_internal.link.is_file
-        ):
+        if _remote_wheel_url(candidate) is not None:
             remote.append((index, candidate))
 
         else:

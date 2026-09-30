@@ -51,7 +51,12 @@ from kpip.install.metadata import (
     prepare_editable_source,
     write_install_report,
 )
-from kpip.install.output import installation_order, prepare_install_candidates
+from kpip.install.archive_workers import start_archive_workers
+from kpip.install.output import (
+    WheelPrefetch,
+    installation_order,
+    prepare_install_candidates,
+)
 from kpip.install.target import InstallTarget
 from kpip.install.wheel_archive_cache import CachedWheelArchive, prepare_cached_wheel
 from kpip.install.wheel_install_plan_cache import (
@@ -1317,13 +1322,59 @@ def run_install(args: list[str]) -> int:
 
         resolved_fresh = plan is None
 
+        pycompile = not execution.options.no_compile
+
+        # Started before resolving, so the workers are up by the first wheel.
+        archive_workers = (
+            start_archive_workers()
+            if execution.cache_dir is not None and not execution.options.dry_run
+            else None
+        )
+
+        def prepare_archive(candidate: Any, cache_dir: str) -> object:
+            if archive_workers is not None:
+                return archive_workers.prepare(
+                    candidate, cache_dir, pycompile=pycompile
+                )
+            return prepare_cached_wheel(candidate, cache_dir, pycompile=pycompile)
+
+        # Wheels are fetched and unpacked while the solve goes on -- but only
+        # onto subinterpreters: on threads the unpacking takes turns with the
+        # solve under one interpreter lock, and a cold jupyter install took
+        # longer than not prefetching at all.
+        prefetch = (
+            WheelPrefetch(execution.cache_dir, prepare_archive)
+            if plan is None
+            and archive_workers is not None
+            and execution.cache_dir is not None
+            else None
+        )
+
+        def prefetching_provider() -> Any:
+            provider = get_provider()
+
+            if prefetch is not None:
+                from kpip.index.candidate_materialization import LazyWheelCandidate
+
+                def on_likely(requirement: Any, record: Any) -> None:
+                    prefetch(
+                        LazyWheelCandidate(
+                            record, requirement, provider.get_materializer_internal()
+                        )
+                    )
+
+                provider.on_likely = on_likely
+
+            return provider
+
         if plan is None:
             try:
                 if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
                     print("Reporter.starting()")
                 plan = ResolutionEngine.resolve_serving_stale_pages(
                     lambda: ResolutionEngine(
-                        provider=get_provider(),
+                        provider=prefetching_provider(),
+                        on_decided=prefetch,
                         no_deps=(
                             execution.options.no_deps or execution.bundle.only_locked
                         ),
@@ -1499,14 +1550,18 @@ def run_install(args: list[str]) -> int:
                                 )
                                 + f"             Got        {actual}",
                             )
-            pycompile = not execution.options.no_compile
-            materialized_candidates = prepare_install_candidates(
-                plan.candidates,
-                execution.cache_dir,
-                lambda candidate, cache_dir: prepare_cached_wheel(
-                    candidate, cache_dir, pycompile=pycompile
-                ),
-            )
+            try:
+                materialized_candidates = prepare_install_candidates(
+                    plan.candidates,
+                    execution.cache_dir,
+                    prepare_archive,
+                    prefetch,
+                )
+            finally:
+                if prefetch is not None:
+                    prefetch.close()
+                if archive_workers is not None:
+                    archive_workers.close()
             plan = plan.replace(candidates=tuple(materialized_candidates))
 
         parsed_constraints = map(parse_requirement, execution.bundle.constraints)
