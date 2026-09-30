@@ -1,8 +1,4 @@
-"""Implementation of the ``kpip show`` subcommand.
-
-Split out of ``cli/inspect.py`` so its cost is not paid by ``hash``, which
-shares the same command file for no reason but historical convenience.
-"""
+"""Implementation of the ``kpip show`` subcommand."""
 
 from __future__ import annotations
 

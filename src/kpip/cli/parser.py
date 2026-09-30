@@ -1,13 +1,4 @@
-"""The argparse subclasses every command parser is built from.
-
-Split out of ``cli.common`` so that importing it is a decision a command
-makes, not a toll the entrypoint pays: ``argparse`` costs several
-milliseconds and no route that only resolves a command name needs it.
-
-The base classes here are evaluated at class-creation time, so this module
-cannot be made lazy -- separating it is the only way to keep its cost off the
-startup path.
-"""
+"""The argparse subclasses every command parser is built from."""
 
 from __future__ import annotations
 
@@ -243,6 +234,30 @@ class ArgumentParser(argparse.ArgumentParser):
         unused.
         """
         raise AttributeError("_get_validation_formatter")
+
+    def parse_args(self, args: Any = None, namespace: Any = None) -> Any:
+        """Parse as pip does.
+
+        Every command takes ``-q`` and ``-v``, whether or not it has a use
+        for them, and positional arguments may come before, between and
+        after options.
+        """
+        options = self._option_string_actions
+
+        if "-q" not in options and "--quiet" not in options:
+            self.add_argument("-q", "--quiet", action="count", default=0)
+
+        if "-v" not in options and "--verbose" not in options:
+            self.add_argument("-v", "--verbose", action="count", default=0)
+
+        if any(
+            action.nargs in (argparse.PARSER, argparse.REMAINDER)
+            for action in self._actions
+        ):
+            # argparse cannot intermix a subcommand or a remainder.
+            return super().parse_args(args, namespace)
+
+        return self.parse_intermixed_args(args, namespace)
 
     def error(self, message: str) -> NoReturn:
         if message.startswith("unrecognized arguments: "):

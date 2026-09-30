@@ -1,10 +1,4 @@
-"""Implementation of the ``kpip hash`` subcommand.
-
-Split out of ``cli/inspect.py`` so that digesting a file never pays for the
-metadata stack that ``check``/``show``/``inspect`` need -- ``hash`` is the only
-command among the four that does not touch installed-distribution metadata at
-all.
-"""
+"""Implementation of the ``kpip hash`` subcommand."""
 
 from __future__ import annotations
 

@@ -1,8 +1,4 @@
-"""Argument parser for ``kpip install``.
-
-Kept apart from the command module so that ``kpip install --help`` builds a
-parser without loading the machinery that runs the command.
-"""
+"""Argument parser for ``kpip install``."""
 
 from __future__ import annotations
 

@@ -427,8 +427,7 @@ def record_replayable_lock(
 
 
 def run_lock(args: list[str]) -> int:
-    # As pip: requirements may be given before, between and after options.
-    options = create_parser().parse_intermixed_args(args)
+    options = create_parser().parse_args(args)
 
     resolvers: list[ResolutionEngine] = []
 

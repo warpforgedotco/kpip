@@ -1,8 +1,4 @@
-"""Argument parser for ``kpip cache``.
-
-Kept apart from the command module so that ``kpip cache --help`` builds a
-parser without loading the machinery that runs the command.
-"""
+"""Argument parser for ``kpip cache``."""
 
 from __future__ import annotations
 

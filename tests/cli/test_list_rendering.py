@@ -79,6 +79,7 @@ def test_columns_rule_off_the_header_as_pip_does(site: Path) -> None:
         f"Package  Version Build {location}\n"
         f"-------- ------- ----- {'-' * width}\n"
         f"alpha    2.0.1         {source}\n"
+        "empty    9\n"
         "mid      0.3\n"
         "Zeta-Pkg 1.0     7\n"
     )
@@ -90,10 +91,10 @@ def test_verbose_columns_add_location_and_installer(site: Path) -> None:
 
     assert header.split()[-2:] == ["Location", "Installer"]
     assert set(rule) == {"-", " "}
-    assert [row.split()[0] for row in rows] == ["alpha", "mid", "Zeta-Pkg"]
+    assert [row.split()[0] for row in rows] == ["alpha", "empty", "mid", "Zeta-Pkg"]
     assert rows[0].endswith(f"{site} uv")
-    assert rows[1].endswith(str(site))
-    assert rows[2].endswith(f"{site} kpip")
+    assert rows[2].endswith(str(site))
+    assert rows[3].endswith(f"{site} kpip")
 
 
 def test_json_lists_each_distribution(site: Path) -> None:
@@ -101,6 +102,7 @@ def test_json_lists_each_distribution(site: Path) -> None:
 
     assert json.loads(_list(["--format=json"])) == [
         {"name": "alpha", "version": "2.0.1", "editable_project_location": source},
+        {"name": "empty", "version": "9"},
         {"name": "mid", "version": "0.3"},
         {"name": "Zeta-Pkg", "version": "1.0"},
     ]
@@ -112,6 +114,7 @@ def test_json_lists_each_distribution(site: Path) -> None:
             "installer": "uv",
             "editable_project_location": source,
         },
+        {"name": "empty", "version": "9", "location": str(site), "installer": ""},
         {"name": "mid", "version": "0.3", "location": str(site), "installer": ""},
         {
             "name": "Zeta-Pkg",
@@ -123,15 +126,18 @@ def test_json_lists_each_distribution(site: Path) -> None:
 
 
 def test_freeze_format_lists_pins(site: Path) -> None:
-    assert _list(["--format=freeze"]) == "alpha==2.0.1\nmid==0.3\nZeta-Pkg==1.0\n"
+    assert _list(["--format=freeze"]) == (
+        "alpha==2.0.1\nempty==9\nmid==0.3\nZeta-Pkg==1.0\n"
+    )
     assert _list(["--format=freeze", "-v"]) == (
-        f"alpha==2.0.1 ({site})\nmid==0.3 ({site})\nZeta-Pkg==1.0 ({site})\n"
+        f"alpha==2.0.1 ({site})\nempty==9 ({site})\n"
+        f"mid==0.3 ({site})\nZeta-Pkg==1.0 ({site})\n"
     )
 
 
 def test_exclude_takes_any_spelling_of_a_name(site: Path) -> None:
     assert _list(["--exclude", "Zeta-pkg", "--exclude", "alpha"]) == (
-        "Package Version\n------- -------\nmid     0.3\n"
+        "Package Version\n------- -------\nempty   9\nmid     0.3\n"
     )
 
 
@@ -175,3 +181,14 @@ def test_pip_exclusion_covers_kpip(
     assert _list(["--exclude", "pip"]) == (
         "Package Version\n------- -------\nkeep    1.0\n"
     )
+
+
+def test_quiet_lists_nothing(site: Path) -> None:
+    """pip writes the listing through its logger, which ``-q`` silences."""
+    assert _list(["-q"]) == ""
+    assert _list(["--format=json", "--quiet"]) == ""
+
+
+def test_a_dist_info_with_no_metadata_is_listed_for_its_name(site: Path) -> None:
+    """As pip lists it, though pip's columns show its version as ``None``."""
+    assert "empty    9\n" in _list([])

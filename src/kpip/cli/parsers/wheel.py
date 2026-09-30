@@ -1,8 +1,4 @@
-"""Argument parser for ``kpip wheel``.
-
-Kept apart from the command module so that ``kpip wheel --help`` builds a
-parser without loading the machinery that runs the command.
-"""
+"""Argument parser for ``kpip wheel``."""
 
 from __future__ import annotations
 
