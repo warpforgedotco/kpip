@@ -1,0 +1,4054 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Wed, 30 Sep 2026 21:00:00 -0400
+Subject: [PATCH] Compile for free-threaded Python 3.14
+
+Compiling for a free-threaded 3.14 did not build, and once it did, compiled
+code crashed, hung, leaked or computed wrong results as soon as threads ran
+it at the same time. Everything the GIL used to make private to one thread
+is now either made per call or done the way CPython 3.14 does it without
+the GIL. Builds with the GIL are unchanged but for fixes that apply to them
+as well.
+
+Build: GC allocations are counted per thread without generations; delayed
+frees ask the interpreter whether the world is stopped; immortal dictionary
+keys have a negative count; the frame code reference uses the free-threaded
+stack reference constructor; the GIL check reads the build configuration,
+not the flags of the process running Nuitka; debug builds no longer force
+inlining through function pointers or warn about helpers they do not use.
+
+Memory: objects are allocated from the mimalloc heap for their kind, as
+"_PyObject_MallocWithType" does, so the collector sees them and freed blocks
+keep clear of reference counts lock-free readers touch. The delayed-free
+queue shared with CPython releases the objects CPython queues instead of
+freeing their memory, takes each item off before releasing it, links new
+chunks and survives running out of memory. Free-threaded dictionary lookups
+no longer leak a reference each; frames made per call are released. New
+objects are initialized as CPython's "new_reference" does, and zeroed
+without their header, which lock-free readers of reused memory may read.
+
+Shared state: cached frames, static free lists and the module variable
+cache are not used. Module variables and closure cells are read with a
+reference of our own and written through a lock, as CPython's globals and
+"PyCell_GetRef"/"PyCell_SetTakeRef" are; type attribute lookups take a
+reference ("_PyType_LookupRef"); in-place operations reuse an object only
+if "_PyObject_IsUniquelyReferenced"; list and dictionary operations,
+concatenation and comparison use CPython's, which lock; counters are atomic
+and code objects are completed once, under their lock.
+
+Also fixed, with or without the GIL: "list.remove"/"list.count" with a
+tuple argument, a double release in "list.index" with a bad stop, a leaked
+cell in "__reduce__", and a code generation assertion when a class body
+falls back to a module variable read with a reference.
+
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+
+diff --git a/nuitka/PythonVersions.py b/nuitka/PythonVersions.py
+index bf167eb..47f962b 100644
+--- a/nuitka/PythonVersions.py
++++ b/nuitka/PythonVersions.py
+@@ -711,7 +711,12 @@ def getModuleLinkerLibs():
+ 
+ 
+ def isPythonWithGil():
+-    return python_version < 0x3D0 or sys.flags.gil
++    # The build decides, not whether this process runs with the GIL: under a
++    # free-threaded build with "PYTHON_GIL=1" the compiled code still runs
++    # without it wherever that is not set.
++    import sysconfig
++
++    return python_version < 0x3D0 or not sysconfig.get_config_var("Py_GIL_DISABLED")
+ 
+ 
+ def getSitePackageCandidateNames():
+diff --git a/nuitka/build/include/nuitka/allocator.h b/nuitka/build/include/nuitka/allocator.h
+index c51868b..a20a4a9 100644
+--- a/nuitka/build/include/nuitka/allocator.h
++++ b/nuitka/build/include/nuitka/allocator.h
+@@ -359,6 +359,26 @@ NUITKA_MAY_BE_UNUSED static void NuitkaMem_Free(void *ptr) { python_mem_free(pyt
+ #endif
+ #endif
+ 
++// Our version of "_PyObject_MallocWithType": without the GIL, objects go to
++// the mimalloc heap for their kind. The collector finds objects by walking the
++// GC heaps, and each heap keeps freed blocks' links clear of the reference
++// counts that lock-free readers may still touch, which differ in place for
++// objects with a pre-header.
++NUITKA_MAY_BE_UNUSED static void *NuitkaObject_MallocWithType(PyTypeObject *type, size_t size) {
++#if defined(Py_GIL_DISABLED) && PYTHON_VERSION >= 0x3e0
++    _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
++    struct _mimalloc_thread_state *m = &tstate->mimalloc;
++
++    m->current_object_heap = _PyObject_GetAllocationHeap(tstate, type);
++    void *result = NuitkaObject_Malloc(size);
++    m->current_object_heap = &m->heaps[_Py_MIMALLOC_HEAP_OBJECT];
++
++    return result;
++#else
++    return NuitkaObject_Malloc(size);
++#endif
++}
++
+ #ifdef Py_REF_DEBUG
+ static inline void Nuitka_Py_IncRefTotal(PyThreadState *tstate) {
+ #if PYTHON_VERSION < 0x3c0
+@@ -511,7 +531,30 @@ static inline void _Py_SET_TYPE(PyObject *ob, PyTypeObject *type) { ob->ob_type
+ // it expensive to call.
+ #if PYTHON_VERSION >= 0x390
+ static inline void Nuitka_Py_NewReferenceNoTotal(PyObject *op) {
++#if defined(Py_GIL_DISABLED)
++    // As CPython's "new_reference", each field once: a thread holding a stale
++    // pointer to this memory may try to take a reference without a lock, and
++    // reads these fields, atomically, so a sanitizer build writes them so.
++#if PYTHON_VERSION >= 0x3e0
++    op->ob_flags = 0;
++#else
++    op->_padding = 0;
++#endif
++    op->ob_mutex = (PyMutex){0};
++#ifdef _Py_THREAD_SANITIZER
++    _Py_atomic_store_uintptr_relaxed(&op->ob_tid, _Py_ThreadId());
++    _Py_atomic_store_uint8_relaxed(&op->ob_gc_bits, 0);
++    _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, 1);
++    _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared, 0);
++#else
++    op->ob_tid = _Py_ThreadId();
++    op->ob_gc_bits = 0;
++    op->ob_ref_local = 1;
++    op->ob_ref_shared = 0;
++#endif
++#else
+     Py_SET_REFCNT(op, 1);
++#endif
+ 
+ #if PYTHON_VERSION >= 0x3e0 && defined(Py_REF_DEBUG)
+     _PyReftracerTrack(op, PyRefTracer_CREATE);
+@@ -532,17 +575,6 @@ static inline void Nuitka_Py_NewReference(PyObject *op) {
+     op->ob_refcnt = 1;
+ #endif
+ #endif
+-#else
+-    op->ob_tid = _Py_ThreadId();
+-#if PYTHON_VERSION >= 0x3e0
+-    op->ob_flags = 0;
+-#else
+-    op->_padding = 0;
+-#endif
+-    op->ob_mutex = (PyMutex){0};
+-    op->ob_gc_bits = 0;
+-    op->ob_ref_local = 1;
+-    op->ob_ref_shared = 0;
+ #endif
+ 
+     Nuitka_Py_NewReferenceNoTotal(op);
+@@ -717,17 +749,20 @@ static PyObject *Nuitka_PyType_AllocNoTrackVar(PyTypeObject *type, Py_ssize_t ni
+     inline_values_size = Nuitka_PyType_InlineValuesSize(type);
+ #endif
+ 
+-    char *alloc = (char *)NuitkaObject_Malloc(size + pre_size + inline_values_size);
++    char *alloc = (char *)NuitkaObject_MallocWithType(type, size + pre_size + inline_values_size);
+     assert(alloc);
+     PyObject *obj = (PyObject *)(alloc + pre_size);
+ 
+ #ifdef Py_GIL_DISABLED
++    // Only objects with a managed dictionary or weak references have a
++    // pre-header here, but every one of these is a GC object, counted
++    // towards the next collection as CPython's own allocations are.
+     if (pre_size) {
+         ((PyObject **)alloc)[0] = NULL;
+         ((PyObject **)alloc)[1] = NULL;
+-
+-        Nuitka_PyObject_GC_Link(obj);
+     }
++
++    Nuitka_PyObject_GC_Link(obj);
+ #else
+     assert(pre_size != 0);
+     ((PyObject **)alloc)[0] = NULL;
+@@ -738,7 +773,14 @@ static PyObject *Nuitka_PyType_AllocNoTrackVar(PyTypeObject *type, Py_ssize_t ni
+ 
+     // We might be able to avoid this, but it's unclear what e.g. the sentinel
+     // is supposed to be.
++#ifdef Py_GIL_DISABLED
++    // Not the object header, as CPython's "_PyType_AllocNoTrack": a thread
++    // with a stale pointer to this memory may read it, and it is written by
++    // the initialization below.
++    memset((char *)obj + sizeof(PyObject), 0, size - sizeof(PyObject));
++#else
+     memset(obj, 0, size);
++#endif
+ 
+     // This is the "var" branch, we already know we are variable size here.
+     assert(type->tp_itemsize != 0);
+@@ -774,17 +816,20 @@ static PyObject *Nuitka_PyType_AllocNoTrack(PyTypeObject *type) {
+     size += Nuitka_PyType_InlineValuesSize(type);
+ #endif
+ 
+-    char *alloc = (char *)NuitkaObject_Malloc(size + pre_size);
++    char *alloc = (char *)NuitkaObject_MallocWithType(type, size + pre_size);
+     assert(alloc);
+     PyObject *obj = (PyObject *)(alloc + pre_size);
+ 
+ #ifdef Py_GIL_DISABLED
++    // Only objects with a managed dictionary or weak references have a
++    // pre-header here, but every one of these is a GC object, counted
++    // towards the next collection as CPython's own allocations are.
+     if (pre_size) {
+         ((PyObject **)alloc)[0] = NULL;
+         ((PyObject **)alloc)[1] = NULL;
+-
+-        Nuitka_PyObject_GC_Link(obj);
+     }
++
++    Nuitka_PyObject_GC_Link(obj);
+ #else
+     assert(pre_size != 0);
+     ((PyObject **)alloc)[0] = NULL;
+@@ -903,7 +948,7 @@ static void inline Py_SET_REFCNT_IMMORTAL(PyObject *object) {
+     object->ob_ref_local = _Py_IMMORTAL_INITIAL_REFCNT;
+     object->ob_ref_shared = 0;
+ #if PYTHON_VERSION >= 0x3e0
+-    _Py_atomic_or_uint8(&op->ob_gc_bits, _PyGC_BITS_DEFERRED);
++    _Py_atomic_or_uint8(&object->ob_gc_bits, _PyGC_BITS_DEFERRED);
+ #endif
+ 
+ #else
+diff --git a/nuitka/build/include/nuitka/compiled_cell.h b/nuitka/build/include/nuitka/compiled_cell.h
+index 9a06c81..7081497 100644
+--- a/nuitka/build/include/nuitka/compiled_cell.h
++++ b/nuitka/build/include/nuitka/compiled_cell.h
+@@ -34,7 +34,12 @@ extern struct Nuitka_CellObject *Nuitka_Cell_New0(PyObject *value);
+ extern struct Nuitka_CellObject *Nuitka_Cell_New1(PyObject *value);
+ 
+ // Check stuff while accessing a compile cell in debug mode.
+-#ifdef __NUITKA_NO_ASSERT__
++#if defined(Py_GIL_DISABLED)
++// Without the GIL, other threads may write the cell at any time: a plain read
++// is only good for a test against NULL, a value to use is read with a
++// reference, see "Nuitka_Cell_GET_REF".
++#define Nuitka_Cell_GET(cell) _Py_atomic_load_ptr_relaxed(&((struct Nuitka_CellObject *)(cell))->ob_ref)
++#elif defined(__NUITKA_NO_ASSERT__)
+ #define Nuitka_Cell_GET(cell) (((struct Nuitka_CellObject *)(cell))->ob_ref)
+ #else
+ #define Nuitka_Cell_GET(cell)                                                                                          \
+@@ -45,7 +50,52 @@ NUITKA_MAY_BE_UNUSED static inline PyObject *Nuitka_CellOrPyCell_GET(PyObject *c
+     CHECK_OBJECT(cell);
+     assert(Nuitka_CellOrPyCell_Check(cell));
+ 
++#ifdef Py_GIL_DISABLED
++    return _Py_atomic_load_ptr_relaxed(&((struct Nuitka_CellObject *)cell)->ob_ref);
++#else
+     return ((struct Nuitka_CellObject *)cell)->ob_ref;
++#endif
++}
++
++// The value of a compiled or uncompiled cell with a reference of our own. As
++// CPython's "PyCell_GetRef" does, it is taken under the cell's lock without the
++// GIL, so a thread replacing the value cannot release it first.
++NUITKA_MAY_BE_UNUSED static inline PyObject *Nuitka_CellOrPyCell_GET_REF(PyObject *cell) {
++    CHECK_OBJECT(cell);
++    assert(Nuitka_CellOrPyCell_Check(cell));
++
++    PyObject *result;
++#ifdef Py_GIL_DISABLED
++    Py_BEGIN_CRITICAL_SECTION(cell);
++    result = _Py_XNewRefWithLock(((struct Nuitka_CellObject *)cell)->ob_ref);
++    Py_END_CRITICAL_SECTION();
++#else
++    result = ((struct Nuitka_CellObject *)cell)->ob_ref;
++    Py_XINCREF(result);
++#endif
++    return result;
++}
++
++// Store a value, taking over the reference, and return the previous one to be
++// released by the caller. As CPython's "PyCell_SetTakeRef" does, the exchange
++// happens under the cell's lock without the GIL, so two threads writing never
++// both release the same previous value, and no reader is between the two.
++NUITKA_MAY_BE_UNUSED static inline PyObject *Nuitka_CellOrPyCell_EXCHANGE(PyObject *cell, PyObject *value) {
++    CHECK_OBJECT(cell);
++    CHECK_OBJECT_X(value);
++    assert(Nuitka_CellOrPyCell_Check(cell));
++
++    PyObject *old;
++#ifdef Py_GIL_DISABLED
++    Py_BEGIN_CRITICAL_SECTION(cell);
++    old = ((struct Nuitka_CellObject *)cell)->ob_ref;
++    _Py_atomic_store_ptr_release(&((struct Nuitka_CellObject *)cell)->ob_ref, value);
++    Py_END_CRITICAL_SECTION();
++#else
++    old = ((struct Nuitka_CellObject *)cell)->ob_ref;
++    ((struct Nuitka_CellObject *)cell)->ob_ref = value;
++#endif
++    return old;
+ }
+ 
+ #if _DEBUG_REFCOUNTS
+@@ -59,7 +109,11 @@ NUITKA_MAY_BE_UNUSED static inline void Nuitka_Cell_SET(struct Nuitka_CellObject
+     CHECK_OBJECT(cell_object);
+ 
+     assert(Nuitka_Cell_Check((PyObject *)cell_object));
++#ifdef Py_GIL_DISABLED
++    _Py_atomic_store_ptr_release(&cell_object->ob_ref, value);
++#else
+     cell_object->ob_ref = value;
++#endif
+ }
+ 
+ NUITKA_MAY_BE_UNUSED static inline void Nuitka_CellOrPyCell_SET(PyObject *cell, PyObject *value) {
+@@ -67,7 +121,11 @@ NUITKA_MAY_BE_UNUSED static inline void Nuitka_CellOrPyCell_SET(PyObject *cell,
+     CHECK_OBJECT(cell);
+ 
+     assert(Nuitka_CellOrPyCell_Check(cell));
++#ifdef Py_GIL_DISABLED
++    _Py_atomic_store_ptr_release(&((struct Nuitka_CellObject *)cell)->ob_ref, value);
++#else
+     ((struct Nuitka_CellObject *)cell)->ob_ref = value;
++#endif
+ }
+ 
+ #endif
+diff --git a/nuitka/build/include/nuitka/freelists.h b/nuitka/build/include/nuitka/freelists.h
+index 6fb8cb8..17cdf10 100644
+--- a/nuitka/build/include/nuitka/freelists.h
++++ b/nuitka/build/include/nuitka/freelists.h
+@@ -13,7 +13,9 @@
+ #include "nuitka/prelude.h"
+ #endif
+ 
+-#ifdef _NUITKA_EXPERIMENTAL_DISABLE_FREELIST_ALL
++// Free lists of our own are plain static lists, which without the GIL two
++// threads can pop the same object from: free-threaded builds go without.
++#if defined(_NUITKA_EXPERIMENTAL_DISABLE_FREELIST_ALL) || defined(Py_GIL_DISABLED)
+ static const bool use_freelists = false;
+ #else
+ static const bool use_freelists = true;
+diff --git a/nuitka/build/include/nuitka/helper/dict_internals.h b/nuitka/build/include/nuitka/helper/dict_internals.h
+index 63a3df0..35783d8 100644
+--- a/nuitka/build/include/nuitka/helper/dict_internals.h
++++ b/nuitka/build/include/nuitka/helper/dict_internals.h
+@@ -43,6 +43,9 @@ static PyDictObject *_Nuitka_AllocatePyDictObject(PyThreadState *tstate);
+ #endif
+ #if PYTHON_VERSION >= 0x360
+ static PyDictKeysObject *_Nuitka_AllocatePyDictKeysObject(PyThreadState *tstate, Py_ssize_t keys_size);
++#endif
++// Defined only for the dictionary fast paths, as is its use.
++#if PYTHON_VERSION >= 0x360 && !_NUITKA_EXPERIMENTAL_DISABLE_DICT_OPT
+ static Py_ssize_t _Nuitka_Py_PyDict_KeysSize(PyDictKeysObject *keys);
+ #endif
+ static PyDictValues *_Nuitka_PyDict_new_values(Py_ssize_t size);
+diff --git a/nuitka/build/include/nuitka/helper/dictionaries.h b/nuitka/build/include/nuitka/helper/dictionaries.h
+index 3997d9b..1c8d7e3 100644
+--- a/nuitka/build/include/nuitka/helper/dictionaries.h
++++ b/nuitka/build/include/nuitka/helper/dictionaries.h
+@@ -309,6 +309,13 @@ extern uint64_t nuitka_dict_version_tag_counter;
+ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT0(PyDictObject *dict, Nuitka_StringObject *key, PyObject *value) {
+     CHECK_OBJECT(value);
+ 
++#ifdef Py_GIL_DISABLED
++    // Replacing the entry in place and releasing the old value races with
++    // other threads reading or writing it: let the dictionary do it.
++    DICT_SET_ITEM((PyObject *)dict, (PyObject *)key, value);
++    return;
++#endif
++
+     Nuitka_DictEntryHandle entry = GET_STRING_DICT_ENTRY(dict, key);
+ 
+ #if PYTHON_VERSION >= 0x360
+@@ -341,6 +348,7 @@ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT0(PyDictObject *dict, Nuitka_
+     }
+ }
+ 
++#ifndef Py_GIL_DISABLED
+ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT_INPLACE(PyDictObject *dict, Nuitka_StringObject *key,
+                                                             PyObject *value) {
+     CHECK_OBJECT(value);
+@@ -380,11 +388,18 @@ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT_INPLACE(PyDictObject *dict,
+         CHECK_OBJECT(value);
+     }
+ }
++#endif
+ 
+ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT1(PyDictObject *dict, Nuitka_StringObject *key, PyObject *value) {
+     CHECK_OBJECT(key);
+     CHECK_OBJECT(value);
+ 
++#ifdef Py_GIL_DISABLED
++    DICT_SET_ITEM((PyObject *)dict, (PyObject *)key, value);
++    Py_DECREF(value);
++    return;
++#endif
++
+     Nuitka_DictEntryHandle entry = GET_STRING_DICT_ENTRY(dict, key);
+ 
+ #if PYTHON_VERSION >= 0x360
+diff --git a/nuitka/build/include/nuitka/helper/subscripts.h b/nuitka/build/include/nuitka/helper/subscripts.h
+index 2d11f38..4f8dcd6 100644
+--- a/nuitka/build/include/nuitka/helper/subscripts.h
++++ b/nuitka/build/include/nuitka/helper/subscripts.h
+@@ -17,7 +17,7 @@
+ extern PyObject *STRING_FROM_CHAR(unsigned char c);
+ 
+ #if PYTHON_VERSION >= 0x3b0
+-static void formatNotSubscriptableTypeError(PyObject *type) {
++NUITKA_MAY_BE_UNUSED static void formatNotSubscriptableTypeError(PyObject *type) {
+     SET_CURRENT_EXCEPTION_TYPE0_FORMAT1(PyExc_TypeError, "type '%s' is not subscriptable",
+                                         ((PyTypeObject *)type)->tp_name);
+ }
+diff --git a/nuitka/build/include/nuitka/prelude.h b/nuitka/build/include/nuitka/prelude.h
+index 7cedf40..c285694 100644
+--- a/nuitka/build/include/nuitka/prelude.h
++++ b/nuitka/build/include/nuitka/prelude.h
+@@ -434,6 +434,28 @@ NUITKA_MAY_BE_UNUSED static PyObject *Nuitka_TypeLookup(PyTypeObject *type, PyOb
+ 
+ #endif
+ 
++// Whether no one else can see an object, so that an in-place operation may
++// change it. Without the GIL a reference count of one is not enough: another
++// thread may be taking a reference without a lock at the same time.
++#if defined(Py_GIL_DISABLED) && PYTHON_VERSION >= 0x3e0
++#define Nuitka_IsUniquelyReferenced(op) _PyObject_IsUniquelyReferenced((PyObject *)(op))
++#else
++#define Nuitka_IsUniquelyReferenced(op) (Py_REFCNT(op) == 1)
++#endif
++
++// The type lookup with a reference of our own. The borrowed one is only safe
++// with the GIL: without it, another thread may replace the attribute and
++// release the value before it is used.
++NUITKA_MAY_BE_UNUSED static PyObject *Nuitka_TypeLookupRef(PyTypeObject *type, PyObject *name) {
++#if defined(Py_GIL_DISABLED)
++    return _PyType_LookupRef(type, name);
++#else
++    PyObject *result = Nuitka_TypeLookup(type, name);
++    Py_XINCREF(result);
++    return result;
++#endif
++}
++
+ /* With the idea to reduce the amount of exported symbols in the DLLs, make it
+  * clear that the module "init" function should of course be exported, but not
+  * for executable, where we call it ourselves from the main code.
+@@ -577,6 +599,21 @@ typedef signed int sdigit;
+ // A long value that represents a signed digit on the helper interface.
+ typedef long nuitka_digit;
+ 
++#if defined(Py_GIL_DISABLED)
++// Without the GIL, CPython locks a list or dictionary for each of its
++// operations, which our fast paths working on the items directly do not do:
++// use CPython's.
++#ifndef _NUITKA_EXPERIMENTAL_DISABLE_DICT_OPT
++#define _NUITKA_EXPERIMENTAL_DISABLE_DICT_OPT 1
++#endif
++#ifndef _NUITKA_EXPERIMENTAL_DISABLE_LIST_OPT
++#define _NUITKA_EXPERIMENTAL_DISABLE_LIST_OPT 1
++#endif
++#ifndef _NUITKA_EXPERIMENTAL_DISABLE_SUBSCRIPT_OPT
++#define _NUITKA_EXPERIMENTAL_DISABLE_SUBSCRIPT_OPT 1
++#endif
++#endif
++
+ #include "nuitka/helpers.h"
+ 
+ #include "nuitka/compiled_frame.h"
+diff --git a/nuitka/build/static_src/CompiledAsyncgenType.c b/nuitka/build/static_src/CompiledAsyncgenType.c
+index b44817f..f984a24 100644
+--- a/nuitka/build/static_src/CompiledAsyncgenType.c
++++ b/nuitka/build/static_src/CompiledAsyncgenType.c
+@@ -1192,8 +1192,14 @@ PyObject *Nuitka_Asyncgen_New(asyncgen_code code, PyObject *module, PyObject *na
+     result->m_exc_state = Nuitka_ExceptionStackItem_Empty;
+ #endif
+ 
++#ifdef Py_GIL_DISABLED
++    // Numbered from several threads at once.
++    static Py_ssize_t Nuitka_Asyncgen_counter = 0;
++    result->m_counter = (long)_Py_atomic_add_ssize(&Nuitka_Asyncgen_counter, 1);
++#else
+     static long Nuitka_Asyncgen_counter = 0;
+     result->m_counter = Nuitka_Asyncgen_counter++;
++#endif
+ 
+     Nuitka_GC_Track(result);
+     return (PyObject *)result;
+diff --git a/nuitka/build/static_src/CompiledCellType.c b/nuitka/build/static_src/CompiledCellType.c
+index 1a4f346..739ec6f 100644
+--- a/nuitka/build/static_src/CompiledCellType.c
++++ b/nuitka/build/static_src/CompiledCellType.c
+@@ -154,22 +154,21 @@ static int Nuitka_Cell_tp_clear(struct Nuitka_CellObject *cell) {
+ }
+ 
+ static PyObject *Nuitka_Cell_get_contents(PyObject *self, void *data) {
+-    struct Nuitka_CellObject *cell = (struct Nuitka_CellObject *)self;
+-    if (unlikely(cell->ob_ref == NULL)) {
++    PyObject *result = Nuitka_CellOrPyCell_GET_REF(self);
++
++    if (unlikely(result == NULL)) {
+         PyThreadState *tstate = PyThreadState_GET();
+ 
+         SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_ValueError, "Cell is empty");
+         return NULL;
+     }
+ 
+-    Py_INCREF(cell->ob_ref);
+-    return cell->ob_ref;
++    return result;
+ }
+ 
+ #if PYTHON_VERSION >= 0x370
+ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data) {
+-    struct Nuitka_CellObject *cell = (struct Nuitka_CellObject *)self;
+-    PyObject *old = cell->ob_ref;
++    PyObject *old = Nuitka_CellOrPyCell_GET(self);
+ 
+     if (old != NULL && value == NULL) {
+         PyThreadState *tstate = PyThreadState_GET();
+@@ -179,8 +178,8 @@ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data)
+         return -1;
+     }
+ 
+-    cell->ob_ref = value;
+     Py_XINCREF(value);
++    old = Nuitka_CellOrPyCell_EXCHANGE(self, value);
+     Py_XDECREF(old);
+ 
+     return 0;
+diff --git a/nuitka/build/static_src/CompiledCoroutineType.c b/nuitka/build/static_src/CompiledCoroutineType.c
+index 2e4a5a6..3853142 100644
+--- a/nuitka/build/static_src/CompiledCoroutineType.c
++++ b/nuitka/build/static_src/CompiledCoroutineType.c
+@@ -1515,8 +1515,14 @@ PyObject *Nuitka_Coroutine_New(PyThreadState *tstate, coroutine_code code, PyObj
+     result->m_exc_state = Nuitka_ExceptionStackItem_Empty;
+ #endif
+ 
++#ifdef Py_GIL_DISABLED
++    // Numbered from several threads at once.
++    static Py_ssize_t Nuitka_Coroutine_counter = 0;
++    result->m_counter = (long)_Py_atomic_add_ssize(&Nuitka_Coroutine_counter, 1);
++#else
+     static long Nuitka_Coroutine_counter = 0;
+     result->m_counter = Nuitka_Coroutine_counter++;
++#endif
+ 
+     Nuitka_GC_Track(result);
+     return (PyObject *)result;
+diff --git a/nuitka/build/static_src/CompiledFrameLocalsProxyType.c b/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
+index 75770b8..81d81a0 100644
+--- a/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
++++ b/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
+@@ -75,6 +75,9 @@ static PyObject *_Nuitka_FrameLocalsProxy_to_dict(Nuitka_FrameLocalsProxyObject
+             offset = Nuitka_FrameLocals_AlignUp(offset, Nuitka_FrameLocals_Align(type));
+             void *slot = (char *)frame->m_locals_ptr + offset;
+             PyObject *value = NULL;
++            // A cell's value is read with a reference, as other threads may
++            // replace it, and released once added.
++            PyObject *cell_value = NULL;
+             switch (type) {
+             case NUITKA_TYPE_DESCRIPTION_OBJECT:
+             case NUITKA_TYPE_DESCRIPTION_OBJECT_PTR:
+@@ -83,7 +86,7 @@ static PyObject *_Nuitka_FrameLocalsProxy_to_dict(Nuitka_FrameLocalsProxyObject
+             case NUITKA_TYPE_DESCRIPTION_CELL: {
+                 struct Nuitka_CellObject *cell = *(struct Nuitka_CellObject **)slot;
+                 if (cell != NULL) {
+-                    value = Nuitka_CellOrPyCell_GET((PyObject *)cell);
++                    value = cell_value = Nuitka_CellOrPyCell_GET_REF((PyObject *)cell);
+                 }
+                 break;
+             }
+@@ -108,10 +111,12 @@ static PyObject *_Nuitka_FrameLocalsProxy_to_dict(Nuitka_FrameLocalsProxyObject
+             if (value != NULL) {
+                 PyObject *name = *var_names;
+                 if (!DICT_SET_ITEM(result, name, value)) {
++                    Py_XDECREF(cell_value);
+                     Py_DECREF(result);
+                     return NULL;
+                 }
+             }
++            Py_XDECREF(cell_value);
+             var_names++;
+             offset += Nuitka_FrameLocals_Size(type);
+         }
+@@ -264,9 +269,8 @@ static PyObject *_Nuitka_FrameLocalsProxy_subscript(PyObject *self, PyObject *ke
+         }
+         case NUITKA_TYPE_DESCRIPTION_CELL: {
+             struct Nuitka_CellObject *cell = *(struct Nuitka_CellObject **)slot;
+-            PyObject *value = Nuitka_CellOrPyCell_GET((PyObject *)cell);
++            PyObject *value = Nuitka_CellOrPyCell_GET_REF((PyObject *)cell);
+             CHECK_OBJECT(value);
+-            Py_INCREF(value);
+             return value;
+         }
+         case NUITKA_TYPE_DESCRIPTION_NILONG: {
+@@ -350,9 +354,8 @@ static int _Nuitka_FrameLocalsProxy_ass_subscript(PyObject *self, PyObject *key,
+                 return 0;
+             }
+ 
+-            PyObject *old = Nuitka_CellOrPyCell_GET((PyObject *)cell);
+-            Nuitka_CellOrPyCell_SET((PyObject *)cell, value);
+             Py_INCREF(value);
++            PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)cell, value);
+             Py_XDECREF(old);
+             return 0;
+         }
+diff --git a/nuitka/build/static_src/CompiledFrameType.c b/nuitka/build/static_src/CompiledFrameType.c
+index b43a17a..7f6f358 100644
+--- a/nuitka/build/static_src/CompiledFrameType.c
++++ b/nuitka/build/static_src/CompiledFrameType.c
+@@ -213,10 +213,11 @@ static PyObject *_Nuitka_Frame_GetLocalsDict(struct Nuitka_FrameObject *nuitka_f
+                 assert(Nuitka_CellOrPyCell_Check((PyObject *)value));
+                 CHECK_OBJECT(value);
+ 
+-                PyObject *cell_value = Nuitka_CellOrPyCell_GET((PyObject *)value);
++                PyObject *cell_value = Nuitka_CellOrPyCell_GET_REF((PyObject *)value);
+ 
+                 if (cell_value != NULL) {
+                     DICT_SET_ITEM(result, *var_names, cell_value);
++                    Py_DECREF(cell_value);
+                 }
+             }
+ 
+@@ -918,6 +919,8 @@ static struct Nuitka_FrameObject *_MAKE_COMPILED_FRAME(PyCodeObject *code, PyObj
+     locals_owner->f_code = code;
+ #elif PYTHON_VERSION < 0x3e0
+     locals_owner->f_executable = (PyObject *)code;
++#elif defined(Py_GIL_DISABLED)
++    locals_owner->f_executable = PyStackRef_FromPyObjectNew((PyObject *)code);
+ #else
+     // TODO: Why is our code object not immortal?
+     locals_owner->f_executable = _PyStackRef_FromPyObjectNew((PyObject *)code);
+@@ -1266,6 +1269,32 @@ PyCodeObject *USE_CODE_OBJECT(PyThreadState *tstate, PyObject *code_object, PyOb
+     CHECK_OBJECT(module_filename_obj);
+ 
+     PyCodeObject *co = (PyCodeObject *)code_object;
++
++#ifdef Py_GIL_DISABLED
++    // Completed once, by whichever thread calls first: the qualname is made
++    // from the partial one, so two threads doing it would repeat the name.
++    // The filename is published last, and completes it for readers checking
++    // without the lock.
++    if (_Py_atomic_load_ptr_acquire(&co->co_filename) == const_str_empty) {
++        Py_BEGIN_CRITICAL_SECTION(co);
++
++        if (co->co_filename == const_str_empty) {
++#if PYTHON_VERSION >= 0x3b0
++            if (co->co_qualname != co->co_name) {
++                PyObject *w = UNICODE_CONCAT(tstate, co->co_qualname, const_str_dot);
++                _Py_atomic_store_ptr_release(&co->co_qualname, UNICODE_CONCAT(tstate, w, co->co_name));
++                Py_DECREF(w);
++            }
++#endif
++            _Py_atomic_store_ptr_release(&co->co_filename, Py_NewRef(module_filename_obj));
++        }
++
++        Py_END_CRITICAL_SECTION();
++    }
++
++    return co;
++#endif
++
+     PyObject *old = co->co_filename;
+ 
+     if (old == const_str_empty) {
+diff --git a/nuitka/build/static_src/CompiledFunctionType.c b/nuitka/build/static_src/CompiledFunctionType.c
+index eb1b6a7..51b79ba 100644
+--- a/nuitka/build/static_src/CompiledFunctionType.c
++++ b/nuitka/build/static_src/CompiledFunctionType.c
+@@ -1355,10 +1355,12 @@ PyObject *Nuitka_Function_GetFunctionState(struct Nuitka_FunctionObject *functio
+             PyObject *cell = PyTuple_GET_ITEM(closure, i);
+             assert(Nuitka_CellOrPyCell_Check(cell));
+ 
+-            PyObject *cell_value = Nuitka_CellOrPyCell_GET(cell);
++            PyObject *cell_value = Nuitka_CellOrPyCell_GET_REF(cell);
+             CHECK_OBJECT(cell_value);
+ 
+-            PyTuple_SET_ITEM0(closure, i, cell_value);
++            // The fresh tuple held the cell, the function still does.
++            PyTuple_SET_ITEM(closure, i, cell_value);
++            Py_DECREF(cell);
+         }
+     }
+ 
+@@ -1667,8 +1669,14 @@ Nuitka_Function_New(function_impl_code c_code, PyObject *name, PyObject *qualnam
+     result->m_dict = NULL;
+     result->m_weakrefs = NULL;
+ 
++#ifdef Py_GIL_DISABLED
++    // Numbered from several threads at once.
++    static Py_ssize_t Nuitka_Function_counter = 0;
++    result->m_counter = (long)_Py_atomic_add_ssize(&Nuitka_Function_counter, 1);
++#else
+     static long Nuitka_Function_counter = 0;
+     result->m_counter = Nuitka_Function_counter++;
++#endif
+ 
+ #if PYTHON_VERSION >= 0x380 && !defined(_NUITKA_EXPERIMENTAL_DISABLE_VECTORCALL_SLOT)
+     result->m_vectorcall = (vectorcallfunc)Nuitka_Function_tp_vectorcall;
+diff --git a/nuitka/build/static_src/CompiledGeneratorType.c b/nuitka/build/static_src/CompiledGeneratorType.c
+index c816f0d..022639b 100644
+--- a/nuitka/build/static_src/CompiledGeneratorType.c
++++ b/nuitka/build/static_src/CompiledGeneratorType.c
+@@ -1944,8 +1944,14 @@ PyObject *Nuitka_Generator_New(generator_code code, PyObject *module, PyObject *
+     result->m_resume_exception = Nuitka_ExceptionStackItem_Empty;
+ #endif
+ 
++#ifdef Py_GIL_DISABLED
++    // Numbered from several threads at once.
++    static Py_ssize_t Nuitka_Generator_counter = 0;
++    result->m_counter = (long)_Py_atomic_add_ssize(&Nuitka_Generator_counter, 1);
++#else
+     static long Nuitka_Generator_counter = 0;
+     result->m_counter = Nuitka_Generator_counter++;
++#endif
+ 
+     Nuitka_GC_Track(result);
+     return (PyObject *)result;
+diff --git a/nuitka/build/static_src/CompiledMethodType.c b/nuitka/build/static_src/CompiledMethodType.c
+index 7c58e3f..9d6db66 100644
+--- a/nuitka/build/static_src/CompiledMethodType.c
++++ b/nuitka/build/static_src/CompiledMethodType.c
+@@ -304,13 +304,14 @@ static PyObject *Nuitka_Method_tp_descr_get(struct Nuitka_MethodObject *method,
+ #endif
+ 
+ static PyObject *Nuitka_Method_tp_getattro(struct Nuitka_MethodObject *method, PyObject *name) {
+-    PyObject *descr = Nuitka_TypeLookup(&Nuitka_Method_Type, name);
++    PyObject *descr = Nuitka_TypeLookupRef(&Nuitka_Method_Type, name);
+ 
+     if (descr != NULL) {
+         if (NuitkaType_HasFeatureClass(Py_TYPE(descr)) && (Py_TYPE(descr)->tp_descr_get != NULL)) {
+-            return Py_TYPE(descr)->tp_descr_get(descr, (PyObject *)method, (PyObject *)Py_TYPE(method));
++            PyObject *result = Py_TYPE(descr)->tp_descr_get(descr, (PyObject *)method, (PyObject *)Py_TYPE(method));
++            Py_DECREF(descr);
++            return result;
+         } else {
+-            Py_INCREF(descr);
+             return descr;
+         }
+     }
+diff --git a/nuitka/build/static_src/HelpersAllocator.c b/nuitka/build/static_src/HelpersAllocator.c
+index c467479..5314cb5 100644
+--- a/nuitka/build/static_src/HelpersAllocator.c
++++ b/nuitka/build/static_src/HelpersAllocator.c
+@@ -662,7 +662,26 @@ static void Nuitka_Py_ScheduleGC(PyThreadState *tstate) {
+ 
+ // This is called during object creation and might trigger garbage collection
+ void Nuitka_PyObject_GC_Link(PyObject *op) {
+-#if PYTHON_VERSION < 0x3d0
++#if defined(Py_GIL_DISABLED) && PYTHON_VERSION >= 0x3e0
++    // The free-threaded collector has no generations and no GC head: an
++    // allocation only counts towards the next collection. As CPython's
++    // "record_allocation", counted per thread and added to the young count
++    // every 512. Whether that calls for a collection -- which also asks
++    // about process memory, out of reach here -- CPython decides on its own
++    // next flush, so none is scheduled from compiled code.
++    (void)op;
++
++    PyThreadState *tstate = _PyThreadState_GET();
++    struct _gc_thread_state *gc = &((_PyThreadStateImpl *)tstate)->gc;
++
++    gc->alloc_count++;
++
++    if (gc->alloc_count >= 512) {
++        GCState *gcstate = &tstate->interp->gc;
++        _Py_atomic_add_int(&gcstate->young.count, (int)gc->alloc_count);
++        gc->alloc_count = 0;
++    }
++#elif PYTHON_VERSION < 0x3d0
+     PyGC_Head *g = AS_GC(op);
+ 
+     PyThreadState *tstate = _PyThreadState_GET();
+@@ -858,8 +877,12 @@ static bool _Nuitka_qsbr_poll(struct _qsbr_thread_state *qsbr, uint64_t goal) {
+ }
+ 
+ static void _NuitkaMem_free_work_item(uintptr_t ptr) {
++    // The queues are shared with CPython, whose "_PyObject_XDecRefDelayed"
++    // tags an object to release, e.g. a replaced instance dictionary, still
++    // alive and maybe referenced: it is released, never freed as memory.
+     if (ptr & 0x01) {
+-        PyObject_Free((char *)(ptr - 1));
++        assert(!_PyInterpreterState_GET()->stoptheworld.world_stopped);
++        Py_DECREF((PyObject *)(ptr - 1));
+     } else {
+         NuitkaMem_Free((void *)ptr);
+     }
+@@ -873,14 +896,17 @@ static void _Nuitka_process_queue(struct llist_node *head, struct _qsbr_thread_s
+     while (!llist_empty(head)) {
+         struct _mem_work_chunk *buf = work_queue_first(head);
+ 
+-        while (buf->rd_idx < buf->wr_idx) {
++        if (buf->rd_idx < buf->wr_idx) {
+             struct _mem_work_item *item = &buf->array[buf->rd_idx];
+             if (!_Nuitka_qsbr_poll(qsbr, item->qsbr_goal)) {
+                 return;
+             }
+ 
+-            _NuitkaMem_free_work_item(item->ptr);
++            // Taken off first, as CPython does: releasing an object may run
++            // arbitrary code that processes this queue again.
+             buf->rd_idx++;
++            _NuitkaMem_free_work_item(item->ptr);
++            continue;
+         }
+ 
+         assert(buf->rd_idx == buf->wr_idx);
+@@ -977,7 +1003,13 @@ void _NuitkaMem_ProcessDelayed(PyThreadState *tstate) {
+ 
+ static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
+     // Free immediately if possible.
++#if PYTHON_VERSION >= 0x3e0
++    PyInterpreterState *interp = _PyInterpreterState_GET();
++
++    if (_PyInterpreterState_GetFinalizing(interp) != NULL || interp->stoptheworld.world_stopped) {
++#else
+     if (_PyRuntime.stoptheworld.world_stopped) {
++#endif
+         _NuitkaMem_free_work_item(ptr);
+         return;
+     }
+@@ -998,9 +1030,24 @@ static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
+ 
+     if (buf == NULL) {
+         buf = NuitkaMem_Calloc(1, sizeof(*buf));
++
++        if (buf != NULL) {
++            llist_insert_tail(head, &buf->node);
++        }
++    }
++
++    if (unlikely(buf == NULL)) {
++        // No memory to queue it: free it now, with no other thread running
++        // that could still be reading it, as CPython does.
++        assert(!(ptr & 0x01));
++
++        _PyEval_StopTheWorld(tstate->base.interp);
++        NuitkaMem_Free((void *)ptr);
++        _PyEval_StartTheWorld(tstate->base.interp);
++        return;
+     }
+ 
+-    assert(buf != NULL && buf->wr_idx < WORK_ITEMS_PER_CHUNK);
++    assert(buf->wr_idx < WORK_ITEMS_PER_CHUNK);
+     uint64_t seq = Nuitka_qsbr_deferred_advance(tstate->qsbr);
+     buf->array[buf->wr_idx].ptr = ptr;
+     buf->array[buf->wr_idx].qsbr_goal = seq;
+diff --git a/nuitka/build/static_src/HelpersAttributes.c b/nuitka/build/static_src/HelpersAttributes.c
+index a7afa09..1dfdad3 100644
+--- a/nuitka/build/static_src/HelpersAttributes.c
++++ b/nuitka/build/static_src/HelpersAttributes.c
+@@ -113,12 +113,10 @@ PyObject *LOOKUP_ATTRIBUTE(PyThreadState *tstate, PyObject *source, PyObject *at
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -301,12 +299,10 @@ PyObject *LOOKUP_ATTRIBUTE_DICT_SLOT(PyThreadState *tstate, PyObject *source) {
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, const_str_plain___dict__);
++        PyObject *descr = Nuitka_TypeLookupRef(type, const_str_plain___dict__);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -418,12 +414,10 @@ PyObject *LOOKUP_ATTRIBUTE_CLASS_SLOT(PyThreadState *tstate, PyObject *source) {
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, const_str_plain___class__);
++        PyObject *descr = Nuitka_TypeLookupRef(type, const_str_plain___class__);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -583,12 +577,10 @@ bool HAS_ATTR_BOOL(PyThreadState *tstate, PyObject *source, PyObject *attr_name)
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -751,12 +743,10 @@ int HAS_ATTR_BOOL2(PyThreadState *tstate, PyObject *source, PyObject *attr_name)
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            // Hold a refcount, Nuitka_TypeLookup does not give any.
+-            Py_INCREF(descr);
+ 
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+@@ -955,11 +945,9 @@ static bool SET_ATTRIBUTE_GENERIC(PyThreadState *tstate, PyTypeObject *type, PyO
+         }
+     }
+ 
+-    PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++    PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+ 
+     if (descr != NULL) {
+-        Py_INCREF(descr);
+-
+         if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+             descrsetfunc func = Py_TYPE(descr)->tp_descr_set;
+ 
+@@ -1209,16 +1197,16 @@ PyObject *LOOKUP_SPECIAL(PyThreadState *tstate, PyObject *source, PyObject *attr
+     // TODO: There is heavy optimization in CPython to avoid it. Potentially
+     // that's worth it to imitate that.
+ 
+-    PyObject *result = Nuitka_TypeLookup(Py_TYPE(source), attr_name);
++    PyObject *result = Nuitka_TypeLookupRef(Py_TYPE(source), attr_name);
+ 
+     if (likely(result)) {
+         descrgetfunc func = Py_TYPE(result)->tp_descr_get;
+ 
+         if (func == NULL) {
+-            Py_INCREF(result);
+             return result;
+         } else {
+             PyObject *func_result = func(result, source, (PyObject *)(Py_TYPE(source)));
++            Py_DECREF(result);
+ 
+             if (unlikely(func_result == NULL)) {
+                 return NULL;
+diff --git a/nuitka/build/static_src/HelpersBuiltin.c b/nuitka/build/static_src/HelpersBuiltin.c
+index f5c3671..4545535 100644
+--- a/nuitka/build/static_src/HelpersBuiltin.c
++++ b/nuitka/build/static_src/HelpersBuiltin.c
+@@ -665,6 +665,36 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
+     CHECK_OBJECT(type);
+     CHECK_OBJECT_X(object);
+ 
++#ifdef Py_GIL_DISABLED
++    // Another thread may rebind "super" and release the value read.
++    PyObject *super_value;
++
++    int found = PyDict_GetItemRef((PyObject *)module_dict, const_str_plain_super, &super_value);
++
++    if (unlikely(found < 0)) {
++        return NULL;
++    }
++
++    if (found == 0) {
++        NUITKA_ASSIGN_BUILTIN(super);
++
++        super_value = NUITKA_ACCESS_BUILTIN(super);
++        Py_INCREF(super_value);
++    }
++
++    PyObject *result;
++
++    if (object != NULL) {
++        PyObject *args[] = {type, object};
++
++        result = CALL_FUNCTION_WITH_ARGS2(tstate, super_value, args);
++    } else {
++        result = CALL_FUNCTION_WITH_SINGLE_ARG(tstate, super_value, type);
++    }
++
++    Py_DECREF(super_value);
++    return result;
++#else
+     PyObject *super_value = GET_STRING_DICT_VALUE(module_dict, (Nuitka_StringObject *)const_str_plain_super);
+ 
+     if (super_value == NULL) {
+@@ -680,6 +710,7 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
+     } else {
+         return CALL_FUNCTION_WITH_SINGLE_ARG(tstate, super_value, type);
+     }
++#endif
+ }
+ 
+ PyObject *BUILTIN_SUPER0(PyThreadState *tstate, PyDictObject *module_dict, PyObject *type, PyObject *object) {
+diff --git a/nuitka/build/static_src/HelpersCallingGenerated.c b/nuitka/build/static_src/HelpersCallingGenerated.c
+index 2304c77..a2b059b 100644
+--- a/nuitka/build/static_src/HelpersCallingGenerated.c
++++ b/nuitka/build/static_src/HelpersCallingGenerated.c
+@@ -277,13 +277,12 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -291,8 +290,9 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -311,12 +311,11 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj);
+                         } else {
+                             result = CALL_FUNCTION_NO_ARGS(tstate, init_method);
+-
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -726,13 +725,12 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -740,8 +738,9 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -760,12 +759,11 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 1);
+                         } else {
+                             result = CALL_FUNCTION_WITH_SINGLE_ARG(tstate, init_method, args[0]);
+-
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -1174,13 +1172,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -1188,8 +1185,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -1208,12 +1206,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 1);
+                         } else {
+                             result = CALL_FUNCTION_WITH_SINGLE_ARG(tstate, init_method, args[0]);
+-
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -1608,13 +1605,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -1622,8 +1618,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -1642,11 +1639,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 2);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS2(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -2037,13 +2034,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -2051,8 +2047,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -2071,11 +2068,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 2);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS2(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -2470,13 +2467,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -2484,8 +2480,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -2504,11 +2501,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 3);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS3(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -2899,13 +2896,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -2913,8 +2909,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -2933,11 +2930,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 3);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS3(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -3332,13 +3329,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -3346,8 +3342,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -3366,11 +3363,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 4);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS4(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -3761,13 +3758,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -3775,8 +3771,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -3795,11 +3792,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 4);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS4(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -4194,13 +4191,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -4208,8 +4204,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -4228,11 +4225,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 5);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS5(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -4623,13 +4620,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -4637,8 +4633,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -4657,11 +4654,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 5);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS5(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -5056,13 +5053,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -5070,8 +5066,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -5090,11 +5087,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 6);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS6(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -5485,13 +5482,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -5499,8 +5495,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -5519,11 +5516,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 6);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS6(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -5918,13 +5915,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -5932,8 +5928,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -5952,11 +5949,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 7);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS7(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -6347,13 +6344,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -6361,8 +6357,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -6381,11 +6378,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 7);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS7(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -6780,13 +6777,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -6794,8 +6790,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -6814,11 +6811,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 8);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS8(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -7209,13 +7206,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -7223,8 +7219,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -7243,11 +7240,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 8);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS8(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -7642,13 +7639,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -7656,8 +7652,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -7676,11 +7673,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 9);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS9(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -8071,13 +8068,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -8085,8 +8081,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -8105,11 +8102,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 9);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS9(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -8504,13 +8501,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
+                         Py_XDECREF(pos_args);
+                         pos_args = NULL;
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -8518,8 +8514,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -8538,11 +8535,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 10);
+                         } else {
+                             result = CALL_FUNCTION_WITH_ARGS10(tstate, init_method, args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -8933,13 +8930,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
+                 if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
+                     if (type->tp_init == default_tp_init_wrapper) {
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -8947,8 +8943,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -8967,11 +8964,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
+                                 tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 10);
+                         } else {
+                             result = CALL_FUNCTION_WITH_POS_ARGS10(tstate, init_method, pos_args);
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
+ 
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
++
+                         if (unlikely(result == NULL)) {
+                             Py_DECREF(obj);
+                             return NULL;
+@@ -12150,12 +12147,10 @@ PyObject *CALL_METHOD_NO_ARGS(PyThreadState *tstate, PyObject *source, PyObject
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -12390,12 +12385,10 @@ PyObject *CALL_METHOD_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *source, P
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -12630,12 +12623,10 @@ PyObject *CALL_METHOD_WITH_ARGS2(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -12871,12 +12862,10 @@ PyObject *CALL_METHOD_WITH_ARGS3(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -13113,12 +13102,10 @@ PyObject *CALL_METHOD_WITH_ARGS4(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -13356,12 +13343,10 @@ PyObject *CALL_METHOD_WITH_ARGS5(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -13600,12 +13585,10 @@ PyObject *CALL_METHOD_WITH_ARGS6(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -13845,12 +13828,10 @@ PyObject *CALL_METHOD_WITH_ARGS7(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -14091,12 +14072,10 @@ PyObject *CALL_METHOD_WITH_ARGS8(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -14338,12 +14317,10 @@ PyObject *CALL_METHOD_WITH_ARGS9(PyThreadState *tstate, PyObject *source, PyObje
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+@@ -14586,12 +14563,10 @@ PyObject *CALL_METHOD_WITH_ARGS10(PyThreadState *tstate, PyObject *source, PyObj
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+diff --git a/nuitka/build/static_src/HelpersComparisonEq.c b/nuitka/build/static_src/HelpersComparisonEq.c
+index 47b4f78..d768f02 100644
+--- a/nuitka/build/static_src/HelpersComparisonEq.c
++++ b/nuitka/build/static_src/HelpersComparisonEq.c
+@@ -10375,6 +10375,14 @@ static PyObject *COMPARE_EQ_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_EQ);
++        return r;
++    }
++#endif
+ 
+     if (Py_SIZE(a) != Py_SIZE(b)) {
+         bool r = false;
+@@ -11021,6 +11029,19 @@ static nuitka_bool COMPARE_EQ_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_EQ);
++        if (unlikely(r == NULL)) {
++            return NUITKA_BOOL_EXCEPTION;
++        }
++        int truth = CHECK_IF_TRUE(r);
++        Py_DECREF(r);
++        return truth == -1 ? NUITKA_BOOL_EXCEPTION : (truth ? NUITKA_BOOL_TRUE : NUITKA_BOOL_FALSE);
++    }
++#endif
+ 
+     if (Py_SIZE(a) != Py_SIZE(b)) {
+         bool r = false;
+diff --git a/nuitka/build/static_src/HelpersComparisonGe.c b/nuitka/build/static_src/HelpersComparisonGe.c
+index 045053e..2bb6742 100644
+--- a/nuitka/build/static_src/HelpersComparisonGe.c
++++ b/nuitka/build/static_src/HelpersComparisonGe.c
+@@ -10181,6 +10181,14 @@ static PyObject *COMPARE_GE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_GE);
++        return r;
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+@@ -10819,6 +10827,19 @@ static nuitka_bool COMPARE_GE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_GE);
++        if (unlikely(r == NULL)) {
++            return NUITKA_BOOL_EXCEPTION;
++        }
++        int truth = CHECK_IF_TRUE(r);
++        Py_DECREF(r);
++        return truth == -1 ? NUITKA_BOOL_EXCEPTION : (truth ? NUITKA_BOOL_TRUE : NUITKA_BOOL_FALSE);
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+diff --git a/nuitka/build/static_src/HelpersComparisonGt.c b/nuitka/build/static_src/HelpersComparisonGt.c
+index 17bff42..a9582f3 100644
+--- a/nuitka/build/static_src/HelpersComparisonGt.c
++++ b/nuitka/build/static_src/HelpersComparisonGt.c
+@@ -10165,6 +10165,14 @@ static PyObject *COMPARE_GT_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_GT);
++        return r;
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+@@ -10803,6 +10811,19 @@ static nuitka_bool COMPARE_GT_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_GT);
++        if (unlikely(r == NULL)) {
++            return NUITKA_BOOL_EXCEPTION;
++        }
++        int truth = CHECK_IF_TRUE(r);
++        Py_DECREF(r);
++        return truth == -1 ? NUITKA_BOOL_EXCEPTION : (truth ? NUITKA_BOOL_TRUE : NUITKA_BOOL_FALSE);
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+diff --git a/nuitka/build/static_src/HelpersComparisonLe.c b/nuitka/build/static_src/HelpersComparisonLe.c
+index 64cd0b4..65692da 100644
+--- a/nuitka/build/static_src/HelpersComparisonLe.c
++++ b/nuitka/build/static_src/HelpersComparisonLe.c
+@@ -10267,6 +10267,14 @@ static PyObject *COMPARE_LE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_LE);
++        return r;
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+@@ -10905,6 +10913,19 @@ static nuitka_bool COMPARE_LE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_LE);
++        if (unlikely(r == NULL)) {
++            return NUITKA_BOOL_EXCEPTION;
++        }
++        int truth = CHECK_IF_TRUE(r);
++        Py_DECREF(r);
++        return truth == -1 ? NUITKA_BOOL_EXCEPTION : (truth ? NUITKA_BOOL_TRUE : NUITKA_BOOL_FALSE);
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+diff --git a/nuitka/build/static_src/HelpersComparisonLt.c b/nuitka/build/static_src/HelpersComparisonLt.c
+index 1e7e65d..fbc8005 100644
+--- a/nuitka/build/static_src/HelpersComparisonLt.c
++++ b/nuitka/build/static_src/HelpersComparisonLt.c
+@@ -10251,6 +10251,14 @@ static PyObject *COMPARE_LT_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_LT);
++        return r;
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+@@ -10889,6 +10897,19 @@ static nuitka_bool COMPARE_LT_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_LT);
++        if (unlikely(r == NULL)) {
++            return NUITKA_BOOL_EXCEPTION;
++        }
++        int truth = CHECK_IF_TRUE(r);
++        Py_DECREF(r);
++        return truth == -1 ? NUITKA_BOOL_EXCEPTION : (truth ? NUITKA_BOOL_TRUE : NUITKA_BOOL_FALSE);
++    }
++#endif
+ 
+     bool found = false;
+     nuitka_bool res = NUITKA_BOOL_TRUE;
+diff --git a/nuitka/build/static_src/HelpersComparisonNe.c b/nuitka/build/static_src/HelpersComparisonNe.c
+index e97d48a..a18d20c 100644
+--- a/nuitka/build/static_src/HelpersComparisonNe.c
++++ b/nuitka/build/static_src/HelpersComparisonNe.c
+@@ -10287,6 +10287,14 @@ static PyObject *COMPARE_NE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_NE);
++        return r;
++    }
++#endif
+ 
+     if (Py_SIZE(a) != Py_SIZE(b)) {
+         bool r = true;
+@@ -10934,6 +10942,19 @@ static nuitka_bool COMPARE_NE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ 
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_NE);
++        if (unlikely(r == NULL)) {
++            return NUITKA_BOOL_EXCEPTION;
++        }
++        int truth = CHECK_IF_TRUE(r);
++        Py_DECREF(r);
++        return truth == -1 ? NUITKA_BOOL_EXCEPTION : (truth ? NUITKA_BOOL_TRUE : NUITKA_BOOL_FALSE);
++    }
++#endif
+ 
+     if (Py_SIZE(a) != Py_SIZE(b)) {
+         bool r = true;
+diff --git a/nuitka/build/static_src/HelpersDictionaries.c b/nuitka/build/static_src/HelpersDictionaries.c
+index 9621783..5c204c6 100644
+--- a/nuitka/build/static_src/HelpersDictionaries.c
++++ b/nuitka/build/static_src/HelpersDictionaries.c
+@@ -94,9 +94,16 @@ static inline void ASSERT_DICT_LOCKED(PyObject *op) { _Py_CRITICAL_SECTION_ASSER
+ #define LOAD_KEYS_NENTRIES(keys) _Py_atomic_load_ssize_relaxed(&keys->dk_nentries)
+ 
+ static inline void Nuitka_Py_dictkeys_incref(PyDictKeysObject *dk) {
++#if PYTHON_VERSION >= 0x3e0
++    // Immortal keys carry a negative count from 3.14, as in CPython.
++    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) < 0) {
++        return;
++    }
++#else
+     if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) == _Py_IMMORTAL_REFCNT) {
+         return;
+     }
++#endif
+ #ifdef Py_REF_DEBUG
+     _Py_IncRefTotal(_PyThreadState_GET());
+ #endif
+@@ -104,9 +111,16 @@ static inline void Nuitka_Py_dictkeys_incref(PyDictKeysObject *dk) {
+ }
+ 
+ static inline void Nuitka_Py_dictkeys_decref(PyInterpreterState *interp, PyDictKeysObject *dk, bool use_qsbr) {
++#if PYTHON_VERSION >= 0x3e0
++    // Immortal keys carry a negative count from 3.14, as in CPython.
++    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) < 0) {
++        return;
++    }
++#else
+     if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) == _Py_IMMORTAL_REFCNT) {
+         return;
+     }
++#endif
+     assert(FT_ATOMIC_LOAD_SSIZE(dk->dk_refcnt) > 0);
+ #ifdef Py_REF_DEBUG
+     _Py_DecRefTotal(_PyThreadState_GET());
+@@ -250,6 +264,10 @@ PyObject *DICT_GET_ITEM0(PyThreadState *tstate, PyObject *dict, PyObject *key) {
+     }
+ 
+     CHECK_OBJECT(result);
++#ifdef Py_GIL_DISABLED
++    // Borrowed, as CPython's "PyDict_GetItem" hands it out without the GIL.
++    Py_DECREF(result);
++#endif
+     return result;
+ #endif
+ }
+@@ -339,7 +357,10 @@ PyObject *DICT_GET_ITEM1(PyThreadState *tstate, PyObject *dict, PyObject *key) {
+     }
+ 
+     CHECK_OBJECT(result);
++#ifndef Py_GIL_DISABLED
++    // The free-threaded lookup returned a reference of our own already.
+     Py_INCREF(result);
++#endif
+     return result;
+ #endif
+ }
+@@ -482,7 +503,10 @@ PyObject *DICT_GET_ITEM_WITH_ERROR(PyThreadState *tstate, PyObject *dict, PyObje
+     }
+ 
+     CHECK_OBJECT(result);
++#ifndef Py_GIL_DISABLED
++    // The free-threaded lookup returned a reference of our own already.
+     Py_INCREF(result);
++#endif
+     return result;
+ #endif
+ }
+@@ -571,6 +595,10 @@ PyObject *DICT_GET_ITEM_WITH_HASH_ERROR0(PyThreadState *tstate, PyObject *dict,
+     }
+ 
+     CHECK_OBJECT(result);
++#ifdef Py_GIL_DISABLED
++    // Borrowed, as CPython's "PyDict_GetItem" hands it out without the GIL.
++    Py_DECREF(result);
++#endif
+     return result;
+ #endif
+ }
+@@ -663,7 +691,10 @@ PyObject *DICT_GET_ITEM_WITH_HASH_ERROR1(PyThreadState *tstate, PyObject *dict,
+     }
+ 
+     CHECK_OBJECT(result);
++#ifndef Py_GIL_DISABLED
++    // The free-threaded lookup returned a reference of our own already.
+     Py_INCREF(result);
++#endif
+     return result;
+ #endif
+ }
+@@ -754,6 +785,9 @@ int DICT_HAS_ITEM(PyThreadState *tstate, PyObject *dict, PyObject *key) {
+     if (unlikely(result == NULL)) {
+         return 0;
+     }
++#ifdef Py_GIL_DISABLED
++    Py_DECREF(result);
++#endif
+ #endif
+     return 1;
+ #endif
+@@ -1072,7 +1106,7 @@ static PyDictObject *_Nuitka_AllocatePyDictObjectFresh(void) {
+     size_t pre_size = _PyType_PreHeaderSize(&PyDict_Type);
+     size_t size = _PyObject_SIZE(&PyDict_Type);
+ 
+-    char *alloc = (char *)NuitkaObject_Malloc(size + pre_size);
++    char *alloc = (char *)NuitkaObject_MallocWithType(&PyDict_Type, size + pre_size);
+     assert(alloc != NULL);
+ 
+     ((PyObject **)alloc)[0] = NULL;
+@@ -1145,7 +1179,8 @@ static PyDictObject *_Nuitka_AllocatePyDictObject(PyThreadState *tstate) {
+ #endif
+ 
+ #if PYTHON_VERSION >= 0x360
+-static PyDictKeysObject *_Nuitka_AllocatePyDictKeysObject(PyThreadState *tstate, Py_ssize_t keys_size) {
++NUITKA_MAY_BE_UNUSED static PyDictKeysObject *_Nuitka_AllocatePyDictKeysObject(PyThreadState *tstate,
++                                                                                 Py_ssize_t keys_size) {
+     // CPython names, spell-checker: ignore numfree,dictkeys
+     PyDictKeysObject *dk;
+ 
+@@ -1235,7 +1270,7 @@ static inline PyDictValues *_Nuitka_PyDict_new_values(Py_ssize_t size) {
+ 
+ #if PYTHON_VERSION >= 0x3d0
+ 
+-static PyDictValues *_Nuitka_PyDict_copy_values(PyDictValues *values) {
++NUITKA_MAY_BE_UNUSED static PyDictValues *_Nuitka_PyDict_copy_values(PyDictValues *values) {
+     PyDictValues *new_values = _Nuitka_PyDict_new_values(values->capacity);
+     if (unlikely(new_values == NULL)) {
+         return NULL;
+@@ -1312,7 +1347,15 @@ static inline Py_ssize_t Nuitka_Py_dictkeys_get_index(const PyDictKeysObject *ke
+ // 3.13+
+ #if PYTHON_VERSION >= 0x3d0
+ 
+-static inline Py_ALWAYS_INLINE Py_ssize_t Nuitka_Py_dictkeys_do_lookup(
++// Forced inlining only when optimizing, as CPython's debug builds do: the
++// comparisons are passed by pointer, which unoptimized builds cannot inline.
++#ifdef __NUITKA_NO_ASSERT__
++#define NUITKA_DICT_ALWAYS_INLINE Py_ALWAYS_INLINE
++#else
++#define NUITKA_DICT_ALWAYS_INLINE
++#endif
++
++static inline NUITKA_DICT_ALWAYS_INLINE Py_ssize_t Nuitka_Py_dictkeys_do_lookup(
+     PyDictObject *mp, PyDictKeysObject *dk, PyObject *key, Py_hash_t hash,
+     int (*check_lookup)(PyDictObject *, PyDictKeysObject *, void *, Py_ssize_t ix, PyObject *key, Py_hash_t)) {
+     void *ep0 = _DK_ENTRIES(dk);
+@@ -1433,7 +1476,7 @@ Py_ssize_t _Py_HOT_FUNCTION Nuitka_Py_unicodekeys_lookup_unicode(PyDictKeysObjec
+ 
+ #ifdef Py_GIL_DISABLED
+ 
+-static inline Py_ALWAYS_INLINE int
++static inline NUITKA_DICT_ALWAYS_INLINE int
+ Nuitka_Py_dictkeys_compare_unicode_generic_threadsafe(PyDictObject *mp, PyDictKeysObject *dk, void *ep0, Py_ssize_t ix,
+                                                       PyObject *key, Py_hash_t hash) {
+     PyDictUnicodeEntry *ep = &((PyDictUnicodeEntry *)ep0)[ix];
+@@ -1472,7 +1515,7 @@ static Py_ssize_t Nuitka_Py_unicodekeys_lookup_generic_threadsafe(PyDictObject *
+     return Nuitka_Py_dictkeys_do_lookup(mp, dk, key, hash, Nuitka_Py_dictkeys_compare_unicode_generic_threadsafe);
+ }
+ 
+-static inline Py_ALWAYS_INLINE int
++static inline NUITKA_DICT_ALWAYS_INLINE int
+ Nuitka_Py_dictkeys_compare_unicode_unicode_threadsafe(PyDictObject *mp, PyDictKeysObject *dk, void *ep0, Py_ssize_t ix,
+                                                       PyObject *key, Py_hash_t hash) {
+     PyDictUnicodeEntry *ep = &((PyDictUnicodeEntry *)ep0)[ix];
+@@ -1503,7 +1546,7 @@ static Py_ssize_t _Py_HOT_FUNCTION Nuitka_Py_unicodekeys_lookup_unicode_threadsa
+     return Nuitka_Py_dictkeys_do_lookup(NULL, dk, key, hash, Nuitka_Py_dictkeys_compare_unicode_unicode_threadsafe);
+ }
+ 
+-static inline Py_ALWAYS_INLINE int Nuitka_Py_dictkeys_compare_generic_threadsafe(PyDictObject *mp, PyDictKeysObject *dk,
++static inline NUITKA_DICT_ALWAYS_INLINE int Nuitka_Py_dictkeys_compare_generic_threadsafe(PyDictObject *mp, PyDictKeysObject *dk,
+                                                                                  void *ep0, Py_ssize_t ix,
+                                                                                  PyObject *key, Py_hash_t hash) {
+     PyDictKeyEntry *ep = &((PyDictKeyEntry *)ep0)[ix];
+diff --git a/nuitka/build/static_src/HelpersLists.c b/nuitka/build/static_src/HelpersLists.c
+index 6493b2b..7c496e8 100644
+--- a/nuitka/build/static_src/HelpersLists.c
++++ b/nuitka/build/static_src/HelpersLists.c
+@@ -129,6 +129,10 @@ PyObject *LIST_COPY(PyThreadState *tstate, PyObject *list) {
+     CHECK_OBJECT(list);
+     assert(PyList_CheckExact(list));
+ 
++#ifdef Py_GIL_DISABLED
++    return PyList_GetSlice(list, 0, PY_SSIZE_T_MAX);
++#endif
++
+     Py_ssize_t size = PyList_GET_SIZE(list);
+     PyObject *result = MAKE_LIST_EMPTY(tstate, size);
+ 
+@@ -145,7 +149,7 @@ PyObject *LIST_COPY(PyThreadState *tstate, PyObject *list) {
+     return result;
+ }
+ 
+-static bool LIST_RESIZE(PyListObject *list, Py_ssize_t new_size) {
++NUITKA_MAY_BE_UNUSED static bool LIST_RESIZE(PyListObject *list, Py_ssize_t new_size) {
+     CHECK_OBJECT(list);
+     assert(new_size >= 0);
+ 
+@@ -171,7 +175,7 @@ static bool LIST_RESIZE(PyListObject *list, Py_ssize_t new_size) {
+ 
+     if (array == NULL) {
+         PyErr_NoMemory();
+-        return -1;
++        return false;
+     }
+     PyObject **old_items = list->ob_item;
+     if (list->ob_item != NULL) {
+@@ -480,7 +484,16 @@ bool LIST_REMOVE(PyObject *target, PyObject *item) {
+ 
+     CHECK_OBJECT(item);
+ 
+-#if _NUITKA_EXPERIMENTAL_DISABLE_LIST_OPT && 0
++#if defined(Py_GIL_DISABLED)
++    PyObject *result = PyObject_CallMethod(target, "remove", "(O)", item);
++
++    if (unlikely(result == NULL)) {
++        return false;
++    }
++
++    Py_DECREF(result);
++    return true;
++#elif _NUITKA_EXPERIMENTAL_DISABLE_LIST_OPT && 0
+     // TODO: This is not exposed, would need to delete as slice instead.
+     int res = PyList_Remove(target, item);
+     return res == 0;
+@@ -519,6 +532,11 @@ void LIST_CLEAR(PyObject *target) {
+     CHECK_OBJECT(target);
+     assert(PyList_CheckExact(target));
+ 
++#ifdef Py_GIL_DISABLED
++    PyList_Clear(target);
++    return;
++#endif
++
+     PyListObject *list = (PyListObject *)target;
+ 
+     PyObject **items = list->ob_item;
+@@ -560,6 +578,10 @@ PyObject *LIST_COUNT(PyObject *list, PyObject *item) {
+     CHECK_OBJECT(list);
+     assert(PyList_CheckExact(list));
+ 
++#ifdef Py_GIL_DISABLED
++    return PyObject_CallMethod(list, "count", "(O)", item);
++#endif
++
+     Py_ssize_t count = 0;
+ 
+     for (Py_ssize_t i = 0; i < Py_SIZE(list); i++) {
+@@ -594,6 +616,10 @@ PyObject *LIST_COUNT(PyObject *list, PyObject *item) {
+ 
+ static PyObject *_LIST_INDEX_COMMON(PyThreadState *tstate, PyListObject *list, PyObject *item, Py_ssize_t start,
+                                     Py_ssize_t stop) {
++#ifdef Py_GIL_DISABLED
++    return PyObject_CallMethod((PyObject *)list, "index", "Onn", item, start, stop);
++#endif
++
+     // Negative values for start/stop are handled here.
+     if (start < 0) {
+         start += Py_SIZE(list);
+@@ -714,8 +740,7 @@ PyObject *LIST_INDEX4(PyThreadState *tstate, PyObject *list, PyObject *item, PyO
+     PyObject *stop_index = Nuitka_Number_IndexAsLong(stop);
+ 
+     if (unlikely(stop_index == NULL)) {
+-        Py_DECREF(start_index);
+-
++        // The start index was released above already.
+         CLEAR_ERROR_OCCURRED(tstate);
+ 
+         SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,
+@@ -778,6 +803,13 @@ void LIST_INSERT_CONST(PyObject *list, Py_ssize_t index, PyObject *item) {
+     assert(PyList_CheckExact(list));
+     CHECK_OBJECT(item);
+ 
++#ifdef Py_GIL_DISABLED
++    if (unlikely(PyList_Insert(list, index, item) != 0)) {
++        abort();
++    }
++    return;
++#endif
++
+     PyListObject *list_object = (PyListObject *)list;
+ 
+     Py_ssize_t n = Py_SIZE(list_object);
+@@ -830,6 +862,11 @@ void LIST_REVERSE(PyObject *list) {
+     CHECK_OBJECT(list);
+     assert(PyList_CheckExact(list));
+ 
++#ifdef Py_GIL_DISABLED
++    PyList_Reverse(list);
++    return;
++#endif
++
+     PyListObject *list_object = (PyListObject *)list;
+ 
+     if (Py_SIZE(list_object) > 1) {
+diff --git a/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c b/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
+index 68f2e9c..23b0d34 100644
+--- a/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
++++ b/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
+@@ -20,6 +20,12 @@ static PyObject *LIST_CONCAT(PyThreadState *tstate, PyObject *operand1, PyObject
+     CHECK_OBJECT(operand2);
+     assert(PyList_CheckExact(operand2));
+ 
++#ifdef Py_GIL_DISABLED
++    // Sized once and copied item by item, a list another thread appends to
++    // would overflow the result: CPython's concatenation locks both.
++    return PyList_Type.tp_as_sequence->sq_concat(operand1, operand2);
++#endif
++
+     Py_ssize_t size = Py_SIZE(operand1) + Py_SIZE(operand2);
+ 
+     PyListObject *result = (PyListObject *)MAKE_LIST_EMPTY(tstate, size);
+diff --git a/nuitka/build/static_src/HelpersOperationInplaceAdd.c b/nuitka/build/static_src/HelpersOperationInplaceAdd.c
+index aac40b0..94d6dab 100644
+--- a/nuitka/build/static_src/HelpersOperationInplaceAdd.c
++++ b/nuitka/build/static_src/HelpersOperationInplaceAdd.c
+@@ -636,7 +636,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_LONG(PyObject **operand1, PyObjec
+     if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && Nuitka_LongGetDigitSize(operand2_long_object) <= 1) {
+         long r = (long)(MEDIUM_VALUE(operand1_long_object) + MEDIUM_VALUE(operand2_long_object));
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             Nuitka_LongUpdateFromCLong(&*operand1, (long)r);
+             goto exit_result_ok;
+         } else {
+@@ -649,7 +649,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_LONG(PyObject **operand1, PyObjec
+         goto exit_result_ok_clong;
+     }
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         digit const *b_digits = Nuitka_LongGetDigitPointer(operand2_long_object);
+         Py_ssize_t b_digit_count = Nuitka_LongGetDigitSize(operand2_long_object);
+ 
+@@ -941,7 +941,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_LONG(PyObject **operand1, PyObj
+         if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && Nuitka_LongGetDigitSize(operand2_long_object) <= 1) {
+             long r = (long)(MEDIUM_VALUE(operand1_long_object) + MEDIUM_VALUE(operand2_long_object));
+ 
+-            if (Py_REFCNT(*operand1) == 1) {
++            if (Nuitka_IsUniquelyReferenced(*operand1)) {
+                 Nuitka_LongUpdateFromCLong(&*operand1, (long)r);
+                 goto exit_result_ok;
+             } else {
+@@ -954,7 +954,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_LONG(PyObject **operand1, PyObj
+             goto exit_result_ok_clong;
+         }
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             digit const *b_digits = Nuitka_LongGetDigitPointer(operand2_long_object);
+             Py_ssize_t b_digit_count = Nuitka_LongGetDigitSize(operand2_long_object);
+ 
+@@ -1240,7 +1240,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_OBJECT(PyObject **operand1, PyObj
+         if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && Nuitka_LongGetDigitSize(operand2_long_object) <= 1) {
+             long r = (long)(MEDIUM_VALUE(operand1_long_object) + MEDIUM_VALUE(operand2_long_object));
+ 
+-            if (Py_REFCNT(*operand1) == 1) {
++            if (Nuitka_IsUniquelyReferenced(*operand1)) {
+                 Nuitka_LongUpdateFromCLong(&*operand1, (long)r);
+                 goto exit_result_ok;
+             } else {
+@@ -1253,7 +1253,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_OBJECT(PyObject **operand1, PyObj
+             goto exit_result_ok_clong;
+         }
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             digit const *b_digits = Nuitka_LongGetDigitPointer(operand2_long_object);
+             Py_ssize_t b_digit_count = Nuitka_LongGetDigitSize(operand2_long_object);
+ 
+@@ -1374,7 +1374,7 @@ static inline bool _INPLACE_OPERATION_ADD_FLOAT_FLOAT(PyObject **operand1, PyObj
+     goto exit_result_ok_cfloat;
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -1605,7 +1605,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_FLOAT(PyObject **operand1, PyOb
+         goto exit_result_ok_cfloat;
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -1830,7 +1830,7 @@ static inline bool _INPLACE_OPERATION_ADD_FLOAT_OBJECT(PyObject **operand1, PyOb
+         goto exit_result_ok_cfloat;
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -2403,7 +2403,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_DIGIT(PyObject **operand1, long o
+     if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && (operand2 == 0 ? 0 : 1) <= 1) {
+         long r = (long)(MEDIUM_VALUE(operand1_long_object) + (sdigit)operand2);
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             Nuitka_LongUpdateFromCLong(&*operand1, (long)r);
+             goto exit_result_ok;
+         } else {
+@@ -2416,7 +2416,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_DIGIT(PyObject **operand1, long o
+         goto exit_result_ok_clong;
+     }
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         digit const *b_digits = (digit *)&operand2;
+         Py_ssize_t b_digit_count = (operand2 == 0 ? 0 : 1);
+ 
+@@ -2550,7 +2550,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_CLONG(PyObject **operand1, long o
+     if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && operand2_digit_count <= 1) {
+         long r = (long)(MEDIUM_VALUE(operand1_long_object) + (sdigit)operand2);
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             Nuitka_LongUpdateFromCLong(&*operand1, (long)r);
+             goto exit_result_ok;
+         } else {
+@@ -2563,7 +2563,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_CLONG(PyObject **operand1, long o
+         goto exit_result_ok_clong;
+     }
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         digit const *b_digits = operand2_digits;
+         Py_ssize_t b_digit_count = operand2_digit_count;
+ 
+@@ -2677,7 +2677,7 @@ static inline bool _INPLACE_OPERATION_ADD_FLOAT_CFLOAT(PyObject **operand1, doub
+     goto exit_result_ok_cfloat;
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -2705,7 +2705,7 @@ static inline bool _INPLACE_OPERATION_ADD_STR_STR(PyObject **operand1, PyObject
+     CHECK_OBJECT(operand2);
+     assert(PyString_CheckExact(operand2));
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ #if PYTHON_VERSION < 0x300
+@@ -2885,7 +2885,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_STR(PyObject **operand1, PyObje
+     CHECK_OBJECT(operand2);
+     assert(PyString_CheckExact(operand2));
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ #if PYTHON_VERSION < 0x300
+@@ -3046,7 +3046,7 @@ static inline bool _INPLACE_OPERATION_ADD_STR_OBJECT(PyObject **operand1, PyObje
+     assert(PyString_CheckExact(*operand1));
+     CHECK_OBJECT(operand2);
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ #if PYTHON_VERSION < 0x300
+@@ -3105,7 +3105,7 @@ static inline bool _INPLACE_OPERATION_ADD_UNICODE_UNICODE(PyObject **operand1, P
+     CHECK_OBJECT(operand2);
+     assert(PyUnicode_CheckExact(operand2));
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ 
+@@ -3281,7 +3281,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_UNICODE(PyObject **operand1, Py
+     CHECK_OBJECT(operand2);
+     assert(PyUnicode_CheckExact(operand2));
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ 
+@@ -3446,7 +3446,7 @@ static inline bool _INPLACE_OPERATION_ADD_UNICODE_OBJECT(PyObject **operand1, Py
+     assert(PyUnicode_CheckExact(*operand1));
+     CHECK_OBJECT(operand2);
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ 
+@@ -3510,7 +3510,7 @@ static inline bool _INPLACE_OPERATION_ADD_BYTES_BYTES(PyObject **operand1, PyObj
+     CHECK_OBJECT(operand2);
+     assert(PyBytes_CheckExact(operand2));
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ 
+@@ -3679,7 +3679,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_BYTES(PyObject **operand1, PyOb
+     CHECK_OBJECT(operand2);
+     assert(PyBytes_CheckExact(operand2));
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ 
+@@ -3841,7 +3841,7 @@ static inline bool _INPLACE_OPERATION_ADD_BYTES_OBJECT(PyObject **operand1, PyOb
+     assert(PyBytes_CheckExact(*operand1));
+     CHECK_OBJECT(operand2);
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ 
+@@ -4872,7 +4872,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_OBJECT(PyObject **operand1, PyO
+     }
+ #endif
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ #if PYTHON_VERSION < 0x300
+diff --git a/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c b/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
+index 4aa8ed6..02b95d2 100644
+--- a/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
++++ b/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
+@@ -1187,7 +1187,7 @@ static inline bool _INPLACE_OPERATION_FLOORDIV_FLOAT_FLOAT(PyObject **operand1,
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -1433,7 +1433,7 @@ static inline bool _INPLACE_OPERATION_FLOORDIV_OBJECT_FLOAT(PyObject **operand1,
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -1683,7 +1683,7 @@ static inline bool _INPLACE_OPERATION_FLOORDIV_FLOAT_OBJECT(PyObject **operand1,
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -2280,7 +2280,7 @@ static inline bool _INPLACE_OPERATION_FLOORDIV_FLOAT_CFLOAT(PyObject **operand1,
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+diff --git a/nuitka/build/static_src/HelpersOperationInplaceMod.c b/nuitka/build/static_src/HelpersOperationInplaceMod.c
+index 3e07419..ac6db41 100644
+--- a/nuitka/build/static_src/HelpersOperationInplaceMod.c
++++ b/nuitka/build/static_src/HelpersOperationInplaceMod.c
+@@ -1153,7 +1153,7 @@ static inline bool _INPLACE_OPERATION_MOD_FLOAT_FLOAT(PyObject **operand1, PyObj
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -1389,7 +1389,7 @@ static inline bool _INPLACE_OPERATION_MOD_OBJECT_FLOAT(PyObject **operand1, PyOb
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -1629,7 +1629,7 @@ static inline bool _INPLACE_OPERATION_MOD_FLOAT_OBJECT(PyObject **operand1, PyOb
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -2208,7 +2208,7 @@ static inline bool _INPLACE_OPERATION_MOD_FLOAT_CFLOAT(PyObject **operand1, doub
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+diff --git a/nuitka/build/static_src/HelpersOperationInplaceMult.c b/nuitka/build/static_src/HelpersOperationInplaceMult.c
+index f2ec109..216995f 100644
+--- a/nuitka/build/static_src/HelpersOperationInplaceMult.c
++++ b/nuitka/build/static_src/HelpersOperationInplaceMult.c
+@@ -1201,7 +1201,7 @@ static inline bool _INPLACE_OPERATION_MULT_FLOAT_FLOAT(PyObject **operand1, PyOb
+     goto exit_result_ok_cfloat;
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -1433,7 +1433,7 @@ static inline bool _INPLACE_OPERATION_MULT_OBJECT_FLOAT(PyObject **operand1, PyO
+         goto exit_result_ok_cfloat;
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -1670,7 +1670,7 @@ static inline bool _INPLACE_OPERATION_MULT_FLOAT_OBJECT(PyObject **operand1, PyO
+         goto exit_result_ok_cfloat;
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -2266,7 +2266,7 @@ static inline bool _INPLACE_OPERATION_MULT_FLOAT_CFLOAT(PyObject **operand1, dou
+     goto exit_result_ok_cfloat;
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+diff --git a/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c b/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c
+index 4bca9d9..28b6103 100644
+--- a/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c
++++ b/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c
+@@ -1175,7 +1175,7 @@ static inline bool _INPLACE_OPERATION_OLDDIV_FLOAT_FLOAT(PyObject **operand1, Py
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -1405,7 +1405,7 @@ static inline bool _INPLACE_OPERATION_OLDDIV_OBJECT_FLOAT(PyObject **operand1, P
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -1640,7 +1640,7 @@ static inline bool _INPLACE_OPERATION_OLDDIV_FLOAT_OBJECT(PyObject **operand1, P
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -2226,7 +2226,7 @@ static inline bool _INPLACE_OPERATION_OLDDIV_FLOAT_CFLOAT(PyObject **operand1, d
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+diff --git a/nuitka/build/static_src/HelpersOperationInplacePow.c b/nuitka/build/static_src/HelpersOperationInplacePow.c
+index 8c418c8..ca72256 100644
+--- a/nuitka/build/static_src/HelpersOperationInplacePow.c
++++ b/nuitka/build/static_src/HelpersOperationInplacePow.c
+@@ -140,7 +140,7 @@ static inline bool _INPLACE_OPERATION_POW_FLOAT_FLOAT(PyObject **operand1, PyObj
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -479,7 +479,7 @@ static inline bool _INPLACE_OPERATION_POW_OBJECT_FLOAT(PyObject **operand1, PyOb
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -823,7 +823,7 @@ static inline bool _INPLACE_OPERATION_POW_FLOAT_OBJECT(PyObject **operand1, PyOb
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+diff --git a/nuitka/build/static_src/HelpersOperationInplaceSub.c b/nuitka/build/static_src/HelpersOperationInplaceSub.c
+index a96d38a..f9e2f32 100644
+--- a/nuitka/build/static_src/HelpersOperationInplaceSub.c
++++ b/nuitka/build/static_src/HelpersOperationInplaceSub.c
+@@ -616,7 +616,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_LONG(PyObject **operand1, PyObjec
+     if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && Nuitka_LongGetDigitSize(operand2_long_object) <= 1) {
+         long r = (long)(MEDIUM_VALUE(operand1_long_object) - MEDIUM_VALUE(operand2_long_object));
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             Nuitka_LongUpdateFromCLong(&*operand1, r);
+             goto exit_result_ok;
+         } else {
+@@ -629,7 +629,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_LONG(PyObject **operand1, PyObjec
+         goto exit_result_ok_clong;
+     }
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         digit const *b_digits = Nuitka_LongGetDigitPointer(operand2_long_object);
+         Py_ssize_t b_digit_count = Nuitka_LongGetDigitSize(operand2_long_object);
+ 
+@@ -907,7 +907,7 @@ static inline bool _INPLACE_OPERATION_SUB_OBJECT_LONG(PyObject **operand1, PyObj
+         if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && Nuitka_LongGetDigitSize(operand2_long_object) <= 1) {
+             long r = (long)(MEDIUM_VALUE(operand1_long_object) - MEDIUM_VALUE(operand2_long_object));
+ 
+-            if (Py_REFCNT(*operand1) == 1) {
++            if (Nuitka_IsUniquelyReferenced(*operand1)) {
+                 Nuitka_LongUpdateFromCLong(&*operand1, r);
+                 goto exit_result_ok;
+             } else {
+@@ -920,7 +920,7 @@ static inline bool _INPLACE_OPERATION_SUB_OBJECT_LONG(PyObject **operand1, PyObj
+             goto exit_result_ok_clong;
+         }
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             digit const *b_digits = Nuitka_LongGetDigitPointer(operand2_long_object);
+             Py_ssize_t b_digit_count = Nuitka_LongGetDigitSize(operand2_long_object);
+ 
+@@ -1203,7 +1203,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_OBJECT(PyObject **operand1, PyObj
+         if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && Nuitka_LongGetDigitSize(operand2_long_object) <= 1) {
+             long r = (long)(MEDIUM_VALUE(operand1_long_object) - MEDIUM_VALUE(operand2_long_object));
+ 
+-            if (Py_REFCNT(*operand1) == 1) {
++            if (Nuitka_IsUniquelyReferenced(*operand1)) {
+                 Nuitka_LongUpdateFromCLong(&*operand1, r);
+                 goto exit_result_ok;
+             } else {
+@@ -1216,7 +1216,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_OBJECT(PyObject **operand1, PyObj
+             goto exit_result_ok_clong;
+         }
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             digit const *b_digits = Nuitka_LongGetDigitPointer(operand2_long_object);
+             Py_ssize_t b_digit_count = Nuitka_LongGetDigitSize(operand2_long_object);
+ 
+@@ -1338,7 +1338,7 @@ static inline bool _INPLACE_OPERATION_SUB_FLOAT_FLOAT(PyObject **operand1, PyObj
+     goto exit_result_ok_cfloat;
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -1554,7 +1554,7 @@ static inline bool _INPLACE_OPERATION_SUB_OBJECT_FLOAT(PyObject **operand1, PyOb
+         goto exit_result_ok_cfloat;
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -1775,7 +1775,7 @@ static inline bool _INPLACE_OPERATION_SUB_FLOAT_OBJECT(PyObject **operand1, PyOb
+         goto exit_result_ok_cfloat;
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -2318,7 +2318,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_DIGIT(PyObject **operand1, long o
+     if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && (operand2 == 0 ? 0 : 1) <= 1) {
+         long r = (long)(MEDIUM_VALUE(operand1_long_object) - (sdigit)operand2);
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             Nuitka_LongUpdateFromCLong(&*operand1, r);
+             goto exit_result_ok;
+         } else {
+@@ -2331,7 +2331,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_DIGIT(PyObject **operand1, long o
+         goto exit_result_ok_clong;
+     }
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         digit const *b_digits = (digit *)&operand2;
+         Py_ssize_t b_digit_count = (operand2 == 0 ? 0 : 1);
+ 
+@@ -2466,7 +2466,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_CLONG(PyObject **operand1, long o
+     if (Nuitka_LongGetDigitSize(operand1_long_object) <= 1 && operand2_digit_count <= 1) {
+         long r = (long)(MEDIUM_VALUE(operand1_long_object) - (sdigit)operand2);
+ 
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             Nuitka_LongUpdateFromCLong(&*operand1, r);
+             goto exit_result_ok;
+         } else {
+@@ -2479,7 +2479,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_CLONG(PyObject **operand1, long o
+         goto exit_result_ok_clong;
+     }
+ 
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         digit const *b_digits = operand2_digits;
+         Py_ssize_t b_digit_count = operand2_digit_count;
+ 
+@@ -2594,7 +2594,7 @@ static inline bool _INPLACE_OPERATION_SUB_FLOAT_CFLOAT(PyObject **operand1, doub
+     goto exit_result_ok_cfloat;
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+diff --git a/nuitka/build/static_src/HelpersOperationInplaceTruediv.c b/nuitka/build/static_src/HelpersOperationInplaceTruediv.c
+index dae4a9f..d2ff3e9 100644
+--- a/nuitka/build/static_src/HelpersOperationInplaceTruediv.c
++++ b/nuitka/build/static_src/HelpersOperationInplaceTruediv.c
+@@ -1215,7 +1215,7 @@ static inline bool _INPLACE_OPERATION_TRUEDIV_FLOAT_FLOAT(PyObject **operand1, P
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+@@ -1444,7 +1444,7 @@ static inline bool _INPLACE_OPERATION_TRUEDIV_OBJECT_FLOAT(PyObject **operand1,
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -1677,7 +1677,7 @@ static inline bool _INPLACE_OPERATION_TRUEDIV_FLOAT_OBJECT(PyObject **operand1,
+         }
+ 
+     exit_result_ok_cfloat:
+-        if (Py_REFCNT(*operand1) == 1) {
++        if (Nuitka_IsUniquelyReferenced(*operand1)) {
+             PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+         } else {
+             // We got an object handed, that we have to release.
+@@ -2272,7 +2272,7 @@ static inline bool _INPLACE_OPERATION_TRUEDIV_FLOAT_CFLOAT(PyObject **operand1,
+     }
+ 
+ exit_result_ok_cfloat:
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         PyFloat_SET_DOUBLE(*operand1, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+diff --git a/nuitka/build/static_src/HelpersStrings.c b/nuitka/build/static_src/HelpersStrings.c
+index 8400c8f..7c8a7d2 100644
+--- a/nuitka/build/static_src/HelpersStrings.c
++++ b/nuitka/build/static_src/HelpersStrings.c
+@@ -227,7 +227,7 @@ static void _NuitkaUnicode_FastCopyCharacters(PyObject *to, Py_ssize_t to_start,
+ }
+ 
+ static int _NuitkaUnicode_modifiable(PyObject *unicode) {
+-    if (Py_REFCNT(unicode) != 1)
++    if (!Nuitka_IsUniquelyReferenced(unicode))
+         return 0;
+     if (_PyUnicode_HASH(unicode) != -1)
+         return 0;
+diff --git a/nuitka/build/static_src/HelpersTypes.c b/nuitka/build/static_src/HelpersTypes.c
+index 8f7a9a1..c91bedf 100644
+--- a/nuitka/build/static_src/HelpersTypes.c
++++ b/nuitka/build/static_src/HelpersTypes.c
+@@ -58,7 +58,7 @@ static PyObject *lookupSpecialNoError(PyObject *source, PyObject *attr_name) {
+         }
+     }
+ 
+-    PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++    PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+ 
+     if (descr == NULL) {
+         return NULL;
+@@ -67,10 +67,11 @@ static PyObject *lookupSpecialNoError(PyObject *source, PyObject *attr_name) {
+     descrgetfunc func = Py_TYPE(descr)->tp_descr_get;
+ 
+     if (func == NULL) {
+-        Py_INCREF(descr);
+         return descr;
+     } else {
+-        return func(descr, source, (PyObject *)type);
++        PyObject *result = func(descr, source, (PyObject *)type);
++        Py_DECREF(descr);
++        return result;
+     }
+ }
+ #endif
+@@ -782,15 +783,15 @@ int Nuitka_Object_IsSubclass(PyThreadState *tstate, PyObject *derived, PyObject
+     }
+ 
+     // TODO: For many of our uses, we know it.
+-    PyObject *checker = Nuitka_TypeLookup((PyTypeObject *)cls, const_str_plain___subclasscheck__);
++    PyObject *checker = Nuitka_TypeLookupRef((PyTypeObject *)cls, const_str_plain___subclasscheck__);
+ 
+     if (checker != NULL) {
+         descrgetfunc f = Py_TYPE(checker)->tp_descr_get;
+ 
+-        if (f == NULL) {
+-            Py_INCREF(checker);
+-        } else {
+-            checker = f(checker, cls, (PyObject *)(Py_TYPE(cls)));
++        if (f != NULL) {
++            PyObject *bound = f(checker, cls, (PyObject *)(Py_TYPE(cls)));
++            Py_DECREF(checker);
++            checker = bound;
+         }
+     }
+ 
+diff --git a/nuitka/code_generation/FrameCodes.py b/nuitka/code_generation/FrameCodes.py
+index 425b526..82a2354 100644
+--- a/nuitka/code_generation/FrameCodes.py
++++ b/nuitka/code_generation/FrameCodes.py
+@@ -8,7 +8,7 @@ of frames for different uses.
+ """
+ 
+ from nuitka.options.Options import isExperimental
+-from nuitka.PythonVersions import python_version
++from nuitka.PythonVersions import isPythonWithGil, python_version
+ from nuitka.utils.Jinja2 import renderTemplateFromString
+ 
+ from .CodeHelpers import _generateStatementSequenceCode
+@@ -245,13 +245,19 @@ def getFrameGuardHeavyCode(
+     no_exception_exit = context.allocateLabel("frame_no_exception")
+ 
+     frame_identifier = context.getFrameHandle()
+-    if frame_node.getGuardMode() == "full":
++    # A cached frame is reused by whichever call finds it unused, which
++    # without the GIL two threads can do at once: frames are made per call.
++    if frame_node.getGuardMode() == "full" and isPythonWithGil():
+         frame_cache_identifier = context.variable_storage.addFrameCacheDeclaration(
+             frame_identifier.code_name
+         )
+     else:
+         frame_cache_identifier = None
+ 
++    # A module frame is made once and kept; any other one made per call is
++    # released as it is left.
++    release_frame = frame_cache_identifier is None and frame_node.getGuardMode() == "full"
++
+     frame_init_code = ""
+     frame_exit_code = ""
+ 
+@@ -389,6 +395,7 @@ Nuitka_Frame_ClearLocals(%(frame_identifier)s);
+             frame_exit_code=frame_exit_code,
+             context_identifier=context_identifier,
+             is_python3=python_version >= 0x300,
++            release_frame=release_frame,
+         )
+     )
+ 
+@@ -401,6 +408,7 @@ Nuitka_Frame_ClearLocals(%(frame_identifier)s);
+                 frame_return_exit=frame_return_exit,
+                 needs_preserve=needs_preserve,
+                 frame_exit_code=frame_exit_code,
++                release_frame=release_frame,
+             )
+         )
+ 
+@@ -424,6 +432,7 @@ Nuitka_Frame_ClearLocals(%(frame_identifier)s);
+                 needs_preserve=needs_preserve,
+                 exception_state_name=exception_state_name,
+                 exception_lineno=exception_lineno,
++                release_frame=release_frame,
+             )
+         )
+ 
+@@ -453,8 +462,10 @@ def getFrameGuardGeneratorCode(
+     no_exception_exit = context.allocateLabel("frame_no_exception")
+ 
+     frame_identifier = context.getFrameHandle()
+-    frame_cache_identifier = context.variable_storage.addFrameCacheDeclaration(
+-        frame_identifier.code_name
++    frame_cache_identifier = (
++        context.variable_storage.addFrameCacheDeclaration(frame_identifier.code_name)
++        if isPythonWithGil()
++        else None
+     )
+ 
+     # TODO: Wire the FrameLocalsProxy to generator/coroutine/asyncgen frames by
+diff --git a/nuitka/code_generation/GlobalsLocalsCodes.py b/nuitka/code_generation/GlobalsLocalsCodes.py
+index b6fd857..6927c67 100644
+--- a/nuitka/code_generation/GlobalsLocalsCodes.py
++++ b/nuitka/code_generation/GlobalsLocalsCodes.py
+@@ -121,14 +121,16 @@ def _getVariableDictUpdateCode(
+ 
+     access_code = SourceCodeCollector()
+ 
++    value_name = VariableDeclaration(
++        c_type="PyObject *",
++        code_name="value",
++        init_value=None,
++        heap_name=None,
++        struct_name=None,
++    )
++
+     getNonModuleVariableReferenceCode(
+-        to_name=VariableDeclaration(
+-            c_type="PyObject *",
+-            code_name="value",
+-            init_value=None,
+-            heap_name=None,
+-            struct_name=None,
+-        ),
++        to_name=value_name,
+         variable=variable,
+         variable_trace=variable_trace,
+         needs_check=False,
+@@ -137,6 +139,14 @@ def _getVariableDictUpdateCode(
+         context=context,
+     )
+ 
++    # A closure variable is read with a reference without the GIL, which is
++    # released once stored.
++    if context.needsCleanup(value_name):
++        context.removeCleanupTempName(value_name)
++        release_code = "    Py_DECREF(value);\n"
++    else:
++        release_code = ""
++
+     if is_dict:
+         if initial:
+             template = template_set_locals_dict_value
+@@ -150,6 +160,7 @@ def _getVariableDictUpdateCode(
+                 "var_name": context.getConstantCode(constant=variable.getName()),
+                 "test_code": test_code,
+                 "access_code": indented(access_code),
++                "release_code": release_code,
+             }
+         )
+     else:
+@@ -168,6 +179,7 @@ def _getVariableDictUpdateCode(
+                 "test_code": test_code,
+                 "access_code": access_code,
+                 "tmp_name": res_name,
++                "release_code": release_code,
+             }
+         )
+ 
+diff --git a/nuitka/code_generation/LocalsDictCodes.py b/nuitka/code_generation/LocalsDictCodes.py
+index 470642b..e977493 100644
+--- a/nuitka/code_generation/LocalsDictCodes.py
++++ b/nuitka/code_generation/LocalsDictCodes.py
+@@ -235,8 +235,9 @@ def generateLocalsDictVariableRefOrFallbackCode(to_name, expression, emit, conte
+                 }
+             )
+ 
+-            if needs_ref:
+-                context.addCleanupTempName(value_name)
++            # With a fallback that took a reference, e.g. a module variable
++            # read without the GIL, the value is released already, and the
++            # dictionary read takes one too.
+         else:
+             if needs_ref:
+                 template = template_read_locals_mapping_with_fallback_ref
+diff --git a/nuitka/code_generation/ModuleCodes.py b/nuitka/code_generation/ModuleCodes.py
+index aae2721..3ccb048 100644
+--- a/nuitka/code_generation/ModuleCodes.py
++++ b/nuitka/code_generation/ModuleCodes.py
+@@ -12,7 +12,7 @@ from nuitka.options.Options import (
+     shallMakeModule,
+     shallUseDirectConstantBlobs,
+ )
+-from nuitka.PythonVersions import python_version
++from nuitka.PythonVersions import isPythonWithGil, python_version
+ from nuitka.Version import getNuitkaVersion, getNuitkaVersionYear
+ 
+ from .CodeHelpers import (
+@@ -33,6 +33,7 @@ from .templates.CodeTemplatesModules import (
+ )
+ from .templates.CodeTemplatesVariables import (
+     template_module_variable_accessor_function,
++    template_module_variable_accessor_function_ref,
+ )
+ from .VariableCodes import (
+     getModuleVariableAccessorCodeName,
+@@ -180,7 +181,11 @@ def getModuleCode(
+         context.getModuleVariableAccessors().items()
+     ):
+         module_variable_accessor_codes.append(
+-            template_module_variable_accessor_function
++            (
++                template_module_variable_accessor_function
++                if isPythonWithGil()
++                else template_module_variable_accessor_function_ref
++            )
+             % {
+                 "accessor_function_name": getModuleVariableAccessorCodeName(
+                     module_identifier, module_variable_name
+diff --git a/nuitka/code_generation/OperationCodes.py b/nuitka/code_generation/OperationCodes.py
+index 6397978..b5e646c 100644
+--- a/nuitka/code_generation/OperationCodes.py
++++ b/nuitka/code_generation/OperationCodes.py
+@@ -9,6 +9,7 @@ in-place assignments, which have other operation variants.
+ """
+ 
+ from nuitka.nodes.shapes.StandardShapes import tshape_unknown
++from nuitka.PythonVersions import isPythonWithGil
+ 
+ from .BinaryOperationHelperDefinitions import (
+     getCodeNameForBinaryOperation,
+@@ -228,8 +229,13 @@ def _getBinaryOperationCode(
+ 
+         res_name = context.getBoolResName()
+ 
+-        # For module variable C type to reference later.
+-        if left.isExpressionVariableRef() and left.getVariable().isModuleVariable():
++        # For module variable C type to reference later, which only the
++        # in-place store with the GIL does.
++        if (
++            left.isExpressionVariableRef()
++            and left.getVariable().isModuleVariable()
++            and isPythonWithGil()
++        ):
+             emit("%s = %s;" % (context.getInplaceLeftName(), left_name))
+ 
+         if not left.isExpressionVariableRefOrTempVariableRef():
+@@ -238,9 +244,19 @@ def _getBinaryOperationCode(
+ 
+         emit("%s = %s(&%s, %s);" % (res_name, helper_function, left_name, right_name))
+ 
++        # A module variable read with a reference of its own, without the GIL,
++        # now holds the result: released only if the operation failed, which
++        # the error exit does for every name still to clean up.
++        left_holds_result = (
++            left.isExpressionVariableRefOrTempVariableRef()
++            and context.needsCleanup(left_name)
++        )
++
+         getErrorExitBoolCode(
+             condition="%s == false" % res_name,
+-            release_names=(left_name, right_name),
++            release_names=(
++                (right_name,) if left_holds_result else (left_name, right_name)
++            ),
+             needs_check=needs_check,
+             emit=emit,
+             context=context,
+@@ -250,6 +266,10 @@ def _getBinaryOperationCode(
+ 
+         if not left.isExpressionVariableRefOrTempVariableRef():
+             context.addCleanupTempName(to_name)
++        elif left_holds_result:
++            # The operation replaced our reference with its result.
++            context.removeCleanupTempName(left_name)
++            context.addCleanupTempName(to_name)
+     else:
+         if needs_argument_swap:
+             arg1_name = right_name
+diff --git a/nuitka/code_generation/VariableCodes.py b/nuitka/code_generation/VariableCodes.py
+index 7b43896..b8d29f7 100644
+--- a/nuitka/code_generation/VariableCodes.py
++++ b/nuitka/code_generation/VariableCodes.py
+@@ -7,7 +7,7 @@ from nuitka.nodes.shapes.BuiltinTypeShapes import (
+     tshape_bool,
+     tshape_int_or_long,
+ )
+-from nuitka.PythonVersions import python_version
++from nuitka.PythonVersions import isPythonWithGil, python_version
+ from nuitka.utils.CStrings import encodePythonIdentifierToC
+ 
+ from .c_types.CTypeNuitkaBooleans import CTypeNuitkaBoolEnum
+@@ -153,6 +153,42 @@ if (unlikely(%(value_name)s == NULL)) {
+             needs_check=needs_check,
+         )
+ 
++        # Without the GIL the accessor returns a reference of our own.
++        if not isPythonWithGil():
++            context.addCleanupTempName(value_name)
++
++
++def _getCellVariableReferenceCode(
++    to_name,
++    variable,
++    variable_declaration,
++    needs_check,
++    conversion_check,
++    emit,
++    context,
++):
++    # Without the GIL, another thread sharing the cell may replace its value
++    # and release it at any time: it is read with a reference of our own.
++    with withObjectCodeTemporaryAssignment2(
++        to_name, "cell_value", conversion_check, emit, context
++    ) as value_name:
++        emit(
++            "%s = Nuitka_CellOrPyCell_GET_REF((PyObject *)%s);"
++            % (value_name, variable_declaration)
++        )
++
++        if needs_check:
++            getLocalVariableReferenceErrorCode(
++                variable=variable,
++                condition="%s == NULL" % value_name,
++                emit=emit,
++                context=context,
++            )
++        else:
++            getAssertionCode(check="%s != NULL" % value_name, emit=emit)
++
++        context.addCleanupTempName(value_name)
++
+ 
+ def getNonModuleVariableReferenceCode(
+     to_name, variable, variable_trace, needs_check, conversion_check, emit, context
+@@ -164,6 +200,20 @@ def getNonModuleVariableReferenceCode(
+             context, variable, variable_trace
+         )
+ 
++        if not isPythonWithGil() and issubclass(
++            variable_declaration.getCType(), CTypeCellObject
++        ):
++            _getCellVariableReferenceCode(
++                to_name=to_name,
++                variable=variable,
++                variable_declaration=variable_declaration,
++                needs_check=needs_check,
++                conversion_check=conversion_check,
++                emit=emit,
++                context=context,
++            )
++            return
++
+         value_name = variable_declaration.getCType().emitValueAccessCode(
+             value_name=variable_declaration, emit=emit, context=context
+         )
+@@ -221,6 +271,11 @@ def generateVariableReferenceCode(to_name, expression, emit, context):
+             else:
+                 use_caching = True
+ 
++        # A cached lookup pairs a value with the dict version it was read at,
++        # which without the GIL another thread can update between the two.
++        if not isPythonWithGil():
++            use_caching = False
++
+         getModuleVariableReferenceCode(
+             to_name=to_name,
+             variable_name=variable_name,
+diff --git a/nuitka/code_generation/c_types/CTypeBooleans.py b/nuitka/code_generation/c_types/CTypeBooleans.py
+index 1b7960b..9554248 100644
+--- a/nuitka/code_generation/c_types/CTypeBooleans.py
++++ b/nuitka/code_generation/c_types/CTypeBooleans.py
+@@ -3,6 +3,8 @@
+ 
+ """CType classes for C bool, this cannot represent unassigned, nor indicate exception."""
+ 
++from nuitka.code_generation.ErrorCodes import getReleaseCode
++
+ from .CTypeBases import CTypeBase, CTypeNotReferenceCountedMixin
+ 
+ 
+@@ -35,6 +37,10 @@ class CTypeBool(CTypeNotReferenceCountedMixin, CTypeBase):
+                 )
+             )
+ 
++            # A value held with a reference, e.g. a closure variable read
++            # without the GIL, is done with once tested.
++            getReleaseCode(value_name, emit, context)
++
+     @classmethod
+     def emitAssignmentCodeFromConstant(
+         cls, to_name, constant, may_escape, emit, context
+diff --git a/nuitka/code_generation/c_types/CTypeModuleDictVariables.py b/nuitka/code_generation/c_types/CTypeModuleDictVariables.py
+index 5f64c32..3219d06 100644
+--- a/nuitka/code_generation/c_types/CTypeModuleDictVariables.py
++++ b/nuitka/code_generation/c_types/CTypeModuleDictVariables.py
+@@ -14,6 +14,7 @@ from nuitka.code_generation.templates.CodeTemplatesVariables import (
+     template_del_global_unclear,
+     template_read_mvar_unclear,
+ )
++from nuitka.PythonVersions import isPythonWithGil
+ 
+ from .CTypeBases import CTypeBase
+ 
+@@ -23,7 +24,10 @@ class CTypeModuleDictVariable(CTypeBase):
+     def emitVariableAssignCode(
+         cls, value_name, needs_release, tmp_name, ref_count, inplace, emit, context
+     ):
+-        if inplace:
++        # The in-place store hands the dictionary back the reference it lent
++        # the operation. Without the GIL nothing is lent: the operation took a
++        # reference of our own, and its result is stored like any other value.
++        if inplace and isPythonWithGil():
+             orig_name = context.getInplaceLeftName()
+ 
+             emit(
+@@ -57,6 +61,10 @@ if (%(orig_name)s != %(tmp_name)s) {
+ 
+     @classmethod
+     def emitValueAccessCode(cls, value_name, emit, context):
++        # A borrowed read, only safe with the GIL; module variables are read
++        # through their accessor, see "getModuleVariableReferenceCode".
++        assert isPythonWithGil(), value_name
++
+         tmp_name = context.allocateTempName("mvar_value")
+ 
+         emit(
+diff --git a/nuitka/code_generation/c_types/CTypePyObjectPointers.py b/nuitka/code_generation/c_types/CTypePyObjectPointers.py
+index 49ce776..ceb0783 100644
+--- a/nuitka/code_generation/c_types/CTypePyObjectPointers.py
++++ b/nuitka/code_generation/c_types/CTypePyObjectPointers.py
+@@ -37,6 +37,7 @@ from nuitka.code_generation.templates.CodeTemplatesVariables import (
+     template_write_shared_unclear_ref1,
+ )
+ from nuitka.Constants import getConstantValueGuide, isMutable
++from nuitka.PythonVersions import isPythonWithGil
+ 
+ from .CTypeBases import CTypeBase
+ 
+@@ -491,7 +492,9 @@ class CTypeCellObject(CTypeBase):
+     def emitVariableAssignCode(
+         cls, value_name, needs_release, tmp_name, ref_count, inplace, emit, context
+     ):
+-        if inplace:
++        # Without the GIL the in-place operation took a reference of our
++        # own, and its result is stored like any other value.
++        if inplace and isPythonWithGil():
+             # Releasing is not an issue here, local variable reference never
+             # gave a reference, and the in-place code deals with possible
+             # replacement/release.
+@@ -539,7 +542,7 @@ class CTypeCellObject(CTypeBase):
+     @classmethod
+     def emitAssignmentCodeFromBoolCondition(cls, to_name, condition, emit):
+         emit(
+-            "%(to_name)s->ob_ref = (%(condition)s) ? Py_True : Py_False;"
++            "Nuitka_Cell_SET(%(to_name)s, (%(condition)s) ? Py_True : Py_False);"
+             % {"to_name": to_name, "condition": condition}
+         )
+ 
+@@ -616,7 +619,7 @@ class CTypePyCellObject(CTypeCellObject):
+     def emitVariableAssignCode(
+         cls, value_name, needs_release, tmp_name, ref_count, inplace, emit, context
+     ):
+-        if inplace:
++        if inplace and isPythonWithGil():
+             template = template_write_py_cell_inplace
+ 
+         else:
+diff --git a/nuitka/code_generation/templates/CodeTemplatesFrames.py b/nuitka/code_generation/templates/CodeTemplatesFrames.py
+index 2ee5db9..137d2dd 100644
+--- a/nuitka/code_generation/templates/CodeTemplatesFrames.py
++++ b/nuitka/code_generation/templates/CodeTemplatesFrames.py
+@@ -53,7 +53,11 @@ pushFrameStackGeneratorCompiledFrame(tstate, {{frame_identifier}});
+ {% else %}
+ pushFrameStackCompiledFrame(tstate, {{frame_identifier}});
+ {% endif %}
++{% if context_identifier and not frame_cache_identifier %}
++assert(Py_REFCNT({{frame_identifier}}) == 1); // The generator's only
++{% else %}
+ assert(Py_REFCNT({{frame_identifier}}) == 2);
++{% endif %}
+ 
+ {% if context_identifier and is_python3 %}
+ // Store currently existing exception as the one to publish again when we
+@@ -80,6 +84,9 @@ RESTORE_FRAME_EXCEPTION(tstate, {{frame_identifier}});
+ {% endif %}
+ // Put the previous frame back on top.
+ popFrameStack(tstate);
++{% if release_frame %}
++Py_DECREF({{frame_identifier}});
++{% endif %}
+ {% endif %}
+ 
+ goto {{no_exception_exit}};
+@@ -96,6 +103,9 @@ RESTORE_FRAME_EXCEPTION(tstate, {{frame_identifier}});
+ {% endif %}
+ // Put the previous frame back on top.
+ popFrameStack(tstate);
++{% if release_frame %}
++Py_DECREF({{frame_identifier}});
++{% endif %}
+ 
+ goto {{return_exit}};
+ """
+@@ -145,6 +155,10 @@ assertFrameObject({{frame_identifier}});
+ 
+ // Put the previous frame back on top.
+ popFrameStack(tstate);
++{% if release_frame %}
++// A traceback holds its own reference, if one was made.
++Py_DECREF({{frame_identifier}});
++{% endif %}
+ 
+ // Return the error.
+ goto {{parent_exception_exit}};
+@@ -184,6 +198,7 @@ if (!EXCEPTION_STATE_MATCH_GENERATOR(tstate, &{{exception_state_name}})) {
+ 
+ {{attach_locals}}
+ 
++{% if frame_cache_identifier %}
+     // Release cached frame if used for exception.
+     if ({{frame_identifier}} == {{frame_cache_identifier}}) {
+ #if _DEBUG_REFCOUNTS
+@@ -194,6 +209,7 @@ if (!EXCEPTION_STATE_MATCH_GENERATOR(tstate, &{{exception_state_name}})) {
+         Py_DECREF({{frame_cache_identifier}});
+         {{frame_cache_identifier}} = NULL;
+     }
++{% endif %}
+ 
+     assertFrameObject({{frame_identifier}});
+ }
+diff --git a/nuitka/code_generation/templates/CodeTemplatesVariables.py b/nuitka/code_generation/templates/CodeTemplatesVariables.py
+index f5c05aa..389b2fd 100644
+--- a/nuitka/code_generation/templates/CodeTemplatesVariables.py
++++ b/nuitka/code_generation/templates/CodeTemplatesVariables.py
+@@ -59,17 +59,15 @@ template_write_local_clear_ref1 = """\
+ 
+ template_write_shared_unclear_ref0 = """\
+ {
+-    PyObject *old = Nuitka_Cell_GET(%(identifier)s);
+-    Nuitka_Cell_SET(%(identifier)s, %(tmp_name)s);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, %(tmp_name)s);
+     Py_XDECREF(old);
+ }
+ """
+ 
+ template_write_shared_unclear_ref1 = """\
+ {
+-    PyObject *old = Nuitka_Cell_GET(%(identifier)s);
+-    Nuitka_Cell_SET(%(identifier)s, %(tmp_name)s);
+     Py_INCREF(%(tmp_name)s);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, %(tmp_name)s);
+     Py_XDECREF(old);
+ }
+ """
+@@ -93,8 +91,7 @@ Py_XDECREF(%(identifier)s);
+ 
+ template_del_shared_tolerant = """\
+ {
+-    PyObject *old = Nuitka_Cell_GET(%(identifier)s);
+-    Nuitka_Cell_SET(%(identifier)s, NULL);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, NULL);
+     Py_XDECREF(old);
+ }
+ """
+@@ -109,8 +106,7 @@ if (likely(%(result)s)) {
+ 
+ template_del_shared_intolerant = """\
+ {
+-    PyObject *old = Nuitka_Cell_GET(%(identifier)s);
+-    Nuitka_Cell_SET(%(identifier)s, NULL);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, NULL);
+     Py_XDECREF(old);
+ 
+     %(result)s = old != NULL;
+@@ -125,8 +121,7 @@ Py_DECREF(%(identifier)s);
+ 
+ template_del_shared_known = """\
+ {
+-    PyObject *old = Nuitka_Cell_GET(%(identifier)s);
+-    Nuitka_Cell_SET(%(identifier)s, NULL);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, NULL);
+ 
+     CHECK_OBJECT(old);
+     Py_DECREF(old);
+@@ -219,7 +214,7 @@ if (%(test_code)s) {
+ %(access_code)s
+ 
+     UPDATE_STRING_DICT0((PyDictObject *)%(dict_name)s, (Nuitka_StringObject *)%(var_name)s, value);
+-} else {
++%(release_code)s} else {
+     if (DICT_REMOVE_ITEM(%(dict_name)s, %(var_name)s) == false) {
+         CLEAR_ERROR_OCCURRED(tstate);
+     }
+@@ -236,7 +231,7 @@ if (%(test_code)s) {
+         %(var_name)s,
+         value
+     );
+-
++%(release_code)s
+     assert(res == true);
+ }
+ """
+@@ -252,7 +247,7 @@ if (%(test_code)s) {
+         %(var_name)s,
+         value
+     );
+-} else {
++%(release_code)s} else {
+     PyObject *test_value = LOOKUP_SUBSCRIPT(
+         tstate,
+         %(mapping_name)s,
+@@ -284,7 +279,7 @@ if (%(test_code)s) {
+         %(var_name)s,
+         value
+     );
+-} else {
++%(release_code)s} else {
+     %(tmp_name)s = true;
+ }
+ """
+@@ -365,39 +360,50 @@ static PyObject *%(accessor_function_name)s(PyThreadState *tstate) {
+ }
+ """
+ 
++# Without the GIL, a value read out of the module dictionary may be replaced
++# and released by another thread at any moment, so it is returned with a
++# reference taken the way CPython reads globals, and released by the caller.
++template_module_variable_accessor_function_ref = """\
++static PyObject *%(accessor_function_name)s(PyThreadState *tstate) {
++    PyObject *result;
++
++    if (PyDict_GetItemRef((PyObject *)moduledict_%(module_identifier)s, %(var_name)s, &result) == 0) {
++        PyDict_GetItemRef((PyObject *)dict_builtin, %(var_name)s, &result);
++    }
++
++    return result;
++}
++"""
++
+ template_write_py_cell_inplace = """\
+ PyCell_SET((PyObject *)%(identifier)s, %(tmp_name)s);
+ """
+ 
+ template_write_py_cell_unclear_ref0 = """\
+ {
+-    PyObject *old = PyCell_GET((PyObject *)%(identifier)s);
+-    PyCell_SET((PyObject *)%(identifier)s, %(tmp_name)s);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, %(tmp_name)s);
+     Py_XDECREF(old);
+ }
+ """
+ 
+ template_write_py_cell_unclear_ref1 = """\
+ {
+-    PyObject *old = PyCell_GET((PyObject *)%(identifier)s);
+-    PyCell_SET((PyObject *)%(identifier)s, %(tmp_name)s);
+     Py_INCREF(%(tmp_name)s);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, %(tmp_name)s);
+     Py_XDECREF(old);
+ }
+ """
+ 
+ template_del_py_cell_tolerant = """\
+ {
+-    PyObject *old = PyCell_GET((PyObject *)%(identifier)s);
+-    PyCell_SET((PyObject *)%(identifier)s, NULL);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, NULL);
+     Py_XDECREF(old);
+ }
+ """
+ 
+ template_del_py_cell_intolerant = """\
+ {
+-    PyObject *old = PyCell_GET((PyObject *)%(identifier)s);
+-    PyCell_SET((PyObject *)%(identifier)s, NULL);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, NULL);
+     Py_XDECREF(old);
+ 
+     %(result)s = old != NULL;
+@@ -406,8 +412,7 @@ template_del_py_cell_intolerant = """\
+ 
+ template_del_py_cell_known = """\
+ {
+-    PyObject *old = PyCell_GET((PyObject *)%(identifier)s);
+-    PyCell_SET((PyObject *)%(identifier)s, NULL);
++    PyObject *old = Nuitka_CellOrPyCell_EXCHANGE((PyObject *)%(identifier)s, NULL);
+ 
+     CHECK_OBJECT(old);
+     Py_DECREF(old);
+diff --git a/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2 b/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
+index 330bbdb..4032504 100644
+--- a/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
++++ b/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
+@@ -33,12 +33,10 @@ PyObject *CALL_METHOD_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject *s
+             }
+         }
+ 
+-        PyObject *descr = Nuitka_TypeLookup(type, attr_name);
++        PyObject *descr = Nuitka_TypeLookupRef(type, attr_name);
+         descrgetfunc func = NULL;
+ 
+         if (descr != NULL) {
+-            Py_INCREF(descr);
+-
+             if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
+                 func = Py_TYPE(descr)->tp_descr_get;
+ 
+diff --git a/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2 b/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2
+index bdc6cd4..2f5e51e 100644
+--- a/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2
++++ b/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2
+@@ -443,13 +443,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+                         pos_args = NULL;
+ {% endif %}
+ 
+-                        PyObject *init_method = Nuitka_TypeLookup(type, const_str_plain___init__);
++                        PyObject *init_method = Nuitka_TypeLookupRef(type, const_str_plain___init__);
+ 
+                         // Not really allowed, since we wouldn't have the default wrapper set.
+                         assert(init_method != NULL);
+ 
+                         bool is_compiled_function = false;
+-                        bool init_method_needs_release = false;
+ 
+                         if (likely(init_method != NULL)) {
+                             descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
+@@ -457,8 +456,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+                             if (func == Nuitka_Function_Type.tp_descr_get) {
+                                 is_compiled_function = true;
+                             } else if (func != NULL) {
+-                                init_method = func(init_method, obj, (PyObject *)(type));
+-                                init_method_needs_release = true;
++                                PyObject *bound = func(init_method, obj, (PyObject *)(type));
++                                Py_DECREF(init_method);
++                                init_method = bound;
+                             }
+                         }
+ 
+@@ -476,21 +476,19 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+                             result = Nuitka_CallMethodFunctionNoArgs(tstate, (struct Nuitka_FunctionObject const *)init_method, obj);
+                         } else {
+                             result = CALL_FUNCTION_NO_ARGS(tstate, init_method);
+-
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
++
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
+ {% elif args_count == 1 %}
+                         if (is_compiled_function) {
+                             result = Nuitka_CallMethodFunctionPosArgs(tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 1);
+                         } else {
+                             result = CALL_FUNCTION_WITH_SINGLE_ARG(tstate, init_method, args[0]);
+-
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
++
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
+ {% else %}
+                         if (is_compiled_function) {
+                             result = Nuitka_CallMethodFunctionPosArgs(tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, {{args_count}});
+@@ -500,10 +498,10 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+ {% else %}
+                             result = CALL_FUNCTION_WITH_ARGS{{args_count}}(tstate, init_method, args);
+ {% endif %}
+-                            if (init_method_needs_release) {
+-                                Py_DECREF(init_method);
+-                            }
+                         }
++
++                        // Looked up with a reference, and bound if not compiled.
++                        Py_DECREF(init_method);
+ {% endif %}
+ 
+ 
+diff --git a/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2 b/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
+index da83060..0a109c5 100644
+--- a/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
++++ b/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
+@@ -7,6 +7,23 @@ static {{ target.getTypeDecl() }} COMPARE_{{op_code}}_{{target.getHelperCodeName
+     {# TODO: Unify with tuple, seems the iteration part is only difference #}
+     PyListObject *a = (PyListObject *)operand1;
+     PyListObject *b = (PyListObject *)operand2;
++#ifdef Py_GIL_DISABLED
++    // Without the GIL another thread may change either list while its
++    // items are compared: CPython's comparison holds both.
++    {
++        PyObject *r = PyList_Type.tp_richcompare(operand1, operand2, Py_{{op_code}});
++{% if target.getHelperCodeName() == "OBJECT" %}
++        return r;
++{% else %}
++        if (unlikely(r == NULL)) {
++            return NUITKA_BOOL_EXCEPTION;
++        }
++        int truth = CHECK_IF_TRUE(r);
++        Py_DECREF(r);
++        return truth == -1 ? NUITKA_BOOL_EXCEPTION : (truth ? NUITKA_BOOL_TRUE : NUITKA_BOOL_FALSE);
++{% endif %}
++    }
++#endif
+ 
+ {# Shortcut for equality, driven by length check. #}
+ {% if operator in ("==", "!=") %}
+diff --git a/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2 b/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
+index bd5e318..daf020d 100644
+--- a/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
++++ b/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
+@@ -100,7 +100,7 @@ static inline bool _INPLACE_OPERATION_{{op_code}}_{{left.getHelperCodeName()}}_{
+ {% endif %}
+ 
+ {% if operator == "+" and (left.mayBothHaveType(right, "str") or left.mayBothHaveType(right, "unicode") or left.hasOneOrBothType(right, "bytes")) %}
+-    if (Py_REFCNT(*operand1) == 1) {
++    if (Nuitka_IsUniquelyReferenced(*operand1)) {
+         // We more or less own the operand, so we might reuse its storage and
+         // execute stuff in-place.
+ {% if operator == "+" and left.mayBothHaveType(right, "str") %}
+diff --git a/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2 b/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
+index 989414f..1cdf79e 100644
+--- a/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
++++ b/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
+@@ -247,7 +247,7 @@ exit_result_ok_cfloat:
+     {{ target.getAssignFromFloatExpressionCode(result, "cfloat_result") }}
+ {% else %}
+     {# TODO: Check the reference we were handed down. #}
+-    if (Py_REFCNT({{ operand1 }}) == 1) {
++    if (Nuitka_IsUniquelyReferenced({{ operand1 }})) {
+         PyFloat_SET_DOUBLE({{ operand1 }}, cfloat_result);
+     } else {
+         // We got an object handed, that we have to release.
+diff --git a/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2 b/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2
+index d780a1f..8be61c3 100644
+--- a/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2
++++ b/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2
+@@ -23,7 +23,7 @@
+         long r = (long)({{ left.getLongValueMediumValueExpression("operand1") }} + {{ right.getLongValueMediumValueExpression("operand2") }});
+ 
+ {% if target == None and left.hasReferenceCounting() %}
+-        if (Py_REFCNT({{operand1}}) == 1) {
++        if (Nuitka_IsUniquelyReferenced({{operand1}})) {
+             Nuitka_LongUpdateFromCLong(&{{operand1}}, (long)r);
+             {{ goto_exit(props, "exit_result_ok") }}
+         } else {
+@@ -36,7 +36,7 @@
+     }
+ 
+ {% if target == None and left.hasReferenceCounting() %}
+-    if (Py_REFCNT({{operand1}}) == 1) {
++    if (Nuitka_IsUniquelyReferenced({{operand1}})) {
+         digit const *b_digits = {{ right.getLongValueDigitsPointerExpression("operand2") }};
+         Py_ssize_t b_digit_count = {{ right.getLongValueDigitCountExpression("operand2") }};
+ 
+@@ -100,7 +100,7 @@
+         long r = (long)({{ left.getLongValueMediumValueExpression("operand1") }} - {{ right.getLongValueMediumValueExpression("operand2") }});
+ 
+ {% if target == None and left.hasReferenceCounting() %}
+-        if (Py_REFCNT({{operand1}}) == 1) {
++        if (Nuitka_IsUniquelyReferenced({{operand1}})) {
+             Nuitka_LongUpdateFromCLong(&{{operand1}}, r);
+             {{ goto_exit(props, "exit_result_ok") }}
+         } else {
+@@ -113,7 +113,7 @@
+     }
+ 
+ {% if target == None %}
+-    if (Py_REFCNT({{operand1}}) == 1) {
++    if (Nuitka_IsUniquelyReferenced({{operand1}})) {
+         digit const *b_digits = {{ right.getLongValueDigitsPointerExpression("operand2") }};
+         Py_ssize_t b_digit_count = {{ right.getLongValueDigitCountExpression("operand2") }};
+ 
