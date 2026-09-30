@@ -105,18 +105,40 @@ def script_text(target_ref: str, executable: str | None) -> str:
     )
 
 
-def write_windows_script(path: str, script: str, *, gui: bool) -> None:
-    """Create a distlib-compatible Windows launcher without importing distlib."""
+def windows_machine() -> str:
+    """The machine Windows runs on, which a 32-bit Python is not told directly.
 
-    if sys.maxsize <= 2**32:
-        # Only the 64-bit launchers ship with kpip.
+    A 32-bit process on 64-bit Windows sees ``PROCESSOR_ARCHITECTURE`` as
+    ``x86``; Windows gives it the real machine in ``PROCESSOR_ARCHITEW6432``.
+    """
+    machine = os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get(
+        "PROCESSOR_ARCHITECTURE", ""
+    )
+
+    if not machine and sys.maxsize > 2**32:
+        return "AMD64"
+
+    return machine.upper()
+
+
+def write_windows_script(path: str, script: str, *, gui: bool) -> None:
+    """Create a distlib-compatible Windows launcher without importing distlib.
+
+    The launcher is chosen for the machine, not for the Python: it starts the
+    interpreter its script names as a process of its own, so a 64-bit launcher
+    starts a 32-bit Python as well. Only the 64-bit launchers ship with kpip,
+    so only 32-bit Windows itself is left out.
+    """
+
+    machine = windows_machine()
+
+    if machine not in {"AMD64", "ARM64"}:
         raise InstallationError(
-            "kpip installs console and GUI scripts only for 64-bit Python on Windows"
+            "kpip installs console and GUI scripts only on 64-bit Windows "
+            f"(this machine is {machine or 'unknown'})"
         )
 
-    machine = os.environ.get("PROCESSOR_ARCHITECTURE", "").lower()
-
-    suffix = "-arm" if "arm" in machine else ""
+    suffix = "-arm" if machine == "ARM64" else ""
 
     launcher_name = f"{'w' if gui else 't'}64{suffix}.exe"
 

@@ -75,6 +75,34 @@ jobs:
           -m "not network"
           -p no:randomly
 
+  windows-32-bit-python:
+    name: Scripts under 32-bit Python on Windows
+    # kpip ships only the 64-bit Windows launchers, and chooses one by the
+    # machine: a 64-bit launcher starts the interpreter its script names as a
+    # process of its own, so it serves a 32-bit Python as well. This installs
+    # a console script with a 32-bit Python and runs it.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          architecture: x86
+      - name: kpip in a 32-bit environment
+        run: |
+          python -m venv env32
+          env32\Scripts\python -c "import struct; assert struct.calcsize('P') == 4"
+          env32\Scripts\python -m pip install --quiet .
+      - name: A console script it installs starts the 32-bit Python
+        run: |
+          python .github/scripts/console_script_wheel.py probe
+          env32\Scripts\python -m kpip install --no-index --find-links probe console-script-probe
+          $output = & env32\Scripts\console-script-probe.exe
+          Write-Output $output
+          if (-not ($output -match "^32 ")) { throw "expected a 32-bit Python, got: $output" }
+
   compiled:
     name: Tests compiled / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
