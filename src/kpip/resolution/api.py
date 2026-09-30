@@ -87,6 +87,10 @@ class ResolutionEngine:
             )
         self.provider = provider
 
+        # Called with each release the solve decides on; see
+        # NabProvider.on_decided.
+        self.on_decided: Callable[[Any], None] | None = kwargs.pop("on_decided", None)
+
         if kwargs:
             unexpected = ", ".join(sorted(kwargs))
 
@@ -107,6 +111,7 @@ class ResolutionEngine:
             context=self.config,
             installed=installed,
         )
+        adapter.on_decided = self.on_decided
         roots = adapter.add_roots(requirements)
         resolver = Resolver(adapter, root_version=ZERO_VERSION)
         try:

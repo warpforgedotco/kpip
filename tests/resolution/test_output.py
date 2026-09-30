@@ -4,6 +4,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from kpip.core.packaging import parse_requirement
 from kpip.core.versions import Version
 from kpip.core.wheel import WheelCandidate
@@ -234,3 +236,91 @@ def test_installation_order_leaves_the_interpreter_out_when_ignored() -> None:
         "jupyter-core",
         "jupyter",
     ]
+
+
+def _prefetch_with(monkeypatch, fetch) -> tuple:
+    """A WheelPrefetch whose candidates are all remote wheels named by
+    ``url``, fetched by ``fetch``."""
+    from kpip.install import output
+
+    monkeypatch.setattr(
+        output, "_remote_wheel_url", lambda candidate: getattr(candidate, "url", None)
+    )
+    monkeypatch.setattr(output, "materialize_candidate", fetch)
+    prepared: list[str] = []
+
+    def prepare_archive(candidate, cache_dir):
+        prepared.append(candidate.url)
+        return f"archive:{candidate.url}"
+
+    return output.WheelPrefetch("cache", prepare_archive), prepared
+
+
+class _Wheel(SimpleNamespace):
+    def copy_with(self, **changes):
+        return _Wheel(**{**vars(self), **changes})
+
+
+def test_a_decided_wheel_is_fetched_once_before_the_install_prepares_it(
+    monkeypatch,
+) -> None:
+    """The prefetch only warms the caches: the install waits for it, then
+    prepares the candidate as it would have, finding them warm."""
+    import threading
+
+    events: list[str] = []
+    release = threading.Event()
+
+    def fetch(candidate):
+        if threading.current_thread().name == "kpip-prefetch":
+            release.wait(5)
+            events.append("prefetched")
+        else:
+            events.append("installed")
+        return candidate
+
+    prefetch, prepared = _prefetch_with(monkeypatch, fetch)
+    wheel = _Wheel(url="https://x/a-1.0-py3-none-any.whl", canonical_name="a")
+    prefetch(wheel)
+    prefetch(wheel)  # decided again after a backtrack
+    threading.Timer(0.05, release.set).start()
+
+    result = prepare_install_candidates(
+        [wheel], "cache", lambda c, d: "archive", prefetch
+    )
+
+    assert events == ["prefetched", "installed"]
+    assert prepared == ["https://x/a-1.0-py3-none-any.whl"]
+    assert result[0].wheel_layout == "archive"
+    prefetch.close()
+
+
+def test_a_failed_prefetch_leaves_the_install_to_report_its_own_error(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fetch(candidate):
+        calls.append(candidate.url)
+        raise OSError("connection reset")
+
+    prefetch, _ = _prefetch_with(monkeypatch, fetch)
+    wheel = _Wheel(url="https://x/b-1.0-py3-none-any.whl", canonical_name="b")
+    prefetch(wheel)
+
+    with pytest.raises(OSError, match="connection reset"):
+        prepare_install_candidates([wheel], "cache", lambda c, d: None, prefetch)
+
+    assert calls == [wheel.url, wheel.url]
+    prefetch.close()
+
+
+def test_nothing_is_fetched_after_close(monkeypatch) -> None:
+    fetched: list[str] = []
+    prefetch, _ = _prefetch_with(monkeypatch, lambda c: fetched.append(c.url) or c)
+    prefetch.close()
+
+    prefetch(_Wheel(url="https://x/c-1.0-py3-none-any.whl", canonical_name="c"))
+    time.sleep(0.05)
+
+    assert fetched == []

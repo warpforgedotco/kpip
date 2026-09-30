@@ -8,7 +8,7 @@ import stat
 import time
 import urllib.parse
 from bisect import bisect_left, bisect_right
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from itertools import chain
 from threading import RLock
 from types import MappingProxyType
@@ -91,6 +91,16 @@ CatalogSummaryGroup = tuple[
 CatalogSourceSummary = tuple[list[CatalogSummaryGroup], str, str]
 
 
+def _exact_pin(requirement: Requirement) -> bool:
+    """Whether ``requirement`` allows exactly one release: ``==`` it, no ``*``."""
+    specifiers = tuple(requirement.specifier.specifiers)
+    return (
+        len(specifiers) == 1
+        and specifiers[0].operator == "=="
+        and not specifiers[0].version.endswith(".*")
+    )
+
+
 class CandidateProvider:
     def __init__(
         self,
@@ -152,6 +162,10 @@ class CandidateProvider:
         self.locked_links = locked_links if locked_links is not None else {}
 
         self.session = session
+
+        # Told, as its page is read, of the preferred artifact of each
+        # exactly pinned requirement (``install.output.WheelPrefetch``).
+        self.on_likely: Callable[[Requirement, CandidateRecord], None] | None = None
 
         self.uploaded_prior_to = uploaded_prior_to
 
@@ -2938,6 +2952,14 @@ class CandidateProvider:
         elapsed = time.perf_counter() - started
 
         self.prefetch_policy.observe(cache_key, elapsed, len(catalog.summary_versions))
+
+        on_likely = self.on_likely
+
+        if on_likely is not None and accepted and _exact_pin(requirement):
+            # An exact pin names the release the solve will choose, and this
+            # its preferred artifact: an install starts on its wheel now
+            # rather than once the solve decides it.
+            on_likely(requirement, accepted[0])
 
         if accepted:
             self._chain_dependency_catalogs(
