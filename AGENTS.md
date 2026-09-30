@@ -3,9 +3,11 @@
 ## kpip ships as a compiled binary
 
 kpip is distributed as a single Nuitka-compiled binary (`scripts/compile`,
-`.github/workflows/compile.yml`). Running from source is how it is developed,
-not how it is used. Every change must be correct in both, and the compiled one
-is the one that matters.
+`.github/workflows/compile.yml`), and only as that: no user ever runs it
+interpreted. Running from source exists for development and the test suite
+alone. Design every change for the binary; the source run only has to keep
+working well enough to develop and test with. Do not add behaviour, options
+or pip parity for an interpreted install nobody has.
 
 Compiled, kpip has no Python of its own that it can use:
 
@@ -25,11 +27,12 @@ Compiled, kpip has no Python of its own that it can use:
 Everything about the Python being installed for comes from
 `host.interpreter_facts.target_interpreter()` (or `search_path()` for its
 `sys.path`): prefix, scheme paths, scripts directory, user site, version,
-ABI, platform and markers. That holds for an interpreted kpip too, since
-`--python` names another interpreter. Reach for `sys`, `site` or `sysconfig`
-directly only for facts about the kpip process itself.
+ABI, platform and markers. Reach for `sys`, `site` or `sysconfig` directly
+only for facts about the kpip process itself: the bundled CPython.
 
-Branch on `core.compiled.is_compiled()` only where the two builds must
-genuinely differ; prefer code that asks the target interpreter and is then
-the same for both. When adding a code path, ask what it does compiled, with
-no Python on `PATH`, and with `--python` naming a different version.
+Prefer code that asks the target interpreter, so the source run used in tests
+takes the same path as the binary; branch on `core.compiled.is_compiled()`
+only where the two cannot. When adding a code path, ask what the binary does
+with it: with an environment active, with only a `python3` on `PATH`, with no
+Python at all, and with `--python` naming a version other than the bundled
+one.
