@@ -161,7 +161,7 @@ class NabProvider:
             except InvalidVersion:
                 pass
         self._descent_prefetched: set[tuple[str, Version]] = set()
-        self._source_metadata_started: set[str] = set()
+        self._source_metadata_started: set[tuple[str, Version]] = set()
         self._source_metadata_seen_ranges: dict[str, object] = {}
         self._release_records: dict[
             tuple[str, Version, frozenset[str]],
@@ -2281,16 +2281,20 @@ class NabProvider:
         positive_ranges: Mapping[str, RangeProtocol[Version]],
         decisions: Mapping[str, Version],
     ) -> None:
-        """Begin metadata for source distributions the solve already needs.
+        """Begin metadata for source distributions the solve is about to need.
 
         A package with a positive range is one the solve has committed to
-        including, so reading its metadata is work that will be needed
-        whatever version wins. For a source distribution that reading is a
-        build, and the resolver asks for builds strictly one at a time:
-        starting them from here is what lets more than one run at once.
+        including, and the release it will try first is the newest in that
+        range. For a source distribution, reading that release's metadata is
+        a build, and the resolver asks for builds strictly one at a time:
+        starting them from here is what lets more than one run at once. A
+        cold airflow lock spent a third of its time on nineteen of them, one
+        after another.
 
-        Only a range that has come down to a single release is started, so
-        nothing is built for a version the solve is still choosing between.
+        The release started is the likely choice, not a certain one. If the
+        solve settles elsewhere the build was wasted, on a worker and not on
+        the solve's own time, and its result is cached for the next run that
+        asks.
 
         The hint arrives on every propagation round, so reading it is only
         worth doing for a resolve that pays for builds at all.
@@ -2313,7 +2317,7 @@ class NabProvider:
         decided = decisions.keys()
 
         for package, positive_range in positive_ranges.items():
-            if package in decided or package in self._source_metadata_started:
+            if package in decided:
                 continue
 
             requirement = self.requirements.get(package)
@@ -2322,24 +2326,31 @@ class NabProvider:
                 continue
 
             seen = self._source_metadata_seen_ranges
+
             if seen.get(package) is positive_range:
                 continue
+
             seen[package] = positive_range
 
-            matching = []
-            for version in self._versions(package):
-                if version in positive_range:
-                    matching.append(version)
-                    if len(matching) > 1:
-                        break
+            allows_prereleases = self._allows_prereleases(package)
 
-            if len(matching) != 1:
+            newest = next(
+                (
+                    version
+                    for version in reversed(self._versions(package))
+                    if version in positive_range
+                    and (allows_prereleases or not version.is_prerelease)
+                ),
+                None,
+            )
+
+            if newest is None or (package, newest) in self._source_metadata_started:
                 continue
 
-            self._source_metadata_started.add(package)
+            self._source_metadata_started.add((package, newest))
 
             try:
-                records = self._release_records_for(requirement, matching[0])
+                records = self._release_records_for(requirement, newest)
 
             except (KpipError, OSError, ValueError):
                 continue
