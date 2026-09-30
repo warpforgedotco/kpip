@@ -1,5 +1,4 @@
 import ssl
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -95,7 +94,6 @@ def test_proxy_does_not_override_netrc(
 
 
 @pytest.mark.xfail(
-    sys.version_info >= (3, 14),
     reason="Access logs are blank intermittently on 3.14",
     strict=False,
 )

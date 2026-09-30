@@ -465,11 +465,7 @@ class InstallRequirement:
         )
 
     def load_pyproject_toml(self) -> dict[str, object]:
-        try:
-            from tomllib import loads
-
-        except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-            from kpip._vendor.tomli import loads
+        from tomllib import loads
 
         if self.source_dir is None:
             raise InstallationError("Install requirement has no source directory")

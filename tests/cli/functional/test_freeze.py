@@ -87,17 +87,8 @@ def test_freeze_with_setuptools(script: KpipTestEnvironment) -> None:
 
     result = script.kpip("freeze")
 
-    should_suppress = sys.version_info < (3, 12)
-    if should_suppress:
-        assert "setuptools==" not in result.stdout, (
-            f"setuptools should be suppressed in Python {sys.version_info[:2]} "
-            f"but was found in freeze output: {result.stdout}"
-        )
-    else:
-        assert "setuptools==" in result.stdout, (
-            f"setuptools should be shown in Python {sys.version_info[:2]} "
-            f"but was not found in freeze output: {result.stdout}"
-        )
+    # Shown: only before 3.12, where venvs preinstalled it, was it hidden.
+    assert "setuptools==" in result.stdout, result.stdout
 
     result_all = script.kpip("freeze", "--all")
     assert "setuptools==" in result_all.stdout

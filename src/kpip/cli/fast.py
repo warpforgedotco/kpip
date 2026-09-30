@@ -575,8 +575,6 @@ def run_freeze(args: list[str]) -> int | None:
         from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 
         skip.update(canonicalize_name(name) for name in KPIP_DISTRIBUTION_NAMES)
-        if sys.version_info < (3, 12):
-            skip.add("setuptools")
 
     lines: list[tuple[str, str]] = []
     for entry in chosen.values():

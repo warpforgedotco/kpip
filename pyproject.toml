@@ -13,10 +13,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -28,7 +24,7 @@ authors = [
 
 # NOTE: requires-python is duplicated in __kpip-runner__.py.
 # When changing this value, please change the other copy as well.
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = []
 
 [project.optional-dependencies]
@@ -50,7 +46,7 @@ build-backend = "kpip.build.build_backend"
 backend-path = ["src"]
 
 [dependency-groups]
-benchmark = ["pytest-codspeed>=5.0.3", "pytest-benchmark>=5", "tomli>=2", "uv==0.12.1"]
+benchmark = ["pytest-codspeed>=5.0.3", "pytest-benchmark>=5", "uv==0.12.1"]
 crosshair = ["crosshair-tool", "hypothesis-crosshair"]
 typing = ["ruff", "ty", "typing-extensions==4.16.0"]
 vendoring = ["vendoring==1.4.0; python_version >= '3.11'"]
@@ -72,7 +68,6 @@ test = [
     "pytest-xdist>=3.8.0",
     "scripttest",
     "tomli-w",
-    "tomli",
     "uv",
     "uv-build",
     "virtualenv",

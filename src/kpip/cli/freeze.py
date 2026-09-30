@@ -6,7 +6,6 @@ import collections
 import os
 import re
 import site
-import sys
 from collections.abc import Generator, Iterable
 
 from kpip.cli.parsers.freeze import create_parser
@@ -368,9 +367,6 @@ def run_freeze(args: list[str]) -> int:
 
     if not options.all:
         skip.update(KPIP_DISTRIBUTION_NAMES)
-
-        if sys.version_info < (3, 12):
-            skip.add("setuptools")
 
     paths = [os.path.normpath(path) for path in options.path] if options.path else None
 

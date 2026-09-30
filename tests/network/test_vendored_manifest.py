@@ -14,7 +14,6 @@ LICENSE_PATHS = (
     "idna/LICENSE.md",
     "nab_resolver/LICENSE",
     "urllib3/LICENSE.txt",
-    "tomli/LICENSE",
 )
 
 LAUNCHER_HASHES = {

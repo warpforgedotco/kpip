@@ -22,12 +22,8 @@ from kpip.resolution.files.models import ParsedRequirement
 
 def _toml_module() -> Any:
     """The TOML parser, imported on first use: only a pylock input needs it."""
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-        from kpip._vendor import tomli
+    import tomllib
 
-        return tomli
     return tomllib
 
 

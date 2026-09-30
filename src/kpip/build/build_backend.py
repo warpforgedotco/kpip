@@ -20,11 +20,7 @@ import tarfile
 import tempfile
 import threading
 
-try:
-    from tomllib import loads
-
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-    from kpip._vendor.tomli import loads
+from tomllib import loads
 
 import zipfile
 from collections.abc import Callable, Iterable, Iterator
