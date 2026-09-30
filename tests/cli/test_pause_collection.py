@@ -11,7 +11,7 @@ import gc
 from collections.abc import Iterator
 
 import pytest
-from kpip.cli import entrypoint, fast
+from kpip.cli import entrypoint
 
 
 @pytest.fixture(autouse=True)
@@ -30,8 +30,8 @@ def restore_collection() -> Iterator[None]:
 def seen(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     """Whether collection was on while each command ran."""
     monkeypatch.delenv("KPIP_GC", raising=False)
-    monkeypatch.setattr(fast, "run_before_startup", lambda argv: (None, True))
-    monkeypatch.setattr(fast, "suppresses_logging", lambda argv, log_file: True)
+    # No logging handler is left behind for the tests after this one.
+    monkeypatch.setenv("KPIP_QUIET", "1")
     states: list[bool] = []
     monkeypatch.setattr(
         entrypoint,

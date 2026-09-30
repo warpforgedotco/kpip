@@ -432,17 +432,6 @@ def main(
 
             return status
 
-        from kpip.cli import fast
-
-        status, fast_install_attempted = fast.run_before_startup(argv)
-
-        if status is not None:
-            flush_streams()
-
-            return status
-
-        quiet_fast_command = fast.suppresses_logging(argv, log_file=log_file)
-
         spec = get_command(argv[0])
 
         if spec is None:
@@ -455,22 +444,10 @@ def main(
 
             configure(version=version)
 
-        if (
-            spec.needs_logging
-            and not quiet_fast_command
-            and not os.environ.get("KPIP_QUIET")
-        ):
+        if spec.needs_logging and not os.environ.get("KPIP_QUIET"):
             from kpip.cli.logging_config import configure_logging
 
             configure_logging(log_file)
-
-        if not fast_install_attempted:
-            status = fast.run_install_after_startup(argv)
-
-            if status is not None:
-                flush_streams()
-
-                return status
 
         restore_thresholds = collect_less_often()
 

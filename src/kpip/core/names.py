@@ -1,8 +1,7 @@
 """PEP 503 name normalization.
 
 Split out of :mod:`kpip.core.packaging` because this three-line function is
-needed on paths that need nothing else from that module -- notably
-``cli.fast``, which the entrypoint imports on every command.  Reaching it
+needed on paths that need nothing else from that module.  Reaching it
 through ``packaging`` costs ``platform`` and ``subprocess`` as well, for no
 benefit.
 """

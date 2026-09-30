@@ -91,12 +91,7 @@ if TYPE_CHECKING:
 
 
 class PureWheelCandidate:
-    """The candidate shape the pure-wheel installer shortcut needs.
-
-    Both :class:`WheelCandidate` and the process-level fast installer's much
-    lighter candidate satisfy it, which is what lets a resolved plan from
-    either side reach ``cli.fast.install.install_resolved_pure_wheels``.
-    """
+    """What an installer reads from a resolved wheel candidate."""
 
     __slots__ = ()
 
@@ -153,9 +148,8 @@ def linux_platform_parts(platform_tag: str) -> tuple[str, int, int, str] | None:
 def Parser() -> parser.Parser:
     """Lazily construct the legacy email parser.
 
-    The import is deferred as well: ``email.parser`` costs more to import
-    than everything the local fast install path runs, and that path never
-    parses a METADATA file this way.
+    The import is deferred as well: few installs parse a METADATA file this
+    way.
     """
 
     from email import parser

@@ -6,10 +6,7 @@ rather than restoring the untested writer API this module used to carry.
 
 It also owns where package sources come from -- :class:`SourceConfig`,
 :func:`load_source_config`, and :func:`resolve_sources` -- because the answer
-is the same for every command and the install fast path needs it without
-paying for :mod:`kpip.cli.requirements`.
-
-Keep this module import-light: the install fast path loads it on startup.
+is the same for every command.
 """
 
 from __future__ import annotations

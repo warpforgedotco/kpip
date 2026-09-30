@@ -8,7 +8,6 @@ from glob import glob
 import pytest
 from kpip_test_support import KpipTestEnvironment, TestKpipResult
 
-from kpip.cli.fast_install import TREE_CACHE_BUCKET
 from kpip.core.appdirs import versioned_cache_dir
 from kpip.core.appdirs import WHEEL_CACHE_BUCKET
 from kpip.core.appdirs import http_cache_path
@@ -428,33 +427,6 @@ def test_cache_purge(
     assert remove_matches_wheel("zzz-4.5.6", result)
     assert remove_matches_wheel("zzz-4.5.7", result)
     assert remove_matches_wheel("zzz-7.8.9", result)
-
-
-def test_cache_purge_removes_fast_install_snapshots(
-    script: KpipTestEnvironment,
-    cache_dir: str,
-) -> None:
-    from kpip.cli import fast_install
-
-    snapshot = os.path.join(versioned_cache_dir(cache_dir), fast_install.NAME)
-    tree_file = os.path.join(
-        versioned_cache_dir(cache_dir),
-        TREE_CACHE_BUCKET,
-        "aa",
-        "digest",
-        "tree",
-        "demo.py",
-    )
-    os.makedirs(os.path.dirname(tree_file))
-    with open(snapshot, "wb") as file:
-        file.write(b"snapshot")
-    with open(tree_file, "wb") as file:
-        file.write(b"tree")
-
-    script.kpip("cache", "purge", "--verbose")
-
-    assert not os.path.exists(snapshot)
-    assert not os.path.exists(tree_file)
 
 
 def _plant(path: str, content: bytes = b"x") -> str:

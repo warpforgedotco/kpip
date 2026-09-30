@@ -18,7 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 from benchmark_support import flush_persistent_caches, make_wheel, reset_caches
-from kpip.cli.fast_install import FastInstallMetadataCache, resolve_simple_wheelhouse
 from kpip.core.packaging import parse_requirement
 from kpip.core.urls import path_to_url
 from kpip.core.wheel import parse_wheel_file, wheel_candidate
@@ -211,29 +210,6 @@ def test_warm_archive_install_compiled(
         return len(installed)
 
     assert benchmark(install_compiled) > 10
-
-
-def test_warm_fast_install_snapshot(
-    benchmark: BenchmarkFixture,
-    graph_wheelhouse: Path,
-    tmp_path: Path,
-) -> None:
-    """The --no-index fast path with its snapshot already on disk: load it,
-    then resolve the wheelhouse from cached metadata and plans."""
-    cache_dir = str(tmp_path / "fast-cache")
-    os.makedirs(cache_dir)
-    primed = FastInstallMetadataCache(cache_dir)
-    assert resolve_simple_wheelhouse([str(graph_wheelhouse)], [ROOT], primed)
-    primed.flush()
-
-    def resolve_snapshot() -> int:
-        reset_caches()
-        cache = FastInstallMetadataCache(cache_dir)
-        resolved = resolve_simple_wheelhouse([str(graph_wheelhouse)], [ROOT], cache)
-        assert resolved is not None
-        return len(resolved)
-
-    assert benchmark(resolve_snapshot) > 10
 
 
 INDEX_URL = "https://index.test/simple/"
