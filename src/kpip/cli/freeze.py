@@ -18,7 +18,7 @@ from kpip.core.versions import InvalidVersion
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from kpip.core.light_metadata import LightDistribution
+    from kpip.build.metadata import InstalledMetadataDistribution
 
 logger = get_logger(__name__)
 
@@ -46,13 +46,13 @@ def freeze(
     exclude: Iterable[str] = (),
     skip: Iterable[str] = (),
 ) -> Generator[str, None, None]:
-    from kpip.core.light_metadata import LightDistributionStore
+    from kpip.build.metadata import InstalledDistributionStore
 
     installations: dict[str, FrozenRequirement] = {}
 
     excluded = {canonicalize_name(name) for name in exclude}
 
-    dists = LightDistributionStore(
+    dists = InstalledDistributionStore(
         paths=paths,
         user_site=site.getusersitepackages(),
     ).iter(local_only=local_only, user_only=user_only)
@@ -200,7 +200,7 @@ def freeze(
             yield str(installation).rstrip() + "\n"
 
 
-def format_as_name_version(dist: LightDistribution) -> str:
+def format_as_name_version(dist: InstalledMetadataDistribution) -> str:
     try:
         dist_version = dist.version
 
@@ -211,7 +211,7 @@ def format_as_name_version(dist: LightDistribution) -> str:
         return f"{dist.raw_name}=={dist_version}"
 
 
-def get_editable_info(dist: LightDistribution) -> EditableInfo:
+def get_editable_info(dist: InstalledMetadataDistribution) -> EditableInfo:
     """Compute and return values (req, comments) for use in
 
     FrozenRequirement.from_dist().
@@ -261,8 +261,10 @@ def get_editable_info(dist: LightDistribution) -> EditableInfo:
         return EditableInfo(
             requirement=location,
             comments=[
-                f"# Editable {vcs_name} install ({display}) with either a deleted "
-                f"local remote or invalid URI:",
+                (
+                    f"# Editable {vcs_name} install ({display}) with either a deleted "
+                    f"local remote or invalid URI:"
+                ),
                 f"# '{ex.url}'",
             ],
         )
@@ -325,7 +327,7 @@ class FrozenRequirement:
         return canonicalize_name(self.name)
 
     @classmethod
-    def from_dist(cls, dist: LightDistribution) -> FrozenRequirement:
+    def from_dist(cls, dist: InstalledMetadataDistribution) -> FrozenRequirement:
         editable = dist.editable
 
         if editable:
@@ -356,7 +358,7 @@ class FrozenRequirement:
 def run_freeze(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
-    from kpip.core.light_metadata import stdlib_pkgs
+    from kpip.core.metadata import stdlib_pkgs
 
     excluded = {canonicalize_name(name) for name in options.exclude}
 

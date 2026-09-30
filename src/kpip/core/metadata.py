@@ -478,7 +478,14 @@ def _iter_installed_distributions(
         version = headers.get("version", [None])[0]
 
         if not name or not version:
-            continue
+            named = _headers_from_info_name(dist)
+
+            if named is None:
+                continue
+
+            headers = {**headers, **named}
+
+            name, version = named["name"][0], named["version"][0]
 
         if (
             canonical_names is not None

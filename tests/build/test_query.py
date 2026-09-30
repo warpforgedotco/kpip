@@ -144,7 +144,7 @@ def test_dependent_index_reports_unreadable_metadata() -> None:
 
 def test_unsupported_distributions_computes_tags_only_when_needed(tmp_path) -> None:  # noqa: ANN001
     from kpip.build.query import unsupported_distributions
-    from kpip.core.light_metadata import LightDistributionStore
+    from kpip.build.metadata import InstalledDistributionStore
     from kpip.core.target_python import get_supported
 
     def wheel(name: str, *tags: str) -> None:
@@ -164,7 +164,7 @@ def test_unsupported_distributions_computes_tags_only_when_needed(tmp_path) -> N
         calls.append(1)
         return get_supported()
 
-    distributions = LightDistributionStore(paths=[str(tmp_path)]).iter()
+    distributions = InstalledDistributionStore(paths=[str(tmp_path)]).iter()
     assert unsupported_distributions(distributions, supported) == []
     assert calls == []
 
@@ -173,7 +173,7 @@ def test_unsupported_distributions_computes_tags_only_when_needed(tmp_path) -> N
         "native",
         *(f"{t.interpreter}-{t.abi}-{t.platform}" for t in get_supported()[:1]),
     )
-    distributions = LightDistributionStore(paths=[str(tmp_path)]).iter()
+    distributions = InstalledDistributionStore(paths=[str(tmp_path)]).iter()
     unsupported = unsupported_distributions(distributions, supported)
     assert [dist.raw_name for dist in unsupported] == ["foreign"]
     assert calls == [1]

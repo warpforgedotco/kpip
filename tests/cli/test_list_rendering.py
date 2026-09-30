@@ -192,3 +192,28 @@ def test_quiet_lists_nothing(site: Path) -> None:
 def test_a_dist_info_with_no_metadata_is_listed_for_its_name(site: Path) -> None:
     """As pip lists it, though pip's columns show its version as ``None``."""
     assert "empty    9\n" in _list([])
+
+
+def test_the_first_of_a_name_on_the_path_is_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As pip lists it: the one an import would find, once."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _dist(first, "shadowed-1.0.dist-info", "shadowed", "1.0")
+    _dist(second, "shadowed-2.0.dist-info", "shadowed", "2.0")
+    _dist(second, "other-1.0.dist-info", "other", "1.0")
+
+    assert _list(["--path", str(first), "--path", str(second), "--format=freeze"]) == (
+        "other==1.0\nshadowed==1.0\n"
+    )
+
+
+def test_metadata_that_names_nothing_is_listed_for_its_directory(
+    tmp_path: Path,
+) -> None:
+    info = tmp_path / "noname-3.0.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text("Summary: no name here\n")
+
+    assert _list(["--path", str(tmp_path), "--format=freeze"]) == "noname==3.0\n"
