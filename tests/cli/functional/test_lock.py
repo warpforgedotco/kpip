@@ -440,13 +440,14 @@ def test_lock_python_version_selects_wheels_by_the_target_tags(
     """Wheel tags are read for the target too, not only markers and metadata.
 
     The only wheel on offer is tagged for CPython 3.8, so nothing can lock
-    it for the running interpreter; a lock for 3.8 has to find it.
+    it for the running interpreter; a lock for 3.8 has to find it. Its tag is
+    one packaging lists for 3.8 and no other version.
     """
-    wheel = script.scratch_path / "base-0.1.0-cp38-cp38-any.whl"
+    wheel = script.scratch_path / "base-0.1.0-cp38-none-any.whl"
     make_wheel(
         name="base",
         version="0.1.0",
-        wheel_metadata_updates={"Tag": ["cp38-cp38-any"]},
+        wheel_metadata_updates={"Tag": ["cp38-none-any"]},
     ).save_to(wheel)
 
     common = [

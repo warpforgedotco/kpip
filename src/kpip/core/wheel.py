@@ -755,12 +755,13 @@ def _supported_wheel_tags(
     if target is not None:
         if target.python_version:
             digits = target.python_version.replace(".", "")
-            version = (int(digits[0]), int(digits[1:] or 0))
+            # "3" names a major version alone; "38" and "3.8" a minor one.
+            version = (int(digits[0]),) + ((int(digits[1:]),) if digits[1:] else ())
         implementation = target.implementation or implementation
         platform_tags = tuple(target.platforms)
         abi_tags = tuple(target.abis)
 
-    version_digits = f"{version[0]}{version[1]}"
+    version_digits = "".join(str(part) for part in version)
 
     impl_tag = f"{implementation}{version_digits}"
 
@@ -785,7 +786,7 @@ def _supported_wheel_tags(
     # ABI and none for each platform; then pure-Python tags for each
     # platform; then the platform-independent ones. Older versions --
     # cp312-abi3, py38-none -- match through interpreter_matches.
-    python_tags = (f"py{version_digits}", f"py{version[0]}")
+    python_tags = tuple(dict.fromkeys((f"py{version_digits}", f"py{version[0]}")))
     tags = [
         WheelTag(impl_tag, abi, platform)
         for abi in (*(abi for abi in abis if abi != "none"), "none")
@@ -813,7 +814,7 @@ INTERPRETER_SHORT_NAMES = {
 
 
 def interpreter_abis(
-    interpreter: Any, implementation: str, version: tuple[int, int]
+    interpreter: Any, implementation: str, version: tuple[int, ...]
 ) -> tuple[str, ...]:
     """The ABIs packaging lists for ``interpreter`` at ``version``.
 
@@ -824,6 +825,9 @@ def interpreter_abis(
     """
     if implementation != "cp":
         return (*_generic_abis(interpreter), "none")
+    if len(version) < 2:
+        # A major version alone names no ABI of its own.
+        return ("none",)
 
     config = interpreter.config
     version_digits = f"{version[0]}{version[1]}"

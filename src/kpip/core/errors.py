@@ -134,7 +134,30 @@ class DistributionNotFound(KpipError):
 
 
 class ResolutionError(KpipError):
-    """Requirements could not be resolved together."""
+    """Requirements could not be resolved together.
+
+    ``requires_python`` names each project whose every candidate the target
+    Python was outside the ``Requires-Python`` of, with that specifier.
+    ``edges`` are the requirements that could not be met together, each with
+    the release that declared it -- ``(name, version)`` -- or None for one
+    the user gave. ``constraints`` are the user's, by project, and
+    ``located_versions`` the versions of the user's path and URL
+    requirements, as built.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        requires_python: dict[str, str] | None = None,
+        edges: list | None = None,
+        constraints: dict | None = None,
+        located_versions: dict | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.requires_python = requires_python or {}
+        self.edges = edges or []
+        self.constraints = constraints or {}
+        self.located_versions = located_versions or {}
 
 
 class HashError(InstallationError):

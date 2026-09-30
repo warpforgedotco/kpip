@@ -42,7 +42,8 @@ def test_new_resolver_conflict_requirements_file(
         expect_error=True,
     )
 
-    assert "base" in result.stderr, str(result)
+    # As pip: the causes, which name base, are explained on stdout.
+    assert "base" in result.stdout, str(result)
 
 
 def test_new_resolver_conflict_constraints_file(
