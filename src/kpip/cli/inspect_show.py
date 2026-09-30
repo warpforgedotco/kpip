@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_show(args: list[str]) -> int:
-    import sys
-
     from kpip.cli.parsers.inspection import create_show_parser
 
     options = create_show_parser().parse_args(args)
 
     if not options.packages:
-        print("ERROR: Please provide a package name or names.", file=sys.stderr)
+        logger.error("Please provide a package name or names.")
         return 1
 
     from kpip.build import query
@@ -39,18 +41,18 @@ def run_show(args: list[str]) -> int:
 
         dist = info.distribution
         if printed:
-            print("---")
+            logger.info("---")
         printed += 1
 
         metadata = dist.metadata
         project_urls = metadata.get_all("Project-URL", [])
 
-        print(f"Name: {dist.raw_name}")
-        print(f"Version: {dist.raw_version}")
-        print(f"Summary: {metadata.get('Summary', '')}")
-        print(f"Home-page: {info.homepage}")
-        print(f"Author: {metadata.get('Author', '')}")
-        print(f"Author-email: {metadata.get('Author-email', '')}")
+        logger.info(f"Name: {dist.raw_name}")
+        logger.info(f"Version: {dist.raw_version}")
+        logger.info(f"Summary: {metadata.get('Summary', '')}")
+        logger.info(f"Home-page: {info.homepage}")
+        logger.info(f"Author: {metadata.get('Author', '')}")
+        logger.info(f"Author-email: {metadata.get('Author-email', '')}")
 
         metadata_version = dist.metadata_version or ""
         parts = metadata_version.split(".") if metadata_version else []
@@ -61,42 +63,42 @@ def run_show(args: list[str]) -> int:
         )
 
         if metadata_version_tuple >= (2, 4) and metadata.get("License-Expression"):
-            print(f"License-Expression: {metadata.get('License-Expression', '')}")
+            logger.info(f"License-Expression: {metadata.get('License-Expression', '')}")
         else:
-            print(f"License: {metadata.get('License', '')}")
+            logger.info(f"License: {metadata.get('License', '')}")
 
-        print(f"Location: {dist.location}")
+        logger.info(f"Location: {dist.location}")
         if dist.editable and dist.editable_project_location is not None:
-            print(f"Editable project location: {dist.editable_project_location}")
+            logger.info(f"Editable project location: {dist.editable_project_location}")
 
-        print(f"Requires: {', '.join(info.requires)}")
-        print(f"Required-by: {', '.join(info.required_by)}")
+        logger.info(f"Requires: {', '.join(info.requires)}")
+        logger.info(f"Required-by: {', '.join(info.required_by)}")
 
         if options.verbose:
-            print(f"Metadata-Version: {dist.metadata_version or ''}")
-            print(f"Installer: {dist.installer}")
-            print("Classifiers:")
+            logger.info(f"Metadata-Version: {dist.metadata_version or ''}")
+            logger.info(f"Installer: {dist.installer}")
+            logger.info("Classifiers:")
             for classifier in metadata.get_all("Classifier", []):
-                print(f"  {classifier}")
-            print("Entry-points:")
+                logger.info(f"  {classifier}")
+            logger.info("Entry-points:")
             for entry_point in info.entry_points:
-                print(f"  {entry_point}")
-            print("Project-URLs:")
+                logger.info(f"  {entry_point}")
+            logger.info("Project-URLs:")
             for project_url in project_urls:
-                print(f"  {project_url}")
+                logger.info(f"  {project_url}")
 
         if options.files:
-            print("Files:")
+            logger.info("Files:")
             files = info.files or []
             if files:
                 for filename in files:
-                    print(f"  {filename}")
+                    logger.info(f"  {filename}")
             else:
-                print("Cannot locate RECORD or installed-files.txt")
-            print()
+                logger.info("Cannot locate RECORD or installed-files.txt")
+            logger.info("")
 
     if missing:
-        print(f"WARNING: Package(s) not found: {', '.join(missing)}", file=sys.stderr)
+        logger.warning(f"Package(s) not found: {', '.join(missing)}")
         return 1 if len(missing) == len(options.packages) else 0
 
     return 0

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_hash(args: list[str]) -> int:
     import hashlib
-    import os
 
     from kpip.cli.parsers.inspection import create_hash_parser
 
@@ -18,7 +21,7 @@ def run_hash(args: list[str]) -> int:
                 if not block:
                     break
                 digest.update(block)
-        print(
-            f"{os.path.basename(filename)}: --hash={options.algorithm}:{digest.hexdigest()}",
-        )
+        # As pip writes it: the path as given, then the option on a line of
+        # its own, ready for a requirements file.
+        logger.info(f"{filename}:\n--hash={options.algorithm}:{digest.hexdigest()}")
     return 0

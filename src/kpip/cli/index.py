@@ -10,6 +10,10 @@ from kpip.core.format_control import FormatControl
 from kpip.core.packaging import parse_requirement
 from kpip.index.provider import CandidateProvider
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_index(args: list[str]) -> int:
     options = create_parser().parse_args(args)
@@ -38,7 +42,7 @@ def run_index(args: list[str]) -> int:
     latest = available[0] if available else None
 
     if options.json:
-        print(
+        logger.info(
             json.dumps(
                 {"name": requirement.name, "versions": available, "latest": latest},
             ),
@@ -46,8 +50,8 @@ def run_index(args: list[str]) -> int:
 
         return 0
 
-    print(f"{requirement.name} ({latest or 'none'})")
+    logger.info(f"{requirement.name} ({latest or 'none'})")
 
-    print(f"Available versions: {', '.join(available) or 'none'}")
+    logger.info(f"Available versions: {', '.join(available) or 'none'}")
 
     return 0

@@ -327,4 +327,4 @@ def cache_built_wheel(
 
 def emit_build_message(message: str) -> None:
     if not os.environ.get("KPIP_QUIET"):
-        print(message)
+        logger.info(message)

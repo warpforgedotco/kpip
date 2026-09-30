@@ -28,7 +28,6 @@ class CommandSpec:
         "module_path",
         "name",
         "needs_execution_context",
-        "needs_logging",
         "needs_tempdir",
         "parser_factory",
         "parser_module_path",
@@ -43,7 +42,6 @@ class CommandSpec:
         runner: str | None = "run",
         parser_factory: str | None = "create_parser",
         visible: bool = True,
-        needs_logging: bool = True,
         needs_tempdir: bool = True,
         needs_execution_context: bool = True,
         parser_module_path: str | None = None,
@@ -56,7 +54,6 @@ class CommandSpec:
         self.runner = runner
         self.parser_factory = parser_factory
         self.visible = visible
-        self.needs_logging = needs_logging
         self.needs_tempdir = needs_tempdir
         self.needs_execution_context = needs_execution_context
 
@@ -103,7 +100,6 @@ COMMAND_SPECS = (
         "list",
         "kpip.cli.list",
         "run_list",
-        needs_logging=False,
         needs_tempdir=False,
     ),
     CommandSpec(
@@ -118,7 +114,6 @@ COMMAND_SPECS = (
         "run_show",
         parser_factory="create_show_parser",
         parser_module_path="kpip.cli.parsers.inspection",
-        needs_logging=False,
         needs_tempdir=False,
     ),
     CommandSpec(
@@ -127,7 +122,6 @@ COMMAND_SPECS = (
         "run_inspect",
         parser_factory="create_inspect_parser",
         parser_module_path="kpip.cli.parsers.inspection",
-        needs_logging=False,
         needs_tempdir=False,
     ),
     CommandSpec(
@@ -136,7 +130,6 @@ COMMAND_SPECS = (
         "run_hash",
         parser_factory="create_hash_parser",
         parser_module_path="kpip.cli.parsers.inspection",
-        needs_logging=False,
         needs_tempdir=False,
     ),
     CommandSpec(
@@ -145,14 +138,12 @@ COMMAND_SPECS = (
         "run_check",
         parser_factory="create_check_parser",
         parser_module_path="kpip.cli.parsers.inspection",
-        needs_logging=False,
         needs_tempdir=False,
     ),
     CommandSpec(
         "cache",
         "kpip.cli.cache",
         "run_cache",
-        needs_logging=False,
         needs_tempdir=False,
     ),
     CommandSpec(
@@ -167,7 +158,6 @@ COMMAND_SPECS = (
         runner=None,
         parser_factory=None,
         visible=False,
-        needs_logging=False,
         needs_tempdir=False,
     ),
 )

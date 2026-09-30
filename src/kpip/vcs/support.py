@@ -6,6 +6,10 @@ from collections.abc import Iterable
 
 from kpip.core.urls import split_auth_from_netloc
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class HiddenText:
     __slots__ = ("redacted", "secret")
@@ -71,6 +75,6 @@ def ask_path_exists(message: str, options: Iterable[str]) -> str:
         response = input(message).strip().lower()
         if response in options:
             return response
-        print(
+        logger.info(
             f"Your response ({response!r}) was not one of the expected responses: {', '.join(options)}",
         )

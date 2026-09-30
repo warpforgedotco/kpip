@@ -238,9 +238,9 @@ class ArgumentParser(argparse.ArgumentParser):
     def parse_args(self, args: Any = None, namespace: Any = None) -> Any:
         """Parse as pip does.
 
-        Every command takes ``-q`` and ``-v``, whether or not it has a use
-        for them, and positional arguments may come before, between and
-        after options.
+        Every command takes ``-q`` and ``-v``, which decide how much of what
+        it logs is shown from here on, and positional arguments may come
+        before, between and after options.
         """
         options = self._option_string_actions
 
@@ -255,9 +255,16 @@ class ArgumentParser(argparse.ArgumentParser):
             for action in self._actions
         ):
             # argparse cannot intermix a subcommand or a remainder.
-            return super().parse_args(args, namespace)
+            parsed = super().parse_args(args, namespace)
 
-        return self.parse_intermixed_args(args, namespace)
+        else:
+            parsed = self.parse_intermixed_args(args, namespace)
+
+        from kpip.cli.logging_config import configure_logging
+
+        configure_logging(int(parsed.verbose) - int(parsed.quiet))
+
+        return parsed
 
     def error(self, message: str) -> NoReturn:
         if message.startswith("unrecognized arguments: "):

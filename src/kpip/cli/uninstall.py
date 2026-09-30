@@ -11,6 +11,10 @@ from kpip.cli.target import target_paths
 from kpip.core.packaging import parse_requirement
 from kpip.install.requirements import RequirementInstaller
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_uninstall(args: list[str]) -> int:
     parser = create_parser()
@@ -54,7 +58,7 @@ def run_uninstall(args: list[str]) -> int:
             if parent != os.path.dirname(parent):
                 scripts = "Scripts" if os.name == "nt" else "bin"
 
-                print(f"Uninstalling files from {os.path.join(parent, scripts)}")
+                logger.info(f"Uninstalling files from {os.path.join(parent, scripts)}")
 
         if paths is None:
             removed_now = RequirementInstaller().uninstall(package)
@@ -66,6 +70,6 @@ def run_uninstall(args: list[str]) -> int:
             removed.append(package)
 
     for package in removed:
-        print(f"Successfully uninstalled {package}")
+        logger.info(f"Successfully uninstalled {package}")
 
     return 0

@@ -6,7 +6,6 @@ import builtins
 import fnmatch
 import glob
 import os
-import sys
 
 from kpip.cli.parsers.cache import create_parser
 from kpip.core.appdirs import (
@@ -16,6 +15,10 @@ from kpip.core.appdirs import (
     versioned_cache_dir,
 )
 from kpip.core.errors import CommandError
+
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _match_expression(pattern: str) -> str:
@@ -124,10 +127,7 @@ class CacheManager:
 
         if not files and not purge:
             if pattern is not None:
-                print(
-                    f'WARNING: No matching packages for pattern "{pattern}"',
-                    file=sys.stderr,
-                )
+                logger.warning(f'No matching packages for pattern "{pattern}"')
             return 0, 0, 0
 
         files_removed = 0
@@ -142,12 +142,12 @@ class CacheManager:
             except FileNotFoundError:
                 continue
             except OSError as error:
-                print(f"WARNING: Could not remove {path}: {error}", file=sys.stderr)
+                logger.warning(f"Could not remove {path}: {error}")
                 continue
             files_removed += 1
             bytes_removed += size
             if verbose:
-                print(f"Removed {path}")
+                logger.info(f"Removed {path}")
 
         directories_removed = 0
         directories = [
@@ -166,7 +166,7 @@ class CacheManager:
                 continue
             directories_removed += 1
         if purge and not files_removed and not directories_removed:
-            print("WARNING: No matching packages", file=sys.stderr)
+            logger.warning("No matching packages")
         return files_removed, bytes_removed, directories_removed
 
     def info(self) -> tuple[str, builtins.list[str], int]:
@@ -187,7 +187,7 @@ def run_cache(args: list[str]) -> int:
         if options.pattern or options.cache_dir or options.no_cache_dir:
             raise CommandError("Too many arguments")
 
-        print(os.path.normcase(cache_root()))
+        logger.info(os.path.normcase(cache_root()))
 
         return 0
 
@@ -204,12 +204,12 @@ def run_cache(args: list[str]) -> int:
 
         http_dir, wheel_dirs, wheel_count = manager.info()
 
-        print(f"Package index page cache location: {http_dir}")
+        logger.info(f"Package index page cache location: {http_dir}")
 
         for wheel_dir in wheel_dirs:
-            print(f"Locally built wheels location: {wheel_dir}")
+            logger.info(f"Locally built wheels location: {wheel_dir}")
 
-        print(f"Number of locally built wheels: {wheel_count}")
+        logger.info(f"Number of locally built wheels: {wheel_count}")
 
         return 0
 
@@ -217,10 +217,10 @@ def run_cache(args: list[str]) -> int:
         lines = manager.list(options.pattern, absolute=options.format == "abspath")
 
         if not lines and options.format == "human":
-            print("No locally built wheels cached.")
+            logger.info("No locally built wheels cached.")
 
         else:
-            print("\n".join(lines))
+            logger.info("\n".join(lines))
 
         return 0
 
@@ -236,8 +236,8 @@ def run_cache(args: list[str]) -> int:
         verbose=bool(options.verbose),
     )
 
-    print(f"Files removed: {files} ({bytes_removed} bytes)")
+    logger.info(f"Files removed: {files} ({bytes_removed} bytes)")
 
-    print(f"Directories removed: {directories}")
+    logger.info(f"Directories removed: {directories}")
 
     return 0
