@@ -99,7 +99,7 @@ def test_an_index_wheel_already_unpacked_is_not_reopened(tmp_path: Path) -> None
     from kpip.index.candidate_materialization import CandidateMaterializer
     from kpip.index.links import Link
     from kpip.index.source_models import CandidateRecord
-    from kpip.install.wheel_archive_cache import archive_entry_root
+    from kpip.core.appdirs import archive_entry_root
 
     digest = "ab" * 32
     record = CandidateRecord(

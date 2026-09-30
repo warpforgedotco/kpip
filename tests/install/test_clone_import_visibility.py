@@ -44,7 +44,7 @@ def _wheel(directory: Path, name: str, module: str, body: str) -> Path:
 
 def _install(wheel: Path, name: str, target: Path, cache_dir: Path) -> None:
     """Install one wheel, asserting the clone route is what handled it."""
-    from kpip.install.wheel_archive_cache import ARCHIVE_CACHE_BUCKET
+    from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
 
     candidate = wheel_candidate(wheel).copy_with(
         source_hashes={"sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()},

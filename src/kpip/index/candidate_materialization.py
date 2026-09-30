@@ -2151,10 +2151,8 @@ class CandidateMaterializer:
         if not isinstance(digest, str):
             return False
 
-        from kpip.install.wheel_archive_cache import (
-            archive_entry_root,
-            valid_sha256,
-        )
+        from kpip.core.appdirs import archive_entry_root
+        from kpip.core.digests import valid_sha256
 
         return valid_sha256(digest) and os.path.isdir(
             archive_entry_root(os.fspath(self.wheel_cache_dir), digest.lower())

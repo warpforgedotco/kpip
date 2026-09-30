@@ -3,6 +3,7 @@ headers and its SHA-256, both keyed by the file's path, size and mtime."""
 
 from __future__ import annotations
 
+from kpip.core.digests import valid_sha256
 from kpip.core.utils import versioned_bucket
 
 import marshal
@@ -18,13 +19,6 @@ if TYPE_CHECKING:
 
 MetadataHeaders = dict[str, list[str]]
 MetadataIdentity = tuple[str, int, int]
-
-_HEX_DIGITS = "0123456789abcdefABCDEF"
-
-
-def _valid_sha256(value: object) -> bool:
-    """A 64-character hex string, the shape put_digest writes."""
-    return isinstance(value, str) and len(value) == 64 and not value.strip(_HEX_DIGITS)
 
 
 NAME = f"{versioned_bucket('metadata', 1)}.sqlite"
@@ -180,7 +174,7 @@ class WheelMetadataCache(SqliteBackedCache):
                 )
             except sqlite3.Error:
                 return None
-        if row is None or not _valid_sha256(row[0]):
+        if row is None or not valid_sha256(row[0]):
             return None
         self.digests[identity] = row[0]
         return row[0]
@@ -213,7 +207,7 @@ class WheelMetadataCache(SqliteBackedCache):
                 return
         for path, size, mtime, digest in rows:
             identity = (path, size, mtime)
-            if identity in wanted and _valid_sha256(digest):
+            if identity in wanted and valid_sha256(digest):
                 self.digests[identity] = digest
 
     def put_digest(self, identity: MetadataIdentity, digest: str) -> None:

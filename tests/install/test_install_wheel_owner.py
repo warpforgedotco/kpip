@@ -366,7 +366,7 @@ def test_fresh_target_reuses_copy_on_write_wheel_archive(
     assert (target / "owner_demo-1.0.dist-info" / "REQUESTED").exists()
     assert (target / "bin" / "owner-demo").read_text().startswith("#!/target/python\n")
     assert (target / "bin" / "raw-tool").read_text().startswith("#!/target/python\n")
-    from kpip.install.wheel_archive_cache import ARCHIVE_CACHE_BUCKET
+    from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
 
     cache_tree = cache / ARCHIVE_CACHE_BUCKET / digest[:2] / digest / "tree"
     assert (
@@ -541,7 +541,7 @@ def test_invalid_unpacked_wheel_cache_is_rebuilt(tmp_path: Path) -> None:
         )
         assert (target / "owner_demo" / "__init__.py").exists()
         if index == 0:
-            from kpip.install.wheel_archive_cache import ARCHIVE_CACHE_BUCKET
+            from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
 
             manifest = (
                 cache / ARCHIVE_CACHE_BUCKET / digest[:2] / digest / "manifest.bin"

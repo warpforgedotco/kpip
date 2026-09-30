@@ -32,3 +32,11 @@ def sha256_hexdigest(data: bytes) -> str:
             from hashlib import sha256
 
     return sha256(data).hexdigest()
+
+
+_HEX_DIGITS = "0123456789abcdefABCDEF"
+
+
+def valid_sha256(value: object) -> bool:
+    """Whether ``value`` is a sha256 hex digest, in either case."""
+    return isinstance(value, str) and len(value) == 64 and not value.strip(_HEX_DIGITS)
