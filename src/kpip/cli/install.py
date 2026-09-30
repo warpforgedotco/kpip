@@ -63,6 +63,10 @@ from kpip.install.wheel_transaction import (
     WheelInstaller,
     install_wheels_transactionally,
 )
+from kpip.host.environment_checks import (
+    check_externally_managed,
+    warn_if_run_as_root,
+)
 from kpip.host.virtualenv import running_under_virtualenv
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
@@ -978,6 +982,19 @@ def run_install(args: list[str]) -> int:
     cache_dir = prepared.cache_dir
     quiet = prepared.quiet
 
+    # As pip: --root, --target and --prefix install somewhere the marker
+    # cannot be looked for, and a dry run that only reports changes nothing.
+    installs_into_this_environment = (
+        not (options.dry_run and options.report)
+        and options.root is None
+        and options.target is None
+        and options.prefix is None
+        and not os.environ.get("KPIP_TARGET_PREFIX")
+    )
+
+    if installs_into_this_environment and not options.break_system_packages:
+        check_externally_managed()
+
     outcome = InstallOutcome(report_enabled=bool(options.report))
     reinstall = options.force_reinstall or options.ignore_installed
 
@@ -1569,6 +1586,9 @@ def run_install(args: list[str]) -> int:
         preinstalled_editables=preinstalled_editables,
         preinstalled_editable_reports=preinstalled_editable_reports,
     )
+
+    if options.root_user_action == "warn":
+        warn_if_run_as_root()
 
     if not outcome.installed and execution.bundle.requirements:
         report_nothing_installed(execution, outcome)

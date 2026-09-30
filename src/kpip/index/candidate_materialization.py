@@ -9,6 +9,8 @@ import urllib.parse
 from itertools import chain, islice
 from threading import RLock
 
+from kpip.core import run_options
+from kpip.core.temp_dir import build_directory
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
 import logging
 from kpip.core.errors import (
@@ -1606,11 +1608,7 @@ class CandidateMaterializer:
 
                     try:
                         if candidate.link.kind is ArtifactKind.SDIST:
-                            import tempfile
-
-                            prepared_temporary = tempfile.TemporaryDirectory(
-                                prefix="kpip-metadata-",
-                            )
+                            prepared_temporary = build_directory("kpip-metadata-")
                             path = unpack_source_internal(
                                 path,
                                 prepared_temporary.name,
@@ -1675,7 +1673,10 @@ class CandidateMaterializer:
                                 )
                                 prepared_temporary = None
                     finally:
-                        if prepared_temporary is not None:
+                        if (
+                            prepared_temporary is not None
+                            and not run_options.current.no_clean
+                        ):
                             prepared_temporary.cleanup()
                 finally:
                     if vcs_path is not None:

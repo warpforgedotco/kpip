@@ -77,3 +77,7 @@ def apply_general_options(options: argparse.Namespace) -> None:
     current.exists_action = tuple(getattr(options, "exists_action", ()) or ())
     current.isolated = bool(options.isolated)
     current.debug = bool(getattr(options, "debug", False))
+    current.check_build_dependencies = bool(
+        getattr(options, "check_build_dependencies", False)
+    )
+    current.no_clean = bool(getattr(options, "no_clean", False))

@@ -4,9 +4,11 @@ from typing import TYPE_CHECKING
 
 import os.path
 import stat
+import tempfile
 from contextlib import ExitStack, contextmanager
 
 import logging
+from kpip.core import run_options
 from kpip.core.utils import enum
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,18 @@ if TYPE_CHECKING:
     # an annotation, and ``from __future__ import annotations`` leaves
     # those as strings, so ``typing`` itself stays unimported.
     T_internal = TypeVar("T_internal", bound="TempDirectory")
+
+
+def build_directory(prefix: str) -> tempfile.TemporaryDirectory[str]:
+    """A directory a build works in, removed when the build is done with it.
+
+    ``--no-clean`` keeps it, as pip does, for looking at what a failed build
+    left behind.
+    """
+    return tempfile.TemporaryDirectory(
+        prefix=prefix,
+        delete=not run_options.current.no_clean,
+    )
 
 
 def rmtree(path: str, ignore_errors: bool = False, onexc=None) -> None:

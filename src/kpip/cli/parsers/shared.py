@@ -237,18 +237,15 @@ def add_requirement_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--require-hashes", action="store_true")
     parser.add_argument("--no-require-hashes", action="store_true")
 
-    # Taken and not yet acted on: a build that is not isolated does not check
-    # the environment for what it requires before it starts.
     parser.add_argument("--check-build-dependencies", action="store_true")
+    parser.add_argument("--no-clean", action="store_true")
 
     # Accepted as pip accepts them, and without effect here: every build is a
-    # PEP 517 build, nothing draws a progress bar, and no build directory
-    # outlives the command.
+    # PEP 517 build, and nothing draws a progress bar.
     parser.add_argument("--use-pep517", action="store_true")
     parser.add_argument(
         "--progress-bar", choices=("auto", "on", "off", "raw"), default="auto"
     )
-    parser.add_argument("--no-clean", action="store_true")
 
 
 def add_editable_option(parser: argparse.ArgumentParser) -> None:
@@ -272,9 +269,8 @@ def add_config_settings_option(parser: argparse.ArgumentParser) -> None:
 
 
 def add_externally_managed_options(parser: argparse.ArgumentParser) -> None:
-    """``install`` and ``uninstall`` take these from pip. Neither has an
-    effect: kpip does not refuse an externally managed environment, and does
-    not warn when run as root."""
+    """What ``install`` and ``uninstall`` take about an environment another
+    package manager owns, or that root is changing."""
     parser.add_argument("--break-system-packages", action="store_true")
     parser.add_argument(
         "--root-user-action", choices=("warn", "ignore"), default="warn"
