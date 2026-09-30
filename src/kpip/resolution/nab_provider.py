@@ -180,6 +180,7 @@ class NabProvider:
         self._descent_last: dict[str, Version] = {}
         self._yanked_versions: dict[str, frozenset[Version]] = {}
         self._after_cutoff: dict[str, frozenset[Version]] = {}
+        self._binary_versions: dict[str, frozenset[Version]] = {}
         self._sorted_versions_memo: dict[
             str, tuple[tuple[Version, ...], list[Version]]
         ] = {}
@@ -738,6 +739,7 @@ class NabProvider:
             # and its metadata is what the last lock already read.
             selected = preferred
         else:
+            matching = self._preferring_binary(package, requirement, matching)
             selected = self._newest_viable(package, matching)
             selected = self._sidestep_yanked(package, selected, matching, constraints)
         if installed is not None and selected == installed.version:
@@ -867,6 +869,34 @@ class NabProvider:
                 allowed_versions=frozenset({version}),
             )
         )
+
+    def _preferring_binary(
+        self,
+        package: str,
+        requirement: Requirement,
+        matching: list[Version],
+    ) -> list[Version]:
+        """The releases to choose from under ``--prefer-binary``.
+
+        pip ranks a wheel of any release above a newer source distribution,
+        so while a matching release has a usable wheel the choice is among
+        those; a release with none is chosen only once they are all ruled out.
+        """
+        if len(matching) < 2 or not getattr(self.provider, "prefer_binary", False):
+            return matching
+
+        binary = self._binary_versions.get(package)
+        if binary is None:
+            binary = frozenset(
+                record.version
+                for record in self.provider.evaluate_links(
+                    self._unpinned(package, requirement)
+                ).accepted
+                if record.link.is_wheel
+            )
+            self._binary_versions[package] = binary
+
+        return [version for version in matching if version in binary] or matching
 
     def _newest_viable(self, package: str, matching: list[Version]) -> Version:
         """Pick the newest version not disproved by available dependency facts.
