@@ -21,13 +21,12 @@ nab also resolves against an arbitrary configured target Python version
 independent of the host interpreter; kpip's marker evaluation
 (``kpip.core.packaging.default_environment``) always reads the actual
 running interpreter. ``test_nab_smoke_extra_and_python_marker`` accounts for
-that by computing its marker-gated expectation from ``sys.version_info``
-instead of hardcoding nab's Python-3.11 assumption.
+that: kpip runs on 3.12 or newer, where the marker picks the leaf's 2.0.0,
+not the 1.0.0 nab's Python-3.11 assumption would.
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from benchmark_support import reset_caches
@@ -96,7 +95,8 @@ def test_nab_smoke_extra_and_python_marker(
     benchmark: BenchmarkFixture,
     nab_smoke_wheelhouse: Path,
 ) -> None:
-    marker_leaf_version = "1.0.0" if sys.version_info < (3, 12) else "2.0.0"
+    # The leaf's 2.0.0 is marked python_version >= "3.12".
+    marker_leaf_version = "2.0.0"
 
     def resolve_extra() -> dict[str, str]:
         return pins(resolve(nab_smoke_wheelhouse, ["nab-smoke-extra-app[speed]"]))

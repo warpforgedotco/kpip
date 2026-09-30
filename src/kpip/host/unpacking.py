@@ -411,17 +411,7 @@ def untar_file(filename: str, location: str, flatten: bool = True) -> None:
             def kpip_filter(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo:
                 orig_mode = member.mode
                 try:
-                    try:
-                        member = data_filter(member, location)
-                    except tarfile.LinkOutsideDestinationError:
-                        if sys.version_info[:3] in {
-                            (3, 9, 17),
-                            (3, 10, 12),
-                            (3, 11, 4),
-                        }:
-                            member = tarfile.tar_filter(member, location)
-                        else:
-                            raise
+                    member = data_filter(member, location)
                 except tarfile.TarError as exc:
                     message = "Invalid member in the tar file {}: {}"
                     raise InstallationError(

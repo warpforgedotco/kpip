@@ -35,12 +35,8 @@ def parse_dependency_groups(items: list[tuple[str, str]]) -> list[str]:
 def toml_module() -> Any:
     """The TOML parser, imported on first use: only a --group install reads
     TOML, and the import is not free."""
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-        from kpip._vendor import tomli
+    import tomllib
 
-        return tomli
     return tomllib
 
 

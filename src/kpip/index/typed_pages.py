@@ -43,7 +43,8 @@ def _load() -> None:
         _loaded = True
         return
 
-    from typing import Any
+    # Read when msgspec evaluates the structs' annotations.
+    from typing import Any  # noqa: F401
 
     class File(
         msgspec.Struct,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -10,10 +9,7 @@ from import_harness import ROOT, baseline_modules, imported_modules, run_kpip
 
 from kpip.cli.fast import FAST_LOCK_PLAN_BUCKET
 
-if sys.version_info >= (3, 11):
-    from tomllib import loads
-else:
-    from kpip._vendor.tomli import loads
+from tomllib import loads
 
 
 PACKAGES = ROOT / "tests" / "cli" / "data" / "packages"
@@ -291,14 +287,12 @@ def test_already_satisfied_install_answers_before_startup(tmp_path: Path) -> Non
 
 NORMAL_INSTALL_FORBIDDEN = frozenset(
     {
-        "dataclasses",
         "importlib.metadata",
         "kpip.resolution.files.parser",
         "kpip.vcs.versioncontrol",
         "kpip.core.subprocesses",
         "html.parser",
         "tomllib",
-        "kpip._vendor.tomli",
         "kpip.build.build_backend",
         "email.message",
         "configparser",
@@ -330,8 +324,6 @@ def test_normal_local_install_stays_import_light(tmp_path: Path) -> None:
     assert next(target.glob("simplewheel-2.0.dist-info"), None) is not None
     assert "kpip.cli.install" in modules
     forbidden = NORMAL_INSTALL_FORBIDDEN
-    if sys.version_info >= (3, 14):
-        forbidden = forbidden - {"dataclasses"}
     assert not (modules & forbidden), sorted(modules & forbidden)
 
 

@@ -27,11 +27,6 @@ from typing import Any, AnyStr, ClassVar
 from unittest.mock import patch
 from zipfile import ZipFile
 
-if sys.version_info < (3, 11):
-    from kpip._vendor import tomli
-
-    sys.modules.setdefault("tomllib", tomli)
-
 import pytest
 from filelock import FileLock
 

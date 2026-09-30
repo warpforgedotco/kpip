@@ -224,32 +224,12 @@ def create_isolated_venv(
         except (OSError, RuntimeError) as e:
             raise VenvCreationError(str(e))
 
-    if sys.version_info >= (3, 12) and context is not None:
+    if context is not None:
         lib_dirs = [context.lib_path]
         bin_path = context.bin_path
-    elif sys.version_info >= (3, 12):
-        lib_dirs = [get_venv_path_from_sysconfig("purelib", env_path)]
-        bin_path = get_venv_path_from_sysconfig("scripts", env_path)
-    elif sys.version_info[:2] == (3, 11):
-        lib_dirs = [get_venv_path_from_sysconfig("purelib", env_path)]
-        bin_path = get_venv_path_from_sysconfig("scripts", env_path)
     else:
-        if sys.platform == "win32":
-            libpath = os.path.join(env_path, "Lib", "site-packages")
-        else:
-            python = "pypy" if sys.implementation.name == "pypy" else "python"
-            libpath = os.path.join(
-                env_path,
-                "lib",
-                f"{python}{sys.version_info.major}.{sys.version_info.minor}",
-                "site-packages",
-            )
-        lib_dirs = [libpath]
-        try:
-            bin_path = context.bin_path
-        except AttributeError:
-            scripts_dir = "Scripts" if os.name == "nt" else "bin"
-            bin_path = os.path.join(env_path, scripts_dir)
+        lib_dirs = [get_venv_path_from_sysconfig("purelib", env_path)]
+        bin_path = get_venv_path_from_sysconfig("scripts", env_path)
 
     try:
         python_executable = context.env_exec_cmd
