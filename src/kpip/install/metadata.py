@@ -23,6 +23,10 @@ from kpip.index.links import Link
 from kpip.index.vcs import release_checkout
 from kpip.resolution.input_requirements import install_req_from_editable
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
@@ -280,7 +284,9 @@ def prepare_editable_source(
         and egg is not None
         and canonicalize_name(egg) != canonicalize_name(metadata.name)
     ):
-        print(f"{editable} has inconsistent name: expected {egg}, got {metadata.name}")
+        logger.info(
+            f"{editable} has inconsistent name: expected {egg}, got {metadata.name}"
+        )
         raise CommandError(
             "Generating metadata for package "
             f"{egg} produced metadata for project name {metadata.name}. "
@@ -399,7 +405,8 @@ def write_install_report(
         report_values["kpip_resolution"] = resolution_metrics
     report = json.dumps(report_values)
     if path == "-":
-        print(report)
+        # The report is the command's result, not a log line: -q leaves it.
+        sys.stdout.write(report + "\n")
     else:
         with open(path, "w", encoding="utf-8") as file:
             file.write(report)

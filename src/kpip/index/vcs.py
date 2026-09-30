@@ -15,6 +15,10 @@ from kpip.index.vcs_urls import (
     vcs_scheme,
 )
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 __all__ = [
     "VCS_SCHEMES",
     "git_revision",
@@ -105,7 +109,7 @@ def _announce_resolution(url: str, checkout: str) -> None:
         return
     _announced_resolutions.add(url)
     reference = vcs_reference(url)
-    print(f"Resolved {reference.repo_url} to commit {git_revision(checkout)}")
+    logger.info(f"Resolved {reference.repo_url} to commit {git_revision(checkout)}")
 
 
 def _clone_vcs(
@@ -164,7 +168,7 @@ def _clone_vcs(
             raise OSError(f"Failed to checkout {url}: {detail}")
     commit_id = git_revision(target_text)
     if emit_resolution and not os.environ.get("KPIP_QUIET"):
-        print(f"Resolved {reference.repo_url} to commit {commit_id}")
+        logger.info(f"Resolved {reference.repo_url} to commit {commit_id}")
     return target_text
 
 

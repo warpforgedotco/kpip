@@ -38,7 +38,7 @@ Rules:
   of the same behaviour is not. There are no argv recognizers ahead of
   command dispatch; do not add one.
 - The registry stores module paths and imports a command on first use. Startup
-  gating belongs in `CommandSpec` flags (`needs_logging`, `needs_tempdir`,
+  gating belongs in `CommandSpec` flags (`needs_tempdir`,
   `needs_execution_context`), not in command-name tests.
 
 Shared concerns inside `cli` have one owner each; extend the owner rather than

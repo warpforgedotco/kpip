@@ -60,6 +60,10 @@ from kpip.install.wheel_transaction_direct import (
 )
 from kpip.host.clone import clone_path
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
@@ -232,7 +236,7 @@ def install_wheel_internal(
         and not os.environ.get("KPIP_QUIET")
     )
     if reports_replacement:
-        print(f"Uninstalling {existing.raw_name}-{existing.raw_version}")
+        logger.info(f"Uninstalling {existing.raw_name}-{existing.raw_version}")
     if direct and transaction is None:
         raise ValueError("direct wheel installation needs a transaction")
 
@@ -674,7 +678,7 @@ def install_wheel_internal(
         if transaction_sink is not None and transaction is None:
             transaction_sink.append(active_transaction)
         if reports_replacement:
-            print(
+            logger.info(
                 f"Successfully uninstalled {existing.raw_name}-{existing.raw_version}",
             )
     return candidate

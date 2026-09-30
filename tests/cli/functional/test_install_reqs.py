@@ -819,7 +819,7 @@ def test_install_unsupported_wheel_link_with_marker(
 
     assert (
         "Ignoring asdf: markers 'sys_platform == \"xyz\"' don't match your environment"
-    ) in result.stderr
+    ) in result.stdout
     assert len(result.files_created) == 0
 
 

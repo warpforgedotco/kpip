@@ -1199,11 +1199,11 @@ def install_wheels_from_archive_cache(
 
         if report:
             for distribution in uninstalling:
-                print(
+                logger.info(
                     f"Uninstalling {distribution.raw_name}-{distribution.raw_version}",
                 )
 
-                print(
+                logger.info(
                     f"Successfully uninstalled {distribution.raw_name}-{distribution.raw_version}",
                 )
 

@@ -610,9 +610,9 @@ def bundle_install_requirements(
             previous = direct_sources.get(source_name)
 
             if previous is not None and os.path.realpath(previous[0]) != source_path:
-                print(f"The user requested {source_name} {previous[1]}")
+                logger.info(f"The user requested {source_name} {previous[1]}")
 
-                print(f"The user requested {source_name} {source_version}")
+                logger.info(f"The user requested {source_name} {source_version}")
 
                 raise InstallationError(
                     f"Cannot install {source_name} because these package versions "

@@ -23,6 +23,10 @@ from kpip.index.provider import CandidateProvider
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_wheel(args: list[str]) -> int:
     options = create_parser().parse_args([arg for arg in args if arg])
@@ -121,6 +125,6 @@ def run_wheel(args: list[str]) -> int:
         built_names.append(wheel_candidate_from_path(source).name)
 
     if built_names:
-        print(f"Successfully built {' '.join(sorted(set(built_names)))}")
+        logger.info(f"Successfully built {' '.join(sorted(set(built_names)))}")
 
     return 0

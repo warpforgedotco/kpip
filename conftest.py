@@ -429,6 +429,31 @@ def isolate(tmpdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def command_logging() -> Iterator[None]:
+    """What a command logs reaches stdout and stderr, as when kpip is run.
+
+    A command sets this up as it parses its options; a test that calls into
+    one past that point finds it set up the same way.
+    """
+    import logging
+
+    from kpip.cli.logging_config import configure_logging, set_log_file
+
+    root = logging.getLogger()
+    level = root.level
+    set_log_file(None)
+    configure_logging(0)
+
+    yield
+
+    set_log_file(None)
+    for handler in list(root.handlers):
+        if getattr(handler, "kpip_core_handler", False):
+            root.removeHandler(handler)
+    root.setLevel(level)
+
+
+@pytest.fixture(autouse=True)
 def scoped_global_tempdir_manager(request: pytest.FixtureRequest) -> Iterator[None]:
     """Make unit tests with globally-managed tempdirs easier
 

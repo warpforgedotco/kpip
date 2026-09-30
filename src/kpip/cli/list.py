@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 
 from kpip.build.query import (
     format_list_columns,
@@ -14,6 +13,10 @@ from kpip.cli.parsers.list import create_parser
 from kpip.cli.target import target_paths
 from kpip.core.metadata import stdlib_pkgs, user_lib_path
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
@@ -24,18 +27,12 @@ def run_list(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
     if options.outdated and options.uptodate:
-        print(
-            "ERROR: Options --outdated and --uptodate cannot be combined.",
-            file=sys.stderr,
-        )
+        logger.error("Options --outdated and --uptodate cannot be combined.")
 
         return 1
 
     if options.outdated and options.format == "freeze":
-        print(
-            "ERROR: List format 'freeze' cannot be used with the --outdated option.",
-            file=sys.stderr,
-        )
+        logger.error("List format 'freeze' cannot be used with the --outdated option.")
 
         return 1
 
@@ -117,12 +114,8 @@ def run_list(args: list[str]) -> int:
 
     distributions.sort(key=lambda dist: dist.canonical_name)
 
-    # pip writes the listing through its logger, which -q silences.
-    if options.quiet:
-        return 0
-
     if options.format == "json":
-        print(
+        logger.info(
             format_list_json(
                 distributions,
                 outdated=options.outdated,
@@ -138,7 +131,7 @@ def run_list(args: list[str]) -> int:
             distributions,
             verbose=options.verbose > 0,
         ):
-            print(requirement)
+            logger.info(requirement)
 
         return 0
 
@@ -169,6 +162,6 @@ def run_list(args: list[str]) -> int:
     # pip rules the header off from the rows.
     lines.insert(1, " ".join("-" * width for width in widths))
 
-    print("\n".join(lines))
+    logger.info("\n".join(lines))
 
     return 0

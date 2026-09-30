@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import os
 import re
-import sys
 import urllib.parse
 from itertools import chain, islice
 from threading import RLock
@@ -2448,23 +2447,22 @@ class CandidateMaterializer:
             except ValueError:
                 self.invalid_links.add(candidate.link.url)
 
-                print(
-                    f"WARNING: Ignoring version {candidate.version} of "
-                    f"{candidate.name} since it has invalid metadata",
-                    file=sys.stderr,
+                logger.warning(
+                    f"Ignoring version {candidate.version} of "
+                    f"{candidate.name} since it has invalid metadata"
                 )
 
                 continue
 
             if built.version != candidate.version and candidate.version != ZERO_VERSION:
-                print(
+                logger.info(
                     f"WARNING: {candidate.name} has an inconsistent version: "
                     f"expected '{candidate.version}', but metadata has "
                     f"'{built.version}'",
                 )
 
                 if requirement.extras:
-                    print(
+                    logger.info(
                         f"Requested {requirement.raw or requirement.name}, "
                         f"but installing version {built.version}",
                     )

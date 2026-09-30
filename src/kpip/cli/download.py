@@ -26,6 +26,10 @@ from kpip.install.metadata import prepare_editable_source
 from kpip.install.output import fetch_candidate_sources
 from kpip.resolution.api import ResolutionEngine
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_download(args: list[str]) -> int:
     options = create_parser().parse_args(args)
@@ -126,6 +130,6 @@ def run_download(args: list[str]) -> int:
         ):
             message = f"\x1b[32m{message}\x1b[0m"
 
-        print(message)
+        logger.info(message)
 
     return 0

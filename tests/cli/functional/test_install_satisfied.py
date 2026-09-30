@@ -66,7 +66,7 @@ def test_an_installed_name_skipped_for_its_markers_is_not_satisfied(
     assert (
         "Ignoring simplewheel: markers 'sys_platform == \"xyz\"' don't match "
         "your environment"
-    ) in result.stderr
+    ) in result.stdout
     assert not result.files_created
 
     result = script.kpip("install", "--quiet", "--no-index", "-r", requirements)

@@ -6,7 +6,6 @@ import codecs
 import os
 import re
 import shlex
-import sys
 import urllib.parse
 
 from kpip.core.logger import get_logger
@@ -183,9 +182,8 @@ def parse_requirements_internal(
             )
         content = content_cache[normalized]
         if is_pylock_reference(normalized):
-            print(
-                "WARNING: Using pylock.toml as a requirements source is an experimental feature.",
-                file=sys.stderr,
+            logger.warning(
+                "Using pylock.toml as a requirements source is an experimental feature."
             )
             results.extend(parse_pylock(normalized, content, provider=provider))
             continue

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import time
 
@@ -502,15 +501,8 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     quiet_environment = os.environ.get("KPIP_QUIET")
 
-    root_logger = logging.getLogger()
-
-    logging_level = root_logger.level
-
     if options.quiet:
         os.environ["KPIP_QUIET"] = "1"
-
-        # As pip's -q: warnings and errors are still reported.
-        root_logger.setLevel(max(logging_level, logging.WARNING))
 
     format_control = None
 
@@ -944,7 +936,5 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     else:
         os.environ["KPIP_QUIET"] = quiet_environment
-
-    root_logger.setLevel(logging_level)
 
     return 0

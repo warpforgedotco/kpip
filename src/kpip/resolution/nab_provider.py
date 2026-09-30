@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import operator
-import sys
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -37,6 +36,10 @@ from kpip.resolution.nab_types import (
     _key,
     _RecordingRequirements,
 )
+
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 _MISSING = object()
 
@@ -760,10 +763,9 @@ class NabProvider:
         candidate = candidates[0]
 
         if self._invalid_metadata_rejects(candidate):
-            print(
-                f"WARNING: Ignoring version {candidate.version} of "
-                f"{candidate.name} since it has invalid metadata",
-                file=sys.stderr,
+            logger.warning(
+                f"Ignoring version {candidate.version} of "
+                f"{candidate.name} since it has invalid metadata"
             )
 
             alternative = self._alternative_for_invalid_metadata(
@@ -788,14 +790,14 @@ class NabProvider:
         if self._inconsistent_metadata_rejects(candidate):
             metadata_version = getattr(candidate, "metadata_version", None)
 
-            print(
+            logger.info(
                 f"WARNING: {candidate.name} has an inconsistent version: "
                 f"expected '{candidate.version}', but metadata has "
                 f"'{metadata_version}'",
             )
 
             if requirement.extras:
-                print(
+                logger.info(
                     f"Requested {requirement.raw or requirement.name}, "
                     f"but installing version {metadata_version}",
                 )

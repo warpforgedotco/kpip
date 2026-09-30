@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
@@ -129,15 +130,17 @@ def extract_global_options(
 
             continue
 
-        if token == "--verbose":
-            verbosity += 1
+        if token in ("--verbose", "--quiet"):
+            verbosity += 1 if token == "--verbose" else -1
 
             index += 1
 
             continue
 
-        if token.startswith("-") and set(token[1:]) == {"v"}:
-            verbosity += len(token) - 1
+        if token.startswith("-") and set(token[1:]) in ({"v"}, {"q"}):
+            count = len(token) - 1
+
+            verbosity += count if token[1] == "v" else -count
 
             index += 1
 
@@ -246,9 +249,8 @@ def handle_global_commands(
         from kpip.host.virtualenv import running_under_virtualenv
 
         if not running_under_virtualenv():
-            print(
-                "Could not find an activated virtualenv (required).",
-                file=sys.stderr,
+            logging.getLogger(__name__).critical(
+                "Could not find an activated virtualenv (required)."
             )
 
             return VIRTUALENV_NOT_FOUND
@@ -399,6 +401,14 @@ def main(
     try:
         argv = list(sys.argv[1:] if args is None else args)
         argv, verbosity, require_virtualenv, log_file = extract_global_options(argv)
+
+        # Before anything can fail; the command sets it up again with the
+        # -v and -q it is given itself.
+        from kpip.cli.logging_config import configure_logging, set_log_file
+
+        set_log_file(log_file)
+
+        configure_logging(verbosity)
         if verbosity >= 2 or any(token in VERBOSITY_FLAGS for token in argv):
             os.environ["KPIP_RESOLVER_DEBUG"] = "1"
         argv, target_prefix = extract_python_option(argv)
@@ -444,10 +454,8 @@ def main(
 
             configure(version=version)
 
-        if spec.needs_logging and not os.environ.get("KPIP_QUIET"):
-            from kpip.cli.logging_config import configure_logging
-
-            configure_logging(log_file)
+        # Given before the command, -v and -q mean what they mean after it.
+        argv[1:1] = ["-v"] * max(verbosity, 0) + ["-q"] * max(-verbosity, 0)
 
         restore_thresholds = collect_less_often()
 
@@ -494,21 +502,25 @@ def main(
 
             from kpip.cli.logging_config import BrokenStdoutLoggingError
 
-            try:
-                raise BrokenStdoutLoggingError() from exc
-
-            except BrokenStdoutLoggingError:
+            if isinstance(exc, BrokenStdoutLoggingError):
                 traceback.print_exc(file=sys.stderr)
+
+            else:
+                try:
+                    raise BrokenStdoutLoggingError() from exc
+
+                except BrokenStdoutLoggingError:
+                    traceback.print_exc(file=sys.stderr)
 
         return BROKEN_STDOUT
 
     except KeyboardInterrupt:
-        print("ERROR: Operation cancelled by user", file=sys.stderr)
+        logging.getLogger(__name__).critical("Operation cancelled by user")
 
         return 1
 
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        logging.getLogger(__name__).critical("%s", exc)
 
         return 1
 
@@ -518,7 +530,7 @@ def main(
         if not isinstance(exc, KpipError):
             raise
 
-        print(f"ERROR: {exc}", file=sys.stderr)
+        logging.getLogger(__name__).critical("%s", exc)
 
         return 1
 

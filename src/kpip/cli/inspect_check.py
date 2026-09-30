@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_check(args: list[str]) -> int:
     from kpip.cli.parsers.inspection import create_check_parser
@@ -41,18 +45,18 @@ def run_check(args: list[str]) -> int:
     missing, conflicting = query.check_package_set(package_set)
 
     if not missing and not conflicting and not unsupported:
-        print("No broken requirements found.")
+        logger.info("No broken requirements found.")
         return 0
 
     for line in unsupported:
-        print(line)
+        logger.info(line)
 
     by_name = {dist.canonical_name: dist for dist in distributions}
 
     for name, requirements in sorted(missing.items()):
         distribution = by_name[packaging.canonicalize_name(name)]
         for _, requirement in requirements:
-            print(
+            logger.info(
                 f"{name} {distribution.raw_version} requires "
                 f"{packaging.canonicalize_name(requirement.name)}, which is not installed.",
             )
@@ -60,7 +64,7 @@ def run_check(args: list[str]) -> int:
     for name, requirements in sorted(conflicting.items()):
         distribution = by_name[packaging.canonicalize_name(name)]
         for conflict_name, version, requirement in requirements:
-            print(
+            logger.info(
                 f"{name} {distribution.raw_version} has requirement {requirement}, "
                 f"but you have {conflict_name} {version}.",
             )

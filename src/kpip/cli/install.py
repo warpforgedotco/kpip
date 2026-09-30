@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import datetime
-import logging
 import os
 import time
-import sys
 
 from kpip.build.build import build_editable_from_source
 from kpip.build.metadata import InstalledDistributionStore
@@ -75,6 +73,10 @@ from kpip.install.wheel_transaction import (
 from kpip.host.virtualenv import running_under_virtualenv
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
+
+from kpip.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 TYPE_CHECKING = False
 
@@ -401,7 +403,6 @@ def runtime_setup(
 ) -> InstallRuntimeSetup:
     quiet = options.quiet > 0
     if quiet:
-        logging.getLogger().setLevel(logging.ERROR)
         os.environ["KPIP_QUIET"] = "1"
     else:
         os.environ.pop("KPIP_QUIET", None)
@@ -551,7 +552,7 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
     if any(
         os.path.basename(value) == "requirements.txt" for value in options.requirements
     ):
-        print(
+        logger.info(
             "Hint: It looks like you are trying to install a requirements file. "
             "Use the -r option to install the file, or provide a package literally "
             'named "requirements.txt".',
@@ -565,10 +566,9 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
 
     for feature in options.use_features:
         if feature == "build-constraint":
-            print(
-                "WARNING: --use-feature=build-constraint is always enabled; "
-                "the option is a no-op.",
-                file=sys.stderr,
+            logger.warning(
+                "--use-feature=build-constraint is always enabled; "
+                "the option is a no-op."
             )
 
     runtime = runtime_setup(args, options, INDEX_URL_OPTIONS)
@@ -649,9 +649,8 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
         and "://" not in options.index_url
         and not options.index_url.startswith(("http:", "https:", "file:"))
     ):
-        print(
-            f'WARNING: The index url "{options.index_url}" seems invalid, please provide a scheme.',
-            file=sys.stderr,
+        logger.warning(
+            f'The index url "{options.index_url}" seems invalid, please provide a scheme.'
         )
 
     try:
@@ -1015,15 +1014,16 @@ def warn_about_install_conflicts(changed_names: set[str]) -> None:
 
     missing, conflicting = check_package_set(package_set)
 
+    conflicts: list[str] = []
+
     for name, requirements in sorted(missing.items()):
         if name not in affected:
             continue
         distribution = distributions_by_name[name]
         for _, requirement in requirements:
-            print(
+            conflicts.append(
                 f"{distribution.canonical_name} {distribution.raw_version} requires "
-                f"{requirement.name}, which is not installed.",
-                file=sys.stderr,
+                f"{requirement.name}, which is not installed."
             )
 
     for name, requirements in sorted(conflicting.items()):
@@ -1031,11 +1031,24 @@ def warn_about_install_conflicts(changed_names: set[str]) -> None:
             continue
         distribution = distributions_by_name[name]
         for dependency_name, version, requirement in requirements:
-            print(
+            conflicts.append(
                 f"{distribution.canonical_name} {distribution.raw_version} requires "
-                f"{requirement}, but you have {dependency_name} {version} which is incompatible.",
-                file=sys.stderr,
+                f"{requirement}, but you have {dependency_name} {version} which is incompatible."
             )
+
+    if conflicts:
+        # One record, as pip reports it: the lines after the first carry no
+        # prefix of their own.
+        logger.critical(
+            "\n".join(
+                (
+                    "kpip's dependency resolver does not currently take into "
+                    "account all the packages that are installed. This behaviour "
+                    "is the source of the following dependency conflicts.",
+                    *conflicts,
+                )
+            )
+        )
 
 
 def report_nothing_installed(
@@ -1045,7 +1058,7 @@ def report_nothing_installed(
     installed = installed_index()
     for requirement in outcome.satisfied_requirements:
         if requirement not in outcome.reported_satisfied and not execution.quiet:
-            print(f"Requirement already satisfied: {requirement}")
+            logger.info(f"Requirement already satisfied: {requirement}")
             outcome.reported_satisfied.add(requirement)
 
     for requirement in execution.bundle.requirements:
@@ -1060,7 +1073,7 @@ def report_nothing_installed(
             and requirement not in outcome.reported_satisfied
             and not execution.quiet
         ):
-            print(f"Requirement already satisfied: {requirement}", file=sys.stdout)
+            logger.info(f"Requirement already satisfied: {requirement}")
 
 
 def report_install_summary(
@@ -1070,7 +1083,7 @@ def report_install_summary(
 ) -> None:
     for requirement in outcome.satisfied_requirements:
         if requirement not in outcome.reported_satisfied and not execution.quiet:
-            print(f"Requirement already satisfied: {requirement}")
+            logger.info(f"Requirement already satisfied: {requirement}")
 
     if execution.options.report:
         session = execution.bundle.session
@@ -1095,7 +1108,7 @@ def report_install_summary(
         warn_about_install_conflicts(outcome.newly_installed_names)
 
     if outcome.installed and execution.options.dry_run and not execution.quiet:
-        print(f"Would install {' '.join(outcome.installed)}")
+        logger.info(f"Would install {' '.join(outcome.installed)}")
     elif outcome.installed and not execution.quiet:
         locked_order = {
             name: index for index, name in enumerate(execution.bundle.locked_links)
@@ -1112,9 +1125,9 @@ def report_install_summary(
                 ),
             )
         ]
-        print(f"Successfully installed {' '.join(outcome.installed)}")
+        logger.info(f"Successfully installed {' '.join(outcome.installed)}")
         for item in outcome.installed:
-            print(f"installed {item}")
+            logger.info(f"installed {item}")
 
 
 def install_editables(
@@ -1250,7 +1263,7 @@ def install_editables(
                         and existing.version == candidate.version
                     ):
                         if not execution.quiet:
-                            print(
+                            logger.info(
                                 f"Requirement already satisfied: {candidate.name}=={candidate.version}"
                             )
                         continue
@@ -1393,20 +1406,20 @@ def run_install(args: list[str]) -> int:
         )
 
     if options.verbose and bundle.no_index:
-        print("Ignoring indexes:")
+        logger.info("Ignoring indexes:")
 
     if options.verbose and bundle.index_url:
         for requirement in requirements:
             if requirement.req is None:
                 continue
-            print(
+            logger.info(
                 f"Getting page {bundle.index_url.rstrip('/')}/{requirement.req.canonical_name}",
             )
 
     if options.verbose and bundle.find_links:
         for find_link in bundle.find_links:
             if find_link.startswith(("http://", "https://")):
-                print(f"Fetching project page and analyzing links: {find_link}")
+                logger.info(f"Fetching project page and analyzing links: {find_link}")
 
     preinstalled_editables: set[str] = set()
     preinstalled_editable_reports: dict[str, tuple[Any, Any]] = {}
@@ -1464,7 +1477,7 @@ def run_install(args: list[str]) -> int:
             preinstalled_editable_reports[editable] = (candidate, direct_url)
 
     if bundle.find_links and not quiet:
-        print(f"Looking in links: {', '.join(bundle.find_links)}")
+        logger.info(f"Looking in links: {', '.join(bundle.find_links)}")
 
     if options.verbose and bundle.requirement_hashes:
         for raw, hashes in bundle.requirement_hashes.items():
@@ -1475,7 +1488,7 @@ def run_install(args: list[str]) -> int:
                 digest_count = min(
                     digest_count, len(constraint_hashes.get("sha256", ()))
                 )
-            print(
+            logger.info(
                 f"Using {digest_count} sha256 hashes for requirement {name!r}",
             )
 
@@ -1562,7 +1575,7 @@ def run_install(args: list[str]) -> int:
         if plan is None:
             try:
                 if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
-                    print("Reporter.starting()")
+                    logger.info("Reporter.starting()")
                 plan = ResolutionEngine.resolve_serving_stale_pages(
                     lambda: ResolutionEngine(
                         provider=prefetching_provider(),
@@ -1593,16 +1606,26 @@ def run_install(args: list[str]) -> int:
 
             except (DistributionNotFound, ResolutionError) as exc:
                 if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
-                    print("conflict is caused by the requested requirements")
-                for raw in execution.bundle.constraints:
-                    print(f"The user requested (constraint) {raw}")
+                    logger.info("conflict is caused by the requested requirements")
                 detail = resolution_error_message(
                     str(exc),
                     execution.requirements,
                     parsed_release_control_args,
                 )
+                constraints = [
+                    f"The user requested (constraint) {raw}"
+                    for raw in execution.bundle.constraints
+                ]
+                if execution.quiet:
+                    # A quiet run shows only the error, and a build that
+                    # installs its requirements quietly has nowhere else to
+                    # say which constraints the failed resolve was held to.
+                    detail = "\n".join((detail, *constraints))
+                else:
+                    for constraint in constraints:
+                        logger.info(constraint)
                 if execution.options.verbose:
-                    print(f"DistributionNotFound: {detail}")
+                    logger.info(f"DistributionNotFound: {detail}")
                 raise DistributionNotFound(detail) from exc
 
         assert plan is not None
@@ -1610,11 +1633,11 @@ def run_install(args: list[str]) -> int:
         installed = installed_index()
 
         if plan.metrics.get("nab_conflicts", 0) and not execution.quiet:
-            print("This could take a while.")
+            logger.info("This could take a while.")
             if plan.metrics.get("nab_conflicts", 0) >= 8:
-                print("This could take a while.")
+                logger.info("This could take a while.")
             if plan.metrics.get("nab_conflicts", 0) >= 13:
-                print("This could take a while. press Ctrl + C to cancel.")
+                logger.info("This could take a while. press Ctrl + C to cancel.")
 
         if not execution.quiet and not execution.options.ignore_installed:
             for candidate in plan.candidates:
@@ -1624,7 +1647,7 @@ def run_install(args: list[str]) -> int:
                         installed_dependency.version,
                         allow_prereleases=True,
                     ):
-                        print(
+                        logger.info(
                             f"Requirement already satisfied: {dependency.raw or dependency.name}"
                         )
 
@@ -1659,7 +1682,7 @@ def run_install(args: list[str]) -> int:
                     )
                 ):
                     if not quiet:
-                        print(
+                        logger.info(
                             f"Requirement already satisfied: {candidate.name}=={candidate.version}"
                         )
                 else:
@@ -1671,12 +1694,11 @@ def run_install(args: list[str]) -> int:
             if yanked_reason is not None:
                 # PEP 592: installing a yanked release should warn, with the
                 # reason the index gave.
-                print(
-                    "WARNING: The candidate selected for download or install is "
+                logger.warning(
+                    "The candidate selected for download or install is "
                     f"a yanked version: {candidate.name!r} candidate (version "
                     f"{candidate.version} at {getattr(candidate, 'source_url', '')})"
-                    f"\nReason for being yanked: {yanked_reason or '<none given>'}",
-                    file=sys.stderr,
+                    f"\nReason for being yanked: {yanked_reason or '<none given>'}"
                 )
 
         if execution.bundle.require_hashes:
@@ -1786,21 +1808,20 @@ def run_install(args: list[str]) -> int:
                 for extra in getattr(candidate, "provided_extras", ())
             }
             for extra in sorted(requested - provided):
-                print(
-                    f"WARNING: {candidate.name} {candidate.version} does not provide the extra '{extra}'",
-                    file=sys.stderr,
+                logger.warning(
+                    f"{candidate.name} {candidate.version} does not provide the extra '{extra}'"
                 )
 
         for item in plan.satisfied:
             requested = item.requirement.raw or item.requirement.name
             if not quiet:
                 if options.upgrade:
-                    print(
+                    logger.info(
                         f"Requirement already satisfied: {requested} in "
                         f"{item.distribution.location}",
                     )
                 else:
-                    print(f"Requirement already satisfied: {requested}")
+                    logger.info(f"Requirement already satisfied: {requested}")
             outcome.reported_satisfied.add(requested)
 
         if plan.candidates and not quiet:
@@ -1808,7 +1829,7 @@ def run_install(args: list[str]) -> int:
                 plan.candidates,
                 key=lambda candidate: candidate.canonical_name in requested_names,
             )
-            print(
+            logger.info(
                 "Installing collected packages: "
                 + ", ".join(
                     requested_names.get(candidate.canonical_name, candidate.name)
@@ -1879,7 +1900,7 @@ def run_install(args: list[str]) -> int:
                         conflict_name = message[len(prefix) :].split(":", 1)[0]
                         for candidate in plan.candidates:
                             if candidate.canonical_name == conflict_name:
-                                print(
+                                logger.info(
                                     f"The user requested {candidate.canonical_name} "
                                     f"{candidate.version}",
                                 )
@@ -1980,7 +2001,7 @@ def run_install(args: list[str]) -> int:
                         else parent_name
                     )
                 suffix = f" (from {provenance})" if provenance else ""
-                print(f"Processing {candidate.path}{suffix}")
+                logger.info(f"Processing {candidate.path}{suffix}")
 
             source_requirement = source_requirements_by_name.get(
                 candidate.canonical_name,
