@@ -883,6 +883,10 @@ def report_nothing_installed(
 
     for requirement in execution.bundle.requirements:
         item = install_req_from_line(requirement)
+        # Skipped for its markers, as bundle_install_requirements logged:
+        # installed or not, it was never a requirement here.
+        if not item.match_markers():
+            continue
         requirement_name = item.req.name if item.req is not None else requirement
         if (
             installed.get(canonicalize_name(requirement_name)) is not None

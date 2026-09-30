@@ -10,6 +10,7 @@ import sys
 from kpip.cli.dependency_groups import toml_module
 from kpip.core.errors import KpipError, InstallationError
 from kpip.core.format_control import FormatControl
+from kpip.core.logger import get_logger
 from kpip.core.packaging import SpecifierSet, canonicalize_name, parse_requirement
 from kpip.core.versions import Version
 from kpip.core.release_control import ReleaseControl
@@ -21,6 +22,8 @@ from kpip.network.deferred import DeferredNetworkSession
 from kpip.resolution.input_requirements import install_req_from_line
 
 RELEASE_OPTIONS = frozenset(("pre", "all-releases"))
+
+logger = get_logger(__name__)
 
 
 TYPE_CHECKING = False
@@ -695,9 +698,10 @@ def bundle_install_requirements(
 
         if not item.match_markers():
             if item.req is not None and item.markers:
-                print(
-                    f"Ignoring {item.req.name}: markers '{item.markers}' don't match "
-                    "your environment",
+                logger.info(
+                    "Ignoring %s: markers '%s' don't match your environment",
+                    item.req.name,
+                    item.markers,
                 )
 
             continue
