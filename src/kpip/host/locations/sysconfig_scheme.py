@@ -172,6 +172,16 @@ def get_scheme(
     else:
         variables = {}
 
+    from kpip.core.interpreter import is_compiled
+
+    if is_compiled():
+        # A compiled kpip's runtime sets sys.platlibdir -- from which
+        # sysconfig's platlibdir comes -- to the binary's own directory, so
+        # platlib under --prefix /x was /x/<that directory>/python3.14/...
+        # The directory the interpreter was built with is still in its
+        # build configuration.
+        variables["platlibdir"] = sysconfig.get_config_var("PLATLIBDIR") or "lib"
+
     paths = sysconfig.get_paths(scheme=scheme_name, vars=variables)
 
     if running_under_virtualenv():

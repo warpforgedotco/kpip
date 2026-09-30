@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -718,3 +719,102 @@ def test_kpip_installs_a_build_environments_requirements(
 
     assert imported.stdout.strip() == "build-helper"
     assert has_pip.returncode != 0
+
+
+def _recording_environments(
+    monkeypatch: pytest.MonkeyPatch, identity: list[object]
+) -> tuple[list[bool], list[tuple[list[str], dict[str, str]]]]:
+    """A compiled kpip's build environments, faked: each venv's pip and
+    interpreter identity, and each command with its environment."""
+    from kpip.build import build_backend
+    from kpip.install.build_env.isolated_venv import CreatedVenv
+
+    venvs: list[bool] = []
+    commands: list[tuple[list[str], dict[str, str]]] = []
+
+    def create(env_path: str, *, with_pip: bool, **_: object) -> CreatedVenv:
+        # The interpreter creates it from inside, so it must be there.
+        assert os.path.isdir(env_path)
+        venvs.append(with_pip)
+        return CreatedVenv(
+            [env_path], env_path, os.path.join(env_path, "python"), identity
+        )
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append((command, kwargs["env"]))  # type: ignore[arg-type]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(build_backend, "_prepared_environments", {})
+    monkeypatch.setattr(build_backend, "is_compiled", lambda: True)
+    monkeypatch.setattr(build_backend, "own_command", lambda: ["/opt/kpip"])
+    monkeypatch.setattr(build_backend, "_prefix_is_environment", lambda *_: True)
+    monkeypatch.setattr(build_backend, "create_isolated_venv", create)
+    monkeypatch.setattr(build_backend.subprocess, "run", run)
+    return venvs, commands
+
+
+def test_a_compiled_kpip_installs_build_requirements_for_its_own_python(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The build interpreter is the Python the binary embeds: no pip, and the
+    binary installs the requirements itself, as itself rather than -m kpip,
+    with the environment's Python for their scripts."""
+    from kpip.build.build_backend import BackendRunner, BackendSpec
+    from kpip.install.build_env.isolated_venv import interpreter_identity
+
+    venvs, commands = _recording_environments(monkeypatch, interpreter_identity())
+    spec = BackendSpec("hatchling.build", ("hatchling",), ())
+
+    with BackendRunner(tmp_path, spec).caller() as (caller, _):
+        python = caller.python_executable
+
+    assert venvs == [False]
+    [(command, env)] = commands
+    assert command[:2] == ["/opt/kpip", "install"]
+    assert "--prefix" in command
+    assert command[-1] == "hatchling"
+    assert env["KPIP_SCRIPT_PYTHON"] == python
+
+
+def test_a_compiled_kpip_leaves_another_pythons_build_requirements_to_pip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Another interpreter takes other wheels than the binary would pick:
+    the environment is made again with pip, which installs them."""
+    from kpip.build.build_backend import BackendRunner, BackendSpec
+    from kpip.install.build_env.isolated_venv import interpreter_identity
+
+    other = interpreter_identity()
+    other[1] = [3, 9]
+    venvs, commands = _recording_environments(monkeypatch, other)
+    spec = BackendSpec("hatchling.build", ("hatchling",), ())
+
+    with BackendRunner(tmp_path, spec).caller() as (caller, _):
+        python = caller.python_executable
+
+    assert venvs == [False, True]
+    [(command, _)] = commands
+    assert command[:3] == [python, "-m", "pip"]
+
+
+def test_an_interpreter_describes_itself_as_kpip_sees_it() -> None:
+    """The identity a build interpreter reports about itself is the one kpip
+    computes for the Python running it."""
+    import json
+
+    from kpip.install.build_env.isolated_venv import _VENV_PATHS, interpreter_identity
+
+    described = subprocess.run(
+        [sys.executable, "-c", _VENV_PATHS],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert json.loads(described.stdout)[3] == interpreter_identity()
+
+
+def test_kpip_runs_again_as_itself() -> None:
+    from kpip.core.interpreter import own_command
+
+    assert own_command() == [sys.executable, "-m", "kpip"]

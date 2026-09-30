@@ -47,6 +47,22 @@ def is_compiled() -> bool:
     return "__compiled__" in globals()
 
 
+def own_command() -> list[str]:
+    """This kpip, as a command to run another copy of it.
+
+    ``-m kpip`` under this interpreter; a compiled kpip is its own
+    executable, which is not ``sys.executable`` -- Nuitka points that at a
+    ``python`` beside the binary that does not exist -- but the one Nuitka
+    names for starting the program again.
+    """
+    compiled = globals().get("__compiled__")
+
+    if compiled is None:
+        return [sys.executable, "-m", "kpip"]
+
+    return [compiled.process_exe]
+
+
 def _environment_python(prefix: str) -> str:
     if os.name == "nt":
         return os.path.join(prefix, "Scripts", "python.exe")

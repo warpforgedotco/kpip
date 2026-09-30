@@ -8,6 +8,8 @@ import tempfile
 from typing import Any
 from unittest.mock import Mock
 
+import pytest
+
 from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.host.scheme import SCHEME_KEYS
 
@@ -100,3 +102,30 @@ class TestLocations:
 
         expected = {k: calculate_expected(v) for k, v in normal_scheme.items()}
         assert prefix_scheme == expected
+
+
+def test_a_compiled_kpip_lays_out_platlib_as_its_python_was_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A compiled kpip's runtime points sys.platlibdir at the binary's own
+    directory; a prefix's platlib still sits under the interpreter's lib."""
+    import sysconfig
+
+    from kpip.core import interpreter
+    from kpip.host.locations import sysconfig_scheme
+
+    passed: dict[str, str] = {}
+    get_paths = sysconfig.get_paths
+
+    def recording(scheme=None, vars=None, expand=True):
+        passed.update(vars or {})
+        return get_paths(scheme, vars, expand)
+
+    monkeypatch.setattr(interpreter, "is_compiled", lambda: True)
+    monkeypatch.setattr(sysconfig_scheme.sysconfig, "get_paths", recording)
+
+    scheme = sysconfig_scheme.get_scheme("demo", prefix="/x")
+
+    built = sysconfig.get_config_var("PLATLIBDIR") or "lib"
+    assert passed["platlibdir"] == built
+    assert scheme.platlib.startswith(os.path.join("/x", built))
