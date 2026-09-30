@@ -300,6 +300,10 @@ class InstalledMetadataDistribution:
         return bool(self.info_location and self.info_location.endswith(".dist-info"))
 
     @property
+    def installed_with_setuptools_egg_info(self) -> bool:
+        return bool(self.info_location and self.info_location.endswith(".egg-info"))
+
+    @property
     def direct_url(self) -> DirectUrl | None:
         try:
             return DirectUrl.from_json(self.read_text("direct_url.json"))
@@ -434,11 +438,20 @@ class InstalledDistributionStore:
     ) -> list[InstalledMetadataDistribution]:
         result: list[InstalledMetadataDistribution] = []
 
+        # The first distribution of a name on the path is the one an import
+        # finds, and the one pip reports.
+        seen: set[str] = set()
+
         for distribution in iter_installed_distributions(self.paths, names=names):
             view = InstalledMetadataDistribution(
                 distribution,
                 user_site=self.user_site,
             )
+
+            if view.canonical_name in seen:
+                continue
+
+            seen.add(view.canonical_name)
 
             if local_only and not view.local:
                 continue

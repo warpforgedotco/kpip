@@ -11,9 +11,10 @@ def run_check(args: list[str]) -> int:
     import sys
 
     from kpip.build import query
-    from kpip.core import kpip_version, light_metadata, packaging
+    from kpip.build.metadata import InstalledDistributionStore
+    from kpip.core import kpip_version, packaging
 
-    distributions = light_metadata.LightDistributionStore().iter(
+    distributions = InstalledDistributionStore().iter(
         skip=kpip_version.KPIP_DISTRIBUTION_NAMES
     )
     package_set = query.package_set_from_dependencies(

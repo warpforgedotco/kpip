@@ -11,15 +11,17 @@ def run_inspect(args: list[str]) -> int:
     import json
     import site
 
-    from kpip.core import kpip_version, light_metadata, packaging, urls
+    from kpip.build.metadata import InstalledDistributionStore
+    from kpip.core import kpip_version, packaging, urls
+    from kpip.core.metadata import stdlib_pkgs
 
-    distributions = light_metadata.LightDistributionStore(
+    distributions = InstalledDistributionStore(
         paths=options.path or None,
         user_site=site.getusersitepackages(),
     ).iter(
         local_only=options.local,
         user_only=options.user,
-        skip=set(light_metadata.stdlib_pkgs),
+        skip=set(stdlib_pkgs),
     )
 
     installed = []

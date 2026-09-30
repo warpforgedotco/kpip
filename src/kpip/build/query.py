@@ -7,7 +7,7 @@ from collections import namedtuple
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-from kpip.core.light_metadata import LightDistributionStore, parse_metadata_text
+from kpip.core.light_metadata import parse_metadata_text
 from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
@@ -26,14 +26,7 @@ if TYPE_CHECKING:
     LatestInfo = Mapping[str, tuple[Any, str]]
 
     class DistributionLike(Protocol):
-        """The subset of InstalledMetadataDistribution/LightDistribution this module uses.
-
-        A structural type rather than a shared base class: check/show/inspect/
-        freeze read installed metadata through the lightweight, importlib.metadata
-        -free LightDistribution, while list's slower path still uses the richer
-        InstalledMetadataDistribution. The functions below don't care which one
-        they get, only that it has this shape.
-        """
+        """The part of ``InstalledMetadataDistribution`` this module uses."""
 
         @property
         def canonical_name(self) -> str: ...
@@ -140,7 +133,11 @@ def iter_installed_package_info(
     include_files: bool = False,
 ) -> Iterator[InstalledPackageInfo]:
     """Collect presentation-neutral information for named distributions."""
-    installed = {dist.canonical_name: dist for dist in LightDistributionStore().iter()}
+    from kpip.build.metadata import InstalledDistributionStore
+
+    installed = {
+        dist.canonical_name: dist for dist in InstalledDistributionStore().iter()
+    }
     query_names = [canonicalize_name(name) for name in query]
     dependents, dependents_unavailable = (
         _dependent_index(installed.values())

@@ -1,13 +1,3 @@
-"""Read ``kpip.conf`` / ``kpip.ini`` and the ``KPIP_*`` environment.
-
-This is a reader: there is no ``kpip config`` command, so nothing here writes
-configuration back out.
-
-It also owns where package sources come from -- :class:`SourceConfig`,
-:func:`load_source_config`, and :func:`resolve_sources` -- because the answer
-is the same for every command.
-"""
-
 from __future__ import annotations
 
 import os

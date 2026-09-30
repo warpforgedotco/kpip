@@ -49,16 +49,17 @@ stdlib_pkgs = {"python", "wsgiref", "argparse"}
 
 
 def _read_text_file(target: str) -> str | None:
+    """The text of ``target``, or None when it cannot be read.
+
+    One distribution's damaged metadata must not stop the environment being
+    listed: bytes that are not UTF-8 are replaced, and a file that cannot be
+    read at all counts as absent. pip stops with a traceback on either.
+    """
     try:
-        with open(target, encoding="utf-8") as file:
+        with open(target, encoding="utf-8", errors="replace") as file:
             return file.read()
 
-    except (
-        FileNotFoundError,
-        IsADirectoryError,
-        NotADirectoryError,
-        PermissionError,
-    ):
+    except OSError:
         return None
 
 
@@ -478,7 +479,14 @@ def _iter_installed_distributions(
         version = headers.get("version", [None])[0]
 
         if not name or not version:
-            continue
+            named = _headers_from_info_name(dist)
+
+            if named is None:
+                continue
+
+            headers = {**headers, **named}
+
+            name, version = named["name"][0], named["version"][0]
 
         if (
             canonical_names is not None
