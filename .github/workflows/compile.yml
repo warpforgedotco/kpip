@@ -58,6 +58,13 @@ jobs:
         run: uv run --group tests pytest
       - name: Compile
         run: uv run kpip-compile build
+      - name: Subinterpreters beside compiled code
+        # Compiles small programs with the Nuitka the build just vendored, to
+        # check kpip's patches keep them safe beside subinterpreters.
+        if: runner.os == 'Linux'
+        env:
+          KPIP_NUITKA_TESTS: "1"
+        run: uv run --group tests pytest tests/test_nuitka_subinterpreters.py
       - name: Smoke test
         run: |
           # Where Nuitka's {CACHE_DIR} points on each system.

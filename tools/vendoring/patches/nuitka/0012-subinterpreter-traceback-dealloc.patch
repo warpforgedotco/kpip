@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Wed, 30 Sep 2026 12:00:00 -0400
+Subject: [PATCH] Fix, tracebacks freed by a subinterpreter corrupted the main interpreter heap
+
+The traceback type is shared by every interpreter in the process, and its
+deallocator is replaced at startup with one that keeps freed tracebacks on a
+free list of its own, which has no lock. With subinterpreters running, e.g.
+an InterpreterPoolExecutor, tracebacks that they free were put on it too:
+objects from another interpreter's allocator, taken under another lock,
+later reused and freed by the main interpreter. The process aborted with
+"free(): invalid size" or segfaulted. A traceback that another interpreter
+frees now goes to CPython's own deallocator.
+
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+ nuitka/build/static_src/InspectPatcher.c | changed
+ 1 file changed, 15 insertions(+), 1 deletions(-)
+
+diff --git a/nuitka/build/static_src/InspectPatcher.c b/nuitka/build/static_src/InspectPatcher.c
+--- a/nuitka/build/static_src/InspectPatcher.c
++++ b/nuitka/build/static_src/InspectPatcher.c
+@@ -644,8 +644,19 @@
+ 
+     return result;
+ }
++
++static destructor original_PyTraceBack_tp_dealloc = NULL;
+ 
+ static void Nuitka_tb_dealloc(PyTracebackObject *tb) {
++    // The traceback type is shared by every interpreter in the process, but
++    // the free list below is the main interpreter's, and has no lock. A
++    // traceback another interpreter frees was allocated by that interpreter,
++    // under its own lock, so it must be freed the way CPython frees it.
++    if (unlikely(_PyInterpreterState_GET() != PyInterpreterState_Main())) {
++        original_PyTraceBack_tp_dealloc((PyObject *)tb);
++        return;
++    }
++
+     // Need to use official method as it checks for recursion.
+     Nuitka_GC_UnTrack(tb);
+ 
+@@ -671,7 +682,12 @@
+ #endif
+ }
+ 
+-void patchTracebackDealloc(void) { PyTraceBack_Type.tp_dealloc = (destructor)Nuitka_tb_dealloc; }
++void patchTracebackDealloc(void) {
++    if (original_PyTraceBack_tp_dealloc == NULL) {
++        original_PyTraceBack_tp_dealloc = PyTraceBack_Type.tp_dealloc;
++        PyTraceBack_Type.tp_dealloc = (destructor)Nuitka_tb_dealloc;
++    }
++}
+ 
+ //     Part of "Nuitka", an optimizing Python compiler that is compatible and
+ //     integrates with CPython, but also works on its own.
+-- 
+2.51.0
+
