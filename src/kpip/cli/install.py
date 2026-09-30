@@ -80,8 +80,10 @@ TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     import argparse
+    from collections.abc import Mapping
     from typing import Any
 
+    from kpip.core.metadata import InstalledDistribution
     from kpip.resolution.models import ResolutionResult
     from kpip.resolution.req_install import InstallRequirement
 
@@ -299,6 +301,7 @@ def filter_already_satisfied_requirements(
     outcome: InstallOutcome,
     *,
     allow_prereleases: bool,
+    follow_dependencies: bool,
 ) -> list[InstallRequirement]:
     """Drop requirements already satisfied by an installed distribution.
 
@@ -307,6 +310,7 @@ def filter_already_satisfied_requirements(
     """
     unresolved_requirements: list[InstallRequirement] = []
     installed = installed_index()
+    satisfied: list[tuple[InstalledDistribution, frozenset[str]]] = []
     for requirement in requirements:
         installed_dist = (
             installed.get(requirement.req.canonical_name)
@@ -324,9 +328,70 @@ def filter_already_satisfied_requirements(
             )
         ):
             outcome.satisfied_requirements.append(requirement.req.raw)
+            satisfied.append((installed_dist, requirement.req.extras))
         else:
             unresolved_requirements.append(requirement)
+    if follow_dependencies:
+        named = {
+            requirement.req.canonical_name
+            for requirement in unresolved_requirements
+            if requirement.req is not None
+        }
+        unresolved_requirements.extend(
+            install_req_from_line(dependency)
+            for name, dependency in unmet_dependencies(installed, satisfied).items()
+            if name not in named
+        )
     return unresolved_requirements
+
+
+def unmet_dependencies(
+    installed: Mapping[str, InstalledDistribution],
+    satisfied: list[tuple[InstalledDistribution, frozenset[str]]],
+) -> dict[str, str]:
+    """What the dependencies of satisfied requirements still need installed.
+
+    pip keeps a requirement the environment satisfies and goes on to its
+    dependencies: one that is missing, or installed in a version the
+    requirement on it rules out, is installed. Each is given by canonical
+    name, as the requirement to resolve for it.
+    """
+    unmet: dict[str, str] = {}
+    seen: set[tuple[str, frozenset[str]]] = set()
+    pending = list(satisfied)
+    while pending:
+        distribution, extras = pending.pop()
+        for dependency in distribution.dependencies(extras):
+            key = (dependency.canonical_name, dependency.extras)
+            if key in seen:
+                continue
+            seen.add(key)
+            found = installed.get(dependency.canonical_name)
+            if found is not None and (
+                dependency.url is not None
+                or (
+                    found.version is not None
+                    and dependency.is_satisfied_by(found.version)
+                )
+            ):
+                pending.append((found, dependency.extras))
+                continue
+            text = dependency.name
+            if dependency.extras:
+                text += f"[{','.join(sorted(dependency.extras))}]"
+            text += (
+                f" @ {dependency.url}"
+                if dependency.url is not None
+                else dependency.specifier.text
+            )
+            previous = unmet.get(dependency.canonical_name)
+            # Two requirements on one name: both hold, as one requirement.
+            unmet[dependency.canonical_name] = (
+                text
+                if previous is None or dependency.url is not None
+                else f"{previous},{dependency.specifier.text}".rstrip(",")
+            )
+    return unmet
 
 
 def runtime_setup(
@@ -1295,6 +1360,7 @@ def run_install(args: list[str]) -> int:
             requirements,
             outcome,
             allow_prereleases=options.pre,
+            follow_dependencies=not options.no_deps,
         )
 
     execution = InstallExecutionContext(

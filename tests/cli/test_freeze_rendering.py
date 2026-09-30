@@ -69,30 +69,36 @@ def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_the_first_of_a_name_on_the_path_is_frozen(site: Path) -> None:
     assert _freeze([]) == (
-        "alpha==2.0.1\n" + URL_LINE + "shadowed==1.0\nZeta-Pkg==1.0\n"
+        "alpha==2.0.1\nempty==9\n" + URL_LINE + "shadowed==1.0\nZeta-Pkg==1.0\n"
     )
 
 
 def test_all_includes_kpip_itself(site: Path) -> None:
     assert _freeze(["--all"]) == (
-        "alpha==2.0.1\n" + URL_LINE + "kpip==0.0.1\nshadowed==1.0\nZeta-Pkg==1.0\n"
+        "alpha==2.0.1\nempty==9\n"
+        + URL_LINE
+        + "kpip==0.0.1\nshadowed==1.0\nZeta-Pkg==1.0\n"
     )
 
 
 def test_exclude_drops_a_name(site: Path) -> None:
     assert _freeze(["--exclude", "alpha"]) == (
-        URL_LINE + "shadowed==1.0\nZeta-Pkg==1.0\n"
+        "empty==9\n" + URL_LINE + "shadowed==1.0\nZeta-Pkg==1.0\n"
     )
     assert _freeze(["--exclude", "kpip"]) == _freeze([])
 
 
 def test_path_orders_the_roots_as_given(site: Path) -> None:
     assert _freeze(["--path", str(site / "second")]) == (
-        "alpha==2.0.1\n" + URL_LINE + "shadowed==2.0\n"
+        "alpha==2.0.1\nempty==9\n" + URL_LINE + "shadowed==2.0\n"
     )
     assert _freeze(
         ["--path", str(site / "second"), "--path", str(site / "first"), "--all"]
-    ) == ("alpha==2.0.1\n" + URL_LINE + "kpip==0.0.1\nshadowed==2.0\nZeta-Pkg==1.0\n")
+    ) == (
+        "alpha==2.0.1\nempty==9\n"
+        + URL_LINE
+        + "kpip==0.0.1\nshadowed==2.0\nZeta-Pkg==1.0\n"
+    )
 
 
 def test_exclude_editable_leaves_editables_out(site: Path, tmp_path: Path) -> None:
@@ -107,7 +113,7 @@ def test_exclude_editable_leaves_editables_out(site: Path, tmp_path: Path) -> No
     )
 
     assert _freeze(["--exclude-editable"]) == (
-        "alpha==2.0.1\n" + URL_LINE + "shadowed==1.0\nZeta-Pkg==1.0\n"
+        "alpha==2.0.1\nempty==9\n" + URL_LINE + "shadowed==1.0\nZeta-Pkg==1.0\n"
     )
     assert "editable" in _freeze([])
 
@@ -120,3 +126,8 @@ def test_a_version_is_frozen_as_the_parser_spells_it(site: Path) -> None:
 
     assert "pre==1.0rc1" in lines
     assert "respelled==1.0rc2" in lines
+
+
+def test_quiet_changes_nothing(site: Path) -> None:
+    """pip's freeze writes to stdout itself, so ``-q`` does not silence it."""
+    assert _freeze(["-q"]) == _freeze([])

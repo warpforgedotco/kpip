@@ -10,6 +10,7 @@ directories on disk and assert kpip's fast path agrees exactly with what
 from __future__ import annotations
 
 import importlib.metadata
+import os
 from pathlib import Path
 
 import pytest
@@ -249,18 +250,20 @@ def test_default_and_explicit_scans_are_cached_separately(
 
 
 def _stdlib_view(paths: list[str]) -> list[tuple[str, str, str]]:
-    """(name, metadata path, location) for every entry the stdlib finds
-    that carries metadata -- the same filter kpip applies."""
+    """(name, metadata path, location) for every entry the stdlib finds,
+    a ``.dist-info`` directory with no metadata named as pip names it: for
+    what its own name spells."""
     found = []
     for dist in importlib.metadata.distributions(path=paths):
         text = dist.read_text("METADATA") or dist.read_text("PKG-INFO")
         if not text:
             text = dist.read_text("")
-        if not text:
+        path = str(getattr(dist, "_path", ""))
+        if not text and not (path.endswith(".dist-info") and os.path.isdir(path)):
             continue
         found.append(
             (
-                dist.metadata["Name"],
+                dist.metadata["Name"] if text else os.path.basename(path).split("-")[0],
                 str(getattr(dist, "_path", None)),
                 str(dist.locate_file("")),
             )
@@ -305,11 +308,17 @@ def test_directory_scan_matches_stdlib_for_every_root_spelling(
         monkeypatch.chdir(tmp_path)
         view = _kpip_view([spelling])
         assert view == _stdlib_view([spelling]), spelling
-        assert sorted(name for name, _, _ in view) == ["Up", "demo", "flat", "legacy"]
+        assert sorted(name for name, _, _ in view) == [
+            "Up",
+            "demo",
+            "empty",
+            "flat",
+            "legacy",
+        ]
 
     monkeypatch.chdir(root)
     assert _kpip_view([""]) == _stdlib_view([""])
-    assert len(_kpip_view([""])) == 4
+    assert len(_kpip_view([""])) == 5
     assert _kpip_view(["."]) == _stdlib_view(["."])
 
 

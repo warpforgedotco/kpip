@@ -381,6 +381,39 @@ def _metadata_file_identity(base: str) -> HeaderIdentity | None:
     return (os.path.abspath(target), stat.st_size, stat.st_mtime_ns)
 
 
+def info_name_and_version(path: str) -> tuple[str, str] | None:
+    """What a ``name-version.dist-info`` directory is named for.
+
+    pip reports a ``.dist-info`` directory that has lost its ``METADATA`` by
+    the name and version its own name spells, rather than not at all.
+    """
+    basename = os.path.basename(path)
+
+    if not basename.lower().endswith(".dist-info") or not os.path.isdir(path):
+        return None
+
+    name, separator, version = basename[: -len(".dist-info")].partition("-")
+
+    if not separator or not name or not version:
+        return None
+
+    return name, version
+
+
+def _headers_from_info_name(raw: RawDistribution) -> dict[str, list[str]] | None:
+    path = getattr(raw, "_path", None)
+
+    if not (isinstance(path, str) or is_loaded_path_internal(path)):
+        return None
+
+    named = info_name_and_version(os.fspath(path))
+
+    if named is None:
+        return None
+
+    return {"name": [named[0]], "version": [named[1]]}
+
+
 def _iter_installed_distributions(
     paths: Iterable[str] | None = None,
     names: Collection[str] | None = None,
@@ -432,9 +465,13 @@ def _iter_installed_distributions(
             text = _read_raw_metadata_text(dist)
 
             if text is None:
-                continue
+                headers = _headers_from_info_name(dist)
 
-            headers = parse_metadata_headers(text)
+                if headers is None:
+                    continue
+
+            else:
+                headers = parse_metadata_headers(text)
 
         name = headers.get("name", [None])[0]
 

@@ -24,6 +24,7 @@ import sys
 
 from kpip.core.direct_url import DirectUrl
 from kpip.core.egg_link import egg_link_path_from_sys_path
+from kpip.core.metadata import info_name_and_version
 from kpip.core.names import installed_name_might_match
 from kpip.core.packaging import canonicalize_name, marker_applies, parse_requirement
 from kpip.core.versions import Version
@@ -389,7 +390,10 @@ def _iter_root_distributions(
         info_location = os.path.join(root or os.curdir, name)
         metadata = _read_metadata_file(info_location)
         if metadata is None:
-            continue
+            named = info_name_and_version(info_location)
+            if named is None:
+                continue
+            metadata = parse_metadata_text(f"Name: {named[0]}\nVersion: {named[1]}\n")
         raw_name = metadata.get("Name")
         raw_version = metadata.get("Version")
         if not raw_name or not raw_version:

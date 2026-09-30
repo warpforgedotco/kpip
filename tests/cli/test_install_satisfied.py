@@ -73,3 +73,78 @@ def test_a_requirement_given_twice_is_reported_once(
 def test_quiet_reports_nothing(site: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert run_install(["--no-index", "-q", "simple"]) == 0
     assert capsys.readouterr().out == ""
+
+
+def _requires(root: Path, dirname: str, *requirements: str) -> None:
+    with (root / dirname / "METADATA").open("a") as metadata:
+        for requirement in requirements:
+            metadata.write(f"Requires-Dist: {requirement}\n")
+
+
+def _unmet(*names: str) -> dict[str, str]:
+    from kpip.core.metadata import clear_installed_index, installed_index
+
+    clear_installed_index()
+    installed = installed_index()
+
+    return install.unmet_dependencies(
+        installed, [(installed[name], frozenset()) for name in names]
+    )
+
+
+def test_a_missing_dependency_of_a_satisfied_requirement_is_wanted(site: Path) -> None:
+    """pip installs what a satisfied requirement needs and lacks."""
+    _requires(site, "simple-2.0.0.dist-info", "absent>=1.0", "other")
+
+    assert _unmet("simple") == {"absent": "absent>=1.0"}
+
+
+def test_a_dependency_installed_in_a_version_ruled_out_is_wanted(site: Path) -> None:
+    _requires(site, "simple-2.0.0.dist-info", "other>=2")
+
+    assert _unmet("simple") == {"other": "other>=2"}
+
+
+def test_dependencies_are_followed_through_what_is_installed(site: Path) -> None:
+    _requires(site, "simple-2.0.0.dist-info", "other")
+    _requires(site, "other-1.5.dist-info", "deep<3", "simple")
+
+    assert _unmet("simple") == {"deep": "deep<3"}
+
+
+def test_a_dependency_whose_marker_does_not_apply_is_not_wanted(site: Path) -> None:
+    _requires(
+        site,
+        "simple-2.0.0.dist-info",
+        'absent; sys_platform == "no-such-platform"',
+        'extra-only; extra == "more"',
+    )
+
+    assert _unmet("simple") == {}
+
+
+def test_an_install_resolves_the_missing_dependency_alone(
+    site: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip.core.metadata import clear_installed_index
+
+    _requires(site, "simple-2.0.0.dist-info", "absent>=1.0")
+    clear_installed_index()
+    kept = install.filter_already_satisfied_requirements
+
+    asked: list[list[str]] = []
+
+    def recording(requirements, outcome, **options):  # noqa: ANN001, ANN003, ANN202
+        unresolved = kept(requirements, outcome, **options)
+        asked.append([str(item.req) for item in unresolved])
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(install, "filter_already_satisfied_requirements", recording)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_install(["--no-index", "simple"])
+
+    with pytest.raises(KeyboardInterrupt):
+        run_install(["--no-index", "--no-deps", "simple"])
+
+    assert asked == [["absent>=1.0"], []]

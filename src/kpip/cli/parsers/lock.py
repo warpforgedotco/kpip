@@ -1,8 +1,4 @@
-"""Argument parser for ``kpip lock``.
-
-Kept apart from the command module so that ``kpip lock --help`` builds a
-parser without loading the machinery that runs the command.
-"""
+"""Argument parser for ``kpip lock``."""
 
 from __future__ import annotations
 
@@ -42,7 +38,7 @@ def create_parser() -> ArgumentParser:
 
     parser.add_argument("--no-build-isolation", action="store_true")
 
-    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("-q", "--quiet", action="store_true")
 
     parser.add_argument("--python-version", metavar="PYTHON_VERSION")
 

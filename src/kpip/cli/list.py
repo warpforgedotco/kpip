@@ -117,6 +117,10 @@ def run_list(args: list[str]) -> int:
 
     distributions.sort(key=lambda dist: dist.canonical_name)
 
+    # pip writes the listing through its logger, which -q silences.
+    if options.quiet:
+        return 0
+
     if options.format == "json":
         print(
             format_list_json(
