@@ -566,7 +566,12 @@ class TestRevalidationWave:
 
 class TestRecording:
     def record(
-        self, tmp_path: Path, requirements: Path, *extra: str, previous: bytes | None
+        self,
+        tmp_path: Path,
+        requirements: Path,
+        *extra: str,
+        previous: bytes | None,
+        builds: tuple[object, ...] | None = (),
     ) -> str:
         from types import SimpleNamespace
 
@@ -586,7 +591,11 @@ class TestRecording:
                 *extra,
             ]
         )
-        provider = SimpleNamespace(index_sources=[SimpleNamespace(pages_read={PAGE})])
+        materializer = SimpleNamespace(source_metadata_checks=lambda: builds)
+        provider = SimpleNamespace(
+            index_sources=[SimpleNamespace(pages_read={PAGE})],
+            get_materializer_internal=lambda: materializer,
+        )
         session = SimpleNamespace(cache=lock_replay.open_http_cache(cache_dir))
         record_replayable_lock(
             options,
@@ -631,4 +640,52 @@ class TestRecording:
             cache_dir,
             requirements,
             previous_lock=previous_lock_digest(RENDERED.encode("utf-8"), []),
+        )
+
+    def test_a_lock_with_unchecked_source_metadata_is_not_kept(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        """An sdist read with no cache to name its metadata by leaves nothing
+        a replay could trust."""
+        cache_dir = self.record(tmp_path, requirements, previous=None, builds=None)
+
+        assert not self.recorded_for(cache_dir, requirements)
+
+
+class TestSourceMetadata:
+    """A lock with source distributions replays while their cached metadata --
+    what building them said -- is the metadata the lock resolved with."""
+
+    KEY = ("https://files.example/demo-1.0.tar.gz", "1.0", (), "sha256=abc", "3.14")
+    VALUE = ("demo", "1.0", ("idna>=2",), (), None)
+
+    def snapshot(self, tmp_path: Path, stored: dict[object, bytes]) -> str:
+        from kpip.core.utils import save_snapshot
+
+        path = str(tmp_path / "candidate-metadata.snapshot")
+        assert save_snapshot(path, ("kpip-candidate-metadata", stored))
+        return path
+
+    def test_unchanged_metadata_lets_the_lock_replay(self, tmp_path: Path) -> None:
+        import marshal
+
+        path = self.snapshot(tmp_path, {self.KEY: marshal.dumps(self.VALUE)})
+
+        assert lock_replay.builds_unchanged(((path, self.KEY, self.VALUE),))
+        assert lock_replay.builds_unchanged(())
+
+    def test_rewritten_metadata_does_not(self, tmp_path: Path) -> None:
+        import marshal
+
+        rebuilt = ("demo", "1.0", ("idna>=3",), (), None)
+        path = self.snapshot(tmp_path, {self.KEY: marshal.dumps(rebuilt)})
+
+        assert not lock_replay.builds_unchanged(((path, self.KEY, self.VALUE),))
+
+    def test_evicted_or_unreadable_metadata_does_not(self, tmp_path: Path) -> None:
+        path = self.snapshot(tmp_path, {})
+
+        assert not lock_replay.builds_unchanged(((path, self.KEY, self.VALUE),))
+        assert not lock_replay.builds_unchanged(
+            ((str(tmp_path / "missing.snapshot"), self.KEY, self.VALUE),)
         )

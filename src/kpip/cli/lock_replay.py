@@ -29,7 +29,7 @@ from kpip.network.freshness import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from typing import Protocol
 
     class MetadataCache(Protocol):
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 REPLAY_BUCKET = versioned_bucket("lock-replay", 1)
 """Directory under the cache directory holding replayable locks."""
 
-REPLAY_FORMAT = 3
+REPLAY_FORMAT = 4
 
 FRESH = "fresh"
 """Every page is unchanged and still fresh: the lock can be replayed."""
@@ -53,13 +53,23 @@ CHANGED = "changed"
 PageValidators = tuple[str, "str | None", "str | None"]
 """A page URL with the ETag and Last-Modified it had when the lock read it."""
 
+BuildCheck = tuple[str, tuple[object, ...], tuple[object, ...]]
+"""A source distribution's metadata the lock resolved with: the snapshot it is
+cached in, its key there and the value stored under it."""
+
 
 class ReplayRecord:
-    __slots__ = ("pages", "rendered")
+    __slots__ = ("builds", "pages", "rendered")
 
-    def __init__(self, pages: tuple[PageValidators, ...], rendered: str) -> None:
+    def __init__(
+        self,
+        pages: tuple[PageValidators, ...],
+        rendered: str,
+        builds: tuple[BuildCheck, ...] = (),
+    ) -> None:
         self.pages = pages
         self.rendered = rendered
+        self.builds = builds
 
 
 def _plain_requirement(value: str) -> bool:
@@ -228,7 +238,7 @@ def load_record(cache_dir: str, key: bytes) -> ReplayRecord | None:
 
     try:
         with open(record_path(cache_dir, key), "rb") as file:
-            stored_key, pages, rendered = marshal.loads(file.read())
+            stored_key, pages, rendered, builds = marshal.loads(file.read())
     except (OSError, EOFError, TypeError, ValueError):
         return None
 
@@ -236,10 +246,11 @@ def load_record(cache_dir: str, key: bytes) -> ReplayRecord | None:
         stored_key != key
         or not isinstance(rendered, str)
         or not isinstance(pages, tuple)
+        or not isinstance(builds, tuple)
     ):
         return None
 
-    return ReplayRecord(pages, rendered)
+    return ReplayRecord(pages, rendered, builds)
 
 
 def save_record(
@@ -247,6 +258,7 @@ def save_record(
     key: bytes,
     pages: tuple[PageValidators, ...],
     rendered: str,
+    builds: tuple[BuildCheck, ...] = (),
 ) -> None:
     path = record_path(cache_dir, key)
     temporary = f"{path}.{os.getpid()}.tmp"
@@ -255,7 +267,7 @@ def save_record(
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         with open(temporary, "wb") as file:
-            file.write(marshal.dumps((key, pages, rendered)))
+            file.write(marshal.dumps((key, pages, rendered, builds)))
 
         os.replace(temporary, path)
     except (OSError, ValueError):
@@ -317,6 +329,55 @@ def page_state(http_cache: MetadataCache, pages: Iterable[PageValidators]) -> st
             state = STALE_SAME
 
     return state
+
+
+def builds_unchanged(builds: Iterable[BuildCheck]) -> bool:
+    """Whether every source distribution's cached metadata is as the lock saw it.
+
+    The index pages pin a source distribution's archive by hash, but not what
+    building it said its dependencies are: that is the metadata cached from
+    the build, which a resolve reads instead of building again. While each
+    entry is still cached and unchanged, resolving would read the same
+    metadata and give the same lock; an entry evicted or rewritten means
+    resolving, which builds again if it has to.
+    """
+
+    snapshots: dict[str, Mapping[object, object] | None] = {}
+
+    for path, key, value in builds:
+        if path not in snapshots:
+            snapshots[path] = _read_snapshot(path)
+
+        stored = snapshots[path]
+
+        if stored is None:
+            return False
+
+        blob = stored.get(key)
+
+        if not isinstance(blob, bytes):
+            return False
+
+        try:
+            if marshal.loads(blob) != value:
+                return False
+        except (EOFError, TypeError, ValueError):
+            return False
+
+    return True
+
+
+def _read_snapshot(path: str) -> Mapping[object, object] | None:
+    """A candidate-metadata snapshot's entries, or None when it cannot be read."""
+
+    from kpip.core.utils import load_snapshot
+
+    loaded = load_snapshot(path)
+
+    if isinstance(loaded, tuple) and len(loaded) == 2 and isinstance(loaded[1], dict):
+        return loaded[1]  # ty: ignore[invalid-return-type]
+
+    return None
 
 
 def stale_pages(

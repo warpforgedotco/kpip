@@ -870,7 +870,7 @@ def replay_lock(options: LockOptions) -> int | None:
         return None
 
     record = lock_replay.load_record(root, key)
-    if record is None:
+    if record is None or not lock_replay.builds_unchanged(record.builds):
         return None
 
     http_cache = lock_replay.open_http_cache(root)

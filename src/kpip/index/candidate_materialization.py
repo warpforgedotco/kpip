@@ -628,6 +628,15 @@ class CandidateMaterializer:
         # builds to start is pure overhead on it.
         self.prepares_source_metadata = False
 
+        # The cached metadata of each source distribution this resolve read,
+        # for a lock replay to check is unchanged; ``untracked`` once one was
+        # read with no cache to name it by.
+        self.source_metadata_read: dict[
+            tuple[str, CacheKey], CandidateMetadataCache
+        ] = {}
+
+        self.source_metadata_untracked = False
+
         self.source_build_lock = RLock()
 
         self.source_build_pool: ThreadPoolExecutor | None = None
@@ -1185,6 +1194,30 @@ class CandidateMaterializer:
             self.artifact_fingerprint(candidate),
         )
 
+    def source_metadata_checks(
+        self,
+    ) -> tuple[tuple[str, CacheKey, tuple[object, ...]], ...] | None:
+        """What a lock replay checks of the source distributions read.
+
+        Each read source distribution's snapshot, key and cached value; None
+        when one cannot be checked -- read with no cache, or not cached --
+        and a replay would have nothing to trust its metadata by.
+        """
+        if self.source_metadata_untracked:
+            return None
+
+        checks = []
+
+        for (path, persistent_key), cache in list(self.source_metadata_read.items()):
+            value = cache.stored_value(persistent_key)
+
+            if value is None:
+                return None
+
+            checks.append((path, persistent_key, value))
+
+        return tuple(sorted(checks, key=repr))
+
     def metadata_cache_keys(
         self,
         candidate: CandidateRecord,
@@ -1426,6 +1459,14 @@ class CandidateMaterializer:
 
         def load() -> CandidateMetadata:
             nonlocal persistent_cache, persistent_key
+
+            if candidate.link.kind is ArtifactKind.SDIST:
+                if persistent_cache is None:
+                    self.source_metadata_untracked = True
+                else:
+                    self.source_metadata_read[
+                        (persistent_cache.path, persistent_key)
+                    ] = persistent_cache
 
             cached = self.metadata_cache.get(key)
 
