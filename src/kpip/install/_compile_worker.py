@@ -1,4 +1,4 @@
-"""Byte-compilation worker, run as a script by :mod:`kpip.install.bytecode`.
+"""The byte-compilation worker loop that :mod:`kpip.install.bytecode` runs.
 
 Compiling holds the GIL, so threads cannot make it parallel; this runs in a
 child process instead. The process is reused for every module in a session,
@@ -16,9 +16,9 @@ this script, and it keeps exactly one file in flight per worker so the parent
 can attribute a hang or a crash to the file that caused it.
 
 The loop is :data:`SOURCE`, text rather than code, because the interpreter
-that runs it need not be kpip's: one kpip installs for compiles its own
-bytecode, and is handed the loop with ``-c`` -- a compiled kpip has no file
-to point it at. So it is written for any Python kpip installs for.
+that runs it is the one kpip installs for, which compiles its own bytecode.
+It is handed the loop with ``-c`` -- a compiled kpip has no file to point it
+at -- so it is written for any Python kpip installs for.
 Modules are compiled unoptimized, whatever flags run the worker, to match
 the ``.pyc`` names kpip gives them.
 
@@ -27,10 +27,6 @@ wheel that ships a module this interpreter cannot compile -- vendored Python
 2 is the usual reason -- still installs; it simply has no bytecode for that
 module, which is what pip does too.
 """
-
-WORKER_ARGUMENT = "--kpip-compile-worker"
-"""What a compiled kpip is started with to be a worker: it has no script to
-run, so ``kpip/__main__.py`` runs :func:`main` when this comes first."""
 
 SOURCE = r"""
 import py_compile
@@ -69,11 +65,3 @@ with warnings.catch_warnings():
 
         print(source, flush=True)
 """
-
-
-def main() -> None:
-    exec(compile(SOURCE, "<kpip compile worker>", "exec"), {"__name__": "__main__"})  # noqa: S102 - kpip's own constant
-
-
-if __name__ == "__main__":
-    main()

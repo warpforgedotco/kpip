@@ -4,18 +4,18 @@ Compiling is the dominant cost of filling the archive cache -- for a sixteen
 wheel set it was measured at 2.5s of a 2.7s fill -- and ``compile()`` holds
 the GIL, so the thread pool that extracts wheels cannot overlap any of it.
 
-The work therefore goes to child interpreters running
+The work therefore goes to child interpreters running the loop in
 :mod:`kpip.install._compile_worker`. They are started once and reused for
 every module in the session, because starting an interpreter costs about as
 much as compiling a small module.
 
 The bytecode is the target interpreter's: the Python kpip installs for,
 which need not be the one running kpip, and is not when kpip is compiled.
-When that one compiles just as this process does -- the same cache tag and
-magic number -- this process and its workers compile, and the archive cache
-keeps what they made. Otherwise the target's own interpreter does, in
-workers of its own, and nothing is compiled here: this process's ``marshal``
-neither reads nor writes another version's code.
+The workers are always that interpreter. When it compiles just as this
+process does -- the same cache tag and magic number -- this process may
+compile what they decline, and the archive cache keeps their bytecode for
+later installs. Otherwise nothing is compiled here: this process's
+``marshal`` neither reads nor writes another version's code.
 
 Everything here is optional. If workers cannot be started, misbehave, or
 time out, the caller compiles in-process instead: this makes installs
@@ -34,10 +34,9 @@ import subprocess
 import sys
 import threading
 
-from kpip.core.compiled import is_compiled, own_command
 from kpip.core.utils import default_worker_count
 from kpip.host.interpreter_facts import target_interpreter
-from kpip.install._compile_worker import SOURCE, WORKER_ARGUMENT
+from kpip.install._compile_worker import SOURCE
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -171,7 +170,7 @@ def compiles_as_this_process() -> bool:
     compiles: the same cache tag and magic number."""
     interpreter = target_interpreter(installing=False)
 
-    return interpreter.is_own or (
+    return (
         interpreter.cache_tag == sys.implementation.cache_tag
         and interpreter.magic == importlib.util.MAGIC_NUMBER.hex()
     )
@@ -243,30 +242,15 @@ def compile_modules(jobs: list[CompileJob]) -> None:
     compile_jobs(jobs)
 
 
-def _worker_script() -> str:
-    return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "_compile_worker.py"
-    )
-
-
 def _worker_command() -> list[str]:
-    """How to start a worker: the target interpreter given the worker loop,
-    when it does not compile as this process does; else this interpreter
-    running the worker script, or a compiled kpip, which has neither, as
-    itself with the worker argument.
+    """How to start a worker: the target interpreter, handed the loop.
 
-    The compiled one used to be started as ``sys.executable``, a ``python``
-    beside the binary that does not exist: no worker ever started, and it
-    compiled every module in the main process, one at a time.
+    Text, with ``-c``: a compiled kpip has no script on disk to point it at,
+    and its ``sys.executable`` is a ``python`` beside the binary that does
+    not exist.
     """
 
-    if not compiles_as_this_process():
-        return [target_interpreter(installing=False).executable, "-c", SOURCE]
-
-    if is_compiled():
-        return [*own_command(), WORKER_ARGUMENT]
-
-    return [sys.executable, _worker_script()]
+    return [target_interpreter(installing=False).executable, "-c", SOURCE]
 
 
 def _spawn(command: list[str]) -> _Worker | None:
@@ -338,10 +322,8 @@ class CompilePool:
     interleave rather than queue behind each other.
     """
 
-    def __init__(self, workers: int, command: list[str]) -> None:
+    def __init__(self, workers: int) -> None:
         self._limit = max(1, min(workers, default_worker_count()))
-
-        self.command = command
 
         self._queue: queue.Queue[tuple[CompileJob, _Batch] | None] = queue.Queue()
 
@@ -364,8 +346,10 @@ class CompilePool:
 
             self._started = True
 
+            command = _worker_command()
+
             for _ in range(self._limit):
-                worker = _spawn(self.command)
+                worker = _spawn(command)
 
                 if worker is None:
                     break
@@ -516,7 +500,8 @@ _POOL_LOCK = threading.Lock()
 def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     """Compile ``jobs`` across worker processes.
 
-    Returns the jobs no worker took, for the caller to compile in-process.
+    Returns the jobs no worker took, for the caller to compile in-process
+    if :func:`compiles_as_this_process`, else to leave without bytecode.
     """
     global _POOL
 
@@ -526,22 +511,13 @@ def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     if _in_subinterpreter():
         return jobs
 
-    command = _worker_command()
-    retired: CompilePool | None = None
-
     with _POOL_LOCK:
-        if _POOL is not None and _POOL.command != command:
-            retired, _POOL = _POOL, None
-
         if _POOL is None:
-            _POOL = CompilePool(MAX_WORKERS, command)
+            _POOL = CompilePool(MAX_WORKERS)
 
             atexit.register(shutdown)
 
         pool = _POOL
-
-    if retired is not None:
-        retired.close()
 
     remaining = pool.compile(jobs)
 
