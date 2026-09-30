@@ -10,9 +10,7 @@ import io
 import logging
 import os
 import re
-import struct
 import sys
-import sysconfig
 import time
 import zipfile
 from importlib.resources import files
@@ -20,6 +18,7 @@ from pathlib import Path
 
 from kpip.core.errors import InstallationError
 from kpip.host.clone import replace_contents
+from kpip.host.interpreter_facts import target_interpreter
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +44,21 @@ ENTRY_POINT = re.compile(
 def script_python() -> str:
     """The interpreter installed scripts run with, when none is given.
 
-    ``sys.executable``, unless the kpip that started this one named another
-    in ``KPIP_SCRIPT_PYTHON``: a build environment's scripts run with that
-    environment's Python, not the one installing into it -- which, for a
-    compiled kpip, is no Python at all.
+    The one a kpip that started this one named in ``KPIP_SCRIPT_PYTHON``: a
+    build environment's scripts run with that environment's Python.
+    Otherwise :func:`environment_python`.
     """
-    return os.environ.get("KPIP_SCRIPT_PYTHON") or sys.executable
+    return os.environ.get("KPIP_SCRIPT_PYTHON") or environment_python()
+
+
+def environment_python() -> str:
+    """The Python of the environment kpip installs into.
+
+    pip runs under that interpreter, and its scripts run with
+    ``sys.executable``. kpip may not run under it: ``--python`` names
+    another, and a compiled kpip is no Python at all.
+    """
+    return target_interpreter().executable
 
 
 def rewrite_shebang(path: str, executable: str | None) -> None:
@@ -139,7 +147,7 @@ def versioned(console: dict[str, str]) -> dict[str, str]:
     console = dict(console)
     result: dict[str, str] = {}
     ensurepip = os.environ.get("ENSUREPIP_OPTIONS")
-    major, minor = sys.version_info[:2]
+    major, minor = target_interpreter().version[:2]
 
     pip_script = console.pop("pip", None)
     if pip_script:
@@ -261,7 +269,7 @@ def shebang(executable: str | None, *, gui: bool) -> bytes:
     one too long for the kernel to read, is run through ``/bin/sh``.
     """
     named = executable or os.environ.get("KPIP_SCRIPT_PYTHON")
-    interpreter = named or sys.executable
+    interpreter = named or environment_python()
     if gui and os.name == "nt":
         directory, name = os.path.split(interpreter)
         interpreter = os.path.join(directory, name.replace("python", "pythonw"))
@@ -289,8 +297,10 @@ def windows_launcher(body: bytes, head: bytes, *, gui: bool) -> bytes:
     The launcher reads the shebang between itself and the zip archive it
     runs as ``__main__.py``.
     """
-    bits = "64" if struct.calcsize("P") == 8 else "32"
-    arm = "-arm" if sysconfig.get_platform() == "win-arm64" else ""
+    # The target's: a 32-bit Python on 64-bit Windows takes 32-bit launchers.
+    interpreter = target_interpreter()
+    bits = "64" if interpreter.pointer_bits == 64 else "32"
+    arm = "-arm" if interpreter.platform == "win-arm64" else ""
     name = f"{'w' if gui else 't'}{bits}{arm}.exe"
     launcher = (files("kpip._launchers") / name).read_bytes()
 

@@ -17,6 +17,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Protocol
 
+from kpip.host.interpreter_facts import target_interpreter
 from kpip.core.appdirs import http_cache_path
 from kpip.core.code_identity import code_identity
 from kpip.core.utils import key_bytes, load_snapshot, versioned_bucket
@@ -145,12 +146,14 @@ def resolution_environment() -> tuple[object, ...]:
         except OSError, ValueError:
             libc = ""
 
+    # The interpreter resolved for, which need not be the one running kpip.
+    interpreter = target_interpreter(installing=False)
     return (
-        sys.version,
-        sys.implementation.name,
-        sys.implementation.cache_tag,
-        getattr(sys, "abiflags", ""),
-        sys.platform,
+        tuple(sorted(interpreter.markers.items())),
+        interpreter.cache_tag,
+        interpreter.config.get("SOABI"),
+        interpreter.config.get("Py_GIL_DISABLED"),
+        interpreter.platform,
         os.name,
         machine,
         host,

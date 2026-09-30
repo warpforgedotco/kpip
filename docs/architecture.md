@@ -219,8 +219,7 @@ Invariants:
 | `install` | targets, inventories, wheel plans, transactions | index parsing |
 | `cli` | argument parsing, dispatch, presentation | reusable mechanics |
 
-Allowed first-party dependency edges (enforced by
-`tests/core/test_architecture_imports.py`):
+Allowed first-party dependency edges:
 
 | Domain | May import |
 | --- | --- |
@@ -241,11 +240,6 @@ Four edges cross the table and are known debt, not precedent:
 `resolution/req_install.py` → `build.pep517_hooks`. `TYPE_CHECKING` imports
 count as edges too; move the shared shape down instead of guarding the import.
 Vendored code is outside these rules.
-
-The test walks every non-vendored Python file recursively and parses nested and
-`TYPE_CHECKING` imports too; it also rejects stale debt exceptions once an edge
-is removed. Extend the exception set only while documenting an existing edge
-here; new shared shapes should move down instead.
 
 ## Performance boundaries
 

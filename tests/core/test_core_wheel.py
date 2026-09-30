@@ -171,6 +171,9 @@ def test_wheel_tag_rank_reuses_compatibility_result() -> None:
 
 
 def test_supported_wheel_tags_target_context_oracle() -> None:
+    """pip's tags for a target named by options, in pip's order."""
+    from pip._internal.utils.compatibility_tags import get_supported
+
     tags = supported_wheel_tags(
         TargetContext(
             platforms=("linux_x86_64",),
@@ -179,9 +182,22 @@ def test_supported_wheel_tags_target_context_oracle() -> None:
             abis=("cp311",),
         ),
     )
+    expected = get_supported(
+        version="311", platforms=["linux_x86_64"], impl="cp", abis=["cp311"]
+    )
 
-    assert WheelTag("cp311", "cp311", "linux_x86_64") in tags
-    assert WheelTag("py3", "cp311", "any") in tags
+    assert [(tag.interpreter, tag.abi, tag.platform) for tag in tags] == [
+        (tag.interpreter, tag.abi, tag.platform)
+        for tag in expected
+        # Older abi3 and py3x versions match through interpreter_matches.
+        if not (
+            (tag.abi == "abi3" and tag.interpreter != "cp311")
+            or (
+                tag.interpreter.startswith("py3")
+                and tag.interpreter not in ("py311", "py3")
+            )
+        )
+    ]
 
 
 @pytest.mark.parametrize(

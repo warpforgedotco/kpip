@@ -43,6 +43,7 @@ from kpip.core.packaging import (
 from kpip.core.subprocesses import call_subprocess
 from kpip.core.temp_dir import build_directory
 from kpip.core.versions import InvalidVersion, Version
+from kpip.host.interpreter_facts import interpreter_at
 from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.install.build_env.isolated_venv import (
     CreatedVenv,
@@ -456,7 +457,9 @@ def _runs_like(venv: CreatedVenv) -> bool:
 def _prefix_is_environment(env_path: str, venv: CreatedVenv) -> bool:
     """Whether ``--prefix env_path`` installs where ``venv`` imports from."""
 
-    scheme = get_scheme("", prefix=env_path)
+    scheme = get_scheme(
+        "", interpreter=interpreter_at(build_interpreter()), prefix=env_path
+    )
 
     libraries = {os.path.realpath(path) for path in venv.lib_dirs}
 

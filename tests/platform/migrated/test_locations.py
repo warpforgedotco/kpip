@@ -8,7 +8,7 @@ import tempfile
 from typing import Any
 from unittest.mock import Mock
 
-import pytest
+from kpip.host.interpreter_facts import Interpreter, own_interpreter
 from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.host.scheme import SCHEME_KEYS
 
@@ -19,7 +19,7 @@ else:
 
 
 def get_scheme_dict(*args: Any, **kwargs: Any) -> dict[str, str]:
-    scheme = get_scheme(*args, **kwargs)
+    scheme = get_scheme(*args, interpreter=own_interpreter(), **kwargs)
     return {k: getattr(scheme, k) for k in SCHEME_KEYS}
 
 
@@ -103,27 +103,21 @@ class TestLocations:
         assert prefix_scheme == expected
 
 
-def test_a_compiled_kpip_lays_out_platlib_as_its_python_was_built(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A compiled kpip's runtime points sys.platlibdir at the binary's own
-    directory; a prefix's platlib still sits under the interpreter's lib."""
-    import sysconfig
+def test_a_scheme_is_laid_out_as_its_interpreter_lays_it_out() -> None:
+    """Another Python's scheme follows that Python's layout, not kpip's."""
+    own = own_interpreter()
+    facts = {name: getattr(own, name) for name in Interpreter.__slots__}
+    facts["version"] = [3, 11, 9]
+    facts["config"] = {
+        **own.config,
+        "py_version_short": "3.11",
+        "py_version_nodot": "311",
+        "abiflags": "",
+    }
+    other = Interpreter(facts)
 
-    from kpip.host.locations import sysconfig_scheme
+    scheme = get_scheme("demo", interpreter=other, prefix="/x")
 
-    passed: dict[str, str] = {}
-    get_paths = sysconfig.get_paths
-
-    def recording(scheme=None, vars=None, expand=True):
-        passed.update(vars or {})
-        return get_paths(scheme, vars, expand)
-
-    monkeypatch.setattr(sysconfig_scheme, "is_compiled", lambda: True)
-    monkeypatch.setattr(sysconfig_scheme.sysconfig, "get_paths", recording)
-
-    scheme = sysconfig_scheme.get_scheme("demo", prefix="/x")
-
-    built = sysconfig.get_config_var("PLATLIBDIR") or "lib"
-    assert passed["platlibdir"] == built
-    assert scheme.platlib.startswith(os.path.join("/x", built))
+    assert scheme.purelib == os.path.join(
+        "/x", str(own.config.get("platlibdir") or "lib"), "python3.11", "site-packages"
+    )

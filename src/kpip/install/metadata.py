@@ -20,7 +20,7 @@ from kpip.core.packaging import (
     canonicalize_requirement,
 )
 from kpip.core.urls import path_to_url, url_to_path
-from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
+from kpip.core.packaging import requires_python_version
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.links import Link
 from kpip.index.vcs import release_checkout
@@ -287,7 +287,7 @@ def prepare_editable_source(
             f"Fix your #egg={egg} fragments.",
         )
     if metadata is not None and metadata.requires_python is not None:
-        python_version = CURRENT_PYTHON_VERSION_FULL
+        python_version = requires_python_version()
         if not SpecifierSet(metadata.requires_python).contains(python_version):
             raise CommandError(
                 f"Package '{metadata.name}' requires a different Python: "

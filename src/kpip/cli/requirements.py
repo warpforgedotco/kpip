@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 import argparse
 import logging
 import os
-import sys
 import tomllib
 import urllib.parse
 
@@ -14,7 +13,12 @@ from kpip.build.build_backend import prepare_project_metadata
 from kpip.cli.package_finder import release_control_from
 from kpip.core.errors import InstallationError, KpipError
 from kpip.core.format_control import FormatControl
-from kpip.core.packaging import SpecifierSet, canonicalize_name, parse_requirement
+from kpip.core.packaging import (
+    SpecifierSet,
+    canonicalize_name,
+    parse_requirement,
+    requires_python_version,
+)
 from kpip.core.release_control import ReleaseControl
 from kpip.core.versions import Version
 from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
@@ -276,7 +280,7 @@ def requirements_from_script(
                 "Script metadata 'requires-python' must be a string",
             )
 
-        current = Version(".".join(str(part) for part in sys.version_info[:3]))
+        current = Version(requires_python_version())
 
         incompatible = (
             requires_python.startswith("!=")

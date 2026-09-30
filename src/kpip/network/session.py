@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 import logging
 import os
 import ssl
-import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
 
+from kpip.host.interpreter_facts import target_interpreter
 from kpip._vendor import certifi, urllib3
 from kpip._vendor.urllib3._collections import HTTPHeaderDict
 from kpip._vendor.urllib3.exceptions import (
@@ -413,7 +413,7 @@ class NetworkSession:
         if version is None:
             version = get_kpip_version()
 
-        python_version = "%s.%s.%s" % sys.version_info[:3]
+        python_version = "%d.%d.%d" % target_interpreter(installing=False).version
 
         return f"kpip/{version} Python/{python_version}"
 

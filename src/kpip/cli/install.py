@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import logging
 import os
-import site
 
 from kpip.build.build import build_editable_from_source
 from kpip.build.metadata import InstalledDistributionStore
@@ -35,7 +34,6 @@ from kpip.cli.requirement_command import (
     without_user_requested,
 )
 from kpip.cli.requirements import build_options_from_requirements
-from kpip.cli.target import target_prefix
 from kpip.core.code_identity import code_identity
 from kpip.core.errors import (
     CommandError,
@@ -46,15 +44,20 @@ from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.metadata import find_installed, installed_index, user_lib_path
 from kpip.core.packaging import (
     canonicalize_name,
+    default_environment,
     marker_applies,
     parse_requirement,
 )
-from kpip.core.wheel import TargetContext, wheel_candidate_from_path
+from kpip.core.wheel import (
+    TargetContext,
+    supported_wheel_tags,
+    wheel_candidate_from_path,
+)
 from kpip.host.environment_checks import (
     check_externally_managed,
     warn_if_run_as_root,
 )
-from kpip.host.virtualenv import running_under_virtualenv
+from kpip.host.interpreter_facts import target_interpreter
 from kpip.index.candidate_materialization import LazyWheelCandidate
 from kpip.install.archive_workers import start_archive_workers
 from kpip.install.metadata import (
@@ -408,8 +411,8 @@ def prepare_install(args: list[str], parser: Any) -> PreparedRequirements:
 
 
 def validate_user_install(options: argparse.Namespace) -> None:
-    if not site.ENABLE_USER_SITE:
-        if running_under_virtualenv():
+    if not target_interpreter().user_site_enabled:
+        if target_interpreter().in_virtualenv:
             raise InstallationError(
                 "Can not perform a '--user' install. User site-packages are "
                 "not visible in this virtualenv.",
@@ -419,7 +422,7 @@ def validate_user_install(options: argparse.Namespace) -> None:
             "disabled for this Python.",
         )
 
-    if running_under_virtualenv():
+    if target_interpreter().in_virtualenv:
         for raw_requirement in options.requirements:
             item = install_req_from_line(raw_requirement)
             if item.req is None:
@@ -505,6 +508,9 @@ def _plan_context(options: Any, bundle: Any, target: Any) -> tuple[object, ...]:
         target.implementation,
         target.python_version,
         tuple(target.abis),
+        # The interpreter planned for, when options do not name it.
+        tuple(sorted(default_environment().items())),
+        supported_wheel_tags(target),
         options.upgrade_strategy,
         bool(options.force_reinstall),
     )
@@ -630,7 +636,7 @@ def install_candidate(
         target=options.target,
         user=options.user,
         root=options.root,
-        prefix=options.prefix or target_prefix(),
+        prefix=options.prefix,
     )
     WheelInstaller(
         target,
@@ -986,7 +992,6 @@ def run_install(args: list[str]) -> int:
         and options.root is None
         and options.target is None
         and options.prefix is None
-        and not os.environ.get("KPIP_TARGET_PREFIX")
     )
 
     if installs_into_this_environment and not options.break_system_packages:
@@ -1381,7 +1386,7 @@ def run_install(args: list[str]) -> int:
                 target=options.target,
                 user=options.user,
                 root=options.root,
-                prefix=options.prefix or target_prefix(),
+                prefix=options.prefix,
             )
 
             candidate_direct_urls: dict[str, Any] = {}

@@ -5,16 +5,19 @@ from __future__ import annotations
 import io
 import os
 import sys
+import types
 import zipfile
 from importlib.resources import files
 from pathlib import Path
 
 import pytest
 from kpip.core.errors import InstallationError
+from kpip.install import wheel_scripts
 from kpip.install.wheel_scripts import (
     entry_point_scripts,
     generate_entry_point_files,
     scripts_not_on_path_message,
+    shebang,
     warn_about_scripts_not_on_path,
     windows_launcher,
 )
@@ -91,6 +94,11 @@ def test_default_interpreter_with_a_space_is_quoted(
 ) -> None:
     monkeypatch.delenv("KPIP_SCRIPT_PYTHON", raising=False)
     monkeypatch.setattr(sys, "executable", "/env with space/bin/python")
+    monkeypatch.setattr(
+        wheel_scripts,
+        "target_interpreter",
+        lambda: types.SimpleNamespace(executable="/env with space/bin/python"),
+    )
 
     assert kpip_scripts(tmp_path / "kpip", None) == pip_scripts(tmp_path / "pip", None)
 
@@ -228,3 +236,18 @@ def test_scripts_beside_the_interpreter_draw_no_warning(
         warn_about_scripts_not_on_path([wheel], str(scripts), str(scripts / "python"))
 
     assert caplog.messages == []
+
+
+def test_scripts_run_with_the_python_kpip_installs_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The interpreter ``--python`` names, or a compiled kpip's environment's:
+    not the one running kpip."""
+    monkeypatch.delenv("KPIP_SCRIPT_PYTHON", raising=False)
+    monkeypatch.setattr(
+        wheel_scripts,
+        "target_interpreter",
+        lambda: types.SimpleNamespace(executable="/env/bin/python"),
+    )
+
+    assert shebang(None, gui=False) == b"#!/env/bin/python\n"

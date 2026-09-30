@@ -1,16 +1,18 @@
+"""pip's install schemes, for the interpreter kpip installs for.
+
+The logic is pip's; the ``sysconfig`` it consults is the target
+interpreter's, as :mod:`kpip.host.interpreter_facts` read it.
+"""
+
 from __future__ import annotations
 
 import os
-import sys
-import sysconfig
-from collections.abc import Callable
 
 from kpip.core.errors import InstallationError
-from kpip.core.interpreter import is_compiled
+from kpip.host.interpreter_facts import Interpreter
 from kpip.host.scheme import SCHEME_KEYS, Scheme
-from kpip.host.virtualenv import running_under_virtualenv
 
-from .base import change_root, get_major_minor_version, is_osx_framework
+from .base import change_root
 
 
 class InvalidSchemeCombination(InstallationError):
@@ -28,16 +30,11 @@ class UserInstallationInvalid(InstallationError):
         return "User base directory is not specified"
 
 
-AVAILABLE_SCHEMES = set(sysconfig.get_scheme_names())
-
-PREFERRED_SCHEME_API: Callable[[str], str] | None = getattr(
-    sysconfig,
-    "get_preferred_scheme",
-    None,
-)
+def is_osx_framework(interpreter: Interpreter) -> bool:
+    return bool(interpreter.config.get("PYTHONFRAMEWORK"))
 
 
-def should_use_osx_framework_prefix() -> bool:
+def should_use_osx_framework_prefix(interpreter: Interpreter) -> bool:
     """Check for Apple's ``osx_framework_library`` scheme.
 
     Python distributed by Apple's Command Line Tools has this special scheme
@@ -57,13 +54,13 @@ def should_use_osx_framework_prefix() -> bool:
     or our own, and we deal with this special case in ``get_scheme()`` instead.
     """
     return (
-        "osx_framework_library" in AVAILABLE_SCHEMES
-        and not running_under_virtualenv()
-        and is_osx_framework()
+        "osx_framework_library" in interpreter.schemes
+        and not interpreter.in_virtualenv
+        and is_osx_framework(interpreter)
     )
 
 
-def infer_prefix() -> str:
+def infer_prefix(interpreter: Interpreter) -> str:
     """Try to find a prefix scheme for the current platform.
 
     This tries:
@@ -77,62 +74,62 @@ def infer_prefix() -> str:
 
     If none of the above works, fall back to ``posix_prefix``.
     """
-    if PREFERRED_SCHEME_API:
-        return PREFERRED_SCHEME_API("prefix")
-    if should_use_osx_framework_prefix():
+    if "prefix" in interpreter.preferred:
+        return interpreter.preferred["prefix"]
+    if should_use_osx_framework_prefix(interpreter):
         return "osx_framework_library"
-    implementation_suffixed = f"{sys.implementation.name}_{os.name}"
-    if implementation_suffixed in AVAILABLE_SCHEMES:
+    implementation_suffixed = f"{interpreter.implementation}_{os.name}"
+    if implementation_suffixed in interpreter.schemes:
         return implementation_suffixed
-    if sys.implementation.name in AVAILABLE_SCHEMES:
-        return sys.implementation.name
+    if interpreter.implementation in interpreter.schemes:
+        return interpreter.implementation
     suffixed = f"{os.name}_prefix"
-    if suffixed in AVAILABLE_SCHEMES:
+    if suffixed in interpreter.schemes:
         return suffixed
-    if os.name in AVAILABLE_SCHEMES:
+    if os.name in interpreter.schemes:
         return os.name
     return "posix_prefix"
 
 
-def infer_user() -> str:
+def infer_user(interpreter: Interpreter) -> str:
     """Try to find a user scheme for the current platform."""
-    if PREFERRED_SCHEME_API:
-        return PREFERRED_SCHEME_API("user")
-    if is_osx_framework() and not running_under_virtualenv():
+    if "user" in interpreter.preferred:
+        return interpreter.preferred["user"]
+    if is_osx_framework(interpreter) and not interpreter.in_virtualenv:
         suffixed = "osx_framework_user"
     else:
         suffixed = f"{os.name}_user"
-    if suffixed in AVAILABLE_SCHEMES:
+    if suffixed in interpreter.schemes:
         return suffixed
-    if "posix_user" not in AVAILABLE_SCHEMES:
+    if "posix_user" not in interpreter.schemes:
         raise UserInstallationInvalid
     return "posix_user"
 
 
-def infer_home() -> str:
+def infer_home(interpreter: Interpreter) -> str:
     """Try to find a home for the current platform."""
-    if PREFERRED_SCHEME_API:
-        return PREFERRED_SCHEME_API("home")
+    if "home" in interpreter.preferred:
+        return interpreter.preferred["home"]
     suffixed = f"{os.name}_home"
-    if suffixed in AVAILABLE_SCHEMES:
+    if suffixed in interpreter.schemes:
         return suffixed
     return "posix_home"
 
 
-HOME_KEYS = [
+HOME_KEYS = (
     "installed_base",
     "base",
     "installed_platbase",
     "platbase",
     "prefix",
     "exec_prefix",
-]
-if sysconfig.get_config_var("userbase") is not None:
-    HOME_KEYS.append("userbase")
+)
 
 
 def get_scheme(
     dist_name: str,
+    *,
+    interpreter: Interpreter,
     user: bool = False,
     home: str | None = None,
     root: str | None = None,
@@ -143,6 +140,7 @@ def get_scheme(
 
     :param dist_name: the name of the package to retrieve the scheme for, used
         in the headers scheme path
+    :param interpreter: the Python the scheme is that of
     :param user: indicates to use the "user" scheme
     :param home: indicates to use the "home" scheme
     :param root: root under which other directories are re-based
@@ -157,38 +155,33 @@ def get_scheme(
         raise InvalidSchemeCombination("--home", "--prefix")
 
     if home is not None:
-        scheme_name = infer_home()
+        scheme_name = infer_home(interpreter)
     elif user:
-        scheme_name = infer_user()
+        scheme_name = infer_user(interpreter)
     else:
-        scheme_name = infer_prefix()
+        scheme_name = infer_prefix(interpreter)
 
     if prefix is not None and scheme_name == "osx_framework_library":
         scheme_name = "posix_prefix"
 
+    keys = HOME_KEYS
+    if interpreter.config.get("userbase") is not None:
+        keys = (*keys, "userbase")
     if home is not None:
-        variables = dict.fromkeys(HOME_KEYS, home)
+        variables = dict.fromkeys(keys, home)
     elif prefix is not None:
-        variables = dict.fromkeys(HOME_KEYS, prefix)
+        variables = dict.fromkeys(keys, prefix)
     else:
         variables = {}
 
-    if is_compiled():
-        # A compiled kpip's runtime sets sys.platlibdir -- from which
-        # sysconfig's platlibdir comes -- to the binary's own directory, so
-        # platlib under --prefix /x was /x/<that directory>/python3.14/...
-        # The directory the interpreter was built with is still in its
-        # build configuration.
-        variables["platlibdir"] = sysconfig.get_config_var("PLATLIBDIR") or "lib"
+    paths = interpreter.paths(scheme_name, variables)
 
-    paths = sysconfig.get_paths(scheme=scheme_name, vars=variables)
-
-    if running_under_virtualenv():
+    if interpreter.in_virtualenv:
         if user:
-            base = variables.get("userbase", sys.prefix)
+            base = variables.get("userbase", interpreter.prefix)
         else:
-            base = variables.get("base", sys.prefix)
-        python_xy = f"python{get_major_minor_version()}"
+            base = variables.get("base", interpreter.prefix)
+        python_xy = f"python{interpreter.major_minor}"
         paths["include"] = os.path.join(base, "include", "site", python_xy)
     elif not dist_name:
         dist_name = "UNKNOWN"

@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -31,10 +32,10 @@ def system_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     directory the test owns."""
     stdlib = tmp_path / "stdlib"
     stdlib.mkdir()
-    monkeypatch.setattr(environment_checks, "running_under_virtualenv", lambda: False)
-    monkeypatch.setattr(
-        environment_checks.sysconfig, "get_path", lambda name: str(stdlib)
+    interpreter = types.SimpleNamespace(
+        stdlib=str(stdlib), prefix=str(tmp_path), in_virtualenv=False
     )
+    monkeypatch.setattr(environment_checks, "target_interpreter", lambda: interpreter)
     return stdlib
 
 
@@ -74,7 +75,7 @@ def test_a_virtual_environment_is_never_externally_managed(
     system_python: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (system_python / "EXTERNALLY-MANAGED").write_text("")
-    monkeypatch.setattr(environment_checks, "running_under_virtualenv", lambda: True)
+    monkeypatch.setattr(environment_checks.target_interpreter(), "in_virtualenv", True)
 
     check_externally_managed()
 

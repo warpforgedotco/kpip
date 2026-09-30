@@ -3,12 +3,13 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import pathlib
-import site
 import sys
 import sysconfig
 from collections.abc import Collection, Iterable
 from importlib.machinery import PathFinder
 from typing import TYPE_CHECKING, Protocol
+
+from kpip.host.interpreter_facts import search_path, target_interpreter
 
 from .names import installed_name_might_match
 from .packaging import (
@@ -265,7 +266,7 @@ def default_lib_path() -> str:
 
 
 def user_lib_path() -> str:
-    return site.getusersitepackages()
+    return target_interpreter().user_site
 
 
 _INFO_SUFFIXES = (".dist-info", ".egg-info")
@@ -298,7 +299,10 @@ def _iter_raw_distributions(
     """
 
     if paths is None:
-        if any(
+        # This process's own finders can only speak for the Python running
+        # kpip; another's -- or a compiled kpip's, whose finder is its own
+        # bundle -- is read from its sys.path.
+        if target_interpreter().is_own and any(
             finder is not PathFinder and hasattr(finder, "find_distributions")
             for finder in sys.meta_path
         ):
@@ -306,7 +310,7 @@ def _iter_raw_distributions(
 
             return
 
-        roots = [os.fspath(entry) for entry in sys.path]
+        roots = [os.fspath(entry) for entry in search_path()]
 
     else:
         roots = [os.fspath(path) for path in paths]
@@ -523,7 +527,7 @@ _installed_index_cache: dict[
 
 def _search_paths(paths: Iterable[str] | None) -> tuple[str, ...]:
     if paths is None:
-        return tuple(os.fspath(entry) for entry in sys.path)
+        return tuple(os.fspath(entry) for entry in search_path())
 
     return tuple(os.fspath(path) for path in paths)
 

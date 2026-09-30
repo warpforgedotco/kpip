@@ -6,7 +6,7 @@ import collections
 import logging
 import os
 import re
-import site
+from kpip.core.metadata import user_lib_path
 from collections.abc import Generator, Iterable
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -57,7 +57,7 @@ def freeze(
 
     dists = InstalledDistributionStore(
         paths=paths,
-        user_site=site.getusersitepackages(),
+        user_site=user_lib_path(),
     ).iter(local_only=local_only, user_only=user_only)
 
     for dist in dists:

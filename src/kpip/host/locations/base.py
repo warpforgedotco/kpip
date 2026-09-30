@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import functools
 import os
-import sysconfig
 
 from kpip.core.appdirs import user_cache_dir
 from kpip.core.errors import InstallationError
@@ -41,8 +39,3 @@ def change_root(new_root: str, pathname: str) -> str:
     raise InstallationError(
         f"Unknown platform: {os.name}\nCan not change root path prefix on unknown platform.",
     )
-
-
-@functools.cache
-def is_osx_framework() -> bool:
-    return bool(sysconfig.get_config_var("PYTHONFRAMEWORK"))

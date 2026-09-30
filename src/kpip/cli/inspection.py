@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import site
+from kpip.core.metadata import user_lib_path
 
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.cli.parsers.inspection import create_inspect_parser
@@ -16,7 +16,7 @@ def run_inspect(args: list[str]) -> int:
 
     distributions = InstalledDistributionStore(
         paths=options.path or None,
-        user_site=site.getusersitepackages(),
+        user_site=user_lib_path(),
     ).iter(
         local_only=options.local,
         user_only=options.user,

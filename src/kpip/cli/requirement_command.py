@@ -47,12 +47,9 @@ from kpip.core.packaging import (
     canonicalize_name,
     normalize_python_version,
     parse_requirement,
+    requires_python_version,
 )
 from kpip.core.urls import url_to_path
-from kpip.core.utils import (
-    CURRENT_PYTHON_VERSION_DIGITS,
-    CURRENT_PYTHON_VERSION_FULL,
-)
 from kpip.core.wheel import TargetContext
 from kpip.index.links import Link
 from kpip.index.metadata_cache import get_wheel_metadata_cache
@@ -180,18 +177,18 @@ def check_dist_restriction(options: argparse.Namespace) -> None:
 def python_version(options: argparse.Namespace) -> str:
     requested = getattr(options, "python_version", None)
     if not requested:
-        return CURRENT_PYTHON_VERSION_FULL
+        return requires_python_version()
     return normalize_python_version(str(requested))
 
 
 def target_context(options: argparse.Namespace) -> TargetContext:
-    """The interpreter distributions are chosen for: the running one, unless
-    the command takes pip's target options and was given some."""
+    """The interpreter distributions are chosen for: the one kpip installs
+    for, unless the command takes pip's target options and was given some."""
     requested = getattr(options, "python_version", None)
     return TargetContext(
         platforms=tuple(getattr(options, "platform", ())),
         implementation=getattr(options, "implementation", None),
-        python_version=(str(requested) if requested else CURRENT_PYTHON_VERSION_DIGITS),
+        python_version=str(requested) if requested else None,
         abis=tuple(getattr(options, "abi", ())),
     )
 

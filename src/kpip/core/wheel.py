@@ -5,11 +5,9 @@ import os
 import platform
 import re
 import sys
-import sysconfig
 import zipfile
 from collections.abc import Callable, Collection, Mapping
 from email import parser
-from functools import lru_cache
 from typing import TYPE_CHECKING, Protocol
 
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
@@ -24,7 +22,7 @@ from .packaging import (
     marker_applies,
     parse_requirement,
 )
-from .utils import CURRENT_PYTHON_VERSION_DIGITS
+from kpip.host import interpreter_facts
 from .versions import InvalidVersion, Version
 from .wheel_metadata import (
     metadata_paths,
@@ -731,44 +729,149 @@ class _HashCachedTags(tuple):
             return value
 
 
-@lru_cache(maxsize=1024)
 def supported_wheel_tags(target: TargetContext | None = None) -> tuple[WheelTag, ...]:
-    if target is None:
-        implementation = "cp"
+    """The tags a wheel may carry to install into the target interpreter.
 
-        version_digits = CURRENT_PYTHON_VERSION_DIGITS
+    packaging's ``sys_tags``, for the Python kpip installs for -- which need
+    not be the one running it -- or for ``target`` where it names a version,
+    implementation, platform or ABI.
+    """
+    return _supported_wheel_tags(
+        target, interpreter_facts.target_interpreter(installing=False)
+    )
 
-        platform_tags = current_platform_tags()
 
-        abi_tags = ()
+@memoized(1024)
+def _supported_wheel_tags(
+    target: TargetContext | None, interpreter: Any
+) -> tuple[WheelTag, ...]:
+    version = interpreter.version[:2]
+    implementation = INTERPRETER_SHORT_NAMES.get(
+        interpreter.implementation, interpreter.implementation
+    )
+    platform_tags: tuple[str, ...] = ()
+    abi_tags: tuple[str, ...] = ()
 
-    else:
-        version = target.python_version or CURRENT_PYTHON_VERSION_DIGITS
+    if target is not None:
+        if target.python_version:
+            digits = target.python_version.replace(".", "")
+            version = (int(digits[0]), int(digits[1:] or 0))
+        implementation = target.implementation or implementation
+        platform_tags = tuple(target.platforms)
+        abi_tags = tuple(target.abis)
 
-        version_digits = version.replace(".", "")
-
-        implementation = target.implementation or "cp"
-
-        platform_tags = target.platforms or current_platform_tags()
-
-        abi_tags = target.abis
+    version_digits = f"{version[0]}{version[1]}"
 
     impl_tag = f"{implementation}{version_digits}"
 
-    major = version_digits[0]
+    if not abi_tags:
+        abis = interpreter_abis(interpreter, implementation, version)
+    elif implementation == "cp":
+        # As packaging's cpython_tags: the ABIs given, then the stable ABI
+        # their threading takes, then none.
+        own = tuple(abi for abi in abi_tags if abi not in ("abi3", "abi3t", "none"))
+        stable = ()
+        if version >= (3, 2):
+            flags = re.match(r"cp\d+(.*)", own[0]) if own else None
+            threaded = flags is not None and "t" in flags.group(1)
+            stable = ("abi3t",) if threaded else ("abi3",)
+        abis = (*own, *stable, "none")
+    else:
+        abis = (*(abi for abi in abi_tags if abi != "none"), "none")
 
-    interpreters = (impl_tag, f"py{version_digits}", f"py{major}")
+    platforms = platform_tags or current_platform_tags()
 
-    abis = tuple(abi_tags) or (impl_tag, "abi3", "none")
-
-    platforms = tuple(platform_tags) + ("any",)
-
-    return _HashCachedTags(
-        WheelTag(interpreter, abi, platform)
-        for interpreter in interpreters
-        for abi in abis
+    # packaging's order, best first: the interpreter's own ABIs, the stable
+    # ABI and none for each platform; then pure-Python tags for each
+    # platform; then the platform-independent ones. Older versions --
+    # cp312-abi3, py38-none -- match through interpreter_matches.
+    python_tags = (f"py{version_digits}", f"py{version[0]}")
+    tags = [
+        WheelTag(impl_tag, abi, platform)
+        for abi in (*(abi for abi in abis if abi != "none"), "none")
         for platform in platforms
-    )
+    ]
+    tags += [
+        WheelTag(python, "none", platform)
+        for python in python_tags
+        for platform in platforms
+    ]
+    tags.append(WheelTag(impl_tag, "none", "any"))
+    tags += [WheelTag(python, "none", "any") for python in python_tags]
+    if implementation == "pp":
+        tags.append(WheelTag("pp3", "none", "any"))
+    return _HashCachedTags(tags)
+
+
+INTERPRETER_SHORT_NAMES = {
+    "python": "py",
+    "cpython": "cp",
+    "pypy": "pp",
+    "ironpython": "ip",
+    "jython": "jy",
+}
+
+
+def interpreter_abis(
+    interpreter: Any, implementation: str, version: tuple[int, int]
+) -> tuple[str, ...]:
+    """The ABIs packaging lists for ``interpreter`` at ``version``.
+
+    A CPython's own ABI -- ``t`` when free-threaded, ``d`` for a debug build,
+    which also loads extensions built without it -- then the stable ABI,
+    ``abi3t`` for a free-threaded build and ``abi3`` otherwise, then
+    ``none``. Other implementations name theirs in ``EXT_SUFFIX``.
+    """
+    if implementation != "cp":
+        return (*_generic_abis(interpreter), "none")
+
+    config = interpreter.config
+    version_digits = f"{version[0]}{version[1]}"
+    debug = ""
+    with_debug = config.get("Py_DEBUG")
+    if with_debug or (
+        with_debug is None
+        and (interpreter.debug_refcount or "_d.pyd" in interpreter.extension_suffixes)
+    ):
+        debug = "d"
+    threading = "t" if version >= (3, 13) and config.get("Py_GIL_DISABLED") else ""
+    pymalloc = ""
+    if version < (3, 8):
+        with_pymalloc = config.get("WITH_PYMALLOC")
+        if with_pymalloc or with_pymalloc is None:
+            pymalloc = "m"
+
+    abis = [f"cp{version_digits}{threading}{debug}{pymalloc}"]
+    if debug and version >= (3, 8):
+        abis.append(f"cp{version_digits}{threading}")
+    if version >= (3, 2):
+        abis.append("abi3t" if threading else "abi3")
+    abis.append("none")
+    return tuple(abis)
+
+
+def _generic_abis(interpreter: Any) -> tuple[str, ...]:
+    """packaging's ABI from ``EXT_SUFFIX``, for an interpreter not CPython."""
+    ext_suffix = interpreter.config.get("EXT_SUFFIX")
+    if not isinstance(ext_suffix, str) or not ext_suffix.startswith("."):
+        return ()
+    parts = ext_suffix.split(".")
+    if len(parts) < 3:
+        return ()
+    soabi = parts[1]
+    if soabi.startswith("cpython"):
+        abi = "cp" + soabi.split("-")[1]
+    elif soabi.startswith("cp"):
+        abi = soabi.split("-")[0]
+    elif soabi.startswith("pypy"):
+        abi = "-".join(soabi.split("-")[:2])
+    elif soabi.startswith("graalpy"):
+        abi = "-".join(soabi.split("-")[:3])
+    elif soabi:
+        abi = soabi
+    else:
+        return ()
+    return (abi.replace(".", "_").replace("-", "_"),)
 
 
 _MACOS_VERSION_PLIST = "/System/Library/CoreServices/SystemVersion.plist"
@@ -821,6 +924,8 @@ def macos_product_version() -> str | None:
 
 
 def current_platform_tag() -> str:
+    """The target interpreter's platform, as a wheel tag names it."""
+    interpreter = interpreter_facts.target_interpreter(installing=False)
     if sys.platform == "darwin":
         release = macos_product_version()
 
@@ -832,10 +937,12 @@ def current_platform_tag() -> str:
         if len(mac_version) >= 2 and all(part.isdigit() for part in mac_version[:2]):
             major = int(mac_version[0])
             minor = 0 if major >= 11 else int(mac_version[1])
-            machine = platform.machine().replace("-", "_").replace(".", "_")
+            # The target's: an x86_64 Python runs under Rosetta on arm64.
+            machine = interpreter.markers["platform_machine"]
+            machine = machine.replace("-", "_").replace(".", "_")
             return f"macosx_{major}_{minor}_{machine}"
 
-    return sysconfig.get_platform().replace("-", "_").replace(".", "_")
+    return interpreter.platform.replace("-", "_").replace(".", "_")
 
 
 @memoized(1)
@@ -1614,15 +1721,12 @@ def interpreter_matches(runtime: str, wheel: str, abi: str) -> bool:
     if runtime == wheel:
         return True
 
-    if abi == "abi3" and runtime.startswith("cp") and wheel.startswith("cp"):
+    if abi in ("abi3", "abi3t") and runtime.startswith("cp") and wheel.startswith("cp"):
         try:
             return int(wheel[2:]) <= int(runtime[2:])
 
         except ValueError:
             return False
-
-    if wheel == "py3" and runtime.startswith(("cp", "py")):
-        return True
 
     # A pure wheel for an older minor of the same major -- py38-none-any on
     # 3.12 -- is compatible, as packaging's compatible_tags lists it.

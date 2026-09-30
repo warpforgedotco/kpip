@@ -18,7 +18,6 @@ from kpip.cli.package_finder import (
     package_finder,
 )
 from kpip.cli.parsers.list import create_parser
-from kpip.cli.target import target_paths
 from kpip.core.metadata import stdlib_pkgs, user_lib_path
 from kpip.core.packaging import parse_requirement
 
@@ -44,7 +43,7 @@ def run_list(args: list[str]) -> int:
         return 1
 
     distributions = select_installed_distributions(
-        paths=options.path or target_paths(),
+        paths=options.path or None,
         local_only=options.local,
         user_only=options.user,
         editables_only=options.editable,

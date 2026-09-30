@@ -17,10 +17,11 @@ import sys
 
 from kpip.core.errors import DiagnosticKpipError
 from kpip.core.packaging import target_python_version
+from kpip.host import interpreter_facts
 
 _PROBE = "import sys, venv; print('%d.%d' % sys.version_info[:2])"
 
-_build_interpreters: dict[tuple[str | None, str | None], str] = {}
+_build_interpreters: dict[tuple[str | None, str | None, str | None], str] = {}
 
 
 class NoBuildInterpreterError(DiagnosticKpipError):
@@ -138,24 +139,28 @@ def _discover() -> str:
 def build_interpreter() -> str:
     """The Python to create build environments and run build backends with.
 
-    ``KPIP_BUILD_PYTHON`` wins when set. Otherwise it is the interpreter
-    running kpip, unless kpip is compiled, in which case one is discovered:
-    the active virtual or conda environment's, then ``python<target>``,
-    ``python3`` and ``python`` on ``PATH``, preferring one whose version is
-    the lock's target. The answer is kept for the process.
+    ``KPIP_BUILD_PYTHON`` wins when set. Otherwise it is the Python kpip
+    installs for, as pip, run under it, builds with it: the one ``--python``
+    names, or the one running kpip. A compiled kpip has none of its own, and
+    discovers one -- the active virtual or conda environment's, then
+    ``python<target>``, ``python3`` and ``python`` on ``PATH`` -- preferring
+    the lock's target version when ``--python-version`` names one. The
+    answer is kept for the process.
     """
 
     explicit = os.environ.get("KPIP_BUILD_PYTHON") or None
-    key = (explicit, target_python_version())
+    key = (explicit, target_python_version(), os.environ.get("KPIP_PYTHON"))
     found = _build_interpreters.get(key)
 
     if found is None:
         if explicit is not None:
             found = explicit
-        elif not is_compiled():
-            found = sys.executable
         else:
-            found = _discover()
+            target = interpreter_facts.target_interpreter(installing=False)
+            if is_compiled() and (target.is_own or target_python_version()):
+                found = _discover()
+            else:
+                found = target.executable
 
         _build_interpreters[key] = found
 

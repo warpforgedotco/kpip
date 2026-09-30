@@ -13,7 +13,7 @@ from kpip.core.errors import InstallationError
 from kpip.core.format_control import FormatControl
 from kpip.core.packaging import SpecifierSet, marker_applies
 from kpip.core.urls import path_to_url
-from kpip.core.utils import CURRENT_PYTHON_VERSION_FULL
+from kpip.core.packaging import requires_python_version
 from kpip.core.versions import Version
 from kpip.core.wheel import parse_wheel_file, parse_wheel_filename, wheel_tag_rank
 from kpip.resolution.files.models import ParsedRequirement
@@ -80,7 +80,7 @@ def parse_pylock(
 
     if lock_requires_python is not None and not SpecifierSet(
         str(lock_requires_python),
-    ).contains(Version(CURRENT_PYTHON_VERSION_FULL)):
+    ).contains(Version(requires_python_version())):
         raise InstallationError(
             f"Cannot select requirements from pylock file {reference!r}: "
             "no distribution supports this Python version",
@@ -107,7 +107,7 @@ def parse_pylock(
 
         if requires_python is not None and not SpecifierSet(
             str(requires_python),
-        ).contains(Version(CURRENT_PYTHON_VERSION_FULL)):
+        ).contains(Version(requires_python_version())):
             raise InstallationError(
                 f"Cannot select requirements from pylock file {reference!r}: "
                 "no distribution supports this Python version",

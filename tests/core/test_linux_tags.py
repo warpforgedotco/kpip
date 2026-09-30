@@ -30,12 +30,12 @@ def linux_host(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(wheel, "current_platform_tag", lambda: platform_tag)
         monkeypatch.setattr(wheel, "detect", lambda: detected)
         wheel.current_platform_tags.cache_clear()
-        wheel.supported_wheel_tags.cache_clear()
+        wheel._supported_wheel_tags.cache_clear()
         return wheel.supported_wheel_tags()
 
     yield configure
     wheel.current_platform_tags.cache_clear()
-    wheel.supported_wheel_tags.cache_clear()
+    wheel._supported_wheel_tags.cache_clear()
 
 
 CP = CURRENT_PYTHON_VERSION_DIGITS

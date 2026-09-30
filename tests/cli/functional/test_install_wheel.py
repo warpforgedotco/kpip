@@ -168,8 +168,9 @@ def get_header_scheme_path_for_script(
     dist_name: str,
 ) -> Path:
     command = (
+        "from kpip.host.interpreter_facts import own_interpreter;"
         "from kpip.host.locations.sysconfig_scheme import get_scheme;"
-        f"scheme = get_scheme({dist_name!r});"
+        f"scheme = get_scheme({dist_name!r}, interpreter=own_interpreter());"
         "print(scheme.headers);"
     )
     result = script.run("python", "-c", command).stdout

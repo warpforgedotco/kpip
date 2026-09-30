@@ -23,7 +23,7 @@ from kpip.core import run_options
 from kpip.core.errors import KpipError
 from kpip.core.temp_dir import global_tempdir_manager
 from kpip.core.utils import configure
-from kpip.host.virtualenv import running_under_virtualenv
+from kpip.host.interpreter_facts import target_interpreter
 
 if TYPE_CHECKING:
     from typing import NoReturn
@@ -63,7 +63,7 @@ HELP_FLAGS = frozenset(("-h", "--help"))
 def extract_python_option(args: list[str]) -> tuple[list[str], str | None]:
     filtered: list[str] = []
 
-    target_prefix: str | None = None
+    python: str | None = None
 
     index = 0
 
@@ -79,14 +79,14 @@ def extract_python_option(args: list[str]) -> tuple[list[str], str | None]:
             if index + 1 >= len(args):
                 raise ValueError("--python requires a path")
 
-            target_prefix = args[index + 1]
+            python = args[index + 1]
 
             index += 2
 
             continue
 
         if token.startswith("--python="):
-            target_prefix = token.partition("=")[2]
+            python = token.partition("=")[2]
 
             index += 1
 
@@ -96,7 +96,7 @@ def extract_python_option(args: list[str]) -> tuple[list[str], str | None]:
 
         index += 1
 
-    return filtered, target_prefix
+    return filtered, python
 
 
 def extract_global_options(
@@ -262,7 +262,7 @@ def handle_global_commands(
         return 0
 
     if require_virtualenv:
-        if not running_under_virtualenv():
+        if not target_interpreter().in_virtualenv:
             logging.getLogger(__name__).critical(
                 "Could not find an activated virtualenv (required)."
             )
@@ -406,8 +406,7 @@ def main(
     collection_paused = False
 
     managed_environment = {
-        name: os.environ.get(name)
-        for name in ("KPIP_RESOLVER_DEBUG", "KPIP_TARGET_PREFIX")
+        name: os.environ.get(name) for name in ("KPIP_RESOLVER_DEBUG", "KPIP_PYTHON")
     }
     try:
         run_options.reset()
@@ -423,9 +422,9 @@ def main(
         configure_logging(verbosity)
         if verbosity >= 2 or any(token in VERBOSITY_FLAGS for token in argv):
             os.environ["KPIP_RESOLVER_DEBUG"] = "1"
-        argv, target_prefix = extract_python_option(argv)
-        if target_prefix is not None:
-            os.environ["KPIP_TARGET_PREFIX"] = target_prefix
+        argv, python = extract_python_option(argv)
+        if python is not None:
+            os.environ["KPIP_PYTHON"] = python
 
         if (
             not require_virtualenv

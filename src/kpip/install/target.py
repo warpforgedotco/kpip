@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 
+from kpip.host.interpreter_facts import target_interpreter
 from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.host.scheme import Scheme
 
@@ -104,6 +105,7 @@ class InstallTarget:
         return cls.from_scheme(
             get_scheme(
                 name,
+                interpreter=target_interpreter(),
                 user=user,
                 home=home,
                 root=root,

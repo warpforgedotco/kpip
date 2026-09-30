@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import os
-import platform
 import re
-import sys
 import urllib.parse
 from bisect import bisect_left, bisect_right
 
 # `markers` and this module import each other, so each is imported whole
 # and its names are read when used.
 from kpip.core import markers
+from kpip.host import interpreter_facts
 from kpip.core.caches import bounded_put, clear_all, memoized, register_table
 from kpip.core.names import canonicalize_name
 from kpip.core.versions import (
@@ -38,19 +36,16 @@ def safe_extra(extra: str) -> str:
 
 
 def implementation_version_text() -> str:
-    """``implementation_version`` as PEP 508 defines it.
+    """``implementation_version`` as PEP 508 defines it, for the target.
 
     This is the *implementation's* version, not the language version: on PyPy
     it is 7.3.x, not 3.10.x, and markers that gate on a PyPy release are
     written against that number. Non-final builds carry the release level, so
     a CPython alpha reports ``3.15.0a1`` rather than ``3.15.0``.
     """
-    info = sys.implementation.version
-    version = f"{info.major}.{info.minor}.{info.micro}"
-    kind = info.releaselevel
-    if kind != "final":
-        version += kind[0] + str(info.serial)
-    return version
+    return interpreter_facts.target_interpreter(installing=False).markers[
+        "implementation_version"
+    ]
 
 
 _TARGET_PYTHON: str | None = None
@@ -114,16 +109,15 @@ def normalize_python_version(value: str) -> str:
 
 @memoized(8)
 def default_environment(extra: str | None = None) -> dict[str, str]:
-    impl = platform.python_implementation()
+    """The marker environment of the Python kpip resolves for."""
+    interpreter = interpreter_facts.target_interpreter(installing=False)
+    environment = dict(interpreter.markers)
 
-    version = platform.python_version()
-
+    version = environment["python_full_version"]
     if version.endswith("+"):
         # A build from an untagged checkout reports "3.15.0+", which is not a
         # PEP 440 version; the reference environment repairs it the same way.
         version += "local"
-
-    implementation_version = implementation_version_text()
 
     if _TARGET_PYTHON is not None:
         # Only the language version moves. A cross-version resolve still runs
@@ -133,23 +127,23 @@ def default_environment(extra: str | None = None) -> dict[str, str]:
         # would describe an interpreter that does not exist.
         version = _TARGET_PYTHON
 
-        if sys.implementation.name == "cpython":
-            implementation_version = _TARGET_PYTHON
+        if interpreter.implementation == "cpython":
+            environment["implementation_version"] = _TARGET_PYTHON
 
-    return {
-        "implementation_name": sys.implementation.name,
-        "implementation_version": implementation_version,
-        "os_name": os.name,
-        "platform_machine": platform.machine(),
-        "platform_python_implementation": impl,
-        "platform_release": platform.release(),
-        "platform_system": platform.system(),
-        "platform_version": platform.version(),
-        "python_full_version": version,
-        "python_version": ".".join(version.split(".")[:2]),
-        "sys_platform": sys.platform,
-        "extra": extra or "",
-    }
+    environment["python_full_version"] = version
+    environment["python_version"] = ".".join(version.split(".")[:2])
+    environment["extra"] = extra or ""
+    return environment
+
+
+def requires_python_version() -> str:
+    """The version ``Requires-Python`` is checked against: the target's
+    ``major.minor.micro``, as pip takes ``sys.version_info[:3]`` -- a release
+    candidate is its release -- or the one ``--python-version`` asks for."""
+    if _TARGET_PYTHON is not None:
+        return _TARGET_PYTHON
+    version = interpreter_facts.target_interpreter(installing=False).version
+    return "%d.%d.%d" % version[:3]
 
 
 class InvalidSpecifier(ValueError):

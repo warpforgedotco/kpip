@@ -7,10 +7,9 @@ import locale
 import logging
 import os
 import sys
-import sysconfig
 
 from kpip.core.errors import KpipError
-from kpip.host.virtualenv import running_under_virtualenv
+from kpip.host.interpreter_facts import target_interpreter
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,8 @@ class ExternallyManagedEnvironment(KpipError):
 
 def _default_error() -> str:
     return (
-        f"The Python environment under {sys.prefix} is managed externally, and "
+        f"The Python environment under {target_interpreter().prefix} is managed "
+        "externally, and "
         "may not be\nmanipulated by the user. Please use specific tooling from "
         "the distributor of\nthe Python installation to interact with this "
         "environment instead.\n"
@@ -82,10 +82,10 @@ def check_externally_managed() -> None:
     As pip: a virtual environment is never externally managed, and the
     marker is ``EXTERNALLY-MANAGED`` beside the standard library.
     """
-    if running_under_virtualenv():
+    if target_interpreter().in_virtualenv:
         return
 
-    marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
+    marker = os.path.join(target_interpreter().stdlib, "EXTERNALLY-MANAGED")
 
     if not os.path.isfile(marker):
         return
@@ -110,7 +110,7 @@ def warn_if_run_as_root() -> None:
     In a virtual environment root still writes to the environment; on
     Windows there are no system-managed Python packages to break.
     """
-    if running_under_virtualenv():
+    if target_interpreter().in_virtualenv:
         return
 
     if not hasattr(os, "getuid") or sys.platform in {"win32", "cygwin"}:

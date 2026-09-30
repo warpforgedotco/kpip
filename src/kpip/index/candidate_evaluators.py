@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
 from typing import TypeVar
 
 from kpip.core.caches import memoized
 from kpip.core.errors import InvalidWheelFilename
 from kpip.core.hashes import Hashes
-from kpip.core.packaging import Requirement, SpecifierSet, target_python_version
+from kpip.core.packaging import (
+    Requirement,
+    SpecifierSet,
+    requires_python_version,
+    target_python_version,
+)
 from kpip.core.release_control import ReleaseControl
 from kpip.core.target_python import get_supported
 from kpip.core.versions import ZERO_VERSION, Version
@@ -33,7 +37,6 @@ from kpip.index.source_models import (
 CandidateT = TypeVar("CandidateT", bound=CandidateRecord)
 
 _UNKNOWN_DIRECT_SOURCE_VERSION = ZERO_VERSION
-_RUNNING_PYTHON = Version("%s.%s.%s" % sys.version_info[:3])
 
 
 class CandidateEvaluator:
@@ -328,7 +331,7 @@ class CandidateEvaluator:
             return True
 
         return specifier.contains(
-            _RUNNING_PYTHON if python is None else Version(python),
+            Version(requires_python_version() if python is None else python),
         )
 
     @staticmethod

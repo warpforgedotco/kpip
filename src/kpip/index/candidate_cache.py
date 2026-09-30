@@ -6,12 +6,11 @@ import json
 import logging
 import os
 import shutil
-import sysconfig
 import tempfile
 
 from kpip.core.digests import sha256_hexdigest
 from kpip.core.hashes import file_hashes
-from kpip.core.utils import CACHE_INTERPRETER_TAG
+from kpip.host.interpreter_facts import target_interpreter
 from kpip.core.versions import ZERO_VERSION
 from kpip.core.wheel import WheelCandidate, wheel_candidate_from_path
 from kpip.index.artifacts import ArtifactLocator
@@ -123,8 +122,11 @@ def built_wheel_cache_key(
     body later served at the same URL, so it is deliberately ineligible for
     persistent reuse.  A VCS checkout is reusable when its URL pins a full
     commit, or when the caller resolved its reference to one
-    (``vcs_commit``), which then becomes part of the identity.
+    (``vcs_commit``), which then becomes part of the identity. A build is for
+    the interpreter it ran with: the one kpip builds for.
     """
+
+    interpreter = target_interpreter(installing=False)
 
     if candidate.link.kind is ArtifactKind.SDIST:
         if not source_hashes:
@@ -154,8 +156,9 @@ def built_wheel_cache_key(
                 _constraint_identity(value) for value in build_constraints or ()
             ],
             "isolation": build_isolation,
-            "interpreter": CACHE_INTERPRETER_TAG,
-            "platform": sysconfig.get_platform(),
+            "interpreter": interpreter.cache_tag,
+            "abi": interpreter.config.get("SOABI"),
+            "platform": interpreter.platform,
             "target": target_key,
         },
     }

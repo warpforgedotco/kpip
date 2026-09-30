@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-import site
+from kpip.core.metadata import user_lib_path
 
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.cli.parsers.uninstall import create_parser
-from kpip.cli.target import target_paths
 from kpip.core.packaging import parse_requirement
 from kpip.host.environment_checks import (
     check_externally_managed,
@@ -41,17 +40,14 @@ def run_uninstall(args: list[str]) -> int:
     if not packages:
         parser.error("You must give at least one package to uninstall")
 
-    if not options.break_system_packages and target_paths() is None:
+    if not options.break_system_packages:
         check_externally_managed()
 
     removed: list[str] = []
 
     for package in packages:
-        paths = target_paths()
-
         distribution = InstalledDistributionStore(
-            paths=paths,
-            user_site=site.getusersitepackages(),
+            user_site=user_lib_path(),
         ).find(package)
 
         if options.verbose and distribution is not None:
@@ -66,11 +62,7 @@ def run_uninstall(args: list[str]) -> int:
 
                 logger.info(f"Uninstalling files from {os.path.join(parent, scripts)}")
 
-        if paths is None:
-            removed_now = RequirementInstaller().uninstall(package)
-
-        else:
-            removed_now = RequirementInstaller().uninstall(package, paths=paths)
+        removed_now = RequirementInstaller().uninstall(package)
 
         if removed_now:
             removed.append(package)
