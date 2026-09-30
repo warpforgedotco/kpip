@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import datetime
 import os
 import time
 
@@ -10,6 +9,8 @@ from kpip.build.build import build_editable_from_source
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.cli.config import SourceConfig, load_source_config
 from kpip.cli.dependency_groups import group_items, parse_dependency_groups
+from kpip.cli.package_finder import format_control as selected_formats
+from kpip.cli.package_finder import release_control
 from kpip.cli.parsers.install import create_parser
 from kpip.cli.requirements import (
     build_options_from_requirements,
@@ -397,11 +398,7 @@ def unmet_dependencies(
     return unmet
 
 
-def runtime_setup(
-    args: list[str],
-    options: argparse.Namespace,
-    index_url_options: frozenset[str],
-) -> InstallRuntimeSetup:
+def runtime_setup(options: argparse.Namespace) -> InstallRuntimeSetup:
     quiet = options.quiet > 0
     if quiet:
         os.environ["KPIP_QUIET"] = "1"
@@ -411,47 +408,10 @@ def runtime_setup(
     cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
     return InstallRuntimeSetup(
         config=load_source_config("install"),
-        explicit_index_url=any(arg in index_url_options for arg in args),
+        explicit_index_url=options.index_url is not None,
         cache_dir=cache_dir,
         quiet=quiet,
     )
-
-
-def format_control_from_args(args: list[str]) -> FormatControl:
-    control = FormatControl()
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token in ("--no-binary", "--only-binary"):
-            if index + 1 < len(args):
-                control.apply(token[2:], args[index + 1])
-            index += 2
-            continue
-        if token.startswith(("--no-binary=", "--only-binary=")):
-            option, _, value = token.partition("=")
-            control.apply(option[2:], value)
-        index += 1
-    return control
-
-
-def release_control_args(args: list[str]) -> list[tuple[str, str]]:
-    result: list[tuple[str, str]] = []
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token in ("--all-releases", "--only-final"):
-            if index + 1 >= len(args):
-                raise ValueError(f"{token} requires a value")
-            result.append((token[2:], args[index + 1]))
-            index += 2
-            continue
-        if token.startswith(("--all-releases=", "--only-final=")):
-            option, _, value = token.partition("=")
-            result.append((option[2:], value))
-        elif token == "--pre":
-            result.append(("pre", ":all:"))
-        index += 1
-    return result
 
 
 def requirement_bundle(
@@ -534,8 +494,7 @@ def target_context(options: argparse.Namespace) -> TargetContext:
 
 
 def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
-    normalized_args = normalize_install_args(args, INDEX_URL_OPTIONS)
-    options = parser.parse_args(normalized_args)
+    options = parser.parse_args(normalize_install_args(args, INDEX_URL_OPTIONS))
 
     if options.target:
         # As pip: a target directory is a library of its own, which what the
@@ -572,7 +531,7 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
                 "the option is a no-op."
             )
 
-    runtime = runtime_setup(args, options, INDEX_URL_OPTIONS)
+    runtime = runtime_setup(options)
 
     if runtime.cache_dir is not None:
         from kpip.core.metadata import use_header_cache
@@ -599,8 +558,6 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
         script_requirements = requirements_from_script(
             options.requirements_from_scripts[0],
         )
-
-    format_control = format_control_from_args(normalized_args)
 
     try:
         validate_option_combinations(options)
@@ -654,10 +611,7 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
             f'The index url "{options.index_url}" seems invalid, please provide a scheme.'
         )
 
-    try:
-        parsed_release_control_args = release_control_args(normalized_args)
-    except ValueError as exc:
-        parser.error(str(exc))
+    parsed_release_control_args = release_control(options)
 
     cache_dir = runtime.cache_dir
 
@@ -667,7 +621,7 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
         explicit_index_url=explicit_index_url,
         grouped_requirements=grouped_requirements,
         script_requirements=script_requirements,
-        format_control=format_control,
+        format_control=selected_formats(options),
         release_control=parsed_release_control_args,
         config_settings=parsed_config_settings,
         cache_dir=cache_dir,
@@ -749,13 +703,7 @@ def create_candidate_provider(
         build_isolation=not options.no_build_isolation,
         locked_links={name: Link(url) for name, url in bundle.locked_links.items()},
         target=target,
-        uploaded_prior_to=(
-            datetime.datetime.fromisoformat(
-                options.uploaded_prior_to.replace("Z", "+00:00"),
-            )
-            if options.uploaded_prior_to
-            else None
-        ),
+        uploaded_prior_to=options.uploaded_prior_to,
     )
 
     provider.release_control = bundle.release_control

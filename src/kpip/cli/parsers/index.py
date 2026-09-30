@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import (
+    add_index_options,
+    add_selection_options,
+    add_target_python_options,
+)
 
 
 def create_parser() -> ArgumentParser:
@@ -16,19 +21,10 @@ def create_parser() -> ArgumentParser:
 
     parser.add_argument("--json", action="store_true")
 
-    parser.add_argument("-i", "--index-url")
+    parser.add_argument("--ignore-requires-python", action="store_true")
 
-    parser.add_argument("--extra-index-url", action="append", default=[])
-
-    parser.add_argument(
-        "--trusted-host",
-        dest="trusted_hosts",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("--no-index", action="store_true")
-
-    parser.add_argument("--pre", action="store_true")
+    add_index_options(parser)
+    add_selection_options(parser)
+    add_target_python_options(parser)
 
     return parser

@@ -313,13 +313,13 @@ def lock_replay_key(
     ``previous`` is the lock it starts from, as ``read_previous_lock`` read it.
     """
 
-    if cache_dir is None or options.no_index or options.find_links or options.editable:
+    if cache_dir is None or options.no_index or options.find_links or options.editables:
         return None
 
     return replay_key(
         requirements=options.requirements,
-        requirement_files=options.requirement,
-        constraint_files=options.constraints,
+        requirement_files=options.requirement_files,
+        constraint_files=options.constraint_files,
         index_urls=(DEFAULT_INDEX_URL,),
         no_binary=options.no_binary,
         no_build_isolation=options.no_build_isolation,
@@ -599,7 +599,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     editable_packages: list[dict] = []
 
-    for value in options.editable:
+    for value in options.editables:
         from kpip.build.build_backend import prepare_project_metadata
 
         item = install_req_from_line(value)
@@ -619,7 +619,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             },
         )
 
-    for filename in options.requirement:
+    for filename in options.requirement_files:
         if os.path.basename(filename).startswith("pylock") and filename.endswith(
             ".toml",
         ):
@@ -668,7 +668,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     constraints = [
         requirement
-        for filename in options.constraints
+        for filename in options.constraint_files
         for requirement in read_requirement_lines(filename)
     ]
 

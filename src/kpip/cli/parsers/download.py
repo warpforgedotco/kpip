@@ -2,61 +2,29 @@
 
 from __future__ import annotations
 
+import os
+
 from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import (
+    add_index_options,
+    add_requirement_options,
+    add_selection_options,
+    add_target_python_options,
+)
 
 
 def create_parser() -> ArgumentParser:
     parser = ArgumentParser(prog="kpip download")
-
-    parser.add_argument("requirements", nargs="*")
-
-    parser.add_argument("--group", dest="groups", action="append", default=[])
-
+    add_requirement_options(parser)
+    add_index_options(parser)
+    add_selection_options(parser)
+    add_target_python_options(parser)
     parser.add_argument(
-        "-r",
-        "--requirement",
-        dest="requirement_files",
-        action="append",
-        default=[],
+        "-d",
+        "--dest",
+        "--destination-dir",
+        "--destination-directory",
+        dest="dest",
+        default=os.curdir,
     )
-
-    parser.add_argument(
-        "-c",
-        "--constraint",
-        dest="constraint_files",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("-f", "--find-links", action="append", default=[])
-
-    parser.add_argument("-i", "--index-url")
-
-    parser.add_argument("--extra-index-url", action="append", default=[])
-
-    parser.add_argument(
-        "--trusted-host",
-        dest="trusted_hosts",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("--proxy")
-
-    parser.add_argument("--cert")
-
-    parser.add_argument("--client-cert")
-
-    parser.add_argument("--no-index", action="store_true")
-
-    parser.add_argument("--no-build-isolation", action="store_true")
-
-    parser.add_argument("--cache-dir")
-
-    parser.add_argument("--no-cache-dir", action="store_true")
-
-    parser.add_argument("--no-color", action="store_true")
-
-    parser.add_argument("-d", "--dest", required=True)
-
     return parser
