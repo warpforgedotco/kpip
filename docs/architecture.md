@@ -47,14 +47,27 @@ re-deriving locally:
 | Concern | Owner |
 | --- | --- |
 | Config files, `KPIP_*` overrides, source selection | `cli/config.py` |
+| The options pip's commands share, declared once | `cli/parsers/shared.py` |
+| Index and selection options (`--pre`, `--only-binary`, `--refresh-package`, ...) read into a provider | `cli/package_finder.py` |
+| Requirement options to a resolved plan, for `install`, `download` and `wheel` | `cli/requirement_command.py` |
 | Requirement collection, `--config-settings`, proxy environment | `cli/requirements.py` |
 | `--group` and dependency-group files | `cli/dependency_groups.py` |
 | Lock serialization | `cli/lock_format.py` |
 | Cache directory policy | `core/appdirs.py` |
 | Resolver report → CLI diagnostic | `cli/resolution_errors.py` |
 
-Known, deliberate divergence: `install` concatenates configured and
-command-line find-links instead of using `resolve_sources`. Every caching
+`install`, `download` and `wheel` are one requirement command with three
+endings, as in pip: `requirement_command.prepare` reads their options and
+`requirement_command.resolve` resolves them, and a new option they share is
+handled there, not in a command. `install` calls the steps between the two
+itself, because it sets aside what is installed, replays cached plans and
+fetches while the solve runs; `download` and `wheel` call
+`resolve_requirements`. `lock` takes the same declarations but keeps its own
+resolve, for its replay records and its rendering.
+
+Known, deliberate divergence: the requirement commands add command-line
+find-links to the configured ones, as pip does; `index` and `list` use
+`resolve_sources`, where the command line replaces them. Every caching
 command takes its cache from `core/appdirs.py:command_cache_dir`, which is the
 default cache unless `--no-cache-dir` or `KPIP_NO_CACHE_DIR` turns it off.
 
@@ -62,9 +75,9 @@ default cache unless `--no-cache-dir` or `KPIP_NO_CACHE_DIR` turns it off.
 
 ```text
 cli.install:run_install
-  -> cli.requirements: roots, constraints, sources, policy
+  -> cli.requirement_command:prepare -> cli.requirements: roots, constraints, sources, policy
   -> plan: install.wheel_install_plan_cache:load_cached_install_plan (exact remote pins, warm)
-           else ResolutionEngine.resolve
+           else cli.requirement_command:resolve -> ResolutionEngine
   -> install.output:prepare_install_candidates   materialize winners, prepare wheel archives
   -> install.wheel_transaction:install_wheels_transactionally
   -> save_cached_install_plan after a fresh exact-pin install

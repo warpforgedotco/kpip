@@ -10,6 +10,7 @@ import sys
 
 
 from kpip.cli.dependency_groups import toml_module
+from kpip.cli.package_finder import release_control_from
 from kpip.core.errors import KpipError, InstallationError
 from kpip.core.format_control import FormatControl
 import logging
@@ -23,7 +24,6 @@ from kpip.index.source_locations import resolve_source_location
 from kpip.network.deferred import DeferredNetworkSession
 from kpip.resolution.input_requirements import install_req_from_line
 
-RELEASE_OPTIONS = frozenset(("pre", "all-releases"))
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +205,11 @@ def build_options_from_requirements(
     return build_options
 
 
-def requirements_from_script(path: str) -> list[str]:
+def requirements_from_script(
+    path: str,
+    *,
+    ignore_requires_python: bool = False,
+) -> list[str]:
     tomllib = toml_module()
 
     try:
@@ -270,7 +274,7 @@ def requirements_from_script(path: str) -> list[str]:
 
     requires_python = data.get("requires-python")
 
-    if requires_python is not None:
+    if requires_python is not None and not ignore_requires_python:
         if not isinstance(requires_python, str):
             raise InstallationError(
                 "Script metadata 'requires-python' must be a string",
@@ -307,6 +311,7 @@ def collect_requirements(
     format_control: FormatControl | None = None,
     release_control_args: list[tuple[str, str]] | None = None,
     require_hashes: bool = False,
+    no_require_hashes: bool = False,
     cert: str | None = None,
     client_cert: str | None = None,
     no_input: bool = False,
@@ -406,11 +411,7 @@ def collect_requirements(
         format_control=bundle_format_control,
     )
 
-    for kind, value in release_control_args or []:
-        provider.release_control.apply(
-            "all_releases" if kind in RELEASE_OPTIONS else "only_final",
-            value,
-        )
+    provider.release_control = release_control_from(release_control_args or [])
 
     if requirement_files or constraint_files:
         assert session is not None
@@ -526,10 +527,15 @@ def collect_requirements(
             and not collected_constraints
         ),
         release_control=provider.release_control or ReleaseControl(),
+        # As pip: a hash on any requirement turns hash-checking mode on for
+        # all of them, unless --no-require-hashes says to check only the
+        # requirements that carry one.
         require_hashes=(
             bool(getattr(option_state, "require_hashes", False))
-            or bool(requirement_hashes)
-            or bool(constraint_hashes)
+            or (
+                not no_require_hashes
+                and (bool(requirement_hashes) or bool(constraint_hashes))
+            )
         ),
         session=session,
     )

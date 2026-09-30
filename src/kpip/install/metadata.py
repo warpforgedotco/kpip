@@ -183,8 +183,13 @@ def prepare_editable_source(
     *,
     build_isolation: bool = True,
     prepare_metadata: bool = True,
+    src_dir: str | None = None,
 ) -> tuple[str, DirectUrl | None, ProjectMetadata | None]:
-    """Validate and prepare an editable source for the build service."""
+    """Validate and prepare an editable source for the build service.
+
+    A project from version control is checked out under ``src_dir``, which
+    is ``src`` in the environment unless ``--src`` names another directory.
+    """
     requirement = install_req_from_editable(editable)
     link = requirement.link
     if link is None or not (link.is_vcs or link.is_existing_dir or link.is_file):
@@ -201,7 +206,9 @@ def prepare_editable_source(
         checkout_name = canonicalize_name(
             link.egg_fragment or os.path.basename(source_path),
         )
-        checkout_dir = os.path.join(sys.prefix, "src", checkout_name)
+        checkout_dir = os.path.join(
+            src_dir or os.path.join(sys.prefix, "src"), checkout_name
+        )
         try:
             shutil.rmtree(checkout_dir)
         except FileNotFoundError:

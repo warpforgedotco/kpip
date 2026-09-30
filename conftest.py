@@ -429,6 +429,23 @@ def isolate(tmpdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def command_environment() -> Iterator[None]:
+    """A requirement command leaves its sources in the environment for the
+    builds it starts; one run in this process must not leave them to the
+    next test."""
+    names = ("KPIP_FIND_LINKS", "KPIP_NO_INDEX", "KPIP_QUIET")
+    before = {name: os.environ.get(name) for name in names}
+
+    yield
+
+    for name, value in before.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
 def command_logging() -> Iterator[None]:
     """What a command logs reaches stdout and stderr, as when kpip is run.
 
