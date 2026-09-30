@@ -217,3 +217,16 @@ def test_metadata_that_names_nothing_is_listed_for_its_directory(
     (info / "METADATA").write_text("Summary: no name here\n")
 
     assert _list(["--path", str(tmp_path), "--format=freeze"]) == "noname==3.0\n"
+
+
+def test_metadata_that_is_not_utf8_does_not_stop_the_listing(tmp_path: Path) -> None:
+    """pip stops with a traceback; one damaged distribution is no reason to
+    report nothing of the rest."""
+    _dist(tmp_path, "good-1.0.dist-info", "good", "1.0")
+    info = tmp_path / "bad-1.0.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_bytes(b"Name: bad\nVersion: 1.0\nAuthor: Jos\xe9\n")
+
+    assert _list(["--path", str(tmp_path), "--format=freeze"]) == (
+        "bad==1.0\ngood==1.0\n"
+    )
