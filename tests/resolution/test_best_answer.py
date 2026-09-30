@@ -8,10 +8,12 @@ which looks for any valid answer that beats it.
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import pytest
 
+from kpip.core import errors
 from kpip.resolution.api import ResolutionEngine
 from tests.resolution.best_answer import (
     build_wheelhouse,
@@ -100,21 +102,7 @@ CASES = {
 }
 
 
-# Dependencies are decided by conflict count, catalog size and name, not
-# outward from the roots, so these come out with the wrong package held back.
-NOT_BEST_YET = {"different-depths", "same-depth", "diamond", "deep-backtrack"}
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        pytest.param(
-            case,
-            marks=pytest.mark.xfail(strict=True) if case in NOT_BEST_YET else (),
-        )
-        for case in CASES
-    ],
-)
+@pytest.mark.parametrize("case", CASES)
 def test_answer_is_best(tmp_path: Path, case: str) -> None:
     wheels, roots, expected = CASES[case]
     wheelhouse = build_wheelhouse(tmp_path, wheels)
@@ -137,3 +125,47 @@ def test_order_is_breadth_first_in_declared_order(tmp_path: Path) -> None:
 
     assert result is not None
     assert solution_order(["a", "k"], result) == ["a", "k", "b", "e", "c", "d"]
+
+
+def random_wheels(seed: int) -> tuple[Wheels, list[str]]:
+    """A small acyclic index whose requirements all name releases that exist."""
+    rng = random.Random(seed)
+    names = [f"p{number}" for number in range(12)]
+    rng.shuffle(names)
+    counts = {name: rng.randint(1, 4) for name in names}
+    wheels: Wheels = {}
+    for index, name in enumerate(names):
+        later = names[index + 1 :]
+        releases = {}
+        for version in range(1, counts[name] + 1):
+            requires = []
+            for other in rng.sample(later, min(len(later), rng.randint(0, 3))):
+                count = counts[other]
+                kind = rng.choice(["", "", "<", ">=", "=="]) if count > 1 else ""
+                if kind == "<":
+                    requires.append(f"{other}<{rng.randint(2, count)}")
+                elif kind:
+                    requires.append(f"{other}{kind}{rng.randint(1, count)}")
+                else:
+                    requires.append(other)
+            releases[str(version)] = requires
+        wheels[name] = releases
+    return wheels, rng.sample(names[:4], rng.randint(1, 2))
+
+
+@pytest.mark.parametrize("seed", range(1000, 1060))
+def test_answer_is_best_on_a_random_index(tmp_path: Path, seed: int) -> None:
+    # Decided by conflict count, catalog size and name, the dependencies of
+    # one in twenty of these came out with the wrong package held back.
+    wheels, roots = random_wheels(seed)
+    wheelhouse = build_wheelhouse(tmp_path, wheels)
+
+    try:
+        result = ResolutionEngine.resolve_wheelhouse([wheelhouse], roots)
+    except errors.ResolutionError:
+        pytest.skip("this index has no answer")
+
+    assert result is not None
+    report = check_best(wheelhouse_resolver(wheelhouse, roots), roots, pins_of(result))
+    assert report.counterexamples == []
+    assert report.inconclusive == []

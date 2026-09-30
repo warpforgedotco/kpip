@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import operator
+import sys
 from bisect import bisect_left, bisect_right
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from kpip._vendor.nab_resolver.ranges import Range
@@ -41,6 +43,9 @@ from kpip.resolution.nab_types import (
 import logging
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from kpip._vendor.nab_resolver.resolver import ResolverObserver
 
 _MISSING = object()
 
@@ -139,6 +144,10 @@ def _conflicting_exact_root(
     return None
 
 
+# Sorts a package with no place in the decision order after every placed one.
+_UNPLACED = sys.maxsize
+
+
 class NabProvider:
     """Native NAB provider backed by kpip candidate discovery."""
 
@@ -227,6 +236,14 @@ class NabProvider:
         self._root_rank: dict[str, int] = {}
         # The extras the roots themselves ask for; see ``requested_solution``.
         self._root_extras: dict[str, frozenset[str]] = {}
+        # Where each dependency comes in the breadth-first order of the
+        # decisions now standing; see ``prioritize``.  ``_placed_by`` holds,
+        # per decision in the order made, the packages that decision was the
+        # first to depend on, so undoing it takes their places back.
+        self._place: dict[str, int] = {}
+        self._placed_by: list[list[str]] = []
+        self._just_decided: tuple[str, Version] | None = None
+        self._place_moved: set[str] = set()
         self._constrained_root_packages: set[str] = set()
         # A release's dependencies as the forward check reads them; see
         # ``_forward_dependencies``.
@@ -1808,7 +1825,67 @@ class NabProvider:
             version in version_range for version in self._eligible_versions(package)
         )
 
+    def decision_observer(self) -> ResolverObserver[str, Version]:
+        """The observer through which the resolver reports its decisions."""
+        # Imported here as the resolver itself is: only a resolve needs it.
+        from kpip.resolution.nab_observer import DecisionObserver
+
+        return DecisionObserver(self)
+
+    def note_decision(self, package: str, version: Version, level: int) -> None:
+        """Hear that ``package`` was decided as the ``level``-th decision.
+
+        The root is the first decision, so a package decided at ``level``
+        stands on ``level - 2`` earlier ones.  Any more than that on record
+        were undone by a backjump, and the places they gave out go with them.
+        """
+        placed_by = self._placed_by
+        while len(placed_by) > level - 2:
+            for dependency in placed_by.pop():
+                del self._place[dependency]
+                self._place_moved.add(dependency)
+        # One entry per decision, whatever became of an earlier one's
+        # dependencies, so the count stays in step with the level.
+        while len(placed_by) < level - 2:
+            placed_by.append([])
+        self._just_decided = (package, version)
+
+    def _place_dependencies(
+        self, package: str, version: Version, dependencies: Mapping[str, object]
+    ) -> None:
+        """Queue the dependencies of a release just decided behind what is placed.
+
+        Packages are decided in the order of their places, so handing places
+        out as each decision's dependencies arrive, in the order the release
+        declares them, numbers the packages breadth-first from the roots.
+        """
+        if self._just_decided != (package, version):
+            # Asked for some other reason than a decision: no place moves.
+            return
+        self._just_decided = None
+        place = self._place
+        next_place = len(self._root_rank) + len(place)
+        placed = [
+            dependency
+            for dependency in dependencies
+            if dependency not in place
+            and dependency not in self._root_rank
+            and dependency != package
+        ]
+        for dependency in placed:
+            place[dependency] = next_place
+            next_place += 1
+        self._placed_by.append(placed)
+        self._place_moved.update(placed)
+
     def get_dependencies(
+        self, package: str, version: Version
+    ) -> Mapping[str, Range[Version]]:
+        dependencies = self._dependencies_of(package, version)
+        self._place_dependencies(package, version, dependencies)
+        return dependencies
+
+    def _dependencies_of(
         self, package: str, version: Version
     ) -> Mapping[str, Range[Version]]:
         # Asked for right after the solve decides ``package==version``.
@@ -2348,13 +2425,16 @@ class NabProvider:
         """Report packages whose priority may have moved, and reset.
 
         ``is_ready`` is constant here, so a package's priority moves only
-        with its requirement -- which is replaced, never mutated in place.
+        with its requirement -- which is replaced, never mutated in place --
+        and with its place in the decision order.
         """
         touched = self.requirements.touched
-        if not touched:
+        moved = self._place_moved
+        if not touched and not moved:
             return []
         self.requirements.touched = set()
-        return list(touched)
+        self._place_moved = set()
+        return list(touched | moved)
 
     def prioritize(
         self,
@@ -2363,28 +2443,39 @@ class NabProvider:
         conflict_counts: Mapping[str, int],
         culprit_counts: Mapping[str, int] | None = None,
     ) -> tuple[int, int, int, str]:
+        # Whichever package is decided later is the one that gives way: its
+        # newest release is passed over when it contradicts what is already
+        # decided, by the forward check in ``_newest_viable`` or by a
+        # conflict.  So the order of decisions is the order of precedence,
+        # and it is the breadth-first order from the packages the user named:
+        # those first, as listed, then the dependencies of each decided
+        # release in the order it declares them.  Decided in that order, every
+        # package gets the newest release that what comes before it allows,
+        # which makes the answer the best one: no valid answer has a newer
+        # release at the first package where it differs.  A backjump keeps
+        # that true, since it undoes every decision after the one it returns
+        # to, and the places are handed out again from there.
+        rank = self._root_rank.get(package)
+        if rank is not None:
+            return (rank, 0, 0, package)
+        place = self._place.get(package)
+        if place is not None:
+            return (place, 0, 0, package)
+
+        # A package with no place yet is one no decided release depends on;
+        # it is in the solution only because a clause over every release of
+        # an undecided package asks for it.  It waits for the placed ones,
+        # and among its like goes by the speed heuristic.  A package that has
+        # already caused a backjump is more valuable than an unrelated
+        # package with a smaller catalog.  Keeping catalog size first makes a
+        # deep backjump replay every one-release package before returning to
+        # the decision that can actually advance the solve.
         conflicts = conflict_counts.get(package, 0)
         requirement = self.requirements[package]
         memo = self._priority_memo.get(package)
         if memo is not None and memo[0] is requirement and memo[1] == conflicts:
             return memo[2]
-
-        # A package that has already caused a backjump is more valuable than
-        # an unrelated package with a smaller catalog.  Keeping catalog size
-        # first makes a deep backjump replay every one-release package before
-        # returning to the decision that can actually advance the solve.
-        #
-        # The packages the user named come before all of that, in the order
-        # they were listed.  Whichever package is decided later is the one
-        # that gives way: its newest release is passed over when it
-        # contradicts what is already decided.  Ordered by catalog size, a
-        # named package with many releases was decided after the
-        # dependencies of one with few, and stepped down to suit a
-        # dependency that could have moved instead.  Decided first, a named
-        # package gets its newest release that can be satisfied at all, an
-        # earlier-listed one before a later, which is the answer pip gives.
-        rank = self._root_rank.get(package, len(self._root_rank))
-        priority = (rank, -conflicts, len(self._versions(package)), package)
+        priority = (_UNPLACED, -conflicts, len(self._versions(package)), package)
         self._priority_memo[package] = (requirement, conflicts, priority)
         return priority
 

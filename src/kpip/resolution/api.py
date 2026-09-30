@@ -113,7 +113,11 @@ class ResolutionEngine:
         )
         adapter.on_decided = self.on_decided
         roots = adapter.add_roots(requirements)
-        resolver = Resolver(adapter, root_version=ZERO_VERSION)
+        resolver = Resolver(
+            adapter,
+            observer=adapter.decision_observer(),
+            root_version=ZERO_VERSION,
+        )
         try:
             solution = resolver.solve(roots)
         except Exception as error:
