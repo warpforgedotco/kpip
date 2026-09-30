@@ -39,7 +39,7 @@ def pmset(argument: str) -> str:
             text=True,
             stderr=subprocess.DEVNULL,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         return ""
 
 
@@ -103,7 +103,7 @@ def busiest_processes(count: int = 5) -> list[str]:
             text=True,
             stderr=subprocess.DEVNULL,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         return []
     return [line.rstrip() for line in output.splitlines()[-count - 1 :] if line.strip()]
 
@@ -148,7 +148,7 @@ def default_output(root: Path) -> Path:
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         pass
     stamp = time.strftime("%Y%m%d-%H%M")
     return root / "benchmark-runs" / f"{branch.replace('/', '-')}-{stamp}"

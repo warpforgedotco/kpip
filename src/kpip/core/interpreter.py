@@ -80,7 +80,7 @@ def _probe(executable: str) -> str | None:
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
 
     version = result.stdout.strip()

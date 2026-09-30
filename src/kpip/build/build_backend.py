@@ -1752,7 +1752,7 @@ def read_setup_cfg_metadata(
         with open(setup_cfg, encoding="utf-8") as file:
             parser.read_file(file)
 
-    except (OSError, configparser.Error):
+    except OSError, configparser.Error:
         return None
 
     if not parser.has_section("metadata"):
@@ -2210,7 +2210,7 @@ def _is_package_payload_text(
             == project_root_real
         )
 
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
 
 

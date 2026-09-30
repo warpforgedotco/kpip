@@ -142,7 +142,7 @@ def resolution_environment() -> tuple[object, ...]:
     if confstr is not None:
         try:
             libc = confstr("CS_GNU_LIBC_VERSION") or ""
-        except (OSError, ValueError):
+        except OSError, ValueError:
             libc = ""
 
     return (
@@ -234,7 +234,7 @@ def load_record(cache_dir: str, key: bytes) -> ReplayRecord | None:
     try:
         with open(record_path(cache_dir, key), "rb") as file:
             stored_key, pages, rendered, builds = marshal.loads(file.read())
-    except (OSError, EOFError, TypeError, ValueError):
+    except OSError, EOFError, TypeError, ValueError:
         return None
 
     if (
@@ -265,7 +265,7 @@ def save_record(
             file.write(marshal.dumps((key, pages, rendered, builds)))
 
         os.replace(temporary, path)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         try:
             os.unlink(temporary)
         except OSError:
@@ -356,7 +356,7 @@ def builds_unchanged(builds: Iterable[BuildCheck]) -> bool:
         try:
             if marshal.loads(blob) != value:
                 return False
-        except (EOFError, TypeError, ValueError):
+        except EOFError, TypeError, ValueError:
             return False
 
     return True

@@ -104,7 +104,7 @@ def exact_install_plan_key_from_strings(
 
             normalized.append(item_normalized)
 
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
     key = _exact_install_plan_key(normalized, context)
@@ -239,7 +239,7 @@ def save_plan_pages(cache_dir: str, key: str, pages: tuple[object, ...]) -> None
 
             raise
 
-    except (OSError, TypeError, ValueError):
+    except OSError, TypeError, ValueError:
         pass
 
 
@@ -252,7 +252,7 @@ def load_plan_pages(
         with open(_pages_path(cache_dir, key), "rb") as file:
             stored_key, pages = marshal.load(file)
 
-    except (EOFError, OSError, TypeError, ValueError):
+    except EOFError, OSError, TypeError, ValueError:
         return None
 
     if (
@@ -356,7 +356,7 @@ def save_cached_install_plan(
 
             raise
 
-    except (OSError, TypeError, ValueError):
+    except OSError, TypeError, ValueError:
         return False
 
     return True
@@ -487,7 +487,7 @@ def load_cached_install_plan(
         with open(path, "rb") as file:
             value = marshal.load(file)
 
-    except (EOFError, OSError, TypeError, ValueError):
+    except EOFError, OSError, TypeError, ValueError:
         return None
 
     if not (
@@ -530,7 +530,7 @@ def load_cached_install_plan(
                 child for child in graph_record[1] if isinstance(child, str)
             }
 
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
     if len(graph) != len(value[3]):

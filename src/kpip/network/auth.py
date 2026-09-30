@@ -35,7 +35,7 @@ KEYRING_DISABLED = False
 def load_netrc(netrc_path: str | None) -> netrc.netrc | None:
     try:
         return netrc.netrc(netrc_path)
-    except (FileNotFoundError, OSError, netrc.NetrcParseError):
+    except FileNotFoundError, OSError, netrc.NetrcParseError:
         return None
 
 
@@ -254,7 +254,7 @@ def get_keyring_provider(provider: str) -> KeyRingBaseProvider:
                 if path is None:
                     try:
                         path = os.confstr("CS_PATH")
-                    except (AttributeError, ValueError):
+                    except AttributeError, ValueError:
                         path = os.defpath
 
                 return path

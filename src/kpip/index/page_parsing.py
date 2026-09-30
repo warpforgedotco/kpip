@@ -53,8 +53,6 @@ LinkFactory = Callable[..., Link]
 _FROM_URL_FUNCTION = Link.from_url.__func__
 
 
-
-
 class IndexContent:
     """One page's body, and ``base_url``: what its relative links resolve
     against. That is the URL the body came from, after redirects, as pip

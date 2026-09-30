@@ -57,7 +57,7 @@ def main() -> None:
                     quiet=2,
                 )
 
-            except (OSError, ValueError, RecursionError, MemoryError):
+            except OSError, ValueError, RecursionError, MemoryError:
                 pass
 
             print(source, flush=True)

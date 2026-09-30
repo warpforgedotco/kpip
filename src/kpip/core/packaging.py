@@ -1248,7 +1248,7 @@ def marker_applies_internal(
         try:
             if markers.evaluate_marker(tree, context):
                 return True
-        except (markers.UndefinedEnvironmentName, markers.UndefinedComparison):
+        except markers.UndefinedEnvironmentName, markers.UndefinedComparison:
             continue
 
     return False

@@ -43,7 +43,6 @@ from typing import IO, TYPE_CHECKING
 lazy from kpip.core.errors import InstallationError
 
 if TYPE_CHECKING:
-
     _ReadableStream = IO[bytes] | gzip.GzipFile
 
 BLOCKSIZE = 512

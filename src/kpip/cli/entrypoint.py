@@ -591,7 +591,7 @@ def exit_without_teardown(status: int) -> NoReturn:
             continue
         try:
             stream.flush()
-        except (OSError, ValueError):
+        except OSError, ValueError:
             status = _FLUSH_FAILED
 
     os._exit(status)

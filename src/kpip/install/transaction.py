@@ -206,7 +206,7 @@ class InstallTransaction:
             destination_text = item.destination_text
             try:
                 destination_lstat = os.lstat(destination_text)
-            except (FileNotFoundError, NotADirectoryError):
+            except FileNotFoundError, NotADirectoryError:
                 destination_exists = False
                 destination_visible = False
                 destination_is_file = False

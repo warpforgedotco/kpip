@@ -21,7 +21,6 @@ lazy from kpip.core.versions import Version
 lazy from kpip.core.wheel import WheelTag, wheel_tag_rank
 
 if TYPE_CHECKING:
-
     LatestInfo = Mapping[str, tuple[Any, str]]
 
     class DistributionLike(Protocol):

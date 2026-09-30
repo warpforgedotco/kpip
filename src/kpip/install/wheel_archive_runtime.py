@@ -234,7 +234,7 @@ def open_wheel_archive(
 
         archive = WheelArchive(file)
 
-    except (OSError, ValueError, WheelhouseUnavailable):
+    except OSError, ValueError, WheelhouseUnavailable:
         try:
             file.close()
 

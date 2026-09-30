@@ -14,7 +14,13 @@ lazy from functools import lru_cache
 
 lazy from kpip.core.packaging import Requirement, canonicalize_name
 lazy from kpip.core.urls import WINDOWS, path_to_url, url_to_path
-lazy from kpip.index.catalog_cache import load_summary, load_summary_from, read_summary, record_summary_freshness, summary_is_fresh
+lazy from kpip.index.catalog_cache import (
+    load_summary,
+    load_summary_from,
+    read_summary,
+    record_summary_freshness,
+    summary_is_fresh,
+)
 lazy from kpip.index.directory_index import (
     LocalSourceSnapshot,
     local_source_snapshot,

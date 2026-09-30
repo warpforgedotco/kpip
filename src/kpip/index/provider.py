@@ -50,7 +50,18 @@ lazy from kpip.index.source_locations import (
     SimpleIndexSource,
     is_remote_source_location,
 )
-lazy from kpip.index.source_models import INSTALLABLE_ARTIFACT_KINDS, SOURCE_ARTIFACT_KINDS, ArtifactKind, CandidateRecord, CandidateSelection, CandidateSummary, PackageCatalog, RejectedCandidate, RejectionReason, UniformRecords
+lazy from kpip.index.source_models import (
+    INSTALLABLE_ARTIFACT_KINDS,
+    SOURCE_ARTIFACT_KINDS,
+    ArtifactKind,
+    CandidateRecord,
+    CandidateSelection,
+    CandidateSummary,
+    PackageCatalog,
+    RejectedCandidate,
+    RejectionReason,
+    UniformRecords,
+)
 
 if TYPE_CHECKING:
     from concurrent.futures import Future

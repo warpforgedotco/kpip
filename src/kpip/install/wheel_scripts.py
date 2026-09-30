@@ -70,7 +70,7 @@ def entry_point_scripts(path: str) -> dict[str, tuple[str, bool]]:
         with open(path, encoding="utf-8") as file:
             lines = file.read().splitlines()
 
-    except (FileNotFoundError, IsADirectoryError):
+    except FileNotFoundError, IsADirectoryError:
         return {}
 
     active = False
@@ -275,7 +275,7 @@ def script_matches(
             with open(path, encoding="utf-8") as file:
                 text = file.read()
 
-    except (OSError, KeyError, UnicodeDecodeError):
+    except OSError, KeyError, UnicodeDecodeError:
         return False
 
     return f"from {module} import {entry}" in text

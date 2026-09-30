@@ -53,7 +53,7 @@ def get_http_response_size(resp: HttpResponse) -> int | None:
     try:
         size = int(resp.headers["content-length"])
 
-    except (ValueError, KeyError, TypeError):
+    except ValueError, KeyError, TypeError:
         return None
 
     if size < 0:

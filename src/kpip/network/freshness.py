@@ -68,7 +68,7 @@ def decode_metadata(raw: bytes) -> dict[str, Any] | None:
 
     try:
         values = marshal.loads(raw)
-    except (EOFError, TypeError, ValueError):
+    except EOFError, TypeError, ValueError:
         return None
 
     return values if isinstance(values, dict) else None
@@ -125,7 +125,7 @@ def _http_date(value: Any) -> float | None:
 
     try:
         return email.utils.parsedate_to_datetime(value).timestamp()
-    except (TypeError, ValueError, OverflowError, IndexError):
+    except TypeError, ValueError, OverflowError, IndexError:
         return None
 
 
@@ -139,7 +139,7 @@ def _current_age(headers: Any, now: float) -> float:
 
     try:
         age = max(0.0, float(int(headers.get("Age") or 0)))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         age = 0.0
 
     date = _http_date(headers.get("Date"))
@@ -200,7 +200,7 @@ def metadata_is_fresh(values: Any, now: float) -> bool:
 
     try:
         expires_at = float(values["expires_at"])
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         # Entries written before every response got a deadline have none.
         return False
 
@@ -211,7 +211,7 @@ def metadata_is_fresh(values: Any, now: float) -> bool:
 
     try:
         return expiry_is_fresh(expires_at, float(stored_at), now)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
 
 

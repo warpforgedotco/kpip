@@ -98,7 +98,7 @@ class SqliteBackedCache:
                 conn.commit()
                 self._clear_pending()
                 self.dirty = False
-            except (sqlite3.Error, ValueError, TypeError, OSError):
+            except sqlite3.Error, ValueError, TypeError, OSError:
                 if self.conn is not None:
                     try:
                         self.conn.rollback()

@@ -60,8 +60,9 @@ def test_the_entry_ends_at_the_directory_mode(
     monkeypatch.setattr(
         cache_module,
         "set_descriptor_permissions",
-        lambda descriptor, path, mode: chmods.append(mode)
-        or real(descriptor, path, mode),
+        lambda descriptor, path, mode: (
+            chmods.append(mode) or real(descriptor, path, mode)
+        ),
     )
 
     assert entry_mode_on_disk(os.fspath(directory), "demo") == expected_entry_mode

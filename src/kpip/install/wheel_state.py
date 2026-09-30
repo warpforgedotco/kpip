@@ -87,7 +87,7 @@ def _wheel_metadata_identity(path: str) -> tuple[str, str] | None:
                 if name and version:
                     return name, version
 
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
     return None

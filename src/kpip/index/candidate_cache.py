@@ -88,7 +88,7 @@ def _json_cache_value(value: object) -> object:
 def _constraint_identity(value: str) -> object:
     try:
         local = ArtifactLocator().local_path(value)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return value
 
     if local is None:

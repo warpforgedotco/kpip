@@ -33,8 +33,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
-
 class RequirementsBundle:
     __slots__ = tuple(
         [
@@ -600,7 +598,7 @@ def bundle_install_requirements(
 
                 source_version = str(metadata.version)
 
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 source_name = item.req.canonical_name
 
                 source_version = "unknown"
@@ -736,7 +734,7 @@ def bundle_install_requirements(
                         build_isolation=False,
                     ).version,
                 )
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 source_version = ""
 
             previous = direct_sources.get(item.req.canonical_name)

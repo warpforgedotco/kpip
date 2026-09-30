@@ -28,8 +28,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
-
 def run_list(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 

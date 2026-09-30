@@ -1380,7 +1380,7 @@ class NabProvider:
         if versions is None:
             try:
                 summaries = self.provider.available_versions(requirement)
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 return ()
             versions = tuple(sorted({summary.version for summary in summaries}))
             self._forward_catalog_versions[package] = versions
@@ -1544,7 +1544,7 @@ class NabProvider:
             requirement = parse_requirement(package)
             try:
                 records = self.provider.release_candidates(requirement, version)
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 records = ()
             if records is not None:
                 candidate = None
@@ -1556,7 +1556,7 @@ class NabProvider:
                                 records[0],
                             )
                         )
-                    except (KpipError, OSError, ValueError):
+                    except KpipError, OSError, ValueError:
                         candidate = None
                 self._catalog_candidate_cache[key] = candidate
                 return candidate
@@ -1582,7 +1582,7 @@ class NabProvider:
                 continue
             try:
                 records = self.provider.release_candidates(requirement, version)
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 self._catalog_candidate_cache[key] = None
                 continue
             if records is None:
@@ -1601,7 +1601,7 @@ class NabProvider:
         for version, record in pending:
             try:
                 candidate = materializer.materialize_one(requirement, record)
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 candidate = None
             self._catalog_candidate_cache[(package, version)] = candidate
 
@@ -1618,7 +1618,7 @@ class NabProvider:
 
         try:
             found = tuple(self.provider.find_candidates(parse_requirement(package)))
-        except (KpipError, OSError, ValueError):
+        except KpipError, OSError, ValueError:
             found = ()
 
         index: dict[Version, object | None] = {}
@@ -1769,7 +1769,7 @@ class NabProvider:
         """
         try:
             getattr(candidate, "dependencies", None)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return True
         return False
 
@@ -1805,7 +1805,7 @@ class NabProvider:
         """
         try:
             requires_python = getattr(candidate, "requires_python", None)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return True
 
         if self.ignore_requires_python or not requires_python:
@@ -2106,7 +2106,7 @@ class NabProvider:
                                 allowed_versions=None,
                             ),
                         )
-                    except (AttributeError, TypeError):
+                    except AttributeError, TypeError:
                         candidates = ()
                     if candidates:
                         name = candidates[0].name
@@ -2663,7 +2663,7 @@ class NabProvider:
             try:
                 records = self._release_records_for(requirement, newest)
 
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 continue
 
             if not records:

@@ -80,7 +80,7 @@ class ArtifactCache:
         try:
             with open(receipt, "rb") as file:
                 value = marshal.load(file)
-        except (EOFError, OSError, TypeError, ValueError):
+        except EOFError, OSError, TypeError, ValueError:
             return None
         if not (
             isinstance(value, tuple)
@@ -106,7 +106,7 @@ class ArtifactCache:
                 continue
             try:
                 result[algorithm] = hashlib.new(algorithm)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
         return result
 

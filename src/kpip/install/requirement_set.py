@@ -6,6 +6,7 @@ lazy from kpip.core.names import canonicalize_name
 
 if TYPE_CHECKING:
     from kpip.resolution.models import RequirementInput
+
     RequirementT = TypeVar("RequirementT", bound="RequirementInput")
 
 else:

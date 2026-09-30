@@ -456,7 +456,7 @@ class Link:
                 else:
                     is_source_tree = cached
                 self.local_is_dir_internal = is_source_tree
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 is_source_tree = False
                 self.local_is_dir_internal = False
         if is_source_tree:

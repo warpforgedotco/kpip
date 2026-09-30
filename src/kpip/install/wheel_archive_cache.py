@@ -49,7 +49,6 @@ lazy from kpip.install.wheel_archive import (
 
 if TYPE_CHECKING:
 
-
     class WheelInstallCandidate(Protocol):
         """Read-only candidate boundary required by the archive installer."""
 
@@ -283,7 +282,7 @@ def load_archive(entry_root: str, digest: str) -> CachedWheelArchive | None:
         with open(manifest, "rb") as file:
             value = marshal.load(file)
 
-    except (EOFError, OSError, TypeError, ValueError):
+    except EOFError, OSError, TypeError, ValueError:
         return None
 
     if not (
@@ -376,7 +375,7 @@ def _record_metadata(
     try:
         text = archive.read(f"{dist_info}/RECORD").decode("utf-8")
 
-    except (KeyError, UnicodeDecodeError):
+    except KeyError, UnicodeDecodeError:
         return {}
 
     result: dict[str, tuple[str, str]] = {}
@@ -662,7 +661,7 @@ def _compile_one(source: str, output: str, display: str) -> None:
             quiet=2,
         )
 
-    except (OSError, ValueError, RecursionError, MemoryError):
+    except OSError, ValueError, RecursionError, MemoryError:
         pass
 
 

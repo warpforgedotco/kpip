@@ -90,7 +90,7 @@ class WheelMetadataCache(SqliteBackedCache):
             return None
         try:
             value = marshal.loads(row[0])
-        except (EOFError, TypeError, ValueError):
+        except EOFError, TypeError, ValueError:
             return None
         if not self.valid_headers(value):
             return None
@@ -130,7 +130,7 @@ class WheelMetadataCache(SqliteBackedCache):
                 continue
             try:
                 value = marshal.loads(blob)
-            except (EOFError, TypeError, ValueError):
+            except EOFError, TypeError, ValueError:
                 continue
             if not self.valid_headers(value):
                 continue

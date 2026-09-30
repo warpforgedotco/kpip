@@ -64,7 +64,7 @@ def _marker_error(marker: str) -> str | None:
     except KeyError:
         return None
 
-    except (OSError, UnicodeDecodeError, configparser.ParsingError):
+    except OSError, UnicodeDecodeError, configparser.ParsingError:
         logger.warning("Failed to read %s", marker)
 
         return None

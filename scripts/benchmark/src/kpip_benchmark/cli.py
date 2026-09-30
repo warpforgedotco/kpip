@@ -93,7 +93,7 @@ def _version_of(executable: str) -> str:
         return subprocess.check_output(
             [executable, "--version"], text=True, stderr=subprocess.STDOUT
         ).strip()
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         return "unknown"
 
 
@@ -142,7 +142,7 @@ def collect_run_metadata(
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         git_commit = "unknown"
     metadata = {
         "kpip_python_version": _version_of(kpip_python),

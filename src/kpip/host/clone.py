@@ -28,7 +28,6 @@ lazy from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-
     CloneFile = Callable[[bytes, bytes, int], int]
 
     Devices = tuple[int, int]
@@ -65,7 +64,7 @@ def _darwin_clone(source: str, destination: str) -> bool:
         try:
             function = ctypes.CDLL(None, use_errno=True).clonefile
 
-        except (AttributeError, OSError):
+        except AttributeError, OSError:
             function = None
 
         if function is not None:

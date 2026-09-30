@@ -96,7 +96,7 @@ class _Worker:
                 for line in iter(stdout.readline, ""):
                     self._lines.put(line)
 
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass
 
         # A sentinel, so a waiting caller learns the worker is gone instead of
@@ -128,7 +128,7 @@ class _Worker:
 
             stdin.flush()
 
-        except (BrokenPipeError, OSError, ValueError):
+        except BrokenPipeError, OSError, ValueError:
             return False
 
         echoed = self._readline(COMPILE_TIMEOUT)
@@ -191,7 +191,7 @@ def _spawn() -> _Worker | None:
             close_fds=True,
         )
 
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
     worker = _Worker(process)

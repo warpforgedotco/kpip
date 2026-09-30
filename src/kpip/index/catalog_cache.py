@@ -263,7 +263,7 @@ def _load_catalog_uncached(
         catalog: CatalogData = (payload[1], payload[2])  # ty:ignore[invalid-assignment]
         _remember_validated_catalog(cache, url, raw, catalog)
         return catalog, raw
-    except (EOFError, TypeError, ValueError, KeyError, IndexError):
+    except EOFError, TypeError, ValueError, KeyError, IndexError:
         return None
 
 
@@ -453,7 +453,7 @@ def save_choices(
             CHOICE_HEADER,
             (generation, choices),
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return
     cache.set_atomic(
         choice_key(url, target_key, allow_binary, allow_source),
@@ -565,7 +565,7 @@ def save_catalog(cache: Any, url: str, catalog: CatalogData) -> CatalogSummary |
             CATALOG_HEADER,
             ("kpip-index-catalog", catalog[0], catalog[1]),
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     generation = catalog_generation(payload)
     cache.set_atomic(cache_key(url), payload)
@@ -676,7 +676,7 @@ def save_summary_value(
         payload = encode_checked_payload(
             SUMMARY_HEADER + _freshness_block(freshness), _shared_summary(summary)
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return
     cache.set_atomic(summary_key(url), payload)
 
@@ -734,7 +734,7 @@ def _decode_checked(raw: bytes, digest_start: int) -> object | None:
         return None
     try:
         return marshal.loads(body)
-    except (EOFError, TypeError, ValueError):
+    except EOFError, TypeError, ValueError:
         return None
 
 

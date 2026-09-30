@@ -368,6 +368,7 @@ class PackageCatalog:
 if TYPE_CHECKING:
     from kpip.core.wheel import WheelFile
     from kpip.index.links import Link
+
     # Only ever named in annotations: defining a Protocol imports ``typing``.
     class PackageSource(Protocol):
         def collect_links(self, requirement: Requirement) -> list[Link]: ...

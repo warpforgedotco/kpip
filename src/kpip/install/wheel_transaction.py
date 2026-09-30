@@ -80,7 +80,6 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from kpip.core.direct_url import DirectUrl
 
-
     ExistingDistribution = InstalledMetadataDistribution | InstalledWheelDistribution
 
     class MemberReader(Protocol):
@@ -318,7 +317,7 @@ def install_wheel_internal(
                 record_text = archive.read(f"{validated_dist_info}/RECORD").decode(
                     "utf-8",
                 )
-            except (KeyError, UnicodeDecodeError):
+            except KeyError, UnicodeDecodeError:
                 pass
             else:
                 for row in csv.reader(io.StringIO(record_text)):
@@ -708,7 +707,7 @@ def wheel_root_is_purelib(archive: MemberReader, dist_info: str) -> bool:
     """
     try:
         raw = archive.read(f"{dist_info}/WHEEL")
-    except (KeyError, OSError):
+    except KeyError, OSError:
         return True
     try:
         return root_is_purelib_or_default(raw.decode())

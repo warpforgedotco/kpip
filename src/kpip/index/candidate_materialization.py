@@ -29,7 +29,11 @@ lazy from kpip.core.errors import (
     UnsupportedWheel,
 )
 lazy from kpip.core.hashes import file_hashes
-lazy from kpip.core.http_contracts import HttpStatusError, raise_for_status, response_text
+lazy from kpip.core.http_contracts import (
+    HttpStatusError,
+    raise_for_status,
+    response_text,
+)
 lazy from kpip.core.packaging import (
     Requirement,
     canonicalize_name,
@@ -80,7 +84,14 @@ lazy from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_scheme
 
 if TYPE_CHECKING:
     import tempfile
-    from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import (
+        Callable,
+        Generator,
+        Iterable,
+        Iterator,
+        Mapping,
+        Sequence,
+    )
     from typing import Any
     from kpip.core.hashes import Hashes
     from kpip.core.http_contracts import HttpSession
@@ -273,7 +284,7 @@ def _open_resolver_wheel_archive(
 
             return zipfile.ZipFile(path_text)
 
-    except (OSError, ValueError, WheelhouseUnavailable):
+    except OSError, ValueError, WheelhouseUnavailable:
         try:
             file.close()
 
@@ -767,7 +778,7 @@ class CandidateMaterializer:
         for name in hashes.allowed_internal:
             try:
                 gots[name] = hashlib.new(name)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
 
         with open(path, "rb") as file:
@@ -918,7 +929,7 @@ class CandidateMaterializer:
 
                 cached = file_hashes(local)
 
-            except (KpipError, OSError, ValueError):
+            except KpipError, OSError, ValueError:
                 return None
 
             self.source_hash_cache[link.url] = cached
@@ -1749,7 +1760,7 @@ class CandidateMaterializer:
                 requested_extras,
             )
 
-        except (KeyError, OSError, TypeError, ValueError):
+        except KeyError, OSError, TypeError, ValueError:
             return None
 
     def ranged_wheel_metadata(
@@ -1797,7 +1808,7 @@ class CandidateMaterializer:
                 requested_extras,
             )
 
-        except (KeyError, OSError, TypeError, ValueError):
+        except KeyError, OSError, TypeError, ValueError:
             return None
 
     def metadata_from_headers(
@@ -1916,7 +1927,7 @@ class CandidateMaterializer:
 
                 headers = parse_metadata_headers(response_text(response))
 
-            except (HttpStatusError, KeyError, OSError, TypeError, ValueError):
+            except HttpStatusError, KeyError, OSError, TypeError, ValueError:
                 # An advertised sidecar that does not answer is the index's
                 # problem, not a reason to fail: the next wheel, or the
                 # build, still has the answer.
@@ -2065,7 +2076,7 @@ class CandidateMaterializer:
                 requires_python=requires_python,
             )
 
-        except (KeyError, OSError, TypeError, ValueError):
+        except KeyError, OSError, TypeError, ValueError:
             self.release_metadata_cache[release_key] = None
 
             return None
@@ -2145,7 +2156,7 @@ class CandidateMaterializer:
                     wheel_metadata_text=wheel_metadata_text,
                 ).wheel_layout
 
-        except (OSError, UnsupportedWheel, InstallationError):
+        except OSError, UnsupportedWheel, InstallationError:
             return None
 
     def iter_materialize(

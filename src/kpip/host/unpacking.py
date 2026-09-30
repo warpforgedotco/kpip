@@ -213,7 +213,7 @@ def _fast_unzip(filename: str, location: str, flatten: bool) -> bool:
 
         archive = WheelArchive(file)
 
-    except (OSError, ValueError, WheelhouseUnavailable):
+    except OSError, ValueError, WheelhouseUnavailable:
         try:
             file.close()
 

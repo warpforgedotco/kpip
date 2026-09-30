@@ -221,7 +221,7 @@ class InstallationCandidate(CandidateRecord):
             metadata = prepare_project_metadata(local)
             version = Version(metadata.version)
 
-        except (BuildError, ValueError):
+        except BuildError, ValueError:
             return RejectedCandidate(
                 link,
                 RejectionReason.INVALID_VERSION,

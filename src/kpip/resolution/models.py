@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from kpip.core.packaging import Requirement
 
 
-
 class _FrozenRecord:
     """Keyword-constructed, slot-stored, immutable, compared by value."""
 

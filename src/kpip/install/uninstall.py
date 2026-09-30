@@ -71,7 +71,7 @@ def _inside_distribution(path: str, root: str) -> bool:
     try:
         if os.path.commonpath((resolved, root)) == root:
             return True
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     parent = os.path.normcase(os.path.realpath(os.path.dirname(resolved)))
     return parent in _script_directories(root)

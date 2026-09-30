@@ -46,7 +46,7 @@ def _read_process_umask() -> int:
             for line in status:
                 if line.startswith("Umask:"):
                     return int(line.split()[1], 8)
-    except (OSError, ValueError, IndexError):
+    except OSError, ValueError, IndexError:
         pass
     previous = os.umask(0o022)
     os.umask(previous)
@@ -56,7 +56,6 @@ def _read_process_umask() -> int:
 _PROCESS_UMASK: int | None = None
 
 """Directory under the cache directory holding the HTTP page cache."""
-
 
 
 COMBINED_HEADER = struct.Struct(f"<{len(COMBINED_MAGIC)}sQ")
@@ -177,7 +176,7 @@ class SafeFileCache:
                 raw = file.read()
             try:
                 loaded = marshal.loads(raw)
-            except (EOFError, TypeError, ValueError):
+            except EOFError, TypeError, ValueError:
                 loaded = None
             if (
                 isinstance(loaded, tuple)

@@ -97,7 +97,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
 INDEX_URL_OPTIONS = frozenset(("-i", "--index-url"))
 
 

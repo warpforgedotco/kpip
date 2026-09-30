@@ -730,7 +730,7 @@ class NetworkSession:
 
             reason = str(values["reason"])
 
-        except (AttributeError, KeyError, TypeError, ValueError):
+        except AttributeError, KeyError, TypeError, ValueError:
             if body is not None:
                 body.close()
 

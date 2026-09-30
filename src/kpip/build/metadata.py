@@ -14,7 +14,12 @@ lazy from types import SimpleNamespace
 lazy from kpip.core.direct_url import DirectUrl
 lazy from kpip.core.egg_link import egg_link_path_from_sys_path
 lazy from kpip.core.metadata import find_installed, iter_installed_distributions
-lazy from kpip.core.packaging import SpecifierSet, canonicalize_name, marker_applies, parse_requirement
+lazy from kpip.core.packaging import (
+    SpecifierSet,
+    canonicalize_name,
+    marker_applies,
+    parse_requirement,
+)
 lazy from kpip.core.urls import url_to_path
 lazy from kpip.core.versions import Version
 lazy from kpip.core.wheel import read_wheel_archive_member, validate_wheel
@@ -270,7 +275,7 @@ class InstalledMetadataDistribution:
                 if line.strip()
             )
 
-        except (FileNotFoundError, StopIteration):
+        except FileNotFoundError, StopIteration:
             return ""
 
     @property
@@ -296,7 +301,7 @@ class InstalledMetadataDistribution:
         try:
             return DirectUrl.from_json(self.read_text("direct_url.json"))
 
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             return None
 
     @property

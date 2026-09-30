@@ -317,7 +317,7 @@ def _resolved_metadata_name(candidate: object) -> str | None:
         return None
     try:
         return record.metadata().name
-    except (KpipError, OSError, ValueError, RuntimeError):
+    except KpipError, OSError, ValueError, RuntimeError:
         return None
 
 
@@ -958,7 +958,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
                                 unpack_source(archive_path, temp_dir),
                                 build_isolation=False,
                             )
-                        except (KpipError, OSError, ValueError):
+                        except KpipError, OSError, ValueError:
                             pass
                         else:
                             package_name = project.name

@@ -32,7 +32,11 @@ lazy from kpip.install.wheel_archive import (
     record_metadata_internal,
     validate_member_parts,
 )
-lazy from kpip.install.wheel_archive_cache import INSTALL_WORKERS, prepare_cached_wheels, pyc_root
+lazy from kpip.install.wheel_archive_cache import (
+    INSTALL_WORKERS,
+    prepare_cached_wheels,
+    pyc_root,
+)
 lazy from kpip.install.wheel_scripts import (
     entry_point_scripts,
     generate_entry_point_files,
@@ -45,11 +49,15 @@ if TYPE_CHECKING:
     from kpip.build.metadata import InstalledMetadataDistribution
     from kpip.core.direct_url import DirectUrl
     from kpip.install.target import InstallTarget
-    from kpip.install.wheel_archive_cache import CachedWheelArchive, InstallCandidate, WheelInstallCandidate, WheelRequest
+    from kpip.install.wheel_archive_cache import (
+        CachedWheelArchive,
+        InstallCandidate,
+        WheelInstallCandidate,
+        WheelRequest,
+    )
     from kpip.install.wheel_state import InstalledWheelDistribution
 
 logger = logging.getLogger(__name__)
-
 
 
 _CLONE_WORKERS = min(INSTALL_WORKERS, 4)
@@ -510,7 +518,7 @@ def _remove_existing(path: str) -> None:
     except FileNotFoundError:
         pass
 
-    except (IsADirectoryError, PermissionError):
+    except IsADirectoryError, PermissionError:
         # Unlinking a directory fails with EISDIR on Linux, EPERM elsewhere.
         if not os.path.isdir(path) or os.path.islink(path):
             raise
@@ -638,7 +646,7 @@ def _materialize_pyc(
 
             body = _timestamp_pyc(code, os.stat(source))
 
-        except (EOFError, OSError, ValueError, TypeError):
+        except EOFError, OSError, ValueError, TypeError:
             uncached.append((source, target))
 
             continue

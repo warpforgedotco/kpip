@@ -59,7 +59,7 @@ def _dependencies_or_none(candidate: object) -> tuple[Requirement, ...] | None:
     """
     try:
         return tuple(getattr(candidate, "dependencies", ()))
-    except (KpipError, OSError, ValueError):
+    except KpipError, OSError, ValueError:
         return None
 
 

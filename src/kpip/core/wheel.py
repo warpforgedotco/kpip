@@ -1004,7 +1004,7 @@ def wheel_archive_identity(
 
         return path_key, stat.st_size, stat.st_mtime_ns
 
-    except (KeyError, OSError):
+    except KeyError, OSError:
         return None
 
 
