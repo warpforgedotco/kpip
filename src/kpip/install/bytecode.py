@@ -406,6 +406,9 @@ def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     if not jobs:
         return []
 
+    if _in_subinterpreter():
+        return jobs
+
     with _POOL_LOCK:
         if _POOL is None:
             import atexit
@@ -419,6 +422,24 @@ def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     remaining = pool.compile(jobs)
 
     return jobs if remaining is None else remaining
+
+
+def _in_subinterpreter() -> bool:
+    """Whether this runs in a subinterpreter, e.g. an archive worker.
+
+    One takes no worker processes: each needs a daemon thread to read its
+    answers, which a subinterpreter refuses, so the job failed there and was
+    unpacked again in the main interpreter -- every install that compiles.
+    Nor does it need them. It is one of several unpacking side by side, each
+    with a lock of its own, so compiling in it is already in parallel.
+    """
+    try:
+        import _interpreters
+
+    except ImportError:
+        return False
+
+    return _interpreters.get_current()[0] != _interpreters.get_main()[0]
 
 
 def shutdown() -> None:
