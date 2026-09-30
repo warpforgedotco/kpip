@@ -1,12 +1,12 @@
-"""kpip's Nuitka patches keep compiled programs safe beside subinterpreters.
+"""kpip's Nuitka patches let compiled programs run subinterpreters, safely.
 
 Each test compiles a small program with the vendored Nuitka and runs it:
 minutes of C compilation, so they run only with ``KPIP_NUITKA_TESTS=1`` (the
 compile workflow sets it after building kpip, which vendors Nuitka).
 
-The programs' subinterpreters import a plain copy of the standard library
-and of ``workers.py`` shipped beside the binary: a compiled program's own
-modules are out of their reach.
+The programs' subinterpreters import from the binary alone: the bytecode
+``--subinterpreter-bytecode`` embeds (patch 0014) of the modules a worker is
+found to load, run first on a pool of plain Python.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import os
 import shutil
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 import pytest
@@ -33,18 +32,35 @@ pytestmark = [
     ),
 ]
 
-_STDLIB_SKIPPED = shutil.ignore_patterns(
-    "test",
-    "tests",
-    "idlelib",
-    "tkinter",
-    "turtledemo",
-    "site-packages",
-    "lib-dynload",
-    "__pycache__",
-    "config-*",
-    "ensurepip",
-)
+_PROBE = """\
+import json
+import sys
+from concurrent.futures import InterpreterPoolExecutor
+
+import workers
+
+with InterpreterPoolExecutor(max_workers=1) as pool:
+    pool.submit(workers.raise_and_catch, 1).result()
+    pool.submit(workers.hash_and_compare, 0.0).result()
+    json.dump(pool.submit(workers.loaded).result(), sys.stdout)
+"""
+
+
+def worker_modules() -> list[str]:
+    """The modules the programs' workers load, run on plain Python."""
+    import json
+
+    from kpip_compile.workers import bytecode_modules
+
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", _PROBE],
+        cwd=PROGRAMS,
+        env=dict(os.environ, PYTHONPATH=str(PROGRAMS)),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return bytecode_modules(json.loads(result.stdout))
 
 
 @pytest.fixture(scope="module")
@@ -62,7 +78,7 @@ def nuitka_dir() -> Path:
 def compile_program(
     nuitka_dir: Path, source: Path, workdir: Path, extra: tuple[str, ...] = ()
 ) -> Path:
-    """``source`` compiled standalone, with plain modules for its workers."""
+    """``source`` compiled standalone, with bytecode for its workers."""
     for program in PROGRAMS.iterdir():
         if program.suffix == ".py":
             shutil.copy(program, workdir / program.name)
@@ -76,6 +92,7 @@ def compile_program(
             "--assume-yes-for-downloads",
             "--quiet",
             f"--output-dir={workdir / 'build'}",
+            "--subinterpreter-bytecode=" + ",".join(worker_modules()),
             *extra,
             str(workdir / source.name),
         ],
@@ -84,13 +101,8 @@ def compile_program(
         check=True,
     )
     dist = workdir / "build" / f"{source.stem}.dist"
-    shutil.copytree(
-        sysconfig.get_paths()["stdlib"],
-        dist,
-        ignore=_STDLIB_SKIPPED,
-        dirs_exist_ok=True,
-    )
-    shutil.copy(PROGRAMS / "workers.py", dist / "workers.py")
+    # Nothing beside the binary for the workers to import from.
+    assert not list(dist.glob("*.py*")), sorted(dist.iterdir())
     return dist / (f"{source.stem}.exe" if os.name == "nt" else f"{source.stem}.bin")
 
 

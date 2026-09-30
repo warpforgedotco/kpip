@@ -1,0 +1,340 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Wed, 30 Sep 2026 18:00:00 -0400
+Subject: [PATCH] New option "--subinterpreter-bytecode" to make modules
+ importable by subinterpreters
+
+A new interpreter, e.g. of an "InterpreterPoolExecutor", imports every module
+through the standard import system, starting with "encodings" while it is
+created. It has no meta path loader of ours, and the frozen table that served
+the early modules to the main interpreter was removed after its start, so in
+standalone mode no subinterpreter could even be created.
+
+With the new option, the named modules are also embedded as bytecode in the
+frozen table, which then stays installed. Subinterpreters import them from
+there, through CPython's frozen importer. The main interpreter keeps using the
+compiled modules: the meta path loader moves ahead of the frozen importer.
+Names that CPython has frozen or built in are skipped, others that are not
+included are warned about.
+
+"concurrent.futures.interpreter" is now always included as bytecode: the
+pool runs each job by handing its "do_call" to "Interpreter.call", which only
+shares Python functions, so compiled the pool could run nothing.
+
+Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
+---
+ 8 files changed, 133 insertions(+), 8 deletions(-)
+
+diff --git a/nuitka/options/OptionParsing.py b/nuitka/options/OptionParsing.py
+--- a/nuitka/options/OptionParsing.py
++++ b/nuitka/options/OptionParsing.py
+@@ -380,6 +380,21 @@
+ )
+ 
+ include_group.add_option(
++    "--subinterpreter-bytecode",
++    action="append",
++    dest="subinterpreter_bytecode",
++    metavar="MODULE",
++    default=[],
++    help="""\
++Make an included module importable by subinterpreters too, e.g. those of an
++"InterpreterPoolExecutor". A new interpreter imports from the standard import
++system only, which cannot see compiled modules, so these are also embedded as
++bytecode, which such interpreters import instead. The program itself still
++uses the compiled module. Give as a Python namespace; can be given multiple
++times and takes comma separated values. Default empty.""",
++)
++
++include_group.add_option(
+     "--include-plugin-directory",
+     action="append",
+     dest="include_extra",
+diff --git a/nuitka/options/Options.py b/nuitka/options/Options.py
+--- a/nuitka/options/Options.py
++++ b/nuitka/options/Options.py
+@@ -1607,6 +1607,16 @@
+ def getShallFollowInNoCase():
+     """*list*, items of ``--nofollow-import-to=``"""
+     return sum([_splitShellPattern(x) for x in options.follow_not_modules], [])
++
++
++def getSubinterpreterBytecodeModules():
++    """*list*, items of ``--subinterpreter-bytecode=``"""
++    return tuple(
++        module_name.strip()
++        for value in options.subinterpreter_bytecode
++        for module_name in value.split(",")
++        if module_name.strip()
++    )
+ 
+ 
+ def getShallFollowModules():
+diff --git a/nuitka/code_generation/LoaderCodes.py b/nuitka/code_generation/LoaderCodes.py
+--- a/nuitka/code_generation/LoaderCodes.py
++++ b/nuitka/code_generation/LoaderCodes.py
+@@ -24,6 +24,7 @@
+ from nuitka.ModuleRegistry import getDoneModules, getUncompiledTechnicalModules
+ from nuitka.options.Options import (
+     getFileReferenceMode,
++    getSubinterpreterBytecodeModules,
+     hasNonDeploymentIndicator,
+     isShowInclusion,
+     isStandaloneMode,
+@@ -38,6 +39,7 @@
+     encodePythonUnicodeToC,
+ )
+ from nuitka.utils.ModuleNames import (
++    ModuleName,
+     makeTriggerModuleName,
+     post_module_load_trigger_name,
+     pre_module_load_trigger_name,
+@@ -250,12 +252,7 @@
+ 
+     frozen_defs = []
+ 
+-    # Only the non-technical ones need to be there.
+-    for uncompiled_module in getUncompiledTechnicalModules():
+-        module_name = uncompiled_module.getFullName()
+-        code_data = uncompiled_module.getByteCode()
+-        is_package = uncompiled_module.isUncompiledPythonPackage()
+-
++    for module_name, code_data, is_package in getFrozenModuleBytecodes():
+         size = len(code_data)
+ 
+         # Packages are indicated with negative size.
+@@ -264,7 +261,7 @@
+ 
+         accessor_code = bytecode_accessor.getBlobDataCode(
+             data=code_data,
+-            name="bytecode of module '%s'" % uncompiled_module.getFullName(),
++            name="bytecode of module '%s'" % module_name,
+         )
+ 
+         frozen_defs.append(
+@@ -323,6 +320,86 @@
+     }
+ 
+ 
++def getFrozenModuleBytecodes():
++    """Name, bytecode and package flag of each frozen module to embed.
++
++    The technical ones, which "Py_Initialize" imports before the meta path
++    loader exists, and those "--subinterpreter-bytecode" names. A subinterpreter
++    imports every module through the standard import system: these it finds
++    in the frozen table, which stays installed for them.
++    """
++    result = []
++    seen = set()
++
++    for uncompiled_module in getUncompiledTechnicalModules():
++        module_name = uncompiled_module.getFullName()
++        seen.add(module_name)
++        result.append(
++            (
++                module_name,
++                uncompiled_module.getByteCode(),
++                uncompiled_module.isUncompiledPythonPackage(),
++            )
++        )
++
++    requested = getSubinterpreterBytecodeModules()
++
++    if not requested:
++        return result
++
++    from nuitka.optimizations.BytecodeDemotion import demoteSourceCodeToBytecode
++
++    # Technical modules only cover the start of an interpreter; one started
++    # later imports whatever its code needs, uncompiled or compiled.
++    modules_by_name = dict(
++        (module.getFullName(), module) for module in _getLoaderModuleOrder()
++    )
++
++    for requested_name in requested:
++        module = modules_by_name.get(ModuleName(requested_name))
++
++        if module is None:
++            # Frozen into CPython itself or built into it: every interpreter
++            # has those already.
++            import _imp  # Only for subinterpreters, i.e. Python 3.12 or higher.
++
++            if requested_name in sys.builtin_module_names or _imp.is_frozen(
++                requested_name
++            ):
++                continue
++
++            inclusion_logger.warning(
++                "Module '%s' for '--subinterpreter-bytecode' is not included, ignoring it."
++                % requested_name
++            )
++            continue
++
++        module_name = module.getFullName()
++
++        if module_name in seen:
++            continue
++
++        if module.isUncompiledPythonModule():
++            code_data = module.getByteCode()
++            is_package = module.isUncompiledPythonPackage()
++        elif module.isCompiledPythonModule() and module.getSourceCode() is not None:
++            code_data = demoteSourceCodeToBytecode(
++                module_name=module_name,
++                source_code=module.getSourceCode(),
++                filename=module.getCompileTimeFilename(),
++            )
++            is_package = module.isCompiledPythonPackage()
++        else:
++            # Extension modules load as files, and namespace packages have no
++            # code; a subinterpreter finds both on its path.
++            continue
++
++        seen.add(module_name)
++        result.append((module_name, code_data, is_package))
++
++    return result
++
++
+ perfect_supported = set()
+ 
+ 
+diff --git a/nuitka/MainControl.py b/nuitka/MainControl.py
+--- a/nuitka/MainControl.py
++++ b/nuitka/MainControl.py
+@@ -72,6 +72,7 @@
+ from nuitka.options.Options import (
+     assumeYesForDownloads,
+     getDebuggerName,
++    getSubinterpreterBytecodeModules,
+     getFileReferenceMode,
+     getForcedStderrPath,
+     getForcedStdoutPath,
+@@ -975,10 +976,16 @@
+     if shallTreatUninstalledPython():
+         scons_options["uninstalled_python"] = asBoolStr(True)
+ 
+-    if ModuleRegistry.getUncompiledTechnicalModules():
++    if ModuleRegistry.getUncompiledTechnicalModules() or (
++        getSubinterpreterBytecodeModules()
++    ):
+         scons_options["frozen_modules"] = str(
+             len(ModuleRegistry.getUncompiledTechnicalModules())
++            + len(getSubinterpreterBytecodeModules())
+         )
++
++    if getSubinterpreterBytecodeModules():
++        scons_options["subinterpreter_bytecode"] = asBoolStr(True)
+ 
+     if hasPythonFlagNoWarnings():
+         scons_options["no_python_warnings"] = asBoolStr(True)
+diff --git a/nuitka/build/SconsCompilerSettings.py b/nuitka/build/SconsCompilerSettings.py
+--- a/nuitka/build/SconsCompilerSettings.py
++++ b/nuitka/build/SconsCompilerSettings.py
+@@ -1249,6 +1249,9 @@
+ 
+     # Amount of frozen modules.
+     frozen_modules = getArgumentInt("frozen_modules", 0)
++
++    # Frozen modules stay installed for subinterpreters.
++    subinterpreter_bytecode = getArgumentBool("subinterpreter_bytecode", False)
+ 
+     # Windows runtime DLL inclusion.
+     onefile_windows_static_runtime = getArgumentBool(
+@@ -1323,6 +1326,7 @@
+     env.pgo_mode = pgo_mode
+     env.job_count = job_count
+     env.frozen_modules = frozen_modules
++    env.subinterpreter_bytecode = subinterpreter_bytecode
+     env.uninstalled_python = uninstalled_python
+     env.onefile_windows_static_runtime = onefile_windows_static_runtime
+     env.cf_protection = cf_protection
+diff --git a/nuitka/build/Backend.scons b/nuitka/build/Backend.scons
+--- a/nuitka/build/Backend.scons
++++ b/nuitka/build/Backend.scons
+@@ -487,6 +487,10 @@
+ 
+     env.build_definitions["NUITKA_HAS_FROZEN_MODULES_BOOL"] = (
+         1 if env.frozen_modules else 0
++    )
++
++    env.build_definitions["_NUITKA_SUBINTERPRETER_BYTECODE"] = (
++        1 if env.subinterpreter_bytecode else 0
+     )
+ 
+     if env.forced_stdout_path is not None:
+diff --git a/nuitka/build/static_src/MainProgram.c b/nuitka/build/static_src/MainProgram.c
+--- a/nuitka/build/static_src/MainProgram.c
++++ b/nuitka/build/static_src/MainProgram.c
+@@ -148,6 +148,33 @@
+ }
+ #endif
+ 
++#if _NUITKA_SUBINTERPRETER_BYTECODE
++// The frozen table stays installed for subinterpreters, and holds bytecode of
++// modules that are compiled for this interpreter. Our loader is registered
++// behind the frozen importer, which would then answer for them, so it is moved
++// ahead of it, still behind the builtin importer.
++static void moveMetaPathBasedLoaderAheadOfFrozenImporter(void) {
++    PyObject *meta_path = PySys_GetObject("meta_path");
++
++    if (meta_path == NULL || !PyList_Check(meta_path)) {
++        return;
++    }
++
++    for (Py_ssize_t i = 2; i < PyList_GET_SIZE(meta_path); i++) {
++        PyObject *finder = PyList_GET_ITEM(meta_path, i);
++
++        if (strcmp(Py_TYPE(finder)->tp_name, "nuitka_module_loader") == 0) {
++            Py_INCREF(finder);
++            PySequence_DelItem(meta_path, i);
++            PyList_Insert(meta_path, 1, finder);
++            Py_DECREF(finder);
++
++            return;
++        }
++    }
++}
++#endif
++
+ #include "nuitka/environment_variables.h"
+ 
+ #if _NUITKA_STANDALONE_MODE
+@@ -2082,7 +2109,7 @@
+     setEarlyFrozenModulesFileAttribute(tstate);
+ #endif
+ 
+-#if NUITKA_HAS_FROZEN_MODULES_BOOL
++#if NUITKA_HAS_FROZEN_MODULES_BOOL && !_NUITKA_SUBINTERPRETER_BYTECODE
+     NUITKA_PRINT_TRACE("main(): Removing early frozen module table again.");
+     PyImport_FrozenModules = old_frozen;
+ #endif
+@@ -2099,6 +2126,10 @@
+     /* Enable meta path based loader. */
+     setupMetaPathBasedLoader(tstate);
+ 
++#if _NUITKA_SUBINTERPRETER_BYTECODE
++    moveMetaPathBasedLoaderAheadOfFrozenImporter();
++#endif
++
+ #if PYTHON_VERSION < 0x3d0
+     /* Initialize warnings module. */
+     _PyWarnings_Init();
+diff --git a/nuitka/tree/Building.py b/nuitka/tree/Building.py
+--- a/nuitka/tree/Building.py
++++ b/nuitka/tree/Building.py
+@@ -1062,6 +1062,12 @@
+     # Technically required modules must be bytecode, do not even ask plugins
+     # about it.
+     if is_stdlib and module_name in detectEarlyImports():
++        return "bytecode"
++
++    # An "InterpreterPoolExecutor" runs each job by handing "do_call" of this
++    # module to "Interpreter.call", which only shares Python functions with the
++    # interpreter it calls into: compiled, the pool can run nothing.
++    if is_stdlib and module_name == "concurrent.futures.interpreter":
+         return "bytecode"
+ 
+     result = decideCompilation(module_name)
+-- 
+2.51.0
