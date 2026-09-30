@@ -171,6 +171,113 @@ def _resolution_path(cache_dir: str, key: str) -> str:
     return os.path.join(cache_dir, RESOLUTION_CACHE_BUCKET, key[:2], f"{key}.bin")
 
 
+def plain_install_plan_key(
+    requirements: tuple[object, ...],
+    context: tuple[object, ...],
+) -> str | None:
+    """A stable key when every root is a plain index requirement, pinned or not.
+
+    Its plan holds only while the index pages the resolve read are unchanged,
+    which the caller records with :func:`save_plan_pages` and checks before
+    loading it; ``context`` carries the rest of what the resolve depended on.
+    """
+    from kpip.core.utils import key_bytes
+
+    normalized: list[tuple[str, str, tuple[str, ...], str]] = []
+
+    for item in requirements:
+        requirement = getattr(item, "req", None)
+
+        if (
+            requirement is None
+            or requirement.url is not None
+            or getattr(requirement, "is_unnamed_direct", False)
+            or getattr(item, "link", None) is not None
+            or getattr(item, "hash_options", None)
+            or getattr(item, "config_settings", None)
+        ):
+            return None
+
+        marker = getattr(item, "markers", None) or getattr(requirement, "marker", None)
+
+        normalized.append(
+            (
+                requirement.canonical_name,
+                str(requirement.specifier),
+                tuple(sorted(requirement.extras)),
+                "" if marker is None else str(marker),
+            ),
+        )
+
+    if not normalized:
+        return None
+
+    return hashlib.sha256(key_bytes((tuple(sorted(normalized)), context))).hexdigest()
+
+
+def _pages_path(cache_dir: str, key: str) -> str:
+    return os.path.join(cache_dir, RESOLUTION_CACHE_BUCKET, key[:2], f"{key}.pages")
+
+
+def save_plan_pages(cache_dir: str, key: str, pages: tuple[object, ...]) -> None:
+    """Record the index pages, with their validators, a plan was resolved from."""
+    import tempfile
+
+    path = _pages_path(cache_dir, key)
+    directory = os.path.dirname(path)
+
+    try:
+        os.makedirs(directory, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{key[:12]}-", dir=directory)
+
+        try:
+            with os.fdopen(descriptor, "wb") as file:
+                marshal.dump((key, pages), file)
+
+            os.replace(temporary, path)
+
+        except BaseException:
+            try:
+                os.unlink(temporary)
+
+            except FileNotFoundError:
+                pass
+
+            raise
+
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def load_plan_pages(
+    cache_dir: str, key: str
+) -> tuple[tuple[str, str | None, str | None], ...] | None:
+    """The pages :func:`save_plan_pages` recorded for ``key``, each a URL with
+    its ETag and Last-Modified; None on a miss."""
+    try:
+        with open(_pages_path(cache_dir, key), "rb") as file:
+            stored_key, pages = marshal.load(file)
+
+    except (EOFError, OSError, TypeError, ValueError):
+        return None
+
+    if (
+        stored_key != key
+        or not isinstance(pages, tuple)
+        or not pages
+        or not all(
+            isinstance(page, tuple)
+            and len(page) == 3
+            and isinstance(page[0], str)
+            and all(value is None or isinstance(value, str) for value in page[1:])
+            for page in pages
+        )
+    ):
+        return None
+
+    return pages
+
+
 def save_cached_install_plan(
     cache_dir: str,
     key: str,
@@ -364,8 +471,14 @@ def _candidate_from_record(cache_dir: str, record: object) -> WheelCandidate | N
 def load_cached_install_plan(
     cache_dir: str,
     key: str,
+    *,
+    max_age: float | None = RESOLUTION_CACHE_TTL_SECONDS,
 ) -> ResolutionResult | None:
-    """Load and validate a fresh plan receipt and all referenced archives."""
+    """Load and validate a fresh plan receipt and all referenced archives.
+
+    ``max_age`` None is for a plan whose freshness the caller has checked
+    another way: its index pages, unchanged.
+    """
 
     if not valid_sha256(key):
         return None
@@ -373,8 +486,9 @@ def load_cached_install_plan(
     path = _resolution_path(cache_dir, key)
 
     try:
-        if time.time() - os.stat(path, follow_symlinks=False).st_mtime > (
-            RESOLUTION_CACHE_TTL_SECONDS
+        if (
+            max_age is not None
+            and time.time() - os.stat(path, follow_symlinks=False).st_mtime > max_age
         ):
             return None
 
@@ -394,7 +508,7 @@ def load_cached_install_plan(
     ):
         return None
 
-    if time.time() - value[0] > RESOLUTION_CACHE_TTL_SECONDS:
+    if max_age is not None and time.time() - value[0] > max_age:
         return None
 
     candidates: list[WheelCandidate] = []

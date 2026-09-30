@@ -63,7 +63,10 @@ from kpip.install.wheel_install_plan_cache import (
     REMOTE_EXACT_CONTEXT,
     exact_install_plan_key,
     load_cached_install_plan,
+    load_plan_pages,
+    plain_install_plan_key,
     save_cached_install_plan,
+    save_plan_pages,
 )
 from kpip.install.wheel_transaction import (
     WheelInstaller,
@@ -717,13 +720,10 @@ def create_candidate_provider(
     return provider
 
 
-def cached_remote_plan_key(
-    options: Any,
-    bundle: Any,
-    requirements: list[Any],
-    target: Any,
-) -> str | None:
-    if (
+def _plan_cacheable(options: Any, bundle: Any) -> bool:
+    """Whether an install's plan depends only on its requirements, its target
+    context and the index: nothing installed, local or overridden."""
+    return not (
         options.no_cache_dir
         or options.refresh
         or options.target is None
@@ -765,11 +765,11 @@ def cached_remote_plan_key(
         or bundle.format_control.only_binary
         or bundle.release_control.all_releases
         or bundle.release_control.only_final
-    ):
-        return None
+    )
 
-    context = (
-        REMOTE_EXACT_CONTEXT,
+
+def _plan_context(options: Any, bundle: Any, target: Any) -> tuple[object, ...]:
+    return (
         bundle.index_url,
         tuple(bundle.extra_index_urls),
         tuple(target.platforms),
@@ -780,7 +780,102 @@ def cached_remote_plan_key(
         bool(options.force_reinstall),
     )
 
-    return exact_install_plan_key(tuple(requirements), context)
+
+def cached_remote_plan_key(
+    options: Any,
+    bundle: Any,
+    requirements: list[Any],
+    target: Any,
+) -> str | None:
+    if not _plan_cacheable(options, bundle):
+        return None
+
+    return exact_install_plan_key(
+        tuple(requirements),
+        (REMOTE_EXACT_CONTEXT, *_plan_context(options, bundle, target)),
+    )
+
+
+REPLAY_CONTEXT = "install-replay-1"
+
+
+def replayable_install_plan_key(
+    options: Any,
+    bundle: Any,
+    requirements: list[Any],
+    target: Any,
+) -> str | None:
+    """The key an install's plan is replayed under while the index pages it
+    was resolved from are unchanged, like a lock's (``lock_replay``); None
+    when it cannot be.
+
+    For requirements not all pinned, which the exact-pin receipts do not
+    take: their answer is whatever the index says, so it is kept by the pages
+    read rather than for a time, and keyed on the code and the interpreter
+    that resolved it as well.
+    """
+    if not _plan_cacheable(options, bundle):
+        return None
+
+    from kpip.cli.lock_replay import resolution_environment
+    from kpip.core.code_identity import code_identity
+
+    return plain_install_plan_key(
+        tuple(requirements),
+        (
+            REPLAY_CONTEXT,
+            code_identity(),
+            resolution_environment(),
+            *_plan_context(options, bundle, target),
+        ),
+    )
+
+
+def load_replayable_install_plan(cache_dir: str, key: str) -> ResolutionResult | None:
+    """The plan kept under ``key`` if every page it was resolved from is
+    unchanged and fresh: what resolving again would read. A page merely
+    stale is revalidated by resolving, as ever."""
+    pages = load_plan_pages(cache_dir, key)
+
+    if pages is None:
+        return None
+
+    from kpip.cli.lock_replay import FRESH, open_http_cache, page_state
+
+    if page_state(open_http_cache(cache_dir), pages) != FRESH:
+        return None
+
+    return load_cached_install_plan(cache_dir, key, max_age=None)
+
+
+def record_replayable_install_plan(
+    cache_dir: str, key: str, plan: ResolutionResult, provider: Any
+) -> None:
+    """Keep a freshly resolved plan with the index pages it was read from.
+
+    Only a plan of wheels is kept: one that built a source distribution is
+    not, and is known so before reading its pages or its archives.
+    """
+    if any(candidate.source_kind != "wheel" for candidate in plan.candidates):
+        return
+
+    urls: set[str] = set()
+
+    for source in getattr(provider, "index_sources", ()):
+        urls.update(source.pages_read)
+
+    if not urls:
+        return
+
+    from kpip.cli.lock_replay import open_http_cache, page_validators
+
+    validators = page_validators(open_http_cache(cache_dir), urls)
+
+    if validators is None:
+        return
+
+    if save_cached_install_plan(cache_dir, key, tuple(plan.candidates), plan.graph):
+        save_plan_pages(cache_dir, key, validators)
 
 
 def target_library_is_empty(target: InstallTarget) -> bool:
@@ -1328,10 +1423,27 @@ def run_install(args: list[str]) -> int:
             execution.target,
         )
 
+        replay_key = None
+
         if plan_cache_key is not None and execution.cache_dir is not None:
             plan = load_cached_install_plan(execution.cache_dir, plan_cache_key)
 
+        elif execution.cache_dir is not None:
+            replay_key = replayable_install_plan_key(
+                execution.options,
+                execution.bundle,
+                execution.requirements,
+                execution.target,
+            )
+
+            if replay_key is not None:
+                plan = load_replayable_install_plan(execution.cache_dir, replay_key)
+
         resolved_fresh = plan is None
+
+        # The last one made answered: the resolve makes a second engine only
+        # when its first answer does not stand.
+        providers: list[Any] = []
 
         pycompile = not execution.options.no_compile
 
@@ -1363,6 +1475,8 @@ def run_install(args: list[str]) -> int:
 
         def prefetching_provider() -> Any:
             provider = get_provider()
+
+            providers.append(provider)
 
             if prefetch is not None:
                 from kpip.index.candidate_materialization import LazyWheelCandidate
@@ -1748,6 +1862,16 @@ def run_install(args: list[str]) -> int:
                         plan_cache_key,
                         tuple(plan.candidates),
                         plan.graph,
+                    )
+
+                elif (
+                    resolved_fresh
+                    and replay_key is not None
+                    and execution.cache_dir is not None
+                    and providers
+                ):
+                    record_replayable_install_plan(
+                        execution.cache_dir, replay_key, plan, providers[-1]
                     )
 
         plan_order = {
