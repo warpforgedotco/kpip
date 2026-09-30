@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import time
 
 from kpip.cli.lock_format import (
     LOCK_HEADER,
@@ -24,11 +23,23 @@ from kpip.cli.lock_replay import (
     save_record,
     stale_pages,
 )
+from kpip.cli.dependency_groups import group_items, parse_dependency_groups
 from kpip.cli.parsers.lock import create_parser
+from kpip.cli.package_finder import (
+    apply_refresh,
+    check_release_control,
+    release_control,
+    release_control_from,
+)
+from kpip.cli.package_finder import format_control as selected_formats
+from kpip.cli.requirement_command import check_only_deps, requested_source_urls
+from kpip.cli.requirements import (
+    build_options_from_requirements,
+    config_settings,
+    requirements_from_script,
+)
 from kpip.core.appdirs import command_cache_dir
-from kpip.core.expiry import refresh_since
 from kpip.core.errors import CommandError, KpipError
-from kpip.core.format_control import FormatControl
 from kpip.core.hashes import file_hashes
 from kpip.core.packaging import (
     canonicalize_name,
@@ -55,6 +66,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from argparse import Namespace
+    from typing import Any
 
     from kpip.resolution.req_install import InstallRequirement
 
@@ -305,6 +317,32 @@ def _resolved_metadata_name(candidate: object) -> str | None:
         return None
 
 
+def resolves_as_recorded(options: Namespace) -> bool:
+    """Whether the lock is given none of the options a replay record and the
+    wheelhouse resolve take no account of.
+
+    Both answer for the default index, every dependency and the newest final
+    release of each; a lock asked for anything else is resolved in full.
+    """
+    return not (
+        options.index_url
+        or options.extra_index_url
+        or options.groups
+        or options.requirements_from_scripts
+        or options.build_constraint_files
+        or options.config_settings
+        or options.no_deps
+        or options.only_deps
+        or options.only_binary
+        or options.prefer_binary
+        or options.pre
+        or options.release_control
+        or options.ignore_requires_python
+        or options.uploaded_prior_to
+        or options.refresh_package
+    )
+
+
 def lock_replay_key(
     options: Namespace, cache_dir: str | None, previous: bytes | None
 ) -> bytes | None:
@@ -313,13 +351,19 @@ def lock_replay_key(
     ``previous`` is the lock it starts from, as ``read_previous_lock`` read it.
     """
 
-    if cache_dir is None or options.no_index or options.find_links or options.editable:
+    if (
+        cache_dir is None
+        or options.no_index
+        or options.find_links
+        or options.editables
+        or not resolves_as_recorded(options)
+    ):
         return None
 
     return replay_key(
         requirements=options.requirements,
-        requirement_files=options.requirement,
-        constraint_files=options.constraints,
+        requirement_files=options.requirement_files,
+        constraint_files=options.constraint_files,
         index_urls=(DEFAULT_INDEX_URL,),
         no_binary=options.no_binary,
         no_build_isolation=options.no_build_isolation,
@@ -479,12 +523,27 @@ def close_resolvers(resolvers: list[ResolutionEngine]) -> None:
 
 
 def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
-    if options.refresh:
-        refresh_since(time.time())
+    check_release_control(options)
+    check_only_deps(options)
+    apply_refresh(options)
+
+    if len(options.requirements_from_scripts) > 1:
+        raise CommandError("--requirements-from-script can only be given once")
 
     cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
 
-    resolution_session = DeferredNetworkSession(cache_dir=cache_dir)
+    index_url = options.index_url or DEFAULT_INDEX_URL
+
+    # The session is told of an index only when one is named: it reads the
+    # URL for credentials, which the default index has none of.
+    if options.index_url or options.extra_index_url:
+        resolution_session = DeferredNetworkSession(
+            index_urls=[index_url, *options.extra_index_url],
+            cache_dir=cache_dir,
+        )
+
+    else:
+        resolution_session = DeferredNetworkSession(cache_dir=cache_dir)
 
     previous = read_previous_lock(options.output, options.upgrade)
 
@@ -504,15 +563,22 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     if options.quiet:
         os.environ["KPIP_QUIET"] = "1"
 
-    format_control = None
+    format_control = selected_formats(options) if options.format_control else None
 
-    if options.no_binary:
-        format_control = FormatControl()
+    requirements: list[str | InstallRequirement] = [
+        *parse_dependency_groups(group_items(options.groups)),
+        *(
+            requirements_from_script(
+                options.requirements_from_scripts[0],
+                ignore_requires_python=options.ignore_requires_python,
+            )
+            if options.requirements_from_scripts
+            else ()
+        ),
+    ]
 
-        for value in options.no_binary:
-            format_control.apply("no-binary", value)
-
-    requirements: list[str | InstallRequirement] = []
+    # What the user named, which --only-deps leaves out of the lock.
+    named: list[InstallRequirement] = []
 
     locked_order: list[str] = []
 
@@ -522,6 +588,17 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     for value in options.requirements:
         local_directory = os.path.abspath(value)
+
+        if options.only_deps:
+            # Resolved like any other requirement, for what it depends on;
+            # it is dropped from the packages once that is known.
+            item = install_req_from_line(value)
+
+            named.append(item)
+
+            requirements.append(item)
+
+            continue
 
         if os.path.isdir(local_directory):
             from kpip.build.build_backend import prepare_project_metadata
@@ -599,7 +676,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     editable_packages: list[dict] = []
 
-    for value in options.editable:
+    for value in options.editables:
         from kpip.build.build_backend import prepare_project_metadata
 
         item = install_req_from_line(value)
@@ -607,6 +684,11 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         item.editable = True
 
         requirements.append(item)
+
+        if options.only_deps:
+            named.append(item)
+
+            continue
 
         editable_path = os.path.realpath(value)
 
@@ -619,7 +701,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             },
         )
 
-    for filename in options.requirement:
+    for filename in options.requirement_files:
         if os.path.basename(filename).startswith("pylock") and filename.endswith(
             ".toml",
         ):
@@ -668,7 +750,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     constraints = [
         requirement
-        for filename in options.constraints
+        for filename in options.constraint_files
         for requirement in read_requirement_lines(filename)
     ]
 
@@ -693,6 +775,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         and string_requirements
         and options.no_index
         and not options.no_binary
+        and resolves_as_recorded(options)
         # The wheelhouse path builds its own provider with no target, so it
         # would rank wheels for this interpreter rather than the one asked for.
         and not options.python_version
@@ -706,17 +789,40 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         )
 
     if plan is None and requirements:
+        configured = []
+
+        for value in (*options.requirements, *options.editables):
+            item = install_req_from_line(value)
+
+            item.config_settings = config_settings(options.config_settings)
+
+            configured.append(item)
+
+        build_options = build_options_from_requirements(configured)
+
+        def lock_provider(**sources: Any) -> CandidateProvider:
+            provider = CandidateProvider.from_options(**sources)
+
+            provider.release_control = release_control_from(release_control(options))
+
+            return provider
 
         def build_resolver() -> ResolutionEngine:
             return ResolutionEngine(
-                provider=CandidateProvider.from_options(
+                provider=lock_provider(
                     find_links=options.find_links,
+                    index_url=index_url,
+                    extra_index_urls=options.extra_index_url,
                     no_index=options.no_index,
                     format_control=format_control,
+                    prefer_binary=options.prefer_binary,
+                    build_options=build_options,
+                    build_constraints=options.build_constraint_files,
                     build_isolation=not options.no_build_isolation,
                     wheel_cache_dir=cache_dir,
                     session=resolution_session,
                     dry_run=True,
+                    uploaded_prior_to=options.uploaded_prior_to,
                     target=(
                         TargetContext(
                             python_version=tag_python_version(
@@ -727,10 +833,12 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
                         else None
                     ),
                 ),
-                no_deps=False,
+                no_deps=options.no_deps,
                 ignore_installed=True,
                 constraints=constraints,
                 preferences=preferences,
+                allow_prereleases=options.pre,
+                ignore_requires_python=options.ignore_requires_python,
                 python_version=(
                     normalize_python_version(str(options.python_version))
                     if options.python_version
@@ -764,8 +872,15 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     # cache is unchanged (lock_replay.builds_unchanged).
     every_package_is_an_index_artifact = not packages and not locked_order
 
+    named_projects = {item.req.canonical_name for item in named if item.req is not None}
+
+    named_sources = requested_source_urls(named)
+
     for candidate in plan.candidates if plan is not None else []:
         source = candidate.source_url
+
+        if candidate.canonical_name in named_projects or source in named_sources:
+            continue
 
         if source is None:
             continue

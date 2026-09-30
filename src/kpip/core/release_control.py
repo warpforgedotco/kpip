@@ -4,7 +4,6 @@ from .errors import CommandError
 from .packaging import canonicalize_name
 
 RELEASE_CONTROL_KINDS = frozenset(("all_releases", "only_final"))
-RELEASE_CONTROL_SENTINELS = frozenset((":all:", ":none:"))
 
 
 class ReleaseControl:
@@ -26,24 +25,22 @@ class ReleaseControl:
                 "--all-releases / --only-final option requires 1 argument.",
             )
         entries = [item.strip() for item in value.split(",") if item.strip()]
-        if not entries:
-            return
         target = self.all_releases if kind == "all_releases" else self.only_final
         opposite = self.only_final if kind == "all_releases" else self.all_releases
+        # As pip: ``:all:`` replaces everything said before it, for either
+        # kind, and what follows it matters only if it is emptied again.
+        while ":all:" in entries:
+            opposite.clear()
+            target.clear()
+            target.add(":all:")
+            del entries[: entries.index(":all:") + 1]
+            if ":none:" not in entries:
+                return
         for entry in entries:
-            normalized = (
-                canonicalize_name(entry)
-                if entry not in RELEASE_CONTROL_SENTINELS
-                else entry
-            )
-            if normalized == ":none:":
+            if entry == ":none:":
                 target.clear()
                 continue
-            if normalized == ":all:":
-                target.discard(":none:")
-                opposite.discard(":all:")
-                target.add(":all:")
-                continue
+            normalized = canonicalize_name(entry)
             opposite.discard(normalized)
             target.add(normalized)
 

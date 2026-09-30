@@ -3,6 +3,8 @@ from __future__ import annotations
 import atexit
 import os
 
+from kpip.core import run_options
+from kpip.core.temp_dir import build_directory
 from kpip.core.errors import BuildError
 
 
@@ -22,9 +24,7 @@ def build_wheel_from_source(
     os.makedirs(output_text, exist_ok=True)
     source_is_dir = os.path.isdir(source_text)
 
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="pip-build-") as temp_dir:
+    with build_directory("pip-build-") as temp_dir:
         project = (
             source_text
             if source_is_dir
@@ -59,9 +59,7 @@ def build_editable_from_source(
     os.makedirs(output_text, exist_ok=True)
     source_is_dir = os.path.isdir(source_text)
 
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="pip-build-editable-") as temp_dir:
+    with build_directory("pip-build-editable-") as temp_dir:
         project = (
             source_text
             if source_is_dir
@@ -106,7 +104,8 @@ def default_wheel_dir_internal() -> str:
     import tempfile
 
     path = tempfile.mkdtemp(prefix="pip-build-wheelhouse-")
-    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    if not run_options.current.no_clean:
+        atexit.register(shutil.rmtree, path, ignore_errors=True)
     return path
 
 

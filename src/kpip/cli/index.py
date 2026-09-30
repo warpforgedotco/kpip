@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 
 from kpip.cli.config import load_source_config, resolve_sources
+from kpip.cli.package_finder import excludes_prereleases, package_finder
 from kpip.cli.parsers.index import create_parser
-from kpip.core.format_control import FormatControl
+from kpip.cli.requirement_command import target_context
+from kpip.core.errors import DistributionNotFound
 from kpip.core.packaging import parse_requirement
-from kpip.index.provider import CandidateProvider
 
 import logging
 
@@ -18,28 +19,31 @@ logger = logging.getLogger(__name__)
 def run_index(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
-    sources = resolve_sources(options, load_source_config("index"))
-
-    provider = CandidateProvider.from_options(
-        index_url=sources.index_url,
-        extra_index_urls=sources.extra_index_urls,
-        no_index=sources.no_index,
-        format_control=FormatControl(),
-        trusted_hosts=options.trusted_hosts,
+    provider = package_finder(
+        options,
+        resolve_sources(options, load_source_config("index")),
+        target=target_context(options),
     )
 
     requirement = parse_requirement(options.package)
 
-    versions = provider.available_versions(requirement)
+    # What could be installed for the target: a release with nothing usable
+    # for it, or none the format and upload-time options admit, is not listed.
+    versions = {
+        candidate.version for candidate in provider.evaluate_links(requirement).accepted
+    }
 
-    if not options.pre:
-        versions = tuple(
-            version for version in versions if not version.version.is_prerelease
+    if excludes_prereleases(options, requirement.name):
+        versions = {version for version in versions if not version.is_prerelease}
+
+    if not versions:
+        raise DistributionNotFound(
+            f"No matching distribution found for {options.package}"
         )
 
-    available = [str(version.version) for version in reversed(versions)]
+    available = [str(version) for version in sorted(versions, reverse=True)]
 
-    latest = available[0] if available else None
+    latest = available[0]
 
     if options.json:
         logger.info(
@@ -50,8 +54,8 @@ def run_index(args: list[str]) -> int:
 
         return 0
 
-    logger.info(f"{requirement.name} ({latest or 'none'})")
+    logger.info(f"{requirement.name} ({latest})")
 
-    logger.info(f"Available versions: {', '.join(available) or 'none'}")
+    logger.info(f"Available versions: {', '.join(available)}")
 
     return 0

@@ -9,6 +9,10 @@ from kpip.build.metadata import InstalledDistributionStore
 from kpip.cli.parsers.uninstall import create_parser
 from kpip.cli.target import target_paths
 from kpip.core.packaging import parse_requirement
+from kpip.host.environment_checks import (
+    check_externally_managed,
+    warn_if_run_as_root,
+)
 from kpip.install.requirements import RequirementInstaller
 
 import logging
@@ -37,6 +41,9 @@ def run_uninstall(args: list[str]) -> int:
 
     if not packages:
         parser.error("You must give at least one package to uninstall")
+
+    if not options.break_system_packages and target_paths() is None:
+        check_externally_managed()
 
     removed: list[str] = []
 
@@ -71,5 +78,8 @@ def run_uninstall(args: list[str]) -> int:
 
     for package in removed:
         logger.info(f"Successfully uninstalled {package}")
+
+    if options.root_user_action == "warn":
+        warn_if_run_as_root()
 
     return 0

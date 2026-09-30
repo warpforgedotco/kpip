@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from kpip.cli import download
+from kpip.cli import download, requirement_command
 from kpip.core.appdirs import resolve_cache_dir
 
 
@@ -25,37 +25,13 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Record what ``run_download`` hands its collaborators, then bail out."""
     seen: dict[str, Any] = {}
 
-    monkeypatch.setattr(
-        download,
-        "load_source_config",
-        lambda _name: None,
-    )
-    monkeypatch.setattr(
-        download,
-        "resolve_sources",
-        lambda options, _config: type(
-            "Sources",
-            (),
-            {
-                "find_links": [],
-                "index_url": None,
-                "extra_index_urls": [],
-                "no_index": True,
-            },
-        )(),
-    )
     monkeypatch.setattr(download, "apply_proxy_environment", lambda _proxy: None)
-    monkeypatch.setattr(
-        download,
-        "parse_dependency_groups",
-        lambda _groups: [],
-    )
 
     def fake_collect(**kwargs: Any) -> Any:
         seen["collect_cache_dir"] = kwargs.get("cache_dir")
         raise Stop
 
-    monkeypatch.setattr(download, "collect_requirements", fake_collect)
+    monkeypatch.setattr(requirement_command, "collect_requirements", fake_collect)
     return seen
 
 

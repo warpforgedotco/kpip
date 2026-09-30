@@ -2,47 +2,31 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from kpip.cli.parser import ArgumentParser
+from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import (
+    add_config_settings_option,
+    add_editable_option,
+    add_index_options,
+    add_requirement_options,
+    add_selection_options,
+)
 
 
 def create_parser() -> ArgumentParser:
     """Resolve requirements and write a PEP 751 ``pylock.toml`` file."""
-
-    from kpip.cli.parser import ArgumentParser
-
     parser = ArgumentParser(prog="kpip lock", allow_abbrev=False)
-
-    parser.add_argument("requirements", nargs="*")
-
-    parser.add_argument("-e", "--editable", action="append", default=[])
-
-    parser.add_argument("-r", "--requirement", action="append", default=[])
-
-    parser.add_argument(
-        "-c",
-        "--constraint",
-        dest="constraints",
-        metavar="CONSTRAINT",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("-f", "--find-links", action="append", default=[])
-
-    parser.add_argument("--no-index", action="store_true")
-
-    parser.add_argument("--no-binary", action="append", default=[])
-
-    parser.add_argument("--no-build-isolation", action="store_true")
+    add_requirement_options(parser)
+    add_editable_option(parser)
+    add_config_settings_option(parser)
+    add_index_options(parser)
+    add_selection_options(parser)
 
     parser.add_argument("-q", "--quiet", action="store_true")
 
-    parser.add_argument("--python-version", metavar="PYTHON_VERSION")
+    parser.add_argument("-o", "--output", default="pylock.toml")
 
-    parser.add_argument("--output", default="pylock.toml")
+    # pip's lock is always for the running interpreter; this names another.
+    parser.add_argument("--python-version", metavar="PYTHON_VERSION")
 
     # The lock already at --output is where this one starts: each package
     # keeps its version there while that still satisfies the requirements.

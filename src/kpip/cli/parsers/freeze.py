@@ -12,6 +12,8 @@ def create_parser() -> ArgumentParser:
 
     parser.add_argument("--all", action="store_true")
 
+    parser.add_argument("-l", "--local", action="store_true")
+
     parser.add_argument("--user", action="store_true")
 
     parser.add_argument("--path", action="append", default=[])

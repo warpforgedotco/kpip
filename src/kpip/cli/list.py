@@ -11,9 +11,16 @@ from kpip.build.query import (
     format_list_json,
     select_installed_distributions,
 )
+from kpip.cli.config import load_source_config, resolve_sources
+from kpip.cli.package_finder import (
+    check_release_control,
+    excludes_prereleases,
+    package_finder,
+)
 from kpip.cli.parsers.list import create_parser
 from kpip.cli.target import target_paths
 from kpip.core.metadata import stdlib_pkgs, user_lib_path
+from kpip.core.packaging import parse_requirement
 
 import logging
 
@@ -26,6 +33,8 @@ if TYPE_CHECKING:
 
 def run_list(args: list[str]) -> int:
     options = create_parser().parse_args(args)
+
+    check_release_control(options)
 
     if options.outdated and options.uptodate:
         logger.error("Options --outdated and --uptodate cannot be combined.")
@@ -52,38 +61,17 @@ def run_list(args: list[str]) -> int:
     latest: dict[str, tuple[Any, str]] = {}
 
     if options.outdated or options.uptodate:
-        from kpip.cli import config
-        from kpip.core import format_control, packaging
-        from kpip.index import provider
-
-        sources = config.resolve_sources(options, config.load_source_config("list"))
-
-        candidate_provider = provider.CandidateProvider.from_options(
-            find_links=sources.find_links,
-            index_url=sources.index_url,
-            extra_index_urls=sources.extra_index_urls,
-            no_index=sources.no_index,
-            format_control=format_control.FormatControl(),
+        candidate_provider = package_finder(
+            options,
+            resolve_sources(options, load_source_config("list")),
         )
-
-        assert candidate_provider.release_control is not None
-
-        for value in options.all_releases:
-            candidate_provider.release_control.apply("all_releases", value)
-
-        for value in options.only_final:
-            candidate_provider.release_control.apply("only_final", value)
 
         for dist in distributions:
             candidates = candidate_provider.evaluate_links(
-                packaging.parse_requirement(dist.raw_name),
+                parse_requirement(dist.raw_name),
             ).accepted
 
-            allow_prereleases = candidate_provider.release_control.allows_prereleases(
-                dist.raw_name,
-            )
-
-            if not options.pre and allow_prereleases is not True:
+            if excludes_prereleases(options, dist.raw_name):
                 candidates = [
                     candidate
                     for candidate in candidates
@@ -93,7 +81,12 @@ def run_list(args: list[str]) -> int:
             if not candidates:
                 continue
 
-            candidate = max(candidates, key=lambda item: item.version)
+            # The one that would be installed: with --prefer-binary, a wheel
+            # before a newer source distribution.
+            candidate = max(
+                candidates,
+                key=lambda item: item.sort_key(prefer_binary=options.prefer_binary),
+            )
 
             latest[dist.canonical_name] = (candidate.version, candidate.link.kind.value)
 

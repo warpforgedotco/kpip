@@ -2,87 +2,28 @@
 
 from __future__ import annotations
 
+import os
+
 from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import (
+    add_config_settings_option,
+    add_editable_option,
+    add_index_options,
+    add_requirement_options,
+    add_selection_options,
+)
 
 
 def create_parser() -> ArgumentParser:
     """Build wheels for requirements without installing them."""
-
     parser = ArgumentParser(prog="kpip wheel")
-
-    parser.add_argument("requirements", nargs="*")
-
-    parser.add_argument("--group", dest="groups", action="append", default=[])
-
-    parser.add_argument(
-        "-r",
-        "--requirement",
-        dest="requirement_files",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument(
-        "-c",
-        "--constraint",
-        dest="constraint_files",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument(
-        "--build-constraint",
-        dest="build_constraint_files",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument(
-        "-e",
-        "--editable",
-        dest="editables",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("-f", "--find-links", action="append", default=[])
-
-    parser.add_argument("-i", "--index-url")
-
-    parser.add_argument("--extra-index-url", action="append", default=[])
-
-    parser.add_argument(
-        "--trusted-host",
-        dest="trusted_hosts",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("--proxy")
-
-    parser.add_argument(
-        "--use-feature",
-        dest="use_features",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("--no-index", action="store_true")
-
-    parser.add_argument("--no-build-isolation", action="store_true")
-
-    parser.add_argument("--no-deps", action="store_true")
-
-    parser.add_argument("-v", "--verbose", action="count", default=0)
-
-    parser.add_argument(
-        "-C",
-        "--config-settings",
-        dest="config_settings",
-        action="append",
-        default=[],
-    )
-
-    parser.add_argument("-w", "--wheel-dir", default=".")
-
+    add_requirement_options(parser)
+    add_editable_option(parser)
+    add_config_settings_option(parser)
+    add_index_options(parser)
+    add_selection_options(parser)
+    parser.add_argument("-w", "--wheel-dir", default=os.curdir)
+    # Accepted as pip accepts it: a wheel built here is not verified, so
+    # there is nothing for it to turn off.
+    parser.add_argument("--no-verify", action="store_true")
     return parser

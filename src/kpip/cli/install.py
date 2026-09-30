@@ -2,49 +2,40 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import datetime
 import os
-import time
 
 from kpip.build.build import build_editable_from_source
 from kpip.build.metadata import InstalledDistributionStore
-from kpip.cli.config import SourceConfig, load_source_config
-from kpip.cli.dependency_groups import group_items, parse_dependency_groups
 from kpip.cli.parsers.install import create_parser
-from kpip.cli.requirements import (
-    build_options_from_requirements,
-    bundle_install_requirements,
-    collect_requirements,
-    config_settings,
-    requirements_from_script,
+from kpip.cli.requirement_command import (
+    PreparedRequirements,
+    check_dependency_hashes,
+    check_local_archive_hashes,
+    create_candidate_provider,
+    one_candidate_per_project,
+    prepare,
+    python_version,
+    requested_requirements,
+    resolve,
+    target_context,
+    warn_about_yanked,
+    without_user_requested,
 )
-from kpip.cli.resolution_errors import resolution_error_message
+from kpip.cli.requirements import build_options_from_requirements
 from kpip.cli.target import target_prefix
-from kpip.core.appdirs import command_cache_dir
-from kpip.core.expiry import refresh_since
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.errors import (
     CommandError,
-    DistributionNotFound,
-    HashMismatch,
     InstallationError,
     ResolutionError,
 )
-from kpip.core.format_control import FormatControl
-from kpip.core.hashes import file_hashes
-from kpip.core.hashes import Hashes
 from kpip.core.metadata import find_installed, installed_index, user_lib_path
 from kpip.core.packaging import (
     canonicalize_name,
     marker_applies,
-    normalize_python_version,
     parse_requirement,
 )
-from kpip.core.urls import url_to_path
-from kpip.core.utils import CURRENT_PYTHON_VERSION_DIGITS, CURRENT_PYTHON_VERSION_FULL
 from kpip.core.wheel import TargetContext, wheel_candidate_from_path
-from kpip.index.links import Link
-from kpip.index.provider import CandidateProvider
 from kpip.install.metadata import (
     ReportItem,
     direct_url_from_link,
@@ -72,6 +63,10 @@ from kpip.install.wheel_transaction import (
     WheelInstaller,
     install_wheels_transactionally,
 )
+from kpip.host.environment_checks import (
+    check_externally_managed,
+    warn_if_run_as_root,
+)
 from kpip.host.virtualenv import running_under_virtualenv
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
@@ -91,22 +86,6 @@ if TYPE_CHECKING:
     from kpip.resolution.req_install import InstallRequirement
 
 INDEX_URL_OPTIONS = frozenset(("-i", "--index-url"))
-
-
-class InstallRuntimeSetup:
-    __slots__ = ("cache_dir", "config", "explicit_index_url", "quiet")
-
-    def __init__(
-        self,
-        config: Any,
-        explicit_index_url: bool,
-        cache_dir: str | None,
-        quiet: bool,
-    ) -> None:
-        self.config = config
-        self.explicit_index_url = explicit_index_url
-        self.cache_dir = cache_dir
-        self.quiet = quiet
 
 
 class InstallExecutionContext:
@@ -167,24 +146,6 @@ class InstallRequirementState:
         self.source_requirements_by_name = source_requirements_by_name
         self.source_requirements_by_url = source_requirements_by_url
         self.requested_extras_by_name = requested_extras_by_name
-
-
-class PreparedInstall:
-    __slots__ = ("bundle", "cache_dir", "options", "quiet", "release_control")
-
-    def __init__(
-        self,
-        options: Any,
-        bundle: Any,
-        cache_dir: str | None,
-        quiet: bool,
-        release_control: list[tuple[str, str]],
-    ) -> None:
-        self.options = options
-        self.bundle = bundle
-        self.cache_dir = cache_dir
-        self.quiet = quiet
-        self.release_control = release_control
 
 
 class InstallOutcome:
@@ -397,106 +358,6 @@ def unmet_dependencies(
     return unmet
 
 
-def runtime_setup(
-    args: list[str],
-    options: argparse.Namespace,
-    index_url_options: frozenset[str],
-) -> InstallRuntimeSetup:
-    quiet = options.quiet > 0
-    if quiet:
-        os.environ["KPIP_QUIET"] = "1"
-    else:
-        os.environ.pop("KPIP_QUIET", None)
-
-    cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
-    return InstallRuntimeSetup(
-        config=load_source_config("install"),
-        explicit_index_url=any(arg in index_url_options for arg in args),
-        cache_dir=cache_dir,
-        quiet=quiet,
-    )
-
-
-def format_control_from_args(args: list[str]) -> FormatControl:
-    control = FormatControl()
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token in ("--no-binary", "--only-binary"):
-            if index + 1 < len(args):
-                control.apply(token[2:], args[index + 1])
-            index += 2
-            continue
-        if token.startswith(("--no-binary=", "--only-binary=")):
-            option, _, value = token.partition("=")
-            control.apply(option[2:], value)
-        index += 1
-    return control
-
-
-def release_control_args(args: list[str]) -> list[tuple[str, str]]:
-    result: list[tuple[str, str]] = []
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token in ("--all-releases", "--only-final"):
-            if index + 1 >= len(args):
-                raise ValueError(f"{token} requires a value")
-            result.append((token[2:], args[index + 1]))
-            index += 2
-            continue
-        if token.startswith(("--all-releases=", "--only-final=")):
-            option, _, value = token.partition("=")
-            result.append((option[2:], value))
-        elif token == "--pre":
-            result.append(("pre", ":all:"))
-        index += 1
-    return result
-
-
-def requirement_bundle(
-    options: argparse.Namespace,
-    *,
-    config: SourceConfig,
-    explicit_index_url: bool,
-    grouped_requirements: list[str],
-    script_requirements: list[str],
-    format_control: FormatControl,
-    release_control: list[tuple[str, str]],
-    config_settings: dict[str, object],
-    cache_dir: str | None,
-):
-    return collect_requirements(
-        requirements=[
-            *options.requirements,
-            *grouped_requirements,
-            *script_requirements,
-        ],
-        requirement_files=options.requirement_files,
-        constraint_files=options.constraint_files,
-        editables=options.editables,
-        requirement_config_settings={
-            requirement: dict(config_settings) for requirement in options.requirements
-        },
-        editable_config_settings={
-            editable: dict(config_settings) for editable in options.editables
-        },
-        find_links=[*config.find_links, *options.find_links],
-        index_url=options.index_url if explicit_index_url else config.index_url,
-        extra_index_urls=[*config.extra_index_urls, *options.extra_index_url],
-        no_index=options.no_index or config.no_index,
-        format_control=format_control,
-        release_control_args=release_control,
-        require_hashes=options.require_hashes,
-        cert=options.cert,
-        client_cert=options.client_cert,
-        no_input=options.no_input,
-        keyring_provider=options.keyring_provider,
-        proxy=options.proxy,
-        cache_dir=cache_dir,
-    )
-
-
 def validate_option_combinations(options: argparse.Namespace) -> None:
     if options.user and options.target:
         raise ValueError("Can not combine '--user' and '--target'")
@@ -510,32 +371,10 @@ def validate_option_combinations(options: argparse.Namespace) -> None:
         raise ValueError(
             "Can not use any platform or abi specific options unless installing via '--target'",
         )
-    if options.pre and (options.all_releases or options.only_final):
-        raise ValueError("--pre cannot be used with --all-releases or --only-final")
 
 
-def python_version(options: argparse.Namespace) -> str:
-    if not options.python_version:
-        return CURRENT_PYTHON_VERSION_FULL
-    return normalize_python_version(str(options.python_version))
-
-
-def target_context(options: argparse.Namespace) -> TargetContext:
-    return TargetContext(
-        platforms=tuple(options.platform),
-        implementation=options.implementation,
-        python_version=(
-            str(options.python_version)
-            if options.python_version
-            else CURRENT_PYTHON_VERSION_DIGITS
-        ),
-        abis=tuple(options.abi),
-    )
-
-
-def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
-    normalized_args = normalize_install_args(args, INDEX_URL_OPTIONS)
-    options = parser.parse_args(normalized_args)
+def prepare_install(args: list[str], parser: Any) -> PreparedRequirements:
+    options = parser.parse_args(normalize_install_args(args, INDEX_URL_OPTIONS))
 
     if options.target:
         # As pip: a target directory is a library of its own, which what the
@@ -544,245 +383,55 @@ def prepare_install(args: list[str], parser: Any) -> PreparedInstall:
         # not be used without it.
         options.ignore_installed = True
 
-    if len(options.requirements_from_scripts) > 1:
-        raise CommandError("--requirements-from-script can only be given once")
+    def validate() -> None:
+        try:
+            validate_option_combinations(options)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
-    if options.no_input:
-        os.environ["GIT_TERMINAL_PROMPT"] = "0"
+        if options.user:
+            validate_user_install(options)
 
-    if any(
-        os.path.basename(value) == "requirements.txt" for value in options.requirements
-    ):
-        logger.info(
-            "Hint: It looks like you are trying to install a requirements file. "
-            "Use the -r option to install the file, or provide a package literally "
-            'named "requirements.txt".',
-        )
+    return prepare("install", options, parser, validate=validate)
 
-    for filename in options.build_constraint_files:
-        if not os.path.isfile(filename):
-            raise InstallationError(
-                f"Could not open requirements file: {filename}: No such file or directory",
-            )
 
-    for feature in options.use_features:
-        if feature == "build-constraint":
-            logger.warning(
-                "--use-feature=build-constraint is always enabled; "
-                "the option is a no-op."
-            )
+def validate_user_install(options: argparse.Namespace) -> None:
+    import site
 
-    runtime = runtime_setup(args, options, INDEX_URL_OPTIONS)
-
-    if runtime.cache_dir is not None:
-        from kpip.core.metadata import use_header_cache
-        from kpip.index.metadata_cache import get_wheel_metadata_cache
-
-        use_header_cache(get_wheel_metadata_cache(runtime.cache_dir))
-    config = runtime.config
-    explicit_index_url = runtime.explicit_index_url
-    quiet = runtime.quiet
-
-    parsed_config_settings = config_settings(options.config_settings)
-    parsed_group_items = group_items(options.groups)
-    for path, _ in parsed_group_items:
-        if os.path.basename(os.path.normpath(path)) != "pyproject.toml":
-            parser.error("group paths use 'pyproject.toml' filenames")
-
-    if parsed_group_items:
-        grouped_requirements = parse_dependency_groups(parsed_group_items)
-    else:
-        grouped_requirements = []
-
-    script_requirements: list[str] = []
-    if options.requirements_from_scripts:
-        script_requirements = requirements_from_script(
-            options.requirements_from_scripts[0],
-        )
-
-    format_control = format_control_from_args(normalized_args)
-
-    try:
-        validate_option_combinations(options)
-    except ValueError as exc:
-        raise CommandError(str(exc)) from exc
-
-    if options.user:
-        import site
-
-        if not site.ENABLE_USER_SITE:
-            if running_under_virtualenv():
-                raise InstallationError(
-                    "Can not perform a '--user' install. User site-packages are "
-                    "not visible in this virtualenv.",
-                )
+    if not site.ENABLE_USER_SITE:
+        if running_under_virtualenv():
             raise InstallationError(
                 "Can not perform a '--user' install. User site-packages are "
-                "disabled for this Python.",
+                "not visible in this virtualenv.",
             )
-
-        if running_under_virtualenv():
-            for raw_requirement in options.requirements:
-                item = install_req_from_line(raw_requirement)
-                if item.req is None:
-                    continue
-                installed_dist = InstalledDistributionStore().find(item.req.name)
-                if (
-                    installed_dist is not None
-                    and not options.ignore_installed
-                    and os.path.commonpath(
-                        (
-                            os.path.abspath(installed_dist.location),
-                            os.path.abspath(user_lib_path()),
-                        ),
-                    )
-                    != os.path.abspath(user_lib_path())
-                    and installed_dist.in_site_packages
-                ):
-                    raise InstallationError(
-                        "Will not install to the user site because it will lack "
-                        f"sys.path precedence to {installed_dist.raw_name} in "
-                        f"{installed_dist.location}",
-                    )
-
-    if (
-        options.index_url
-        and "://" not in options.index_url
-        and not options.index_url.startswith(("http:", "https:", "file:"))
-    ):
-        logger.warning(
-            f'The index url "{options.index_url}" seems invalid, please provide a scheme.'
+        raise InstallationError(
+            "Can not perform a '--user' install. User site-packages are "
+            "disabled for this Python.",
         )
 
-    try:
-        parsed_release_control_args = release_control_args(normalized_args)
-    except ValueError as exc:
-        parser.error(str(exc))
-
-    cache_dir = runtime.cache_dir
-
-    bundle = requirement_bundle(
-        options,
-        config=config,
-        explicit_index_url=explicit_index_url,
-        grouped_requirements=grouped_requirements,
-        script_requirements=script_requirements,
-        format_control=format_control,
-        release_control=parsed_release_control_args,
-        config_settings=parsed_config_settings,
-        cache_dir=cache_dir,
-    )
-
-    constraint_hashes_by_name: dict[str, list[set[str]]] = {}
-    for raw, hashes in bundle.constraint_hashes.items():
-        constraint_hashes_by_name.setdefault(
-            canonicalize_name(raw.split("==", 1)[0].strip()),
-            [],
-        ).append(set(hashes.get("sha256", ())))
-    for values in constraint_hashes_by_name.values():
-        if values and set.intersection(*values) == set():
-            raise InstallationError(
-                "Hashes are required in --require-hashes mode, but they are missing "
-                "from some requirements.",
-            )
-
-    if bundle.find_links:
-        os.environ["KPIP_FIND_LINKS"] = " ".join(bundle.find_links)
-
-    if bundle.no_index:
-        os.environ["KPIP_NO_INDEX"] = "1"
-
-    if (
-        not bundle.requirements
-        and not bundle.editables
-        and not options.groups
-        and not options.requirement_files
-    ):
-        raise CommandError(
-            'You must give at least one requirement to install (see "kpip help install")',
-        )
-
-    return PreparedInstall(
-        options=options,
-        bundle=bundle,
-        cache_dir=cache_dir,
-        quiet=quiet,
-        release_control=parsed_release_control_args,
-    )
-
-
-def intersect_hashes(left: Hashes, right: Hashes) -> Hashes:
-    return Hashes(
-        {
-            algorithm: [
-                digest
-                for digest in left.allowed_internal.get(algorithm, [])
-                if digest in right.allowed_internal.get(algorithm, [])
-            ]
-            for algorithm in left.allowed_internal.keys()
-            & right.allowed_internal.keys()
-        },
-    )
-
-
-def create_candidate_provider(
-    options: Any,
-    bundle: Any,
-    requirements: list[Any],
-    build_options: dict[str, dict[str, object]],
-    target: Any,
-    *,
-    cache_dir: str | None,
-) -> Any:
-    provider = CandidateProvider.from_options(
-        find_links=bundle.find_links,
-        index_url=bundle.index_url,
-        extra_index_urls=bundle.extra_index_urls,
-        no_index=bundle.no_index,
-        format_control=bundle.format_control,
-        build_options=build_options,
-        build_constraints=options.build_constraint_files,
-        wheel_cache_dir=cache_dir,
-        trusted_hosts=options.trusted_hosts,
-        session=bundle.session,
-        dry_run=options.dry_run,
-        build_isolation=not options.no_build_isolation,
-        locked_links={name: Link(url) for name, url in bundle.locked_links.items()},
-        target=target,
-        uploaded_prior_to=(
-            datetime.datetime.fromisoformat(
-                options.uploaded_prior_to.replace("Z", "+00:00"),
-            )
-            if options.uploaded_prior_to
-            else None
-        ),
-    )
-
-    provider.release_control = bundle.release_control
-    provider.hashes_by_name = {}
-
-    for item in requirements:
-        if item.req is None or not item.hash_options:
-            continue
-        hashes = item.hashes()
-        previous = provider.hashes_by_name.get(item.req.canonical_name)
-        provider.hashes_by_name[item.req.canonical_name] = (
-            hashes if previous is None else intersect_hashes(previous, hashes)
-        )
-
-    for raw, hashes in (
-        *bundle.constraint_hashes.items(),
-        *bundle.requirement_hashes.items(),
-    ):
-        name = parse_requirement(raw).canonical_name
-        current = provider.hashes_by_name.get(name)
-        provider.hashes_by_name[name] = (
-            Hashes(hashes)
-            if current is None
-            else intersect_hashes(current, Hashes(hashes))
-        )
-
-    return provider
+    if running_under_virtualenv():
+        for raw_requirement in options.requirements:
+            item = install_req_from_line(raw_requirement)
+            if item.req is None:
+                continue
+            installed_dist = InstalledDistributionStore().find(item.req.name)
+            if (
+                installed_dist is not None
+                and not options.ignore_installed
+                and os.path.commonpath(
+                    (
+                        os.path.abspath(installed_dist.location),
+                        os.path.abspath(user_lib_path()),
+                    ),
+                )
+                != os.path.abspath(user_lib_path())
+                and installed_dist.in_site_packages
+            ):
+                raise InstallationError(
+                    "Will not install to the user site because it will lack "
+                    f"sys.path precedence to {installed_dist.raw_name} in "
+                    f"{installed_dist.location}",
+                )
 
 
 def _plan_cacheable(options: Any, bundle: Any) -> bool:
@@ -799,6 +448,11 @@ def _plan_cacheable(options: Any, bundle: Any) -> bool:
         or options.root is not None
         or options.prefix is not None
         or options.no_deps
+        or options.only_deps
+        or options.prefer_binary
+        or options.refresh_package
+        or options.no_require_hashes
+        or options.src_dir
         or options.upgrade
         or options.pre
         or options.require_hashes
@@ -1155,7 +809,9 @@ def install_editables(
             )
             continue
 
-        source_path, direct_url, metadata = prepare_editable_source(editable)
+        source_path, direct_url, metadata = prepare_editable_source(
+            editable, src_dir=execution.options.src_dir
+        )
 
         built = build_editable_from_source(
             source_path,
@@ -1279,6 +935,9 @@ def install_editables(
                     f"{candidate.name}-{candidate.version}", candidate.canonical_name
                 )
 
+        if execution.options.only_deps:
+            continue
+
         if execution.options.dry_run:
             candidate = wheel_candidate_from_path(built)
         else:
@@ -1322,10 +981,19 @@ def run_install(args: list[str]) -> int:
     bundle = prepared.bundle
     cache_dir = prepared.cache_dir
     quiet = prepared.quiet
-    parsed_release_control_args = prepared.release_control
 
-    if options.refresh:
-        refresh_since(time.time())
+    # As pip: --root, --target and --prefix install somewhere the marker
+    # cannot be looked for, and a dry run that only reports changes nothing.
+    installs_into_this_environment = (
+        not (options.dry_run and options.report)
+        and options.root is None
+        and options.target is None
+        and options.prefix is None
+        and not os.environ.get("KPIP_TARGET_PREFIX")
+    )
+
+    if installs_into_this_environment and not options.break_system_packages:
+        check_externally_managed()
 
     outcome = InstallOutcome(report_enabled=bool(options.report))
     reinstall = options.force_reinstall or options.ignore_installed
@@ -1343,33 +1011,12 @@ def run_install(args: list[str]) -> int:
     resolved_python_version = python_version(options)
     target = target_context(options)
 
-    requirements = (
-        bundle_install_requirements(bundle, target=target)
-        if bundle.requirements
-        else []
-    )
+    requirements = requested_requirements(prepared, target)
 
-    if bundle.require_hashes:
-        # Before the satisfied-requirement filter, not after: hash-checking
-        # mode is a claim about the requirements the user wrote, and one that
-        # happens to be installed already must not escape the pin and digest
-        # rules just because nothing would be fetched for it.
-        from kpip.resolution.hash_checking import enforce_hash_checking
-
-        def _as_editable(line: str) -> Any:
-            item = install_req_from_line(line)
-            item.editable = True
-            return item
-
-        enforce_hash_checking(
-            [
-                *requirements,
-                *(_as_editable(editable) for editable in bundle.editables),
-            ],
-            constraints=bundle.constraints,
-        )
-
-    if not reinstall and not options.upgrade:
+    # --only-deps installs what the requirements need and not the
+    # requirements, so one that is installed is still resolved: its
+    # dependencies are what was asked for.
+    if not reinstall and not options.upgrade and not options.only_deps:
         requirements = filter_already_satisfied_requirements(
             requirements,
             outcome,
@@ -1425,11 +1072,14 @@ def run_install(args: list[str]) -> int:
     preinstalled_editables: set[str] = set()
     preinstalled_editable_reports: dict[str, tuple[Any, Any]] = {}
 
-    if bundle.editables:
+    # An editable that depends on nothing is installed before the resolve;
+    # with --only-deps it is not installed at all.
+    if bundle.editables and not options.only_deps:
         for editable in bundle.editables:
             source_path, direct_url, metadata = prepare_editable_source(
                 editable,
                 build_isolation=not options.no_build_isolation,
+                src_dir=options.src_dir,
             )
             if (
                 metadata is None
@@ -1574,60 +1224,16 @@ def run_install(args: list[str]) -> int:
             return provider
 
         if plan is None:
-            try:
-                if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
-                    logger.info("Reporter.starting()")
-                plan = ResolutionEngine.resolve_serving_stale_pages(
-                    lambda: ResolutionEngine(
-                        provider=prefetching_provider(),
-                        on_decided=prefetch,
-                        no_deps=(
-                            execution.options.no_deps or execution.bundle.only_locked
-                        ),
-                        upgrade=execution.options.upgrade,
-                        upgrade_strategy=execution.options.upgrade_strategy,
-                        ignore_installed=reinstall,
-                        constraints=execution.bundle.constraints,
-                        allow_prereleases=execution.options.pre,
-                        require_hashes=execution.bundle.require_hashes,
-                        compute_source_hashes=(
-                            bool(execution.options.report)
-                            or execution.bundle.require_hashes
-                            or bool(execution.bundle.requirement_hashes)
-                        ),
-                        ignore_requires_python=execution.options.ignore_requires_python,
-                        python_version=(
-                            execution.python_version
-                            if execution.options.python_version
-                            else None
-                        ),
-                    ),
-                    execution.requirements,
-                )
-
-            except (DistributionNotFound, ResolutionError) as exc:
-                if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
-                    logger.info("conflict is caused by the requested requirements")
-                detail = resolution_error_message(
-                    str(exc),
-                    execution.requirements,
-                    parsed_release_control_args,
-                )
-                constraints = [
-                    f"The user requested (constraint) {raw}"
-                    for raw in execution.bundle.constraints
-                ]
-                if execution.quiet:
-                    # A quiet run shows only the error, and a build that
-                    # installs its requirements quietly has nowhere else to
-                    # say which constraints the failed resolve was held to.
-                    detail = "\n".join((detail, *constraints))
-                else:
-                    for constraint in constraints:
-                        logger.info(constraint)
-                if execution.options.verbose:
-                    logger.info(f"DistributionNotFound: {detail}")
-                raise DistributionNotFound(detail) from exc
+            plan = resolve(
+                prepared,
+                execution.requirements,
+                prefetching_provider,
+                ignore_installed=reinstall,
+                upgrade=execution.options.upgrade,
+                upgrade_strategy=execution.options.upgrade_strategy,
+                compute_source_hashes=bool(execution.options.report),
+                on_decided=prefetch,
+            )
 
         assert plan is not None
 
@@ -1652,10 +1258,10 @@ def run_install(args: list[str]) -> int:
                             f"Requirement already satisfied: {dependency.raw or dependency.name}"
                         )
 
-        unique_candidates: dict[str, Any] = {}
-        for candidate in plan.candidates:
-            unique_candidates.setdefault(candidate.canonical_name, candidate)
-        plan = plan.replace(candidates=tuple(unique_candidates.values()))
+        plan = one_candidate_per_project(plan)
+
+        if options.only_deps:
+            plan = without_user_requested(plan, requested_roots, requested_source_urls)
 
         if (
             options.upgrade
@@ -1690,81 +1296,16 @@ def run_install(args: list[str]) -> int:
                     retained.append(candidate)
             plan = plan.replace(candidates=tuple(retained))
 
-        for candidate in plan.candidates:
-            yanked_reason = getattr(candidate, "yanked_reason", None)
-            if yanked_reason is not None:
-                # PEP 592: installing a yanked release should warn, with the
-                # reason the index gave.
-                logger.warning(
-                    "The candidate selected for download or install is "
-                    f"a yanked version: {candidate.name!r} candidate (version "
-                    f"{candidate.version} at {getattr(candidate, 'source_url', '')})"
-                    f"\nReason for being yanked: {yanked_reason or '<none given>'}"
-                )
+        warn_about_yanked(plan)
 
-        if execution.bundle.require_hashes:
-            from kpip.resolution.hash_checking import enforce_dependency_hashes
-
-            enforce_dependency_hashes(
-                plan.candidates,
-                hashed_names={
-                    *(
-                        item.req.canonical_name
-                        for item in execution.requirements
-                        if item.req is not None and item.hash_options
-                    ),
-                    *(
-                        parse_requirement(raw).canonical_name
-                        for raw in (
-                            *execution.bundle.requirement_hashes,
-                            *execution.bundle.constraint_hashes,
-                        )
-                    ),
-                },
-                checked_names=requested_roots,
-            )
+        check_dependency_hashes(prepared, plan, execution.requirements, requested_roots)
 
         if plan.candidates and (
             not execution.options.dry_run
             or bool(execution.bundle.requirement_hashes)
             or bool(execution.bundle.constraint_hashes)
         ):
-            user_hashes = [
-                *execution.bundle.requirement_hashes.items(),
-                *execution.bundle.constraint_hashes.items(),
-            ]
-            if user_hashes:
-                # A local archive is used where it lies, not downloaded, so
-                # it is checked here -- against every requirement and
-                # constraint that hashes it; each must allow its digest.
-                for candidate in plan.candidates:
-                    if not (
-                        candidate.source_url
-                        and candidate.source_url.startswith("file:")
-                    ):
-                        continue
-                    expected = [
-                        hashes
-                        for raw, hashes in user_hashes
-                        if parse_requirement(raw).canonical_name
-                        == candidate.canonical_name
-                    ]
-                    if not expected:
-                        continue
-                    actual = file_hashes(url_to_path(candidate.source_url))["sha256"]
-                    for hashes in expected:
-                        allowed = hashes.get("sha256", [])
-                        if actual not in allowed:
-                            raise HashMismatch(
-                                f"{HashMismatch.head}\n"
-                                f"    {candidate.name}=={candidate.version} "
-                                f"from {candidate.source_url}:\n"
-                                + "".join(
-                                    f"        Expected sha256 {value}\n"
-                                    for value in allowed
-                                )
-                                + f"             Got        {actual}",
-                            )
+            check_local_archive_hashes(execution.bundle, plan)
             try:
                 materialized_candidates = prepare_install_candidates(
                     plan.candidates,
@@ -2045,6 +1586,9 @@ def run_install(args: list[str]) -> int:
         preinstalled_editables=preinstalled_editables,
         preinstalled_editable_reports=preinstalled_editable_reports,
     )
+
+    if options.root_user_action == "warn":
+        warn_if_run_as_root()
 
     if not outcome.installed and execution.bundle.requirements:
         report_nothing_installed(execution, outcome)

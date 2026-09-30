@@ -11,7 +11,7 @@ from collections.abc import Generator, Iterable
 from kpip.cli.parsers.freeze import create_parser
 import logging
 from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-from kpip.core.errors import InstallationError
+from kpip.core.errors import CommandError, InstallationError
 from kpip.core.packaging import canonicalize_name
 from kpip.core.versions import InvalidVersion
 
@@ -372,8 +372,12 @@ def run_freeze(args: list[str]) -> int:
 
     paths = [os.path.normpath(path) for path in options.path] if options.path else None
 
+    if options.path and (options.user or options.local):
+        raise CommandError("Cannot combine '--path' with '--user' or '--local'")
+
     for line in freeze(
         requirement=options.requirement,
+        local_only=options.local,
         user_only=options.user,
         paths=paths,
         exclude_editable=options.exclude_editable,

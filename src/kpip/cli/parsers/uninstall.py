@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import add_externally_managed_options
 
 
 def create_parser() -> ArgumentParser:
@@ -21,5 +22,7 @@ def create_parser() -> ArgumentParser:
     parser.add_argument("-v", "--verbose", action="count", default=0)
 
     parser.add_argument("-y", "--yes", action="store_true")
+
+    add_externally_managed_options(parser)
 
     return parser

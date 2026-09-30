@@ -25,6 +25,8 @@ import zipfile
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
+from kpip.core import run_options
+from kpip.core.temp_dir import build_directory
 from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
 from kpip.core.errors import BuildError
 from kpip.core.packaging import canonicalize_name, parse_requirement
@@ -248,6 +250,64 @@ class BackendSpec:
         )
 
 
+def check_build_requirements(
+    source_dir: str | os.PathLike[str],
+    requirements: Iterable[str],
+) -> None:
+    """Fail unless the environment provides what a build declares it needs.
+
+    A build that is not isolated runs with whatever is installed. With
+    ``--check-build-dependencies`` pip checks the project's declared build
+    requirements against the environment first, and says which are missing
+    or installed in a version the requirement rules out.
+    """
+    if not is_own_interpreter(build_interpreter()):
+        # Only this interpreter's environment can be read from here.
+        return
+
+    from kpip.core.metadata import installed_index
+    from kpip.core.packaging import marker_applies, parse_requirement
+
+    installed = installed_index()
+    missing: set[str] = set()
+    conflicting: set[tuple[str, str]] = set()
+
+    for text in requirements:
+        requirement = parse_requirement(text)
+
+        if not marker_applies(requirement.marker, extras=()):
+            continue
+
+        distribution = installed.get(requirement.canonical_name)
+
+        if distribution is None:
+            missing.add(text)
+
+        elif distribution.version is not None and not requirement.is_satisfied_by(
+            distribution.version
+        ):
+            conflicting.add((f"{distribution.name} {distribution.raw_version}", text))
+
+    project = os.fspath(source_dir)
+
+    if conflicting:
+        description = ", ".join(
+            f"{found} is incompatible with {wanted}"
+            for found, wanted in sorted(conflicting)
+        )
+
+        raise BuildError(
+            f"Some build dependencies for {project} conflict with the backend "
+            f"dependencies: {description}."
+        )
+
+    if missing:
+        raise BuildError(
+            f"Some build dependencies for {project} are missing: "
+            f"{', '.join(map(repr, sorted(missing)))}."
+        )
+
+
 class BackendRunner:
     """Run hooks in an isolated environment for an external backend."""
 
@@ -270,9 +330,10 @@ class BackendRunner:
     @contextlib.contextmanager
     def caller(self) -> Iterator[tuple[BuildBackendHookCaller, str]]:
         if not self.build_isolation:
-            with tempfile.TemporaryDirectory(
-                prefix="pip-build-metadata-",
-            ) as metadata_dir:
+            if run_options.current.check_build_dependencies:
+                check_build_requirements(self.source_dir, self.spec.requirements)
+
+            with build_directory("pip-build-metadata-") as metadata_dir:
                 caller = BuildBackendHookCaller(
                     os.fspath(self.source_dir),
                     self.spec.name,
@@ -308,9 +369,7 @@ class BackendRunner:
                 and importlib.util.find_spec("setuptools.build_meta")  # type: ignore
                 is not None
             ):
-                with tempfile.TemporaryDirectory(
-                    prefix="pip-build-metadata-",
-                ) as metadata_dir:
+                with build_directory("pip-build-metadata-") as metadata_dir:
                     caller = BuildBackendHookCaller(
                         os.fspath(self.source_dir),
                         self.spec.name,
@@ -325,7 +384,7 @@ class BackendRunner:
             raise RuntimeError(detail or str(exc)) from exc
 
         # The environment is shared; what a build writes goes here.
-        with tempfile.TemporaryDirectory(prefix="pip-build-env-") as scratch:
+        with build_directory("pip-build-env-") as scratch:
             caller = BuildBackendHookCaller(
                 os.fspath(self.source_dir),
                 self.spec.name,
@@ -364,7 +423,8 @@ def _environments_root() -> str:
 
             root = tempfile.mkdtemp(prefix="pip-build-envs-")
 
-            atexit.register(shutil.rmtree, root, ignore_errors=True)
+            if not run_options.current.no_clean:
+                atexit.register(shutil.rmtree, root, ignore_errors=True)
 
             _prepared_environments_root.append(root)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kpip.cli.parser import ArgumentParser
+from kpip.cli.parsers.shared import add_index_options, add_selection_options
 
 
 def create_parser() -> ArgumentParser:
@@ -24,19 +25,9 @@ def create_parser() -> ArgumentParser:
 
     parser.add_argument("--exclude", action="append", default=[])
 
-    parser.add_argument("--find-links", "-f", action="append", default=[])
+    add_index_options(parser)
 
-    parser.add_argument("--index-url", "-i")
-
-    parser.add_argument("--extra-index-url", action="append", default=[])
-
-    parser.add_argument("--no-index", action="store_true")
-
-    parser.add_argument("--pre", action="store_true")
-
-    parser.add_argument("--all-releases", action="append", default=[])
-
-    parser.add_argument("--only-final", action="append", default=[])
+    add_selection_options(parser)
 
     parser.add_argument(
         "--exclude-editable",

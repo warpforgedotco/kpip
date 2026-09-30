@@ -59,6 +59,8 @@ test = [
     "msgpack",
     "msgspec; implementation_name == 'cpython'",
     "packaging",
+    # The reference the option-parity tests compare kpip's commands with.
+    "pip>=26.2",
     "proxy.py",
     "pyproject-hooks",
     "pytest",

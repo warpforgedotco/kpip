@@ -12,12 +12,14 @@ class RunOptions:
     __slots__ = (
         "cache_dir",
         "cert",
+        "check_build_dependencies",
         "client_cert",
         "debug",
         "exists_action",
         "isolated",
         "keyring_provider",
         "no_cache_dir",
+        "no_clean",
         "no_input",
         "proxy",
         "resume_retries",
@@ -41,6 +43,10 @@ class RunOptions:
         self.exists_action: tuple[str, ...] = ()
         self.isolated = False
         self.debug = False
+        # Not general options: the requirement commands take them, and the
+        # builds they start read them here.
+        self.check_build_dependencies = False
+        self.no_clean = False
 
 
 current = RunOptions()
