@@ -23,6 +23,10 @@ module, which is what pip does too.
 
 import sys
 
+WORKER_ARGUMENT = "--kpip-compile-worker"
+"""What a compiled kpip is started with to be a worker: it has no script to
+run, so ``kpip/__main__.py`` runs :func:`main` when this comes first."""
+
 
 def main() -> None:
     import py_compile
