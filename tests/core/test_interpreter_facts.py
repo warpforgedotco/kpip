@@ -258,6 +258,7 @@ def test_a_compiled_kpip_names_its_binary_and_the_python_it_installs_for(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Not a path inside its bundle, nor the Python it was built with."""
+    import kpip
     from kpip.cli import entrypoint
 
     binary = tmp_path / "kpip"
@@ -266,8 +267,8 @@ def test_a_compiled_kpip_names_its_binary_and_the_python_it_installs_for(
     monkeypatch.setattr(entrypoint, "own_binary", lambda: str(binary))
     monkeypatch.setattr(entrypoint, "target_interpreter", lambda **_: other)
 
-    entrypoint.print_version("1.0", "/bundle/kpip/__init__.py")
+    entrypoint.print_version()
 
     assert capsys.readouterr().out == (
-        f"kpip 1.0 from {os.path.realpath(binary)} (python 3.11)\n"
+        f"kpip {kpip.__version__} from {os.path.realpath(binary)} (python 3.11)\n"
     )
