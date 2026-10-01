@@ -211,7 +211,11 @@ def uninstall_distribution(
                 part for part in entry.split("/") if part and part != "."
             )
 
-            path = os.path.realpath(os.path.join(egg_link_root, *relative_parts))
+            # installed-files.txt rows are relative to the .egg-info
+            # directory itself, as setuptools writes them and pip reads them.
+            path = os.path.realpath(
+                os.path.join(distribution.info_location, *relative_parts),
+            )
 
             if not _inside_distribution(path, root):
                 continue

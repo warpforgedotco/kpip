@@ -1067,3 +1067,28 @@ def test_an_upgrade_deletes_no_recorded_file_outside_the_environment(
     # Inside the environment's data root, the old version's file is its own.
     assert not data_file.exists()
     assert (env / "site" / "owner_demo-2.0.dist-info").is_dir()
+
+
+def test_an_upgrade_over_an_egg_info_removes_its_installed_files(
+    tmp_path: Path,
+) -> None:
+    """installed-files.txt rows are relative to the .egg-info directory, so a
+    wheel replacing a legacy install removes the files those rows name."""
+    target = tmp_path / "target"
+    info = target / "owner_demo-1.0-py3.15.egg-info"
+    info.mkdir(parents=True)
+    (info / "PKG-INFO").write_text(
+        "Metadata-Version: 1.1\nName: owner-demo\nVersion: 1.0\n"
+    )
+    (info / "installed-files.txt").write_text(
+        "../owner_demo/__init__.py\n../owner_demo/legacy.py\nPKG-INFO\n"
+    )
+    (target / "owner_demo").mkdir()
+    (target / "owner_demo" / "__init__.py").write_text("VALUE = '1.0'\n")
+    (target / "owner_demo" / "legacy.py").write_text("")
+
+    install_wheel(make_wheel_internal(tmp_path, version="2.0"), target=str(target))
+
+    assert not (target / "owner_demo" / "legacy.py").exists()
+    assert not info.exists()
+    assert (target / "owner_demo-2.0.dist-info").is_dir()

@@ -311,8 +311,20 @@ def existing_paths(
 
     resolved_root = os.path.realpath(root)
 
+    base = root
+
+    if distribution.info_location and distribution.info_location.endswith(".egg-info"):
+        # installed-files.txt rows are relative to the .egg-info directory,
+        # not to the library root RECORD rows are relative to, and need not
+        # list the directory itself or every file in it: uninstall removes
+        # it whole, as pip's does, and so does replacing it.
+        base = os.fspath(distribution.info_location)
+
+        if os.path.isdir(base):
+            existing.add(os.path.abspath(base))
+
     for entry in entries:
-        path = os.path.join(root, entry)
+        path = os.path.join(base, entry)
 
         try:
             path_stat = os.lstat(path)

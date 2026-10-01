@@ -76,6 +76,30 @@ def test_uninstall_requires_record(tmp_path: Path) -> None:
         RequirementInstaller().uninstall("demo", paths=[str(target)])
 
 
+def test_uninstall_reads_installed_files_relative_to_the_egg_info(
+    tmp_path: Path,
+) -> None:
+    """setuptools writes installed-files.txt relative to the .egg-info
+    directory, so its rows name the package as ``../demo/...``."""
+    site = tmp_path / "site-packages"
+    info = site / "demo-1.0-py3.15.egg-info"
+    info.mkdir(parents=True)
+    (info / "PKG-INFO").write_text("Metadata-Version: 1.1\nName: demo\nVersion: 1.0\n")
+    (info / "installed-files.txt").write_text(
+        "../demo/__init__.py\n../demo/legacy.py\nPKG-INFO\n"
+    )
+    package = site / "demo"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "legacy.py").write_text("")
+
+    assert RequirementInstaller().uninstall("demo", paths=[str(site)])
+
+    assert not (package / "__init__.py").exists()
+    assert not (package / "legacy.py").exists()
+    assert not info.exists()
+
+
 def _python_at(prefix: Path) -> object:
     """This Python's facts, as if it lived at ``prefix``."""
     from kpip.host import interpreter_facts
