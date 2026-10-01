@@ -21,8 +21,9 @@ Compiled, kpip has no Python of its own that it can use:
   `sys.implementation` are the CPython kpip was built with, not the target's.
 - `__file__` points inside the bundle. Do not build paths from it for
   anything that must exist on disk (scripts to run, data to read); package
-  data goes through `importlib.resources`, and anything run as a script needs
-  a compiled entry, as `install/_compile_worker.py` has.
+  data goes through `importlib.resources`, and code another interpreter must
+  run is handed to it as text with `-c`, as the loop in
+  `install/_compile_worker.py` is.
 
 Everything about the Python being installed for comes from
 `host.interpreter_facts.target_interpreter()` (or `search_path()` for its
