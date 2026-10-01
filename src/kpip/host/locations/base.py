@@ -2,18 +2,7 @@ from __future__ import annotations
 
 import os
 
-from kpip.core.appdirs import user_cache_dir
 from kpip.core.errors import InstallationError
-from kpip.core.utils import CURRENT_PYTHON_VERSION
-
-USER_CACHE_DIR = user_cache_dir("kpip")
-
-
-def get_major_minor_version() -> str:
-    """Return the major-minor version of the current Python as a string, e.g.
-    "3.7" or "3.10".
-    """
-    return CURRENT_PYTHON_VERSION
 
 
 def change_root(new_root: str, pathname: str) -> str:

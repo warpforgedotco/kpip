@@ -18,7 +18,7 @@ def cache_dir(script: KpipTestEnvironment) -> str:
     result = script.run(
         "python",
         "-c",
-        "from kpip.host.locations.base import USER_CACHE_DIR;print(USER_CACHE_DIR)",
+        "from kpip.core.appdirs import user_cache_dir;print(user_cache_dir('kpip'))",
     )
     return result.stdout.strip()
 

@@ -171,19 +171,14 @@ def compiles_as_this_process() -> bool:
     )
 
 
-def pyc_name(module: str, *, own: bool = False) -> str | None:
+def pyc_name(module: str) -> str | None:
     """The file name of the ``.pyc`` the target interpreter reads for the
-    module file ``module``, or ``None`` if it reads none; this process's,
-    ``own``, for the archive cache, which keeps only this process's bytecode.
+    module file ``module``, or ``None`` if it reads none.
 
     ``cache_from_source`` would answer for this process: its cache tag, and
     its ``-O`` level, where kpip compiles unoptimized.
     """
-    cache_tag = (
-        sys.implementation.cache_tag
-        if own
-        else target_interpreter(installing=False).cache_tag
-    )
+    cache_tag = target_interpreter(installing=False).cache_tag
 
     if cache_tag is None:
         return None
@@ -233,16 +228,11 @@ def compile_modules(jobs: list[CompileJob]) -> None:
             compile_in_process(job)
 
 
-def bytecode_key(*, own: bool = False) -> str | None:
+def bytecode_key() -> str | None:
     """What the target interpreter's bytecode is cached under -- its cache
-    tag and magic number -- or this process's, ``own``; ``None`` for one
-    that reads no bytecode."""
-    if own:
-        cache_tag = sys.implementation.cache_tag
-        magic = importlib.util.MAGIC_NUMBER.hex()
-    else:
-        interpreter = target_interpreter(installing=False)
-        cache_tag, magic = interpreter.cache_tag, interpreter.magic
+    tag and magic number -- or ``None`` for one that reads no bytecode."""
+    interpreter = target_interpreter(installing=False)
+    cache_tag, magic = interpreter.cache_tag, interpreter.magic
 
     return None if cache_tag is None else f"{cache_tag}-{magic}"
 

@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import pytest
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.core.errors import InstallationError
-from kpip.core.metadata import default_lib_path
 from kpip.core.packaging import parse_requirement
 from kpip.core.wheel import wheel_candidate
 from kpip.install.requirements import RequirementInstaller
@@ -210,7 +209,7 @@ def test_install_root_relocates_default_library(tmp_path: Path) -> None:
 
     install_wheel(wheel, root=str(root))
 
-    relocated = root.joinpath(*default_lib_path().split(os.sep)[1:])
+    relocated = root.joinpath(*sysconfig.get_paths()["purelib"].split(os.sep)[1:])
     assert (relocated / "owner_demo" / "__init__.py").exists()
 
 
