@@ -348,3 +348,35 @@ def test_installing_without_a_python_fails_before_writing(
     assert main(["install", "--no-index", "--target", str(target), "demo"]) != 0
     assert "No Python interpreter to install for" in capsys.readouterr().err
     assert not target.exists()
+
+
+def test_a_probe_is_kept_across_runs_until_its_search_path_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A compiled kpip runs a Python for its facts on every command
+    otherwise; a new .pth file in site-packages changes them."""
+    import subprocess as subprocess_module
+
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+    site = tmp_path / "site"
+    site.mkdir()
+    monkeypatch.setenv("PYTHONPATH", str(site))
+    runs: list[object] = []
+    real_run = subprocess_module.run
+
+    def counting(*args: object, **kwargs: object) -> object:
+        runs.append(args)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(interpreter_facts.subprocess, "run", counting)
+
+    probe(sys.executable)
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+    probe(sys.executable)
+    assert len(runs) == 1
+
+    (site / "extra.pth").write_text("\n")
+    os.utime(site, ns=(1, 1))
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+    probe(sys.executable)
+    assert len(runs) == 2

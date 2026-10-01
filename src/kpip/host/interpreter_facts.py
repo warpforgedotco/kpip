@@ -12,14 +12,19 @@ so it is written for old ones too.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
+from kpip.core import run_options
+from kpip.core.appdirs import resolve_cache_dir
 from kpip.core.caches import register_table
 from kpip.core.errors import CommandError
+from kpip.core.utils import versioned_bucket
 from kpip.core.compiled import is_compiled, is_own_interpreter
 
 SAFE_PATH = "import sys\ndel sys.path[0]\n"
@@ -199,25 +204,123 @@ def own_interpreter() -> Interpreter:
 
 
 def probe(executable: str) -> Interpreter:
-    """The Python at ``executable``, read by running :data:`PROBE` with it."""
+    """The Python at ``executable``, read by running :data:`PROBE` with it.
+
+    A compiled kpip has no Python of its own, so every command runs one --
+    35 to 50 ms -- unless an earlier run left its answer in the cache
+    (:func:`_cached_facts`).
+    """
     key = os.path.realpath(executable)
     found = _interpreters.get(key)
     if found is None:
-        try:
-            result = subprocess.run(
-                [executable, "-c", SAFE_PATH + PROBE],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            facts = json.loads(result.stdout)
-        except (OSError, subprocess.CalledProcessError, ValueError) as exc:
-            raise CommandError(
-                f"Could not read the Python interpreter {executable}: {exc}"
-            ) from exc
+        facts, store = _cached_facts(executable)
+        if facts is None:
+            try:
+                result = subprocess.run(
+                    [executable, "-c", SAFE_PATH + PROBE],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                facts = json.loads(result.stdout)
+            except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+                raise CommandError(
+                    f"Could not read the Python interpreter {executable}: {exc}"
+                ) from exc
+            if store is not None:
+                _store_facts(store, facts)
         found = Interpreter(facts)
         _interpreters[key] = found
     return found
+
+
+_PROBE_CACHE = versioned_bucket("interpreters", 1)
+
+_PROBE_DIGEST = hashlib.sha256((SAFE_PATH + PROBE).encode()).hexdigest()[:16]
+
+# What changes the facts without changing the interpreter's files: where it
+# looks for modules and for its user site.
+_PROBE_ENVIRONMENT = (
+    "PYTHONHOME",
+    "PYTHONNOUSERSITE",
+    "PYTHONPATH",
+    "PYTHONPLATLIBDIR",
+    "PYTHONUSERBASE",
+)
+
+
+def _stamp(path: str) -> list[int] | None:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return [stat.st_mtime_ns, stat.st_size]
+
+
+def _cached_facts(executable: str) -> tuple[dict | None, tuple[str, list] | None]:
+    """An earlier probe of ``executable``, if nothing it depends on changed;
+    and where to store this one's, or ``None`` without a cache.
+
+    The facts hold while the interpreter's file, its environment's
+    ``pyvenv.cfg``, the variables that move its search path, and this
+    probe are what they were; and while every directory on its ``sys.path``,
+    and its user site, has the modification time it had -- adding or
+    removing a ``.pth`` file changes the directory's.
+    """
+    general = run_options.current
+    if general.no_cache_dir or (
+        os.environ.get("KPIP_NO_CACHE_DIR", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    ):
+        return None, None
+    path = os.path.abspath(executable)
+    real = os.path.realpath(path)
+    executable_stamp = _stamp(real)
+    if executable_stamp is None:
+        return None, None
+    key = [
+        path,
+        real,
+        executable_stamp,
+        _stamp(os.path.join(os.path.dirname(os.path.dirname(path)), "pyvenv.cfg")),
+        [os.environ.get(name) for name in _PROBE_ENVIRONMENT],
+        _PROBE_DIGEST,
+    ]
+    name = hashlib.sha256(json.dumps(key).encode()).hexdigest()[:32]
+    store = os.path.join(
+        resolve_cache_dir(general.cache_dir), _PROBE_CACHE, f"{name}.json"
+    )
+    try:
+        with open(store, encoding="utf-8") as file:
+            cached = json.load(file)
+    except OSError, ValueError:
+        return None, (store, key)
+    if not isinstance(cached, dict) or cached.get("key") != key:
+        return None, (store, key)
+    for directory, stamp in cached.get("directories", ()):
+        if _stamp(directory) != stamp:
+            return None, (store, key)
+    return cached.get("facts"), (store, key)
+
+
+def _store_facts(store: tuple[str, list], facts: dict) -> None:
+    path, key = store
+    directories = [*facts.get("path", ()), facts.get("user_site")]
+    entry = {
+        "key": key,
+        "directories": [
+            [directory, _stamp(directory)] for directory in directories if directory
+        ],
+        "facts": facts,
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(entry, file)
+        os.replace(temporary, path)
+    except OSError:
+        pass
 
 
 def search_path() -> list[str]:
