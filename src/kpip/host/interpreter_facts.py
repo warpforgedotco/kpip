@@ -66,7 +66,9 @@ def facts():
         for key in ("prefix", "home", "user"):
             try:
                 preferred[key] = sysconfig.get_preferred_scheme(key)
-            except KeyError:
+            # ValueError: a Python without a user base (MonolithPy, iOS,
+            # WASI) has no user scheme for "user" to name.
+            except (KeyError, ValueError):
                 pass
     config = {}
     for name, value in sysconfig.get_config_vars().items():

@@ -169,6 +169,29 @@ def _other_python(prefix: Path) -> Interpreter:
     return Interpreter(facts)
 
 
+def test_a_python_without_user_schemes_is_probed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # MonolithPy, iOS and WASI have no user base, so sysconfig defines no
+    # user scheme and refuses to name a preferred one.
+    def get_preferred_scheme(key: str) -> str:
+        if key == "user":
+            raise ValueError(
+                "'user' returned 'posix_user', which is not a valid scheme "
+                "on this platform"
+            )
+        return "posix_prefix"
+
+    monkeypatch.setattr(sysconfig, "get_preferred_scheme", get_preferred_scheme)
+    namespace: dict = {"__name__": "kpip_interpreter_probe"}
+    exec(interpreter_facts.PROBE, namespace)  # noqa: S102
+
+    assert namespace["facts"]()["preferred"] == {
+        "prefix": "posix_prefix",
+        "home": "posix_prefix",
+    }
+
+
 def test_another_pythons_distributions_are_local_to_its_prefix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
