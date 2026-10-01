@@ -58,9 +58,10 @@ def versioned_bucket(name: str, version: int, *, interpreter: bool = False) -> s
     Bumping one is the entire migration: the new name is a store this kpip
     has never written, and the old one is inert until ``kpip cache purge``.
 
-    ``interpreter`` appends the interpreter tag for stores whose payload is
-    not portable across interpreters -- ``marshal`` data, byte-compiled
-    modules -- so those are scoped per interpreter as well as per version.
+    ``interpreter`` appends the tag of the Python running kpip for stores
+    whose payload is its own ``marshal`` data, so those are scoped per
+    interpreter as well as per version. Bytecode for the target is kept by
+    the target's own cache tag and magic number instead.
     """
     tag = f"-{CACHE_INTERPRETER_TAG}" if interpreter else ""
 

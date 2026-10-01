@@ -137,8 +137,8 @@ class KeyRingPythonProvider(KeyRingBaseProvider):
 class KeyRingCliProvider(KeyRingBaseProvider):
     """Provider which uses `keyring` cli
 
-    Instead of calling the keyring package installed alongside kpip
-    we call keyring on the command line which will enable kpip to
+    Instead of importing the keyring package, which a compiled kpip
+    cannot, we call keyring on the command line which will enable kpip to
     use which ever installation of keyring is available first in
     PATH.
     """

@@ -1848,8 +1848,8 @@ class CandidateMaterializer:
         A source distribution states its dependencies only through its build
         backend, and running that backend needs a build environment the
         target may not be able to have: a lock for 3.8 is prepared by
-        whichever interpreter kpip runs on, and a C extension pinned for 3.8
-        will not compile there. A wheel of the same release carries the very
+        whichever interpreter builds for kpip, and a C extension pinned for
+        3.8 will not compile there. A wheel of the same release carries the very
         metadata that backend would produce, and PEP 658 serves it beside the
         wheel, so the release answers for its own source distribution without
         anything being built or even downloaded.

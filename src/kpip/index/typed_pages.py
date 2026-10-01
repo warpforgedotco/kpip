@@ -8,9 +8,10 @@ msgspec decodes each file straight into a struct of the eight fields the
 catalog stores and skips the rest: a cold airflow resolve replayed offline
 takes 7.3 s rather than 8.2 s.
 
-msgspec is optional: without it, or for a page it will not take (an entry
-that is not an object, ``files`` that is not a list), :func:`decode_page`
-returns None and the page is read with ``json`` as before. Every field is
+The binary always bundles msgspec; a source run may lack it. Without it, or
+for a page it will not take (an entry that is not an object, ``files`` that
+is not a list), :func:`decode_page` returns None and the page is read with
+``json`` as before. Every field is
 typed ``Any``, so an odd value is passed through for the record builder to
 judge exactly as it judges one read by ``json``.
 """
