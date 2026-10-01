@@ -66,7 +66,8 @@ def direct_batch_preflight(
         and member_count <= DIRECT_MEMBER_BATCH_THRESHOLD
     ):
         return None
-    for raw_members in member_sets:
+    for raw_members, candidate in zip(member_sets, candidates):
+        wheel_target = target.for_distribution(candidate.canonical_name)
         for raw_member in raw_members:
             name = raw_member[0]
             if name.endswith("/"):
@@ -83,7 +84,7 @@ def direct_batch_preflight(
             ):
                 return None
             destination_text = destination_internal_parts_text(
-                target,
+                wheel_target,
                 relative_parts,
                 name,
                 resolved_directories=resolved_directories,

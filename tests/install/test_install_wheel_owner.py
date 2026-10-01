@@ -1130,3 +1130,39 @@ def test_installed_files_take_default_modes_under_the_umask(tmp_path: Path) -> N
     assert os.stat(package / "__init__.py").st_mode & 0o7777 == 0o666 & ~umask
     assert os.stat(package / "big.bin").st_mode & 0o7777 == 0o666 & ~umask
     assert os.stat(package / "tool.sh").st_mode & 0o7777 == 0o777 & ~umask
+
+
+def test_each_wheel_in_a_batch_gets_its_own_headers_directory(
+    tmp_path: Path,
+) -> None:
+    """The scheme's headers path is ``include/<name>``, the normalized name
+    as pip's is: a batch of wheels does not put every wheel's headers in the
+    first one's directory."""
+    wheels = []
+    for name in ("Alpha-Pkg", "beta.pkg"):
+        distribution = name.replace("-", "_").replace(".", "_")
+        wheel = tmp_path / f"{distribution}-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr(f"{distribution}/__init__.py", "")
+            archive.writestr(f"{distribution}-1.0.data/headers/{distribution}.h", "")
+            archive.writestr(
+                f"{distribution}-1.0.dist-info/METADATA",
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n",
+            )
+            archive.writestr(
+                f"{distribution}-1.0.dist-info/WHEEL",
+                "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            )
+            archive.writestr(f"{distribution}-1.0.dist-info/RECORD", "")
+        wheels.append(wheel)
+    target = InstallTarget.from_options("alpha-pkg", prefix=str(tmp_path / "prefix"))
+
+    install_wheels_transactionally(
+        [(str(wheel), True, None) for wheel in wheels],
+        target=target,
+        pycompile=False,
+    )
+
+    include = Path(target.headers).parent
+    assert (include / "alpha-pkg" / "Alpha_Pkg.h").is_file()
+    assert (include / "beta-pkg" / "beta_pkg.h").is_file()

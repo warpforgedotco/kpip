@@ -218,6 +218,7 @@ def install_wheel_internal(
 ) -> WheelCandidate:
     if candidate is None:
         candidate = wheel_candidate_from_path(path, include_layout=False)
+    target = target.for_distribution(candidate.canonical_name)
     if lookup_existing:
         if target_inventory is not None:
             existing = target_inventory.find(candidate.canonical_name)
@@ -709,6 +710,7 @@ def validate_wheel_batch(
                 include_layout=False,
             )
             candidates.append(candidate)
+            wheel_target = target.for_distribution(candidate.canonical_name)
             if validation_cache is not None:
                 validation_cache[path] = dist_info
             root_is_purelib = root_is_purelib_or_default(wheel_metadata_text)
@@ -717,7 +719,7 @@ def validate_wheel_batch(
                     continue
                 relative_parts = validate_member_parts(member.filename)
                 destination = destination_internal_parts_text(
-                    target,
+                    wheel_target,
                     relative_parts,
                     member.filename,
                     resolved_directories=resolved_directories,

@@ -23,6 +23,7 @@ class InstallTarget:
     __slots__ = (
         "data",
         "headers",
+        "headers_root",
         "platlib",
         "purelib",
         "resolved_roots_internal",
@@ -46,6 +47,11 @@ class InstallTarget:
         self.scripts = scripts
 
         self.data = data
+
+        # The directory each distribution's own headers directory is named
+        # in, when the scheme has one per distribution (see
+        # :meth:`for_distribution`).
+        self.headers_root: str | None = None
 
         self.resolved_roots_internal: dict[str, str] = {}
 
@@ -102,17 +108,56 @@ class InstallTarget:
 
             return cls.from_scheme(scheme)
 
-        return cls.from_scheme(
-            get_scheme(
-                name,
-                interpreter=target_interpreter(),
-                user=user,
-                home=home,
-                root=root,
-                isolated=isolated,
-                prefix=prefix,
-            ),
+        scheme = get_scheme(
+            name,
+            interpreter=target_interpreter(),
+            user=user,
+            home=home,
+            root=root,
+            isolated=isolated,
+            prefix=prefix,
         )
+
+        install_target = cls.from_scheme(scheme)
+
+        install_target.headers_root = os.path.realpath(
+            os.path.dirname(scheme.headers),
+        )
+
+        return install_target
+
+    def for_distribution(self, name: str) -> InstallTarget:
+        """This target, with the headers directory of distribution ``name``.
+
+        A scheme's headers path is per distribution, ``include/<name>``: one
+        target for a whole batch would put every wheel's ``.data/headers`` in
+        the first wheel's directory. pip names it after the requirement,
+        which for a wheel it resolved is the normalized name its filename
+        parses to, and so does ``name`` here. A ``--target`` directory has
+        one headers path for all, and is returned as it is.
+        """
+
+        if self.headers_root is None:
+            return self
+
+        headers = os.path.realpath(os.path.join(self.headers_root, name))
+
+        if headers == self.headers:
+            return self
+
+        install_target = InstallTarget(
+            purelib=self.purelib,
+            platlib=self.platlib,
+            headers=headers,
+            scripts=self.scripts,
+            data=self.data,
+        )
+
+        install_target.headers_root = self.headers_root
+
+        install_target.resolved_roots_internal = self.resolved_roots_internal
+
+        return install_target
 
     @property
     def library_roots(self) -> tuple[str, str]:
