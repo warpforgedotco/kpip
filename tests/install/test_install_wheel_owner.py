@@ -1029,3 +1029,41 @@ def test_a_plan_whose_pages_cannot_be_checked_is_not_kept(
     install_cli.record_replayable_install_plan(str(tmp_path), "cd" * 32, plan, provider)
 
     assert install_cli.load_replayable_install_plan(str(tmp_path), "cd" * 32) is None
+
+
+def test_an_upgrade_deletes_no_recorded_file_outside_the_environment(
+    tmp_path: Path,
+) -> None:
+    """The old RECORD is whatever the old wheel shipped: an absolute or `..`
+    row naming a file outside the environment is not deleted by the upgrade,
+    as uninstall does not delete it either."""
+    env = tmp_path / "env"
+    scheme = SimpleNamespace(
+        purelib=str(env / "site"),
+        platlib=str(env / "site"),
+        scripts=str(env / "bin"),
+        data=str(env),
+        headers=str(env / "include" / "owner-demo"),
+    )
+    install_wheel(make_wheel_internal(tmp_path, version="1.0"), scheme=scheme)
+
+    absolute = tmp_path / "absolute.txt"
+    absolute.write_text("keep\n")
+    relative = tmp_path / "relative.txt"
+    relative.write_text("keep\n")
+    data_file = env / "share" / "owner.txt"
+    data_file.parent.mkdir(parents=True)
+    data_file.write_text("owned\n")
+    record = env / "site" / "owner_demo-1.0.dist-info" / "RECORD"
+    with record.open("a", encoding="utf-8") as file:
+        file.write(f"{absolute},,\n../../relative.txt,,\n../share/owner.txt,,\n")
+
+    upgrade = tmp_path / "upgrade"
+    upgrade.mkdir()
+    install_wheel(make_wheel_internal(upgrade, version="2.0"), scheme=scheme)
+
+    assert absolute.read_text() == "keep\n"
+    assert relative.read_text() == "keep\n"
+    # Inside the environment's data root, the old version's file is its own.
+    assert not data_file.exists()
+    assert (env / "site" / "owner_demo-2.0.dist-info").is_dir()

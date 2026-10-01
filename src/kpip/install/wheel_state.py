@@ -15,6 +15,7 @@ from kpip.core.names import (
     installed_name_might_match,
 )
 from kpip.core.versions import version_of
+from kpip.install.uninstall import _inside_distribution
 from kpip.install.bytecode import (
     CompileJob,
     compile_modules,
@@ -265,7 +266,10 @@ def compiled_files(
 
 def existing_paths(
     distribution: InstalledMetadataDistribution | InstalledWheelDistribution | None,
+    target: InstallTarget,
 ) -> tuple[set[str], set[str]]:
+    """The files the installed ``distribution`` owns, which replacing it
+    in ``target`` deletes."""
     if distribution is None:
         return set(), set()
 
@@ -305,6 +309,8 @@ def existing_paths(
             for name in ("INSTALLER", "REQUESTED", "direct_url.json", "RECORD")
         )
 
+    resolved_root = os.path.realpath(root)
+
     for entry in entries:
         path = os.path.join(root, entry)
 
@@ -314,11 +320,21 @@ def existing_paths(
         except OSError:
             continue
 
-        existing.add(
-            os.path.realpath(path)
-            if stat.S_ISLNK(path_stat.st_mode)
-            else os.path.abspath(path),
-        )
+        is_link = stat.S_ISLNK(path_stat.st_mode)
+
+        owned = os.path.realpath(path) if is_link else os.path.abspath(path)
+
+        # RECORD is whatever the old wheel shipped, and every path kept here
+        # is deleted by the upgrade: an absolute row, a `..` row or a link
+        # leading out of the environment is refused as uninstall refuses it.
+        if (
+            is_link
+            or os.path.isabs(entry)
+            or ".." in entry.replace("\\", "/").split("/")
+        ) and not _inside_distribution(owned, resolved_root, target):
+            continue
+
+        existing.add(owned)
 
     return existing, existing
 

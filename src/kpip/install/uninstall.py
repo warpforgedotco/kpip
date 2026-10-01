@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 import csv
 import ntpath
 import os
@@ -12,6 +13,9 @@ from kpip.host.interpreter_facts import search_path, target_interpreter
 from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.install.bytecode import pyc_path
 from kpip.install.transaction import InstallTransaction
+
+if TYPE_CHECKING:
+    from kpip.install.target import InstallTarget
 
 
 class DistributionUninstaller:
@@ -24,7 +28,10 @@ class DistributionUninstaller:
         return uninstall_distribution(name, paths=self.paths)
 
 
-def _script_directories(root: str) -> frozenset[str]:
+def _script_directories(
+    root: str,
+    target: InstallTarget | None = None,
+) -> frozenset[str]:
     """The script directories a distribution installed in ``root`` may write.
 
     A wheel's ``.data/scripts`` members are the one class of file that
@@ -37,10 +44,14 @@ def _script_directories(root: str) -> frozenset[str]:
     ones implied by the layouts kpip installs into: ``<root>/bin`` for a
     ``--target`` directory, ``<prefix>/Scripts`` beside a Windows
     ``Lib/site-packages``, and ``<prefix>/bin`` above a POSIX
-    ``lib/pythonX.Y/site-packages``.
+    ``lib/pythonX.Y/site-packages``. An upgrade also names the ``target``
+    it installs into, whose scripts directory may be none of these.
     """
 
     candidates = [os.path.join(root, "bin"), os.path.join(root, "Scripts")]
+
+    if target is not None:
+        candidates.append(target.scripts)
 
     windows_prefix = os.path.dirname(os.path.dirname(root))
     candidates.append(os.path.join(windows_prefix, "Scripts"))
@@ -55,24 +66,34 @@ def _script_directories(root: str) -> frozenset[str]:
     )
 
 
-def _inside_distribution(path: str, root: str) -> bool:
+def _inside_distribution(
+    path: str,
+    root: str,
+    target: InstallTarget | None = None,
+) -> bool:
     """Whether ``path`` is a file this distribution may remove.
 
     Either it sits under the directory holding the ``.dist-info``, or it is a
-    console script in one of this layout's script directories.
+    console script in one of this layout's script directories. An upgrade
+    passes the ``target`` it installs into: its ``.data/data`` and
+    ``.data/headers`` roots are where the old version put those files.
 
     The path is resolved first: ``commonpath`` compares path components
     literally, so an unresolved ``site-packages/../../../etc/passwd`` would
     otherwise look like it starts inside the distribution.
     """
     resolved = os.path.realpath(path)
-    try:
-        if os.path.commonpath((resolved, root)) == root:
-            return True
-    except OSError, ValueError:
-        pass
+    trees = [root]
+    if target is not None:
+        trees.extend((target.data, target.headers))
+    for tree in trees:
+        try:
+            if os.path.commonpath((resolved, tree)) == tree:
+                return True
+        except OSError, ValueError:
+            pass
     parent = os.path.normcase(os.path.realpath(os.path.dirname(resolved)))
-    return parent in _script_directories(root)
+    return parent in _script_directories(root, target)
 
 
 def uninstall_distribution(

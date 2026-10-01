@@ -977,7 +977,7 @@ def install_wheels_from_archive_cache(
                 if distribution is None:
                     continue
 
-                owned_paths, old_paths = existing_paths(distribution)
+                owned_paths, old_paths = existing_paths(distribution, target)
 
                 allowed_existing.update(
                     normalized

@@ -601,7 +601,7 @@ def install_wheel_internal(
             record_contents,
         )
 
-        owned_paths, old_paths = existing_paths(existing)
+        owned_paths, old_paths = existing_paths(existing, target)
         if preserve_existing and existing is not None:
             old_paths = set()
         old_path_texts = set(old_paths)
