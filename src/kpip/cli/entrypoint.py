@@ -23,7 +23,6 @@ from kpip.core import run_options
 from kpip.core.errors import KpipError
 from kpip.core.compiled import own_binary
 from kpip.core.temp_dir import global_tempdir_manager
-from kpip.core.utils import configure
 from kpip.host.interpreter_facts import target_interpreter
 
 if TYPE_CHECKING:
@@ -185,20 +184,16 @@ def print_help() -> None:
         print(f"  {command}")
 
 
-def print_version(version: str | None, location: str | None) -> None:
-    if version is None:
-        version = kpip.__version__
-
+def print_version() -> None:
     # Compiled, the package is inside the binary, and the Python it names is
     # the one it installs for: its own is only what it was built with.
-    location = own_binary() or location
-    if location is None:
-        location = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    location = own_binary() or os.path.dirname(os.path.abspath(kpip.__file__))
 
     python_version = target_interpreter(installing=False).major_minor
 
     print(
-        f"kpip {version} from {os.path.realpath(location)} (python {python_version})",
+        f"kpip {kpip.__version__} from {os.path.realpath(location)} "
+        f"(python {python_version})",
     )
 
 
@@ -241,8 +236,6 @@ def handle_global_commands(
     argv: list[str],
     *,
     require_virtualenv: bool,
-    version: str | None,
-    location: str | None,
 ) -> int | None:
     """Handle help, version, the virtualenv gate, and unknown command names.
 
@@ -261,7 +254,7 @@ def handle_global_commands(
         return run_help(argv[1:])
 
     if argv[0] in VERSION_FLAGS:
-        print_version(version, location)
+        print_version()
 
         return 0
 
@@ -397,8 +390,6 @@ def collect_less_often() -> tuple[int, int, int] | None:
 def main(
     args: list[str] | None = None,
     *,
-    version: str | None = None,
-    location: str | None = None,
     keep_collection_paused: bool = False,
 ) -> int:
     verbosity = 0
@@ -448,8 +439,6 @@ def main(
         status = handle_global_commands(
             argv,
             require_virtualenv=require_virtualenv,
-            version=version,
-            location=location,
         )
 
         if status is not None:
@@ -461,11 +450,6 @@ def main(
 
         if spec is None:
             raise AssertionError(f"unhandled command: {argv[0]}")
-
-        if version is not None and (
-            spec.needs_execution_context and spec.needs_tempdir
-        ):
-            configure(version=version)
 
         # Given before the command, -v and -q mean what they mean after it.
         argv[1:1] = ["-v"] * max(verbosity, 0) + ["-q"] * max(-verbosity, 0)
@@ -600,12 +584,6 @@ def exit_without_teardown(status: int) -> NoReturn:
     os._exit(status)
 
 
-def console_main(
-    *,
-    version: str | None = None,
-    location: str | None = None,
-) -> NoReturn:
+def console_main() -> NoReturn:
     """The ``kpip`` command: run :func:`main`, then end the process."""
-    exit_without_teardown(
-        main(version=version, location=location, keep_collection_paused=True)
-    )
+    exit_without_teardown(main(keep_collection_paused=True))

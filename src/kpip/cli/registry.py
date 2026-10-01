@@ -28,7 +28,6 @@ class CommandSpec:
         "_parser_module",
         "module_path",
         "name",
-        "needs_execution_context",
         "needs_tempdir",
         "parser_factory",
         "parser_module_path",
@@ -44,7 +43,6 @@ class CommandSpec:
         parser_factory: str | None = "create_parser",
         visible: bool = True,
         needs_tempdir: bool = True,
-        needs_execution_context: bool = True,
         parser_module_path: str | None = None,
     ) -> None:
         self.name = name
@@ -56,7 +54,6 @@ class CommandSpec:
         self.parser_factory = parser_factory
         self.visible = visible
         self.needs_tempdir = needs_tempdir
-        self.needs_execution_context = needs_execution_context
 
     @property
     def module(self) -> ModuleType:
@@ -145,7 +142,6 @@ COMMAND_SPECS = (
         "lock",
         "kpip.cli.lock",
         "run_lock",
-        needs_execution_context=False,
     ),
     CommandSpec(
         "help",
