@@ -17,9 +17,7 @@ def code_identity() -> tuple[object, ...]:
     checkout. A cache keyed on it would replay results rendered by code that
     has since changed, so this looks at the code itself instead -- the
     binary when kpip is compiled into one, else a digest of every module's
-    path, size and modification time, plus the installed ``RECORD``, whose
-    per-file hashes change with any content even when a reproducible build
-    gives every file the same timestamp.
+    path, size and modification time.
     """
 
     global _identity  # noqa: PLW0603 -- process-wide memo
@@ -28,25 +26,6 @@ def code_identity() -> tuple[object, ...]:
         _identity = _compute()
 
     return _identity
-
-
-def _installed_record(root: str) -> bytes | None:
-    """The ``RECORD`` of the distribution ``root`` was installed from, if any."""
-
-    parent = os.path.dirname(root)
-
-    try:
-        with os.scandir(parent) as entries:
-            for entry in entries:
-                name = entry.name.lower()
-
-                if name.startswith("kpip-") and name.endswith(".dist-info"):
-                    with open(os.path.join(entry.path, "RECORD"), "rb") as file:
-                        return file.read()
-    except OSError:
-        return None
-
-    return None
 
 
 def _compute() -> tuple[object, ...]:
@@ -87,10 +66,5 @@ def _source_identity(root: str) -> tuple[object, ...]:
             digest.update(
                 f"{path[prefix:]}\0{stat.st_size}\0{stat.st_mtime_ns}\n".encode()
             )
-
-    record = _installed_record(root)
-
-    if record is not None:
-        digest.update(record)
 
     return ("source", root, digest.hexdigest())

@@ -4,7 +4,6 @@ import importlib.metadata
 import os
 import pathlib
 import sys
-import sysconfig
 from collections.abc import Collection, Iterable
 from importlib.machinery import PathFinder
 from typing import TYPE_CHECKING, Protocol
@@ -259,10 +258,6 @@ class InstalledDistribution:
         files = self.raw.files or ()
 
         return sorted(str(file) for file in files)
-
-
-def default_lib_path() -> str:
-    return sysconfig.get_paths()["purelib"]
 
 
 def user_lib_path() -> str:

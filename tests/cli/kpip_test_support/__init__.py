@@ -24,7 +24,6 @@ from zipfile import ZipFile
 import pytest
 from kpip.cli import main
 from kpip.core.direct_url import DIRECT_URL_METADATA_NAME, DirectUrl
-from kpip.host.locations.base import get_major_minor_version
 from kpip_test_support.filesystem import create_file
 from kpip_test_support.venv import VirtualEnvironment
 from kpip_test_support.wheel import make_wheel
@@ -35,7 +34,7 @@ WORKSPACE_ROOT = pathlib.Path(__file__).resolve().parents[3]
 DATA_DIR = pathlib.Path(__file__).resolve().parents[1].joinpath("data")
 SRC_DIR = WORKSPACE_ROOT
 
-pyversion = get_major_minor_version()
+pyversion = f"{sys.version_info.major}.{sys.version_info.minor}"
 
 CURRENT_PY_VERSION_INFO = sys.version_info[:3]
 
