@@ -9,6 +9,7 @@ import tempfile
 
 from kpip.build.build import unpack_source
 from kpip.build.build_backend import prepare_project_metadata
+from kpip.cli.config import SourceConfig, load_source_config, resolve_sources
 from kpip.cli.dependency_groups import group_items, parse_dependency_groups
 from kpip.cli.lock_format import (
     LOCK_HEADER,
@@ -321,16 +322,40 @@ def _resolved_metadata_name(candidate: object) -> str | None:
         return None
 
 
+def lock_sources(options: Namespace) -> SourceConfig:
+    """Where this lock looks for distributions: the command line over the
+    configuration files and ``KPIP_*`` variables, as for any other command.
+
+    Read once and kept on ``options``, since the replay decision, the
+    session and the resolve each ask.
+    """
+
+    sources = getattr(options, "lock_sources", None)
+
+    if sources is None:
+        sources = resolve_sources(options, load_source_config("lock"))
+
+        options.lock_sources = sources
+
+    return sources
+
+
 def resolves_as_recorded(options: Namespace) -> bool:
     """Whether the lock is given none of the options a replay record and the
     wheelhouse resolve take no account of.
 
     Both answer for the default index, every dependency and the newest final
-    release of each; a lock asked for anything else is resolved in full.
+    release of each; a lock asked for anything else is resolved in full. The
+    index is the one configured, not only the one on the command line: a
+    ``KPIP_INDEX_URL`` pointing elsewhere is as much another index as
+    ``--index-url``.
     """
+
+    sources = lock_sources(options)
+
     return not (
-        options.index_url
-        or options.extra_index_url
+        sources.index_url != DEFAULT_INDEX_URL
+        or sources.extra_index_urls
         or options.groups
         or options.requirements_from_scripts
         or options.build_constraint_files
@@ -355,10 +380,12 @@ def lock_replay_key(
     ``previous`` is the lock it starts from, as ``read_previous_lock`` read it.
     """
 
+    sources = lock_sources(options)
+
     if (
         cache_dir is None
-        or options.no_index
-        or options.find_links
+        or sources.no_index
+        or sources.find_links
         or options.editables
         or not resolves_as_recorded(options)
     ):
@@ -368,7 +395,7 @@ def lock_replay_key(
         requirements=options.requirements,
         requirement_files=options.requirement_files,
         constraint_files=options.constraint_files,
-        index_urls=(DEFAULT_INDEX_URL,),
+        index_urls=(sources.index_url or DEFAULT_INDEX_URL,),
         no_binary=options.no_binary,
         no_build_isolation=options.no_build_isolation,
         python_version=options.python_version,
@@ -407,7 +434,9 @@ def replay_after_revalidation(
 
     if page_state(http_cache, record.pages) != FRESH:
         refresh_pages(
-            SimpleIndexSource(DEFAULT_INDEX_URL, (), session),
+            SimpleIndexSource(
+                lock_sources(options).index_url or DEFAULT_INDEX_URL, (), session
+            ),
             stale_pages(http_cache, record.pages),
         )
 
@@ -534,13 +563,15 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     cache_dir = command_cache_dir(options.cache_dir, options.no_cache_dir)
 
-    index_url = options.index_url or DEFAULT_INDEX_URL
+    sources = lock_sources(options)
+
+    index_url = sources.index_url or DEFAULT_INDEX_URL
 
     # The session is told of an index only when one is named: it reads the
     # URL for credentials, which the default index has none of.
-    if options.index_url or options.extra_index_url:
+    if index_url != DEFAULT_INDEX_URL or sources.extra_index_urls:
         resolution_session = DeferredNetworkSession(
-            index_urls=[index_url, *options.extra_index_url],
+            index_urls=[index_url, *sources.extra_index_urls],
             cache_dir=cache_dir,
         )
 
@@ -764,7 +795,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
     if (
         len(string_requirements) == len(requirements)
         and string_requirements
-        and options.no_index
+        and sources.no_index
         and not options.no_binary
         and resolves_as_recorded(options)
         # The wheelhouse path builds its own provider with no target, so it
@@ -772,7 +803,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         and not options.python_version
     ):
         plan = ResolutionEngine.resolve_wheelhouse(
-            options.find_links,
+            sources.find_links,
             string_requirements,
             constraints=constraints,
             session=resolution_session,
@@ -801,10 +832,10 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         def build_resolver() -> ResolutionEngine:
             return ResolutionEngine(
                 provider=lock_provider(
-                    find_links=options.find_links,
+                    find_links=sources.find_links,
                     index_url=index_url,
-                    extra_index_urls=options.extra_index_url,
-                    no_index=options.no_index,
+                    extra_index_urls=sources.extra_index_urls,
+                    no_index=sources.no_index,
                     format_control=format_control,
                     prefer_binary=options.prefer_binary,
                     build_options=build_options,

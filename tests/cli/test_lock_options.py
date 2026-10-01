@@ -142,6 +142,34 @@ class TestLock:
         assert not resolves_as_recorded(options)
         assert lock_replay_key(options, "/cache", None) is None
 
+    def test_a_configured_index_is_not_replayed_as_the_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from kpip.cli.lock import lock_replay_key, resolves_as_recorded
+
+        monkeypatch.setenv("KPIP_INDEX_URL", "https://example.invalid/simple")
+        options = lock_parser().parse_args(["lib"])
+
+        assert not resolves_as_recorded(options)
+        assert lock_replay_key(options, "/cache", None) is None
+
+    def test_configured_sources_are_locked_from(
+        self, wheelhouse: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``KPIP_NO_INDEX`` and ``KPIP_FIND_LINKS`` reach the lock, as pip's do."""
+        from kpip.cli.main import main
+
+        monkeypatch.setenv("KPIP_NO_INDEX", "1")
+        monkeypatch.setenv("KPIP_FIND_LINKS", str(wheelhouse))
+        output = tmp_path / "pylock.toml"
+
+        assert main(["lock", "--no-cache-dir", "app", "-o", str(output)]) == 0
+        assert [
+            line.split('"')[1]
+            for line in output.read_text().splitlines()
+            if line.startswith("url = ")
+        ] == [(wheelhouse / name).as_uri() for name in (APP, LIB)]
+
     def test_a_plain_lock_is_still_replayed(self) -> None:
         from kpip.cli.lock import resolves_as_recorded
 
