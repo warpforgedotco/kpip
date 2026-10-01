@@ -510,6 +510,20 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     return found
 
 
+class EnvironmentWithoutPython(CommandError):
+    """The active environment, by ``VIRTUAL_ENV`` or ``CONDA_PREFIX``, has
+    no Python that runs: what an install would be for is not there."""
+
+    def __init__(self, variable: str, prefix: str) -> None:
+        super().__init__(
+            f"{variable} names {prefix}, which has no working Python: "
+            "activate another environment, deactivate this one, or "
+            "name one with --python"
+        )
+        self.variable = variable
+        self.prefix = prefix
+
+
 def registered_pythons() -> list[str]:
     """The Pythons Windows has registered (PEP 514), newest first.
 
@@ -565,11 +579,7 @@ def _find_target(python: str | None, *, installing: bool) -> Interpreter:
             return probe(identify(prefix))
         except CommandError as exc:
             if installing:
-                raise CommandError(
-                    f"{variable} names {prefix}, which has no working Python: "
-                    "activate another environment, deactivate this one, or "
-                    "name one with --python"
-                ) from exc
+                raise EnvironmentWithoutPython(variable, prefix) from exc
             # Nothing is installed: resolving needs no environment.
             continue
     tried = []

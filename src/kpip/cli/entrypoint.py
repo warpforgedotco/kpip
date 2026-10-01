@@ -23,7 +23,7 @@ from kpip.core import run_options
 from kpip.core.errors import CommandError, KpipError
 from kpip.core.compiled import own_binary
 from kpip.core.temp_dir import global_tempdir_manager
-from kpip.host.interpreter_facts import target_interpreter
+from kpip.host.interpreter_facts import EnvironmentWithoutPython, target_interpreter
 
 if TYPE_CHECKING:
     from typing import NoReturn
@@ -213,10 +213,13 @@ def print_version() -> None:
     # the one it installs for: its own is only what it was built with.
     location = own_binary() or os.path.dirname(os.path.abspath(kpip.__file__))
 
-    # Not the bundled Python's version when none is found: nothing would
-    # be installed for it.
+    # What an install would be for: not the bundled Python's version when
+    # none is found, nor a python on PATH when the active environment's is
+    # gone -- an install would refuse, naming it.
     try:
         python = f"python {target_interpreter().major_minor}"
+    except EnvironmentWithoutPython as exc:
+        python = f"{exc.variable} names {exc.prefix}, which has no working Python"
     except CommandError:
         python = "no Python found to install for"
 

@@ -487,3 +487,29 @@ def test_version_says_when_there_is_no_python_to_install_for(
     entrypoint.print_version()
 
     assert capsys.readouterr().out.rstrip().endswith("(no Python found to install for)")
+
+
+def test_version_names_an_active_environment_without_a_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not a python on PATH, which an install would not use, nor "none
+    found": the environment an install would refuse over."""
+    from kpip.cli import entrypoint
+
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    monkeypatch.delenv("KPIP_PYTHON", raising=False)
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "gone"))
+    link = tmp_path / "bin" / "python3"
+    link.parent.mkdir()
+    link.symlink_to(sys.executable)
+    monkeypatch.setenv("PATH", str(link.parent))
+
+    entrypoint.print_version()
+
+    assert (
+        capsys.readouterr()
+        .out.rstrip()
+        .endswith(
+            f"(VIRTUAL_ENV names {tmp_path / 'gone'}, which has no working Python)"
+        )
+    )
