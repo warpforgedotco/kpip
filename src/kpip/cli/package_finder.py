@@ -91,6 +91,7 @@ def package_finder(
         prefer_binary=options.prefer_binary,
         trusted_hosts=options.trusted_hosts,
         uploaded_prior_to=options.uploaded_prior_to,
+        ignore_requires_python=getattr(options, "ignore_requires_python", False),
         target=target,
     )
     provider.release_control = release_control_from(release_control(options))

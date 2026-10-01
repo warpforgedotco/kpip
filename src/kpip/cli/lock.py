@@ -823,7 +823,9 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
         build_options = build_options_from_requirements(configured)
 
         def lock_provider(**sources: Any) -> CandidateProvider:
-            provider = CandidateProvider.from_options(**sources)
+            provider = CandidateProvider.from_options(
+                **sources, ignore_requires_python=options.ignore_requires_python
+            )
 
             provider.release_control = release_control_from(release_control(options))
 

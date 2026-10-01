@@ -85,6 +85,7 @@ class ResolutionEngine:
                 extra_index_urls=config.index_urls[1:] if config.index_urls else (),
                 no_index=config.no_index,
                 session=session,
+                ignore_requires_python=config.ignore_requires_python,
             )
         self.provider = provider
 

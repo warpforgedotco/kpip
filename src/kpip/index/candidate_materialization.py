@@ -1528,10 +1528,15 @@ class CandidateMaterializer:
                 )
                 metadata_vcs_commit = self.vcs_build_commit(candidate)
 
+                # As the build will be: the settings shape both the metadata
+                # and the wheel built on the way to it.
+                metadata_config_settings = (self.build_options or {}).get(
+                    requirement.raw
+                )
                 metadata_wheel_cache_key = built_wheel_cache_key(
                     candidate,
                     source_hashes=cache_source_hashes,
-                    config_settings=None,
+                    config_settings=metadata_config_settings,
                     build_constraints=self.build_constraints,
                     build_isolation=self.build_isolation,
                     target_key=self.target_key,
@@ -1586,6 +1591,7 @@ class CandidateMaterializer:
                                 build_constraints=self.build_constraints,
                                 build_isolation=self.build_isolation,
                                 on_wheel_built=remember_wheel_if_reusable,
+                                config_settings=metadata_config_settings,
                             )
 
                         except BuildError as exc:

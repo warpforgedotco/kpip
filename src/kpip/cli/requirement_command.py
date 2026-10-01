@@ -416,6 +416,7 @@ def create_candidate_provider(
         locked_links={name: Link(url) for name, url in bundle.locked_links.items()},
         target=target,
         uploaded_prior_to=options.uploaded_prior_to,
+        ignore_requires_python=options.ignore_requires_python,
     )
 
     provider.release_control = bundle.release_control
