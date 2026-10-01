@@ -364,11 +364,20 @@ def _entry_lock(path: str, entry_root: str, digest: str) -> Generator[None, None
     finally:
         os.close(descriptor)
 
+        # Only this kpip's own: another may have taken it for stale since.
         try:
-            os.unlink(path)
+            with open(path, encoding="ascii") as lock:
+                own = lock.read() == str(os.getpid())
 
-        except FileNotFoundError:
-            pass
+        except OSError, ValueError:
+            own = False
+
+        if own:
+            try:
+                os.unlink(path)
+
+            except FileNotFoundError:
+                pass
 
 
 def _record_metadata(
@@ -788,6 +797,14 @@ def _extract_archive(
 
         with open(os.path.join(temporary, "manifest.bin"), "wb") as file:
             marshal.dump(manifest, file)
+
+        # Another kpip may have published it meanwhile -- one that took this
+        # entry's lock for stale while this one worked. Its entry is whole,
+        # and others may be reading it: keep it, and drop this copy.
+        published = load_archive(entry_root, digest)
+
+        if published is not None:
+            return published
 
         _remove_cache_path(entry_root)
 
