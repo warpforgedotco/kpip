@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from kpip.core.urls import path_to_url
-from kpip.resolution.files.pylock import pylock_location
+from kpip.resolution.files.pylock import parse_pylock, pylock_location
 
 WHEEL = "https://files.invalid/packages/demo-1.0-py3-none-any.whl"
 
@@ -37,3 +37,42 @@ def test_a_path_is_relative_to_a_remote_lock() -> None:
         pylock_location("https://locks.invalid/app/pylock.toml", "demo.whl")
         == "https://locks.invalid/app/demo.whl"
     )
+
+
+LOCK = """
+lock-version = "1.0"
+created-by = "test"
+{default_groups}
+
+[[packages]]
+name = "demo"
+version = "1.0"
+marker = "{marker}"
+
+[[packages.wheels]]
+url = "https://files.invalid/packages/demo-1.0-py3-none-any.whl"
+hashes = {{sha256 = "{digest}"}}
+"""
+
+
+@pytest.mark.parametrize(
+    "marker, default_groups, applies",
+    [
+        ("'dev' not in dependency_groups", "", True),
+        ("'dev' in dependency_groups", "", False),
+        ("'dev' in dependency_groups", 'default-groups = ["dev"]', True),
+        ("'test' in dependency_groups", 'default-groups = ["dev"]', False),
+        ("'cli' not in extras", "", True),
+        ("'cli' in extras", "", False),
+    ],
+)
+def test_lock_markers_see_extras_and_dependency_groups(
+    marker: str, default_groups: str, applies: bool
+) -> None:
+    """PEP 751: no extras, and the lock's default groups. Undefined, these
+    variables made every such marker false and the package went missing."""
+    lock = LOCK.format(marker=marker, default_groups=default_groups, digest="0" * 64)
+
+    parsed = parse_pylock("pylock.toml", lock, provider=None)
+
+    assert bool(parsed) is applies

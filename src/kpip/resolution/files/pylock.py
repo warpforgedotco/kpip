@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from kpip.core.errors import InstallationError
 from kpip.core.format_control import FormatControl
-from kpip.core.packaging import SpecifierSet, marker_applies
+from kpip.core.packaging import SpecifierSet, lock_marker_applies
 from kpip.core.urls import path_to_url
 from kpip.core.packaging import requires_python_version
 from kpip.core.versions import Version
@@ -86,6 +86,15 @@ def parse_pylock(
             "no distribution supports this Python version",
         )
 
+    # No extras or groups can be named for a pylock install, so its markers
+    # see none of the former and the lock's default groups, as PEP 751 says.
+    groups = lock.get("default-groups")
+    default_groups = (
+        tuple(group for group in groups if isinstance(group, str))
+        if isinstance(groups, list)
+        else ()
+    )
+
     results: list[ParsedRequirement] = []
 
     for package in packages:
@@ -100,7 +109,9 @@ def parse_pylock(
         # here: PEP 751 installs what applies, without resolving.
         marker = package.get("marker")
 
-        if isinstance(marker, str) and not marker_applies(marker):
+        if isinstance(marker, str) and not lock_marker_applies(
+            marker, dependency_groups=default_groups
+        ):
             continue
 
         requires_python = package.get("requires-python")

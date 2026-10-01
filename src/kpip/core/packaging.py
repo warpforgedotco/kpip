@@ -20,7 +20,7 @@ from kpip.core.versions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from typing import Any
 
 REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
@@ -1187,9 +1187,43 @@ def _marker_applies_cached(marker: str, extras: tuple[str, ...]) -> bool:
     return marker_applies_internal(marker, default_environment(), set(extras))
 
 
+def lock_marker_applies(
+    marker: str | None,
+    *,
+    extras: Iterable[str] = (),
+    dependency_groups: Iterable[str] = (),
+) -> bool:
+    """Whether a pylock package guarded by ``marker`` applies here.
+
+    PEP 751 lets a lock's markers test the ``extras`` and
+    ``dependency_groups`` being installed, as sets. Neither is in the
+    environment a dependency's marker sees, so evaluated that way every such
+    marker named an undefined variable, and the package was skipped -- even
+    ``'dev' not in dependency_groups``.
+    """
+    if not marker:
+        return True
+
+    return _lock_marker_applies_cached(
+        marker, frozenset(extras), frozenset(dependency_groups)
+    )
+
+
+@memoized(1024)
+def _lock_marker_applies_cached(
+    marker: str, extras: frozenset[str], dependency_groups: frozenset[str]
+) -> bool:
+    environment = {
+        **default_environment(),
+        "extras": extras,
+        "dependency_groups": dependency_groups,
+    }
+    return marker_applies_internal(marker, environment, set())
+
+
 def marker_applies_internal(
     marker: str,
-    env: dict[str, str],
+    env: Mapping[str, Any],
     extras: set[str],
 ) -> bool:
     """Evaluate ``marker`` against ``env``, once per extra in ``extras``.
