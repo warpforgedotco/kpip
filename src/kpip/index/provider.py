@@ -105,6 +105,12 @@ def _exact_pin(requirement: Requirement) -> bool:
     )
 
 
+_TAG_RANK_ORDER = "rank-order-2"
+"""Which ``wheel_tag_rank`` order the persisted catalog choices were made
+under; 2 lists older abi3 and ``py3X`` tags where packaging's ``sys_tags``
+does."""
+
+
 class CandidateProvider:
     def __init__(
         self,
@@ -600,7 +606,9 @@ class CandidateProvider:
 
             # A choice made ignoring data-requires-python is no choice for a
             # resolve that honours it, so the two are filed apart.
-            key_parts = [str(tag) for tag in supported_tags]
+            # The order, too: a choice stored under another ranking of these
+            # tags may be the file that ranking preferred.
+            key_parts = [_TAG_RANK_ORDER, *(str(tag) for tag in supported_tags)]
 
             if self.ignore_requires_python:
                 key_parts.append("ignore-requires-python")

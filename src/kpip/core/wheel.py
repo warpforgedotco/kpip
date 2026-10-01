@@ -1014,32 +1014,152 @@ def wheel_tag_rank(
 ) -> int | None:
     """How good a fit ``tags`` are here: lower is better, None if none fits.
 
-    The index of the first supported tag any of them matches, scaled, plus
-    how far the match reaches within it. One supported tag stands for a
-    range -- a glibc and every older one, a macOS version and every older
-    one with each compatible architecture, an interpreter and every older
-    abi3 or pure-Python minor -- and pip ranks the newest and most specific
-    member of each range first: manylinux_2_28 over manylinux_2_17, arm64
-    over universal2, cp311-abi3 over cp39-abi3.
+    The position packaging's ``sys_tags`` would give the best of them. One
+    supported tag stands for a range -- a glibc and every older one, a macOS
+    version and every older one with each compatible architecture, an
+    interpreter and every older abi3 or pure-Python minor -- and pip ranks
+    the newest and most specific member of each range first: manylinux_2_28
+    over manylinux_2_17, arm64 over universal2, cp311-abi3 over cp39-abi3.
+    Older interpreters are not ranked with their supported tag, though:
+    packaging lists cp39-abi3 after cp312-none, and py38-none-any after
+    py3-none-any, so their matches rank where :func:`_rank_layout` puts them.
     """
     supported = supported_wheel_tags() if supported_tags is None else supported_tags
+    layout = None
+    best = None
 
     for index, supported_tag in enumerate(supported):
-        best = None
+        # Every later tag ranks from its base up, and bases only grow; so a
+        # match of a tag's own interpreter ends the search at the next one.
+        if best is not None and layout is not None and layout[index][0] >= best:
+            break
         for tag in tags:
             if tag_matches(supported_tag, tag):
-                reach = _match_reach(supported_tag, tag)
-                if best is None or reach < best:
-                    best = reach
-        if best is not None:
-            return index * _RANK_SCALE + best
+                if layout is None:
+                    layout = _layout_for(supported)
+                base, older_base, stride, platform_index, older = layout[index]
+                distance, platform = _match_reach(supported_tag, tag)
+                if distance and older_base >= 0:
+                    rank = (
+                        older_base
+                        + (min(distance, older) - 1) * stride
+                        + platform_index * _PLATFORM_SCALE
+                        + platform
+                    )
+                else:
+                    rank = base + platform
+                if best is None or rank < best:
+                    best = rank
 
-    return None
+    return best
 
 
-_RANK_SCALE = 10_000
-"""Room within one supported tag's rank for how far a match reaches; the
-largest rank stays well below the 1,000,000 callers use for "no rank"."""
+def _layout_for(
+    supported: tuple[WheelTag, ...],
+) -> tuple[tuple[int, int, int, int, int], ...]:
+    """:func:`_rank_layout`, for the tuple nearly every call ranks against
+    without hashing it: a resolve holds one, and it is compared by identity."""
+    global _last_layout
+    last = _last_layout
+    if last[0] is supported:
+        return last[1]
+    layout = _rank_layout(supported)
+    _last_layout = (supported, layout)
+    return layout
+
+
+_last_layout: tuple[Any, tuple[tuple[int, int, int, int, int], ...]] = (None, ())
+"""The supported tuple last ranked against, and its :func:`_rank_layout`."""
+
+_PLATFORM_SCALE = 1_000
+"""Room within one supported tag's rank for how far a platform match reaches;
+the largest rank stays well below the 1,000,000 callers use for "no rank"."""
+
+
+def _older_range(tag: WheelTag) -> int:
+    """How many older minors ``tag`` also stands for: every abi3 CPython and
+    pure-Python ``py3X`` down to the first, as packaging lists them; 0 for a
+    tag that matches its own interpreter alone."""
+    interpreter = tag._interpreter_lower
+    abi = tag._abi_lower
+    if len(interpreter) < 4 or not interpreter[3:].isdigit():
+        return 0
+    if (abi in ("abi3", "abi3t") and interpreter.startswith("cp")) or (
+        abi == "none" and interpreter.startswith("py")
+    ):
+        return int(interpreter[3:])
+    return 0
+
+
+@memoized(64)
+def _rank_layout(
+    supported: tuple[WheelTag, ...],
+) -> tuple[tuple[int, int, int, int, int], ...]:
+    """Where each supported tag's matches rank, as packaging orders them.
+
+    For each tag ``(base, older_base, stride, platform_index, older)``: a
+    match of its own interpreter ranks from ``base``; one of an older
+    interpreter -- cp39-abi3 under cp312-abi3, at most ``older`` minors down
+    -- from ``older_base``, a ``stride`` per minor, then by platform. packaging lists those older ones after every
+    platform of the interpreter's last ABI (cp312-none-<platform>), or, for
+    ``py3X-none``, after ``py3-none``, minor by minor and each over every
+    platform, so that is where their room is made.
+    """
+    count = len(supported)
+    layout: list[tuple[int, int, int, int, int]] = [(0, -1, 0, 0, 0)] * count
+    groups: list[tuple[int, int]] = []
+    start = 0
+    while start < count:
+        key = (supported[start]._interpreter_lower, supported[start]._abi_lower)
+        end = start + 1
+        while (
+            end < count
+            and (supported[end]._interpreter_lower, supported[end]._abi_lower) == key
+        ):
+            end += 1
+        groups.append((start, end))
+        start = end
+
+    cursor = 0
+    # Groups with older minors whose room is not made yet, with the
+    # interpreters that may still come before it.
+    pending: list[tuple[int, int, tuple[str, ...]]] = []
+
+    def make_room(group_start: int, group_end: int) -> None:
+        nonlocal cursor
+        size = group_end - group_start
+        stride = size * _PLATFORM_SCALE
+        older = _older_range(supported[group_start])
+        for offset, index in enumerate(range(group_start, group_end)):
+            base = layout[index][0]
+            layout[index] = (base, cursor, stride, offset, older)
+        cursor += older * stride
+
+    for group_start, group_end in groups:
+        interpreter = supported[group_start]._interpreter_lower
+        waiting = []
+        for entry in pending:
+            if interpreter in entry[2]:
+                waiting.append(entry)
+            else:
+                make_room(entry[0], entry[1])
+        pending = waiting
+        for index in range(group_start, group_end):
+            layout[index] = (cursor, -1, 0, 0, 0)
+            cursor += _PLATFORM_SCALE
+        if _older_range(supported[group_start]):
+            followers = (
+                (interpreter, f"py{interpreter[2]}")
+                if interpreter.startswith("py")
+                else (interpreter,)
+            )
+            pending.append((group_start, group_end, followers))
+
+    for entry in pending:
+        make_room(entry[0], entry[1])
+
+    return tuple(layout)
+
 
 _MACOS_ARCH_PREFERENCE = {
     "x86_64": ("x86_64", "intel", "fat64", "fat32", "universal2", "universal"),
@@ -1075,11 +1195,11 @@ def _macos_steps(runtime: tuple[int, int], wheel: tuple[int, int]) -> int:
     return max(0, position(runtime) - position(wheel))
 
 
-def _match_reach(supported: WheelTag, candidate: WheelTag) -> int:
-    """How far below the supported tag a matching ``candidate`` sits: 0 for
-    the tag itself, more for an older interpreter, libc or macOS version, or
-    a less specific architecture. Interpreter reach weighs most, as pip
-    lists every platform of one interpreter before the next older one."""
+def _match_reach(supported: WheelTag, candidate: WheelTag) -> tuple[int, int]:
+    """How far below the supported tag a matching ``candidate`` sits: how
+    many minors older its interpreter is, and how far its platform reaches
+    -- 0 for the tag itself, more for an older libc or macOS version, or a
+    less specific architecture."""
     interpreter = _minor_distance(
         supported._interpreter_lower, candidate._interpreter_lower
     )
@@ -1109,7 +1229,7 @@ def _match_reach(supported: WheelTag, candidate: WheelTag) -> int:
             arches = _MACOS_ARCH_PREFERENCE.get(runtime_parts[3], ())
             arch = arches.index(wheel_parts[3]) if wheel_parts[3] in arches else 0
             platform = versions * 8 + arch
-    return min(interpreter * 1_000 + min(max(platform, 0), 999), _RANK_SCALE - 1)
+    return interpreter, min(max(platform, 0), _PLATFORM_SCALE - 1)
 
 
 def wheel_archive_identity(

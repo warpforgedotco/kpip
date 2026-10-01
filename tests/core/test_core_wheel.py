@@ -568,6 +568,26 @@ def test_pure_wheel_for_an_older_minor_is_compatible(
             "demo-1.0-cp311-abi3-manylinux_2_28_x86_64.whl",
             "demo-1.0-cp312-cp312-manylinux_2_17_x86_64.whl",
         ),
+        # Older interpreters come after the newest's last tag of their kind:
+        # these two ranked the other way round.
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-cp39-abi3-manylinux_2_28_x86_64.whl",
+            "demo-1.0-cp312-none-manylinux_2_28_x86_64.whl",
+        ),
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-py38-none-any.whl",
+            "demo-1.0-py3-none-any.whl",
+        ),
+        (
+            "manylinux_2_35_x86_64",
+            "3.12",
+            "demo-1.0-py38-none-manylinux_2_28_x86_64.whl",
+            "demo-1.0-py3-none-manylinux_2_28_x86_64.whl",
+        ),
     ],
 )
 def test_newest_and_most_specific_match_ranks_first(
