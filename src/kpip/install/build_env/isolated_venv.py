@@ -4,7 +4,8 @@ import json
 import os
 import subprocess
 
-from kpip.core.errors import DiagnosticKpipError
+from kpip.core.errors import CommandError, DiagnosticKpipError
+from kpip.host.interpreter_facts import interpreter_at
 
 
 class VenvCreationError(DiagnosticKpipError):
@@ -69,6 +70,32 @@ _VENV_PATHS = (
 )
 
 
+def _layout_from_facts(env_path: str, python: str) -> CreatedVenv | None:
+    """The new environment's layout, from what ``python`` already said of
+    itself: its ``venv`` scheme, there from 3.11, laid out at ``env_path``.
+    ``None`` -- asking the environment instead -- for an older Python."""
+    try:
+        interpreter = interpreter_at(python)
+    except CommandError:
+        return None
+    if "venv" not in interpreter.schemes:
+        return None
+    try:
+        paths = interpreter.paths("venv", {"base": env_path, "platbase": env_path})
+    except AttributeError:
+        return None
+    executable = os.path.join(
+        paths["scripts"], "python.exe" if os.name == "nt" else "python"
+    )
+    if not os.path.exists(executable):
+        return None
+    return CreatedVenv(
+        lib_dirs=[paths["purelib"]],
+        bin_path=paths["scripts"],
+        python_executable=executable,
+    )
+
+
 def _create_with_interpreter(
     env_path: str, *, with_pip: bool, python: str
 ) -> CreatedVenv:
@@ -97,6 +124,10 @@ def _create_with_interpreter(
             capture_output=True,
             text=True,
         )
+
+        known = _layout_from_facts(env_path, python)
+        if known is not None:
+            return known
 
         executable = (
             os.path.join(env_path, "Scripts", "python.exe")
