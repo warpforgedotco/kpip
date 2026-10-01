@@ -1092,3 +1092,41 @@ def test_an_upgrade_over_an_egg_info_removes_its_installed_files(
     assert not (target / "owner_demo" / "legacy.py").exists()
     assert not info.exists()
     assert (target / "owner_demo-2.0.dist-info").is_dir()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="os.chmod ignores mode bits on Windows")
+def test_installed_files_take_default_modes_under_the_umask(tmp_path: Path) -> None:
+    """A member's raw zip mode is whatever its builder had: only whether it
+    is executable carries over, as 0o777 or 0o666 under the umask, as pip
+    installs it -- never world-writable or setuid as shipped."""
+    from kpip.network.cache import process_umask
+
+    wheel = tmp_path / "modes_demo-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, mode in (
+            ("modes_demo/__init__.py", 0o100666),
+            ("modes_demo/tool.sh", 0o104777),
+            ("modes_demo/big.bin", 0o100666),
+        ):
+            info = zipfile.ZipInfo(name)
+            info.external_attr = mode << 16
+            size = 2 * 1024 * 1024 if name.endswith(".bin") else 1
+            archive.writestr(info, b"x" * size)
+        archive.writestr(
+            "modes_demo-1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: modes-demo\nVersion: 1.0\n",
+        )
+        archive.writestr(
+            "modes_demo-1.0.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr("modes_demo-1.0.dist-info/RECORD", "")
+    target = tmp_path / "target"
+
+    install_wheel(wheel, target=str(target), pycompile=False)
+
+    umask = process_umask()
+    package = target / "modes_demo"
+    assert os.stat(package / "__init__.py").st_mode & 0o7777 == 0o666 & ~umask
+    assert os.stat(package / "big.bin").st_mode & 0o7777 == 0o666 & ~umask
+    assert os.stat(package / "tool.sh").st_mode & 0o7777 == 0o777 & ~umask

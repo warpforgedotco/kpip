@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 
 from kpip.install import transaction
@@ -529,3 +530,43 @@ def test_a_backup_on_another_volume_is_renamed_beside_its_original(
     kept.finish_successfully()
     assert not original.exists()
     assert not list(tmp_path.glob("module.pyd.kpip-backup-*"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="os.chmod ignores mode bits on Windows")
+def test_a_hard_linked_clone_never_loosens_the_cache_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clone may be a hard link into the archive cache: a chmod of it is a
+    chmod of the cache's file, which is only ever tightened."""
+    source = tmp_path / "cache" / "module.py"
+    source.parent.mkdir()
+    source.write_text("cached")
+    source.chmod(0o600)
+    monkeypatch.setattr(transaction, "clone_path", os.link)
+    destination = tmp_path / "site" / "module.py"
+
+    with InstallTransaction() as install_transaction:
+        install_transaction.add_clone(str(source), str(destination), mode=0o644)
+        install_transaction.commit()
+
+    assert stat_mode(source) == 0o600
+    assert stat_mode(destination) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="os.chmod ignores mode bits on Windows")
+def test_an_unshared_clone_takes_its_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "cache" / "tool"
+    source.parent.mkdir()
+    source.write_text("cached")
+    source.chmod(0o644)
+    monkeypatch.setattr(transaction, "clone_path", shutil.copyfile)
+    destination = tmp_path / "site" / "tool"
+
+    with InstallTransaction() as install_transaction:
+        install_transaction.add_clone(str(source), str(destination), mode=0o755)
+        install_transaction.commit()
+
+    assert stat_mode(source) == 0o644
+    assert stat_mode(destination) == 0o755

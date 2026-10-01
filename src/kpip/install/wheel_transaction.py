@@ -42,9 +42,10 @@ from kpip.install.wheel_archive import (
     ResolvedRoots,
     copy_member_with_metadata,
     destination_internal_parts_text,
+    installed_mode,
+    zip_mode,
     record_metadata_internal,
     validate_member_parts,
-    zip_mode,
 )
 from kpip.install.wheel_archive_cache import INSTALL_WORKERS, CachedWheelArchive
 from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
@@ -62,6 +63,7 @@ from kpip.install.wheel_state import (
     compiled_files,
     existing_paths,
 )
+from kpip.network.cache import process_umask
 from kpip.install.wheel_transaction_direct import (
     DIRECT_CONTENT_BATCH_LIMIT,
     direct_batch_preflight,
@@ -342,6 +344,7 @@ def install_wheel_internal(
                     record_key,
                 ) = member_paths.resolve(member.filename)
                 relative_name = relative_parts[-1] if relative_parts else ""
+                mode = installed_mode(zip_mode(member))  # ty:ignore[invalid-argument-type]
                 if relative_parts and relative_parts[0].endswith(".dist-info"):
                     dist_info = relative_parts[0]
                 # The wheel's own RECORD and METADATA, not a vendored copy
@@ -415,7 +418,7 @@ def install_wheel_internal(
                         record_metadata[source_text] = metadata
                     contents = None
                 if direct and contents is not None and not direct_content:
-                    write_direct(destination_text, contents, zip_mode(member))  # ty:ignore[invalid-argument-type]
+                    write_direct(destination_text, contents, mode)
                 if contents is not None and not direct_content and not direct:
                     with open(source_text, "wb") as file:
                         file.write(contents)
@@ -431,7 +434,7 @@ def install_wheel_internal(
                         metadata = record_metadata_internal(contents)
                     if direct_content:
                         if direct:
-                            write_direct(destination_text, contents, zip_mode(member))  # ty:ignore[invalid-argument-type]
+                            write_direct(destination_text, contents, mode)
                         else:
                             direct_contents[destination_text] = contents
                         direct_metadata[destination_text] = metadata
@@ -439,7 +442,6 @@ def install_wheel_internal(
                         direct_metadata[destination_text] = metadata
                     else:
                         record_metadata[source_text] = metadata
-                mode = zip_mode(member)  # ty:ignore[invalid-argument-type]
                 if (
                     pycompile
                     and isinstance(member, CachedWheelInfo)
@@ -762,6 +764,9 @@ def install_wheels_transactionally(
     touches nothing in the target and would otherwise serialize too.
     """
 
+    # Read before any worker thread writes a file: without /proc the umask
+    # is read by setting it, which a file created meanwhile would get.
+    process_umask()
     requests = tuple(items)
     planned_candidates = (
         tuple(candidates)

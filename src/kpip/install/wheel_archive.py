@@ -11,6 +11,7 @@ import stat
 
 from kpip.core.errors import InstallationError
 from kpip.install.bytecode import pyc_name
+from kpip.network.cache import process_umask
 
 if TYPE_CHECKING:
     import zipfile
@@ -329,6 +330,21 @@ def mode_from_external_attr(external_attr: int) -> int | None:
 
 def zip_mode(info: zipfile.ZipInfo) -> int | None:
     return mode_from_external_attr(info.external_attr)
+
+
+def installed_mode(mode: int | None) -> int | None:
+    """The mode a member of zip mode ``mode`` is installed with, ``None``
+    for the default.
+
+    Only whether the wheel marks it executable is kept: 0o777 if so, any
+    other 0o666, under the process umask -- as pip and uv install files, and
+    as the archive cache extracts them. The raw bits are whatever the
+    builder's filesystem had, and a world-writable or setuid member must not
+    install as one.
+    """
+    if mode is None:
+        return None
+    return (0o777 if mode & 0o111 else 0o666) & ~process_umask()
 
 
 def record_metadata_internal(contents: bytes) -> tuple[str, str]:

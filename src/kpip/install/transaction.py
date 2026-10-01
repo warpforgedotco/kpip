@@ -279,6 +279,9 @@ class InstallTransaction:
                         assert item.source_text is not None
                         if item.clone:
                             clone_path(item.source_text, item.destination_text)
+                            append_created(item.destination_text)
+                            if item.mode is not None:
+                                _chmod_clone(item.destination_text, item.mode)
                         else:
                             try:
                                 replace(item.source_text, item.destination_text)
@@ -286,9 +289,9 @@ class InstallTransaction:
                                 if exc.errno != errno.EXDEV:
                                     raise
                                 shutil.move(item.source_text, item.destination_text)
-                        append_created(item.destination_text)
-                        if item.mode is not None:
-                            chmod(item.destination_text, item.mode)
+                            append_created(item.destination_text)
+                            if item.mode is not None:
+                                chmod(item.destination_text, item.mode)
                     else:
                         append_created(item.destination_text)
                         write_path = item.destination_text
@@ -399,6 +402,23 @@ class InstallTransaction:
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         if not self.finished:
             self.rollback()
+
+
+def _chmod_clone(path: str, mode: int) -> None:
+    """Give the clone at ``path`` ``mode``, short of loosening a shared inode.
+
+    A clone may be a hard link into the archive cache, where a chmod changes
+    the cache's file and every other install linked to it. It is left alone
+    when it already has ``mode``, and a hard link is only ever tightened:
+    the cache entry was extracted under the same rule, so its mode differs
+    only under another umask, and a stricter one is the safe one to keep.
+    """
+    path_stat = os.lstat(path)
+    current = stat.S_IMODE(path_stat.st_mode)
+    if path_stat.st_nlink > 1:
+        mode &= current
+    if mode != current:
+        os.chmod(path, mode)
 
 
 def _same_volume(path: str, directory: str) -> bool:
