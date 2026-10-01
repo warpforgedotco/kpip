@@ -19,9 +19,11 @@ from kpip.core.errors import BuildError
 from kpip.core.metadata import clear_installed_index
 from kpip.core.temp_dir import build_directory
 from kpip.host import environment_checks
+from kpip.core.errors import CommandError
 from kpip.host.environment_checks import (
     ExternallyManagedEnvironment,
     check_externally_managed,
+    check_system_python,
     warn_if_run_as_root,
 )
 
@@ -246,3 +248,61 @@ def test_build_requirements_are_checked_in_the_build_interpreters_environment(
 
     with pytest.raises(BuildError, match="missing: 'gone'"):
         check_build_requirements("/project", ["simple", "gone"])
+
+
+@pytest.fixture
+def python_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A compiled kpip with no environment, its target the Python on PATH."""
+    interpreter = types.SimpleNamespace(
+        executable="/usr/bin/python3", in_virtualenv=False
+    )
+    monkeypatch.setattr(environment_checks, "is_compiled", lambda: True)
+    monkeypatch.setattr(environment_checks, "active_environments", list)
+    monkeypatch.setattr(environment_checks, "target_interpreter", lambda: interpreter)
+    for name in ("KPIP_PYTHON", "KPIP_SYSTEM_PYTHON"):
+        monkeypatch.delenv(name, raising=False)
+    return interpreter
+
+
+def test_a_python_on_path_is_changed_only_with_system(python_on_path) -> None:
+    """As uv: nobody chose it, and it is often the system's own."""
+    with pytest.raises(CommandError, match="/usr/bin/python3 on PATH.*--system"):
+        check_system_python(False)
+
+    check_system_python(True)
+
+
+def test_system_can_be_said_by_the_environment(
+    python_on_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KPIP_SYSTEM_PYTHON", "1")
+
+    check_system_python(False)
+
+
+def test_a_chosen_python_needs_no_system(
+    python_on_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python_on_path.in_virtualenv = True
+    check_system_python(False)
+
+    python_on_path.in_virtualenv = False
+    monkeypatch.setattr(
+        environment_checks, "active_environments", lambda: [("conda", "/conda")]
+    )
+    check_system_python(False)
+
+    monkeypatch.setattr(environment_checks, "active_environments", list)
+    monkeypatch.setenv("KPIP_PYTHON", "/usr/bin/python3")
+    check_system_python(False)
+
+
+def test_install_refuses_a_python_on_path_before_writing(
+    python_on_path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from kpip.cli.main import main
+
+    assert main(["install", "--no-index", "demo"]) != 0
+    assert "pass --system" in capsys.readouterr().err
+    assert main(["uninstall", "-y", "demo"]) != 0
+    assert "pass --system" in capsys.readouterr().err

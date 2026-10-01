@@ -11,6 +11,7 @@ from kpip.cli.parsers.uninstall import create_parser
 from kpip.core.packaging import parse_requirement
 from kpip.host.environment_checks import (
     check_externally_managed,
+    check_system_python,
     warn_if_run_as_root,
 )
 from kpip.install.requirements import RequirementInstaller
@@ -40,6 +41,7 @@ def run_uninstall(args: list[str]) -> int:
     if not packages:
         parser.error("You must give at least one package to uninstall")
 
+    check_system_python(options.system)
     if not options.break_system_packages:
         check_externally_managed()
 

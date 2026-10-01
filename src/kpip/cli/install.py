@@ -54,6 +54,7 @@ from kpip.core.wheel import (
 )
 from kpip.host.environment_checks import (
     check_externally_managed,
+    check_system_python,
     warn_if_run_as_root,
 )
 from kpip.host.interpreter_facts import target_interpreter
@@ -993,8 +994,10 @@ def run_install(args: list[str]) -> int:
         and options.prefix is None
     )
 
-    if installs_into_this_environment and not options.break_system_packages:
-        check_externally_managed()
+    if installs_into_this_environment:
+        check_system_python(options.system)
+        if not options.break_system_packages:
+            check_externally_managed()
 
     if not options.dry_run:
         # Before anything is written: scripts name the Python they run with,

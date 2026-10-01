@@ -78,8 +78,10 @@ is the first of:
 5. the first `python3` or `python` on `PATH` that runs;
 6. on Windows, the newest Python the python.org installer registered.
 
-This is uv's order, except that with none of 1-4, kpip installs for the
-Python on `PATH`, as pip does, where uv asks for `--system`.
+This is uv's order. As uv does, `install` and `uninstall` refuse to change a
+Python found on `PATH` (5-6) unless it is a virtual environment's, or
+`--system` (or `KPIP_SYSTEM_PYTHON=1`) says to: it is often the system's own.
+`--target`, `--prefix` and `--root` write elsewhere, and need no `--system`.
 
 `--python` names a Python or an environment directly. Source distributions
 are built with the same Python, unless `KPIP_BUILD_PYTHON` names another.
@@ -87,6 +89,7 @@ are built with the same Python, unless `KPIP_BUILD_PYTHON` names another.
 | Variable | Effect |
 | --- | --- |
 | `KPIP_BUILD_PYTHON` | The Python source distributions are built with. |
+| `KPIP_SYSTEM_PYTHON` | As `--system`: change a Python found on `PATH`. |
 | `KPIP_CACHE_DIR`, `KPIP_NO_CACHE_DIR` | The cache directory, or no cache. |
 | `KPIP_CONFIG_FILE` | A configuration file to read; `os.devnull` reads none. |
 

@@ -8,8 +8,9 @@ import logging
 import os
 import sys
 
-from kpip.core.errors import KpipError
-from kpip.host.interpreter_facts import target_interpreter
+from kpip.core.compiled import is_compiled
+from kpip.core.errors import CommandError, KpipError
+from kpip.host.interpreter_facts import active_environments, target_interpreter
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,35 @@ def _marker_error(marker: str) -> str | None:
             return section[key]
 
     return None
+
+
+def check_system_python(system: bool) -> None:
+    """Refuse to change a Python nobody chose, as uv does, without ``--system``.
+
+    One is chosen by ``--python``, by being an active or ``.venv``
+    environment, or by being a virtual environment's Python. Only the
+    ``python3`` or ``python`` kpip falls back to on ``PATH`` is left: often
+    the system's own, which an install into would change for everything
+    that uses it.
+    """
+    if system or os.environ.get("KPIP_SYSTEM_PYTHON", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return
+    # A source run changes the Python running it, which the developer chose.
+    if not is_compiled() or os.environ.get("KPIP_PYTHON") or active_environments():
+        return
+    interpreter = target_interpreter()
+    if interpreter.in_virtualenv:
+        return
+    raise CommandError(
+        f"No virtual environment found, and {interpreter.executable} on PATH "
+        "is not one: activate an environment, create a .venv, name a Python "
+        "with --python, or pass --system to change this one"
+    )
 
 
 def check_externally_managed() -> None:

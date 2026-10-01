@@ -522,6 +522,7 @@ def _is_conda_base(prefix: str) -> bool:
     it was created with ``-p``: an environment kept in a directory of its
     own name is not base. Pixi never makes a base environment.
     """
+
     def same(a: str, b: str) -> bool:
         return os.path.normcase(os.path.normpath(a)) == os.path.normcase(
             os.path.normpath(b)

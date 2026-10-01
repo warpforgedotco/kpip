@@ -53,7 +53,9 @@ LEFT_OUT = {
 
 # Options kpip adds to a pip command.
 KPIP_ONLY = {
-    "install": frozenset(("--refresh",)),
+    # --system: uv's guard against changing a Python nobody chose.
+    "install": frozenset(("--refresh", "--system")),
+    "uninstall": frozenset(("--system",)),
     "lock": frozenset(
         (
             "-U",

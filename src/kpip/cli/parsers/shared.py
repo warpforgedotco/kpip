@@ -271,6 +271,7 @@ def add_externally_managed_options(parser: argparse.ArgumentParser) -> None:
     """What ``install`` and ``uninstall`` take about an environment another
     package manager owns, or that root is changing."""
     parser.add_argument("--break-system-packages", action="store_true")
+    parser.add_argument("--system", action="store_true")
     parser.add_argument(
         "--root-user-action", choices=("warn", "ignore"), default="warn"
     )
