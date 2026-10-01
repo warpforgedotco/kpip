@@ -5,10 +5,6 @@ from __future__ import annotations
 import kpip
 from kpip.core.utils import current_version
 
-KPIP_DISTRIBUTION_NAME = "kpip"
-
-KPIP_DISTRIBUTION_NAMES = frozenset((KPIP_DISTRIBUTION_NAME, "kpip"))
-
 
 def get_kpip_version() -> str:
     """Return kpip's version from the application context or ``kpip.__version__``."""

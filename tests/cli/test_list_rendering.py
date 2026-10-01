@@ -167,19 +167,19 @@ def test_nothing_to_list_prints_nothing(
     assert _list(["--format=json"]) == "[]\n"
 
 
-def test_pip_exclusion_covers_kpip(
+def test_excluding_pip_leaves_a_kpip_distribution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
-
+    """kpip is never in an environment it serves: one named kpip is the
+    user's own, which excluding pip does not touch."""
     site = tmp_path / "site"
-    for name in (*KPIP_DISTRIBUTION_NAMES, "pip", "keep"):
-        _dist(site, f"{name.replace('-', '_')}-1.0.dist-info", name, "1.0")
+    for name in ("kpip", "pip", "keep"):
+        _dist(site, f"{name}-1.0.dist-info", name, "1.0")
     monkeypatch.setattr(sys, "path", [str(site)])
     monkeypatch.delenv("KPIP_TARGET_PREFIX", raising=False)
 
     assert _list(["--exclude", "pip"]) == (
-        "Package Version\n------- -------\nkeep    1.0\n"
+        "Package Version\n------- -------\nkeep    1.0\nkpip    1.0\n"
     )
 
 

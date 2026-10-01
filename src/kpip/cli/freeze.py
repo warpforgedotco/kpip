@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, NamedTuple
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.cli.parsers.freeze import create_parser
 from kpip.core.errors import CommandError, InstallationError
-from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.metadata import stdlib_pkgs
 from kpip.core.packaging import canonicalize_name
 from kpip.core.versions import InvalidVersion
+from kpip.host.interpreter_facts import target_interpreter
 from kpip.resolution.files.parser import COMMENT_RE
 from kpip.resolution.input_requirements import (
     install_req_from_editable,
@@ -350,18 +350,29 @@ class FrozenRequirement:
         return "\n".join(list(self.comments) + [str(req)]) + "\n"
 
 
+def _dev_pkgs() -> set[str]:
+    """What pip leaves out of its freeze without ``--all``: itself, and the
+    build backends a virtual environment came with before 3.12 -- judged by
+    the target's version, as pip running under it judges by its own. kpip
+    is never in the environment, so it has nothing of its own to leave out.
+    """
+    pkgs = {"pip"}
+
+    if target_interpreter(installing=False).version < (3, 12):
+        pkgs |= {"setuptools", "distribute", "wheel"}
+
+    return pkgs
+
+
 def run_freeze(args: list[str]) -> int:
     options = create_parser().parse_args(args)
 
     excluded = {canonicalize_name(name) for name in options.exclude}
 
-    if "kpip" in excluded:
-        excluded.update(canonicalize_name(name) for name in KPIP_DISTRIBUTION_NAMES)
-
     skip = set(stdlib_pkgs)
 
     if not options.all:
-        skip.update(KPIP_DISTRIBUTION_NAMES)
+        skip.update(_dev_pkgs())
 
     paths = [os.path.normpath(path) for path in options.path] if options.path else None
 

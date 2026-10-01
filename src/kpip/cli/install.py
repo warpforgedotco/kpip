@@ -40,7 +40,6 @@ from kpip.core.errors import (
     InstallationError,
     ResolutionError,
 )
-from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.metadata import find_installed, installed_index, user_lib_path
 from kpip.core.packaging import (
     canonicalize_name,
@@ -647,7 +646,7 @@ def install_candidate(
 
 
 def warn_about_install_conflicts(changed_names: set[str]) -> None:
-    distributions = InstalledDistributionStore().iter(skip=KPIP_DISTRIBUTION_NAMES)
+    distributions = InstalledDistributionStore().iter()
     distributions_by_name = {dist.canonical_name: dist for dist in distributions}
     dependencies_by_name = installed_dependencies_by_name(distributions)
 

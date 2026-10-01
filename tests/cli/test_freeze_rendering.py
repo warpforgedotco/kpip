@@ -57,7 +57,7 @@ def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "archive_info": {"hashes": {"sha256": "ab" * 32}},
         },
     )
-    _dist(second, "kpip-0.0.1.dist-info", "kpip", "0.0.1")
+    _dist(second, "pip-26.0.dist-info", "pip", "26.0")
     _dist(second, "argparse-1.4.0.dist-info", "argparse", "1.4.0")
     (second / "empty-9.dist-info").mkdir()
     monkeypatch.setattr(
@@ -73,11 +73,12 @@ def test_the_first_of_a_name_on_the_path_is_frozen(site: Path) -> None:
     )
 
 
-def test_all_includes_kpip_itself(site: Path) -> None:
+def test_all_includes_pip(site: Path) -> None:
+    """As pip's freeze leaves itself out without --all."""
     assert _freeze(["--all"]) == (
         "alpha==2.0.1\nempty==9\n"
         + URL_LINE
-        + "kpip==0.0.1\nshadowed==1.0\nZeta-Pkg==1.0\n"
+        + "pip==26.0\nshadowed==1.0\nZeta-Pkg==1.0\n"
     )
 
 
@@ -85,7 +86,7 @@ def test_exclude_drops_a_name(site: Path) -> None:
     assert _freeze(["--exclude", "alpha"]) == (
         "empty==9\n" + URL_LINE + "shadowed==1.0\nZeta-Pkg==1.0\n"
     )
-    assert _freeze(["--exclude", "kpip"]) == _freeze([])
+    assert _freeze(["--all", "--exclude", "pip"]) == _freeze([])
 
 
 def test_path_orders_the_roots_as_given(site: Path) -> None:
@@ -97,7 +98,7 @@ def test_path_orders_the_roots_as_given(site: Path) -> None:
     ) == (
         "alpha==2.0.1\nempty==9\n"
         + URL_LINE
-        + "kpip==0.0.1\nshadowed==2.0\nZeta-Pkg==1.0\n"
+        + "pip==26.0\nshadowed==2.0\nZeta-Pkg==1.0\n"
     )
 
 
@@ -131,3 +132,13 @@ def test_a_version_is_frozen_as_the_parser_spells_it(site: Path) -> None:
 def test_quiet_changes_nothing(site: Path) -> None:
     """pip's freeze writes to stdout itself, so ``-q`` does not silence it."""
     assert _freeze(["-q"]) == _freeze([])
+
+
+def test_a_kpip_distribution_is_frozen_like_any_other(
+    site: Path, tmp_path: Path
+) -> None:
+    """kpip is never in an environment it serves: one named kpip is the
+    user's own, and nothing to leave out."""
+    _dist(tmp_path / "first", "kpip-1.0.dist-info", "kpip", "1.0")
+
+    assert "kpip==1.0\n" in _freeze([])
