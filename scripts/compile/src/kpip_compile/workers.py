@@ -85,16 +85,13 @@ with open(wheel, "rb") as file:
 
 with InterpreterPoolExecutor(max_workers=1) as pool:
     pool.submit(archive_workers._import_kpip).result()
-    # Unpacked twice, into two caches: without byte-compilation and with it,
-    # which a worker does in place, importing what compiling needs.
-    for pycompile in (False, True):
-        pool.submit(
-            archive_workers.unpack_in_worker,
-            wheel,
-            sha256,
-            os.path.join(work, f"cache-{pycompile}"),
-            pycompile,
-        ).result()
+    # A worker only unpacks: the main interpreter byte-compiles.
+    pool.submit(
+        archive_workers.unpack_in_worker,
+        wheel,
+        sha256,
+        os.path.join(work, "cache"),
+    ).result()
     modules = pool.submit(_kpip_worker_probe.loaded).result()
 
 json.dump(modules, sys.stdout)
