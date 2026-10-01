@@ -321,6 +321,11 @@ def prepare(
         cache_dir=cache_dir,
     )
 
+    # As pip: --prefer-binary in a requirements file sets the command's own
+    # option, so it reaches the candidate order and every check that asks.
+    if bundle.prefer_binary:
+        options.prefer_binary = True
+
     constraint_hashes_by_name: dict[str, list[set[str]]] = {}
     for raw, hashes in bundle.constraint_hashes.items():
         constraint_hashes_by_name.setdefault(

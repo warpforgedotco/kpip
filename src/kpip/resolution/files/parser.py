@@ -47,7 +47,9 @@ INCLUDE_OPTION_PREFIXES = ("-r", "--requirement", "-c", "--constraint")
 FIND_LINKS_OPTIONS = frozenset(("-f", "--find-links"))
 INDEX_URL_OPTIONS = frozenset(("-i", "--index-url"))
 EDITABLE_OPTIONS = frozenset(("-e", "--editable"))
-BOOLEAN_OPTIONS = frozenset(("--no-index", "--pre", "--require-hashes"))
+BOOLEAN_OPTIONS = frozenset(
+    ("--no-index", "--pre", "--prefer-binary", "--require-hashes")
+)
 BOM_ENCODINGS = (
     (codecs.BOM_UTF32_BE, "utf-32-be"),
     (codecs.BOM_UTF32_LE, "utf-32-le"),
@@ -395,7 +397,10 @@ def parse_line(
                     ):
                         provider.find_links.append(normalized)
                     else:
-                        provider.find_links.append(value)
+                        # pip expands ${VAR} over the whole line before it
+                        # reads any option; normalize_reference expanded it
+                        # for the branch above.
+                        provider.find_links.append(expand_env_variables(value))
             elif option in INDEX_URL_OPTIONS:
                 if provider is not None and not provider.no_index:
                     provider.index_urls[:] = [normalize_reference(value, filename)]
@@ -420,6 +425,7 @@ def parse_line(
                 if auth is not None:
                     auth.index_urls = []
             elif option == "--trusted-host":
+                value = expand_env_variables(value)
                 session.trusted_hosts.add(trusted_host_key(value))
                 logger.info(
                     "adding trusted host: %r (from line %d of %s)",
@@ -433,6 +439,9 @@ def parse_line(
             elif option == "--require-hashes":
                 if options is not None:
                     options.require_hashes = True
+            elif option == "--prefer-binary":
+                if options is not None:
+                    options.prefer_binary = True
             elif option == "--all-releases":
                 if provider is not None and provider.release_control is not None:
                     provider.release_control.apply("all_releases", value)

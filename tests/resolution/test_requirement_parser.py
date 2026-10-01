@@ -169,3 +169,52 @@ def test_options_do_not_unquote_the_marker(tmp_path: Path, options: str) -> None
     assert [item.requirement for item in results] == [
         'demo==1.0 ; python_version >= "3.8"',
     ]
+
+
+class _Source:
+    def __init__(self) -> None:
+        self.find_links: list[str] = []
+        self.index_urls: list[str] = []
+        self.no_index = False
+        self.format_control = None
+        self.release_control = None
+
+
+class _Session:
+    auth = None
+
+    def __init__(self) -> None:
+        self.trusted_hosts: set[tuple[str, int | None]] = set()
+
+
+def test_prefer_binary_takes_no_value(tmp_path: Path) -> None:
+    """pip 26.2.1 reads ``--prefer-binary`` from a file as its flag."""
+    import argparse
+
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("--prefer-binary\ndemo==1\n", encoding="utf-8")
+    options = argparse.Namespace(require_hashes=False, prefer_binary=False)
+
+    results = parse_requirements(str(requirements), object(), options=options)
+
+    assert [item.requirement for item in results] == ["demo==1"]
+    assert options.prefer_binary is True
+
+
+def test_find_links_and_trusted_host_expand_environment_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pip expands ``${VAR}`` over the whole line before reading options."""
+    monkeypatch.setenv("WHEELS_HOST", "wheels.test")
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text(
+        "-f https://${WHEELS_HOST}/links/\n--trusted-host ${WHEELS_HOST}:8080\n",
+        encoding="utf-8",
+    )
+    source = _Source()
+    session = _Session()
+
+    parse_requirements(str(requirements), session, provider=source)
+
+    assert source.find_links == ["https://wheels.test/links/"]
+    assert session.trusted_hosts == {("wheels.test", 8080)}

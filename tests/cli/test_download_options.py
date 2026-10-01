@@ -141,6 +141,19 @@ class TestDownload:
 
         assert names(tmp_path / "out") == [APP, LIB]
 
+    def test_prefer_binary_from_a_requirements_file(
+        self, wheelhouse: Path, newer_sdist: Path, tmp_path: Path
+    ) -> None:
+        """pip 26.2.1 takes the flag from a file as from the command line."""
+        requirements = tmp_path / "requirements.txt"
+        requirements.write_text("--prefer-binary\napp\n")
+
+        assert (
+            run("download", wheelhouse, "-r", requirements, "-d", tmp_path / "out") == 0
+        )
+
+        assert names(tmp_path / "out") == [APP, LIB]
+
     def test_no_binary_takes_the_source_distribution(
         self, wheelhouse: Path, newer_sdist: Path, tmp_path: Path
     ) -> None:

@@ -56,6 +56,7 @@ class RequirementsBundle:
             "locked_direct_names",
             "release_control",
             "require_hashes",
+            "prefer_binary",
             "session",
             "only_locked",
         ],
@@ -81,6 +82,7 @@ class RequirementsBundle:
         require_hashes: bool = False,
         session: Any = None,
         only_locked: bool = False,
+        prefer_binary: bool = False,
     ) -> None:
         self.requirements = requirements
 
@@ -119,6 +121,10 @@ class RequirementsBundle:
         )
 
         self.require_hashes = require_hashes
+
+        # --prefer-binary in a requirements file, which the command adds to
+        # its own flag.
+        self.prefer_binary = prefer_binary
 
         self.session = session
 
@@ -372,7 +378,9 @@ def collect_requirements(
 
     bundle_format_control = format_control or FormatControl()
 
-    option_state = argparse.Namespace(require_hashes=require_hashes)
+    option_state = argparse.Namespace(
+        require_hashes=require_hashes, prefer_binary=False
+    )
 
     local_only = (
         bundle_no_index
@@ -533,6 +541,7 @@ def collect_requirements(
                 and (bool(requirement_hashes) or bool(constraint_hashes))
             )
         ),
+        prefer_binary=option_state.prefer_binary,
         session=session,
     )
 
