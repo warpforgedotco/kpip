@@ -12,12 +12,10 @@ import json
 import os
 import subprocess
 import tempfile
-from contextlib import contextmanager
 
 from kpip.core.interpreter import build_interpreter
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from typing import Any
 
 
@@ -85,11 +83,6 @@ class BuildBackendHookCaller:
             python_executable = build_interpreter()
 
         self.python_executable = python_executable
-
-    @contextmanager
-    def subprocess_runner(self, runner: Any) -> Iterator[None]:
-        del runner
-        yield
 
     def _call(self, hook: str, **kwargs: Any) -> Any:
         with tempfile.TemporaryDirectory(prefix="kpip-pep517-") as directory:

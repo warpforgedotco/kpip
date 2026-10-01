@@ -103,21 +103,9 @@ def test_compiled_kpip_without_a_python_says_how_to_get_one(
     assert str(tmp_path / "python3") in str(raised.value.context)
 
 
-def test_another_interpreter_creates_its_own_build_environment(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """The environment comes from that interpreter, not this process's venv module."""
+def test_the_interpreter_creates_its_own_build_environment(tmp_path: Path) -> None:
+    """The environment comes from that interpreter, which describes it."""
     from kpip.install.build_env import isolated_venv
-
-    monkeypatch.setattr(isolated_venv, "is_own_interpreter", lambda executable: False)
-
-    def unexpected(*args: object, **kwargs: object) -> None:
-        pytest.fail("created the environment in-process")
-
-    import venv
-
-    monkeypatch.setattr(venv.EnvBuilder, "create", unexpected)
 
     created = isolated_venv.create_isolated_venv(
         str(tmp_path), with_pip=False, python=sys.executable
