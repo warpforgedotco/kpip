@@ -400,6 +400,7 @@ class BackendRunner:
                 backend_path=list(self.spec.backend_path) or None,
                 python_executable=venv.python_executable,
                 scripts_dir=venv.bin_path,
+                isolated=True,
             )
 
             yield caller, scratch

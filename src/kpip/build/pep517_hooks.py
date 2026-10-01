@@ -41,11 +41,9 @@ import os
 import sys
 import traceback
 
-hook_name, control_dir = sys.argv[1:]
-module_name, _, object_path = os.environ["KPIP_BUILD_BACKEND"].partition(":")
-backend_path = os.environ.get("KPIP_BUILD_BACKEND_PATH")
-if backend_path:
-    sys.path[:0] = backend_path.split(os.pathsep)
+hook_name, control_dir, backend_name, *backend_path = sys.argv[1:]
+module_name, _, object_path = backend_name.partition(":")
+sys.path[:0] = backend_path
 backend = importlib.import_module(module_name)
 for part in object_path.split(".") if object_path else ():
     backend = getattr(backend, part)
@@ -78,8 +76,12 @@ class BuildBackendHookCaller:
         backend_path: list[str] | None = None,
         python_executable: str | None = None,
         scripts_dir: str | None = None,
+        isolated: bool = False,
     ) -> None:
         self.source_dir = os.path.abspath(source_dir)
+        # Whether the interpreter is an isolated build environment's: its
+        # hooks see only what the environment has.
+        self.isolated = isolated
         # An isolated build environment's own scripts, first on the hook's
         # PATH: backends such as maturin run the tool their build
         # requirements installed there, as pip's build environments allow.
@@ -101,7 +103,16 @@ class BuildBackendHookCaller:
             with open(input_path, "w", encoding="utf-8") as stream:
                 json.dump(kwargs, stream)
             environment = os.environ.copy()
-            environment["KPIP_BUILD_BACKEND"] = self.backend
+            if self.isolated:
+                # What the user's PYTHONPATH names would stand in for the
+                # environment's own build requirements, as pip's
+                # BuildEnvironment keeps it from doing; kpip's own settings
+                # are for kpip, not a backend or what it runs.
+                environment = {
+                    key: value
+                    for key, value in environment.items()
+                    if key != "PYTHONPATH" and not key.startswith("KPIP_")
+                }
             if self.scripts_dir:
                 inherited_path = environment.get("PATH")
                 environment["PATH"] = (
@@ -109,12 +120,16 @@ class BuildBackendHookCaller:
                     if not inherited_path
                     else os.pathsep.join((self.scripts_dir, inherited_path))
                 )
-            if self.backend_path:
-                environment["KPIP_BUILD_BACKEND_PATH"] = os.pathsep.join(
-                    self.backend_path,
-                )
             completed = subprocess.run(
-                [self.python_executable, "-c", _CALLER, hook, directory],
+                [
+                    self.python_executable,
+                    "-c",
+                    _CALLER,
+                    hook,
+                    directory,
+                    self.backend,
+                    *self.backend_path,
+                ],
                 check=False,
                 cwd=self.source_dir,
                 env=environment,

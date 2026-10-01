@@ -54,6 +54,53 @@ def test_the_projects_own_modules_do_not_shadow_the_standard_library(
     assert project not in (pythonpath or "").split(":")
 
 
+ENVIRONMENT_BACKEND = """\
+import os
+import sys
+
+
+def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
+    return [
+        os.environ.get("PYTHONPATH"),
+        sorted(key for key in os.environ if key.startswith("KPIP_")),
+        sys.path,
+    ]
+"""
+
+
+def test_an_isolated_build_does_not_inherit_the_users_pythonpath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In an isolated build environment, what the user's PYTHONPATH names
+    -- an old setuptools, say -- would stand in for the backend the
+    environment installed, as pip keeps it from doing. Without isolation
+    the build runs with what the user has, PYTHONPATH included."""
+    elsewhere = str(tmp_path / "elsewhere")
+    monkeypatch.setenv("PYTHONPATH", elsewhere)
+    monkeypatch.setenv("KPIP_INDEX_URL", "https://example.invalid/simple")
+    hook = caller(tmp_path, ENVIRONMENT_BACKEND)
+
+    isolated = BuildBackendHookCaller(
+        hook.source_dir,
+        "hook_backend",
+        backend_path=["backend"],
+        python_executable=sys.executable,
+        isolated=True,
+    )
+    pythonpath, kpip_variables, path = isolated.prepare_metadata_for_build_wheel(
+        str(tmp_path)
+    )
+
+    assert pythonpath is None
+    assert kpip_variables == []
+    assert elsewhere not in path
+
+    pythonpath, _, path = hook.prepare_metadata_for_build_wheel(str(tmp_path))
+
+    assert pythonpath == elsewhere
+    assert elsewhere in path
+
+
 FAILING_BACKEND = """\
 import sys
 
