@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+import functools
 import logging
 import os
 import ssl
@@ -270,6 +271,70 @@ def request_kind(url: str) -> str:
         return "artifact"
 
     return "other"
+
+
+@functools.cache
+def _trust_store_context_class() -> type[ssl.SSLContext]:
+    """truststore's context, made safe to share between threads.
+
+    Imported here, as pip imports it: loading the system's TLS libraries
+    costs 5 ms, which only a command that verifies a server should pay.
+    """
+    from kpip._vendor import truststore
+
+    class ThreadSafeTrustStoreContext(truststore.SSLContext):
+        """One context for every connection, a fresh one for each handshake.
+
+        truststore turns verification off on its context for the length of
+        a handshake -- the system checks the certificate after -- and back
+        on after it, saving what it found to put back. Two handshakes at
+        once, as kpip's downloads make them, interleave that: the second
+        saves the first's "off", restores it last, and every later
+        connection goes unverified, by OpenSSL and by the system check alike,
+        which reads the same settings. pip never shares a context between
+        threads; kpip's pools do. So what callers set on this one is
+        recorded and replayed onto a new truststore context per handshake,
+        and nothing shared is ever turned off.
+        """
+
+        def _settings(self) -> list[tuple[str, tuple, dict]]:
+            try:
+                return self.__dict__["kpip_settings"]
+            except KeyError:
+                settings: list[tuple[str, tuple, dict]] = []
+                self.__dict__["kpip_settings"] = settings
+                return settings
+
+        def load_verify_locations(self, *args: Any, **kwargs: Any) -> None:
+            self._settings().append(("load_verify_locations", args, kwargs))
+            super().load_verify_locations(*args, **kwargs)
+
+        def load_cert_chain(self, *args: Any, **kwargs: Any) -> None:
+            self._settings().append(("load_cert_chain", args, kwargs))
+            super().load_cert_chain(*args, **kwargs)
+
+        def set_alpn_protocols(self, *args: Any, **kwargs: Any) -> None:
+            self._settings().append(("set_alpn_protocols", args, kwargs))
+            super().set_alpn_protocols(*args, **kwargs)
+
+        def _handshake_context(self) -> ssl.SSLContext:
+            context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            for name, args, kwargs in list(self._settings()):
+                getattr(context, name)(*args, **kwargs)
+            return context
+
+        def wrap_socket(self, sock: Any, *args: Any, **kwargs: Any) -> Any:
+            return self._handshake_context().wrap_socket(sock, *args, **kwargs)
+
+        def wrap_bio(self, *args: Any, **kwargs: Any) -> Any:
+            return self._handshake_context().wrap_bio(*args, **kwargs)
+
+    return ThreadSafeTrustStoreContext
+
+
+def trust_store_context() -> ssl.SSLContext:
+    """A context that verifies against the system's trust store."""
+    return _trust_store_context_class()(ssl.PROTOCOL_TLS_CLIENT)
 
 
 class NetworkSession:
@@ -1074,12 +1139,8 @@ class NetworkSession:
                 # certificate store, with the CAs an organization added --
                 # through truststore, as pip's default. A bundle --cert or
                 # REQUESTS_CA_BUNDLE names is trusted beside it, as pip
-                # loads it into the same context. Imported here, as pip
-                # imports it: loading the system's TLS libraries costs 5 ms,
-                # which only a command that verifies a server should pay.
-                from kpip._vendor import truststore
-
-                context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                # loads it into the same context.
+                context = trust_store_context()
 
                 if bundle:
                     context.load_verify_locations(bundle)

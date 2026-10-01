@@ -61,3 +61,33 @@ def test_use_deprecated_legacy_certs_sets_it() -> None:
         assert run_options.current.legacy_certs
     finally:
         run_options.reset()
+
+
+def test_a_handshake_never_turns_verification_off_on_the_shared_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """truststore turns its context's verification off for each handshake;
+    two at once left it off. Each handshake gets a context of its own, made
+    with what was set on the shared one."""
+    seen: list[tuple[object, object, object]] = []
+
+    def wrap(self: object, sock: object, **_: object) -> object:
+        seen.append((self, getattr(self, "kpip_settings", None), sock))
+        return "wrapped"
+
+    monkeypatch.setattr(truststore.SSLContext, "wrap_socket", wrap)
+    monkeypatch.setattr(
+        truststore.SSLContext, "load_verify_locations", lambda self, *a, **k: None
+    )
+    context = NetworkSession().ssl_context_for("/etc/corporate-ca.pem", None)
+    context.set_alpn_protocols(["http/1.1"])
+
+    first = context.wrap_socket("socket-1", server_hostname="pypi.org")
+    second = context.wrap_socket("socket-2", server_hostname="pypi.org")
+
+    assert first == second == "wrapped"
+    handshake_contexts = {id(entry[0]) for entry in seen}
+    assert id(context) not in handshake_contexts
+    assert len(handshake_contexts) == 2
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
