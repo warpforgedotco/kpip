@@ -15,7 +15,6 @@ from kpip._vendor.nab_resolver.types import (
     RootRequirement,
     Term,
 )
-from tests.range_oracles import requires_patchable_range
 
 _REQUIRES_RESOLVER_OPTIMIZATIONS = pytest.mark.skipif(
     not hasattr(incompat_index, "add_dependency_incompatibility"),
@@ -136,7 +135,6 @@ def test_decision_passes_explicit_parent_dispatch(
     assert widened.incompatibilities[0].terms[0].constraint == broad
 
 
-@requires_patchable_range
 @_REQUIRES_RESOLVER_OPTIMIZATIONS
 def test_decision_reuses_its_exact_range(
     monkeypatch: pytest.MonkeyPatch,

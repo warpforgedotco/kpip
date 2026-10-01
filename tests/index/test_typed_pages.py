@@ -58,7 +58,7 @@ EDGE_PAGES = [
             }
         ]
     },
-    # URLs at every edge of what the compiled loop takes as plain.
+    # URLs at every edge of what the typed path takes as plain.
     {
         "files": [
             {"url": url, "filename": "a-1.0-py3-none-any.whl"}
@@ -153,17 +153,3 @@ def test_recorded_pypi_pages_compile_the_same_either_way(workload: str) -> None:
     for key, body in pages:
         assert _compile(body, key, typed=True) == _compile(body, key, typed=False), key
 
-
-def test_the_compiled_loop_is_the_one_compiling_when_built() -> None:
-    """With the extension built (CI's compiled job builds it), pages go
-    through it; without, through the Python loop -- either way the tests
-    above compare it with ``json``."""
-    from kpip.index import page_parsing
-
-    compiled = page_parsing._page_catalog
-    try:
-        import kpip.index._page_catalog  # noqa: F401
-    except ImportError:
-        assert compiled is None
-    else:
-        assert compiled is not None

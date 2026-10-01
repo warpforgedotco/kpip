@@ -41,8 +41,8 @@ Rules:
   command dispatch; do not add one.
 - Imports sit at the top of a module. Do not import inside a function to
   save startup time. The exceptions are an import whose failure picks a
-  fallback (a `try` around an optional module such as a compiled extension or
-  `msgspec`), a platform module under `sys.platform`, and `keyring`, which is
+  fallback (a `try` around an optional module such as `msgspec`), a platform
+  module under `sys.platform`, and `keyring`, which is
   imported only when that provider is chosen. An import only annotations use
   stays under `TYPE_CHECKING`. PEP 810's `lazy` imports wait on
   python/cpython#158282 (on 3.15.0rc2 resolving one holds the global import

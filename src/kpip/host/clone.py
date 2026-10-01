@@ -33,11 +33,6 @@ if TYPE_CHECKING:
     Devices = tuple[int, int]
 
 try:
-    from kpip.host import _link_tree as _compiled_link_tree
-except ImportError:
-    _compiled_link_tree = None  # ty: ignore[invalid-assignment]
-
-try:
     import fcntl
 except ImportError:
     # Windows.
@@ -362,11 +357,10 @@ def _hardlink(
 
 
 class _PythonLinkTree:
-    """:mod:`kpip.host._link_tree`'s loops in Python, for when it is not built.
+    """The loops that make a new tree's directories and link its files.
 
     ``os.link``, ``os.mkdir`` and ``os.chmod`` release the GIL around their
-    syscall, so these loops link in parallel too, only with more interpreter
-    time between syscalls.
+    syscall, so these loops link in parallel on the threads that run them.
     """
 
     @staticmethod
@@ -409,8 +403,8 @@ class _PythonLinkTree:
         return (0, len(names))
 
 
-_link_tree: Any = _compiled_link_tree or _PythonLinkTree
-"""The link loops: the compiled module or :class:`_PythonLinkTree`.
+_link_tree: Any = _PythonLinkTree
+"""The link loops, :class:`_PythonLinkTree`.
 
 False keeps every tree on the per-file walk.
 """
@@ -473,8 +467,7 @@ def _link_new_directory(
     """Hard link ``source``'s tree into ``destination``, just created.
 
     The tree is listed first, then its directories made and its files linked
-    in loops over the lists -- compiled, with the GIL released, when
-    :mod:`kpip.host._link_tree` is built. Installs clone one wheel tree per
+    in loops over the lists. Installs clone one wheel tree per
     thread, and one tree can hold most of an install's files -- 5,600 of
     jupyter's 12,000 -- so a large tree's files are split into slices linked
     on threads of their own, rather than leaving one thread to link them all

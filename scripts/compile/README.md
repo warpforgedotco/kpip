@@ -2,8 +2,7 @@
 
 Builds a native `kpip` binary with [Nuitka](https://github.com/Nuitka/Nuitka),
 taken from the latest upstream `develop` and patched with kpip's own changes.
-Nothing here ships inside kpip's own distributions; it produces the binary,
-and the optional compiled modules the binary and a source checkout can use.
+Nothing here ships inside kpip's own distributions; it produces the binary.
 
 Run from this directory:
 
@@ -18,33 +17,6 @@ with `--python`, and pass extra Nuitka options after `--`:
 ```console
 uv run kpip-compile build --python /opt/homebrew/bin/python3.15 -- --report=report.xml
 ```
-
-## Compiled modules
-
-Some kpip modules have a compiled counterpart written in Cython's
-pure-Python mode, listed in `EXTENSIONS` in `src/kpip_compile/extensions.py`;
-today those are nab_resolver's `Range` (`_cranges.py`) and the loop that
-compiles an index page into a catalog (`kpip/index/_page_catalog.py`). kpip imports the
-extension when it is present and runs its pure-Python code otherwise, so
-building one only ever adds speed.
-
-`build` compiles them first and ships them in the binary. An extension loads
-only into the Python it was built for, and it is built by the Python
-kpip-compile runs under, so a `--python` of another version is refused: run
-kpip-compile under that Python instead (`uv run --python 3.13 kpip-compile
-build`), or pass `--no-extensions` for a binary that runs the pure-Python code.
-
-To use them from a source checkout, build them in place:
-
-```console
-uv run --python 3.15 kpip-compile extensions
-```
-
-They land beside their sources, where kpip's import finds them, and
-`.gitignore` keeps them out of the tree. The build asks for `-O3` (`/O2` with
-MSVC) itself: setuptools replaces the interpreter's `CFLAGS` with any `CFLAGS`
-in the environment, and a shell that exports only include paths would
-otherwise build at `-O0`, slower than the Python it replaces.
 
 ## Onefile cache mode
 

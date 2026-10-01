@@ -4,19 +4,15 @@ import sys
 from pathlib import Path
 
 import pytest
-from kpip_compile import build as build_module
 from kpip_compile.build import (
     build_id,
     KPIP_PACKAGE,
     BuildOptions,
-    ExtensionMismatchError,
     interpreter_tag,
     kpip_version,
     nuitka_command,
     onefile_tempdir_spec,
-    prepare_extensions,
 )
-from kpip_compile.extensions import EXTENSIONS
 
 
 def test_version_is_read_from_the_package(tmp_path: Path) -> None:
@@ -120,45 +116,6 @@ def test_each_python_unpacks_into_its_own_directory() -> None:
 
 def test_the_tag_comes_from_the_build_interpreter() -> None:
     assert interpreter_tag(sys.executable) == sys.implementation.cache_tag
-
-
-def test_the_binary_ships_the_compiled_modules() -> None:
-    command = nuitka_command(BuildOptions(platform="linux"), "1")
-
-    assert "--no-prefer-source-code" in command
-    assert not any(arg.startswith("--nofollow-import-to") for arg in command)
-
-
-def test_without_extensions_the_binary_leaves_them_out() -> None:
-    """A build left in the tree must not reach a binary that asked for none."""
-    command = nuitka_command(BuildOptions(platform="linux", extensions=False), "1")
-
-    assert "--no-prefer-source-code" not in command
-    for name in EXTENSIONS:
-        assert f"--nofollow-import-to={name}" in command
-
-
-def test_extensions_for_another_python_are_refused(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    built: list[object] = []
-    monkeypatch.setattr(build_module, "build_extensions", lambda: built.append(1))
-
-    with pytest.raises(ExtensionMismatchError, match="--no-extensions"):
-        prepare_extensions(BuildOptions(python="/other/python"), "cpython-399")
-    assert built == []
-
-
-def test_extensions_are_built_for_the_same_python(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    built: list[object] = []
-    monkeypatch.setattr(build_module, "build_extensions", lambda: built.append(1) or [])
-
-    prepare_extensions(BuildOptions(), sys.implementation.cache_tag)
-    prepare_extensions(BuildOptions(extensions=False), "cpython-399")
-
-    assert built == [1]
 
 
 def test_subinterpreter_modules_are_named_in_one_argument() -> None:

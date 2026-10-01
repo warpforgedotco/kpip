@@ -32,7 +32,7 @@ def fresh_link_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(clone, "_reflink_probe", {})
     monkeypatch.setattr(clone, "_darwin_clone", lambda source, destination: False)
     monkeypatch.setattr(clone, "_link_mode", None)
-    # The per-file walk, unless a test asks for the compiled loops.
+    # The per-file walk, unless a test asks for the tree loops.
     monkeypatch.setattr(clone, "_link_tree", False)
     monkeypatch.setenv("KPIP_LINK_MODE", "hardlink")
 
@@ -308,16 +308,8 @@ def test_a_cloned_read_only_directory_keeps_its_mode_and_contents(
             (destination / "locked").chmod(0o755)
 
 
-def compiled_link_tree() -> types.ModuleType:
-    try:
-        from kpip.host import _link_tree
-    except ImportError:
-        pytest.skip("kpip.host._link_tree is not built")
-    return _link_tree
-
-
 class FailingLinkTree:
-    """The compiled loops' contract in Python, failing chosen files once."""
+    """The link loops' contract, failing chosen files once."""
 
     def __init__(self, failures: dict[int, int]) -> None:
         self.failures = dict(failures)
@@ -369,10 +361,10 @@ def link_tree_through(monkeypatch: pytest.MonkeyPatch, module: object) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX only")
-def test_the_compiled_loops_link_the_same_tree(
+def test_the_tree_loops_link_the_same_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
 ) -> None:
-    link_tree_through(monkeypatch, compiled_link_tree())
+    link_tree_through(monkeypatch, clone._PythonLinkTree)
     source = make_tree(tmp_path)
     (source / "pkg" / "sub").chmod(0o750)
     (source / "pkg" / "empty").mkdir()
@@ -389,10 +381,10 @@ def test_the_compiled_loops_link_the_same_tree(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
-def test_the_compiled_loops_keep_a_read_only_directory(
+def test_the_tree_loops_keep_a_read_only_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
 ) -> None:
-    link_tree_through(monkeypatch, compiled_link_tree())
+    link_tree_through(monkeypatch, clone._PythonLinkTree)
     source = tmp_path / "source"
     (source / "locked" / "inner").mkdir(parents=True)
     (source / "locked" / "inner" / "module.py").write_text("x = 1\n")
@@ -413,7 +405,7 @@ def test_the_compiled_loops_keep_a_read_only_directory(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX only")
-def test_the_compiled_loops_reject_a_duplicate_and_leave_nothing(
+def test_the_tree_loops_reject_a_duplicate_and_leave_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
 ) -> None:
     """A clash inside a new directory -- another writer racing it -- fails
@@ -489,14 +481,10 @@ def test_a_link_count_limit_copies_one_file_and_resumes_the_loop(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX only")
-@pytest.mark.parametrize("loops", ["python", "compiled"])
 def test_a_large_tree_is_linked_in_slices(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None, loops: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
 ) -> None:
-    link_tree_through(
-        monkeypatch,
-        clone._PythonLinkTree if loops == "python" else compiled_link_tree(),
-    )
+    link_tree_through(monkeypatch, clone._PythonLinkTree)
     monkeypatch.setattr(clone, "_SPLIT_FILES", 2)
     monkeypatch.setattr(clone, "_SPLIT_WORKERS", 2)
     split: list[int] = []

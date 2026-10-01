@@ -34,7 +34,6 @@ from kpip.index.provider import CandidateProvider
 from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.models import ResolutionConfig
 from kpip.resolution.nab_provider import NabProvider
-from tests.range_oracles import requires_patchable_range
 
 _HAS_EXACT_CLAUSE_DISPATCH = hasattr(propagate, "_related_incompatibility_groups")
 
@@ -217,7 +216,6 @@ def test_impossible_pins_are_skipped_without_conflicts(tmp_path: Path) -> None:
     assert result.metrics["nab_conflicts"] <= 2, result.metrics
 
 
-@requires_patchable_range
 @pytest.mark.parametrize(
     "implied_ranges, expected, expected_relations, expected_intersections",
     [
@@ -339,7 +337,6 @@ def test_transitive_conflicts_are_skipped_without_backtracking(tmp_path: Path) -
     assert result.metrics["nab_conflicts"] <= 2, result.metrics
 
 
-@requires_patchable_range
 @pytest.mark.parametrize(
     "implied, expected",
     [

@@ -8,7 +8,6 @@ import kpip.resolution.nab_types
 from kpip._vendor.nab_resolver.ranges import Range
 from kpip.core.packaging import SpecifierSet
 from kpip.core.versions import Version
-from tests.range_oracles import requires_patchable_range
 
 _BOUNDED_RANGE_INTERSECTIONS = (
     0 if "lower_inclusive" in inspect.signature(Range.between).parameters else 1
@@ -46,7 +45,6 @@ _BOUNDED_RANGE_INTERSECTIONS = (
         ("==1", Range.singleton(Version("1")), _BOUNDED_RANGE_INTERSECTIONS),
     ],
 )
-@requires_patchable_range
 def test_implied_range_uses_expected_intersections(
     monkeypatch: pytest.MonkeyPatch,
     specifier: str,

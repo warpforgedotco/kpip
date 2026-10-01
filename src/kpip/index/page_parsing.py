@@ -11,15 +11,11 @@ from html.parser import HTMLParser
 
 from kpip.core.errors import InstallationError
 from kpip.core.http_contracts import raise_for_status, response_text
-from kpip.core.packaging import canonicalize_name
 from kpip.core.urls import split_auth_from_netloc
-from kpip.core.versions import InvalidVersion, Version
 from kpip.core.wheel import parse_wheel_file_once
 from kpip.index import typed_pages
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.catalog_cache import (
-    RECORD_REQUIRES_PYTHON,
-    RECORD_YANKED,
     WHEEL_RECORD,
     artifact_identity,
     compile_groups,
@@ -35,18 +31,13 @@ from kpip.index.catalog_cache import (
 )
 from kpip.index.dates import parse_iso_datetime
 from kpip.index.hashes import SUPPORTED_RECORD_HASHES
-from kpip.index.links import PLAIN_URL, SOURCE_ARCHIVE_SUFFIXES, Link
+from kpip.index.links import PLAIN_URL, Link
 from kpip.index.paths import PathComponent
 from kpip.index.source_models import ArtifactKind, MetadataFile
 
 if TYPE_CHECKING:
     from typing import Any
     from kpip.core.http_contracts import HttpSession
-
-try:
-    from kpip.index import _page_catalog
-except ImportError:
-    _page_catalog = None  # ty: ignore[invalid-assignment]
 
 LinkFactory = Callable[..., Link]
 
@@ -214,8 +205,6 @@ class IndexPageParser:
                 meta.get("api-version") if isinstance(meta, dict) else None, url
             )
             base_url = base_url or ensure_trailing_slash(url)
-            if _page_catalog is not None:
-                return _page_catalog.compile_files(page.files, base_url, url, unset)
             record_from_fields = self.record_from_fields
             for entry in page.files:
                 file_url = entry.url
@@ -684,39 +673,3 @@ def check_api_version(version: object, url: str) -> None:
 
 def ensure_trailing_slash(url: str) -> str:
     return url if url.endswith("/") else url + "/"
-
-
-def _installed_page_catalog() -> Any:
-    """``kpip.index._page_catalog``, given the rules it defers to, or None.
-
-    Only an extension: its source only runs compiled.
-    """
-    if _page_catalog is None:
-        return None
-    try:
-        _page_catalog._install(
-            join_index_url,
-            IndexPageParser.record_from_fields,
-            identity_for,
-            Version,
-            InvalidVersion,
-            canonicalize_name,
-            PLAIN_URL,
-            (
-                ArtifactKind.WHEEL,
-                ArtifactKind.METADATA,
-                ArtifactKind.ATTESTATION,
-                ArtifactKind.SDIST,
-                ArtifactKind.UNKNOWN,
-            ),
-            SOURCE_ARCHIVE_SUFFIXES,
-            (WHEEL_RECORD, RECORD_REQUIRES_PYTHON, RECORD_YANKED),
-        )
-    except TypeError:
-        # One built from an older source, whose _install takes other
-        # arguments: keep the Python loop.
-        return None
-    return _page_catalog
-
-
-_page_catalog = _installed_page_catalog()
