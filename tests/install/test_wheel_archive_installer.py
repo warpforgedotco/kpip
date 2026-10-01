@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import zipfile
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from kpip.core.wheel import wheel_candidate
 from kpip.install.target import InstallTarget
 from kpip.install.wheel_archive_cache import prepare_cached_wheels
 from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
+from kpip.install.wheel_transaction import install_wheels_transactionally
 
 
 @pytest.mark.parametrize("route", ["archive-cache", "staged", "direct"])
@@ -852,3 +854,86 @@ def test_archives_the_install_loaded_are_not_read_again(
     archives = prepare_cached_wheels(candidates, str(cache_dir), pycompile=False)
 
     assert archives == (candidates[0].wheel_layout,)
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or os.geteuid() == 0,
+    reason="needs a directory permissions keep this user out of",
+)
+def test_an_unwritable_parent_leaves_the_target_to_the_transactional_installer(
+    tmp_path: Path,
+) -> None:
+    """The archive route stages beside the target, in its parent; a parent
+    the user cannot write is no reason to fail an install into a target
+    they can."""
+    cache_dir = tmp_path / "cache"
+    wheel = _make_wheel_with_members(tmp_path, "parent_pkg", {"parent/a.py": ""})
+    candidates = _prevalidated_candidates_for(tmp_path, cache_dir, wheel)
+    parent = tmp_path / "locked"
+    target = parent / "target"
+    target.mkdir(parents=True)
+    parent.chmod(0o555)
+    try:
+        declined = install_wheels_from_archive_cache(
+            ((wheel, True, None),),
+            candidates,
+            target=InstallTarget.from_options("parent_pkg", target=str(target)),
+            cache_dir=str(cache_dir),
+        )
+        assert declined is None
+        assert list(target.iterdir()) == []
+
+        install_wheels_transactionally(
+            [(str(wheel), True, None)],
+            target=InstallTarget.from_options("parent_pkg", target=str(target)),
+            pycompile=False,
+            candidates=candidates,
+            cache_dir=str(cache_dir),
+        )
+    finally:
+        parent.chmod(0o755)
+
+    assert (target / "parent" / "a.py").is_file()
+
+
+@pytest.mark.parametrize("existed", [True, False])
+def test_a_target_that_cannot_be_renamed_is_left_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existed: bool
+) -> None:
+    """A target that is a mount point cannot be renamed (EBUSY): the swap is
+    abandoned with the target as it was, for the transactional installer."""
+    import errno
+
+    from kpip.install import wheel_archive_installer
+
+    cache_dir = tmp_path / "cache"
+    wheel = _make_wheel_with_members(tmp_path, "mount_pkg", {"mount/a.py": ""})
+    candidates = _prevalidated_candidates_for(tmp_path, cache_dir, wheel)
+    target = tmp_path / "target"
+    if existed:
+        target.mkdir()
+        (target / "keep.txt").write_text("keep")
+    real_rename = os.rename
+
+    def rename(source: str, destination: str) -> None:
+        if os.fspath(source if existed else destination) == str(target):
+            raise OSError(errno.EBUSY, "Device or resource busy", source)
+        real_rename(source, destination)
+
+    monkeypatch.setattr(wheel_archive_installer.os, "rename", rename)
+
+    declined = install_wheels_from_archive_cache(
+        ((wheel, True, None),),
+        candidates,
+        target=InstallTarget.from_options("mount_pkg", target=str(target)),
+        cache_dir=str(cache_dir),
+    )
+
+    assert declined is None
+    if existed:
+        assert sorted(path.name for path in target.iterdir()) == ["keep.txt"]
+    else:
+        assert not target.exists()
+    assert [
+        path.name for path in tmp_path.iterdir() if path.name.startswith(".kpip")
+    ] == []

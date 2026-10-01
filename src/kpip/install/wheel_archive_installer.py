@@ -923,9 +923,16 @@ def install_wheels_from_archive_cache(
 
     parent = os.path.dirname(root)
 
-    os.makedirs(parent, exist_ok=True)
+    try:
+        os.makedirs(parent, exist_ok=True)
 
-    staging_parent = tempfile.mkdtemp(prefix=".kpip-install-", dir=parent)
+        staging_parent = tempfile.mkdtemp(prefix=".kpip-install-", dir=parent)
+
+    except OSError:
+        # The stage goes beside the target so the swap is a rename; a
+        # parent this user cannot write is no reason to refuse a target
+        # they can, which the transactional path writes into in place.
+        return None
 
     stage = os.path.join(staging_parent, "target")
 
@@ -1105,10 +1112,22 @@ def install_wheels_from_archive_cache(
         if root_existed:
             backup = os.path.join(staging_parent, "previous")
 
-            os.rename(root, backup)
+            # A target that is a mount point cannot be renamed (EBUSY), nor
+            # one whose parent refuses it: nothing has moved yet, and the
+            # transactional path installs into it in place.
+            try:
+                os.rename(root, backup)
+
+            except OSError:
+                return None
 
             try:
                 os.rename(stage, root)
+
+            except OSError:
+                os.rename(backup, root)
+
+                return None
 
             except BaseException:
                 os.rename(backup, root)
@@ -1118,7 +1137,11 @@ def install_wheels_from_archive_cache(
             shutil.rmtree(backup, ignore_errors=True)
 
         else:
-            os.rename(stage, root)
+            try:
+                os.rename(stage, root)
+
+            except OSError:
+                return None
 
         if report:
             for distribution in uninstalling:
