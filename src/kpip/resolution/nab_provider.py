@@ -739,9 +739,23 @@ class NabProvider:
                     matching = admitted
             self._matching_memo[package] = (versions, version_range, matching)
         control = getattr(self.provider, "release_control", None)
+        # A specifier naming a pre-release -- ``>=0.2.0rc1`` -- opts in to
+        # pre-releases, as packaging's ``prereleases`` does for pip: the
+        # newest release in range is chosen, not the newest final one.
+        explicit_prereleases = has_prerelease and (
+            requirement.specifier.explicitly_allows_prereleases
+            or (
+                bool(constraints)
+                and any(
+                    constraint.specifier.explicitly_allows_prereleases
+                    for constraint in constraints
+                )
+            )
+        )
         if (
             has_prerelease
             and not self.allow_prereleases
+            and not explicit_prereleases
             and (control is None or control.allows_prereleases(package) is None)
         ):
             stable = [version for version in matching if not version.is_prerelease]
@@ -752,7 +766,7 @@ class NabProvider:
                 version for version in matching if version in constrained_versions
             ]
         if constraints:
-            allow_prereleases = self.allow_prereleases
+            allow_prereleases = self.allow_prereleases or explicit_prereleases
             constraint_contains = [
                 constraint.specifier.contains for constraint in constraints
             ]

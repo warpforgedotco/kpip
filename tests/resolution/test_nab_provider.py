@@ -834,3 +834,43 @@ def test_root_prefetch_gives_direct_urls_precedence(direct_first: bool) -> None:
     adapter.add_roots([parse_requirement("app"), *duplicates])
 
     assert provider.prefetch_calls[0] == ("app",)
+
+
+def _prerelease_catalog() -> FakeProvider:
+    provider = FakeProvider()
+    releases = tuple(map(Version, ("0.2.0rc1", "0.2.0", "0.3.0b1")))
+    provider.versions["dep"] = releases
+    for release in releases:
+        provider.candidates[("dep", release)] = SimpleNamespace(
+            name="dep",
+            canonical_name="dep",
+            version=release,
+            dependencies=(),
+            source_url=f"file:///dep-{release}.whl",
+            source_kind="wheel",
+        )
+    return provider
+
+
+@pytest.mark.parametrize(
+    "requirement, constraints, expected",
+    [
+        # Naming a pre-release opts in, as packaging's ``prereleases``: the
+        # newest release in range wins, not the newest final one.
+        ("dep>=0.2.0rc1", (), "0.3.0b1"),
+        ("dep", ("dep>=0.2.0rc1",), "0.3.0b1"),
+        ("dep>=0.2.0rc1", ("dep<1",), "0.3.0b1"),
+        # Otherwise finals come first.
+        ("dep>=0.2.0", (), "0.2.0"),
+        ("dep", (), "0.2.0"),
+    ],
+)
+def test_a_specifier_naming_a_prerelease_is_not_overridden_by_finals(
+    requirement: str, constraints: tuple[str, ...], expected: str
+) -> None:
+    adapter = NabProvider(
+        _prerelease_catalog(), ResolutionConfig(constraints=constraints)
+    )
+    package, version_range = adapter.add_root(parse_requirement(requirement))
+
+    assert adapter.choose_version(package, version_range) == Version(expected)
