@@ -66,6 +66,21 @@ def _script_directories(
     )
 
 
+def _scheme_trees() -> tuple[str, str]:
+    """The target interpreter's ``data`` and include roots.
+
+    A wheel's ``.data/data`` and ``.data/headers`` members land there, so
+    RECORD names them as ``../../../share/...`` or ``../../../include/...``
+    rows that uninstall has to follow. The headers path is per distribution
+    (``include/<name>``); its parent holds every distribution's.
+    """
+    scheme = get_scheme("_", interpreter=target_interpreter())
+    return (
+        os.path.realpath(scheme.data),
+        os.path.realpath(os.path.dirname(scheme.headers)),
+    )
+
+
 def _inside_distribution(
     path: str,
     root: str,
@@ -74,9 +89,9 @@ def _inside_distribution(
     """Whether ``path`` is a file this distribution may remove.
 
     Either it sits under the directory holding the ``.dist-info``, or it is a
-    console script in one of this layout's script directories. An upgrade
-    passes the ``target`` it installs into: its ``.data/data`` and
-    ``.data/headers`` roots are where the old version put those files.
+    console script in one of this layout's script directories, or it is
+    under the ``.data/data`` or ``.data/headers`` roots: the ``target`` an
+    upgrade installs into, or else the target interpreter's own scheme.
 
     The path is resolved first: ``commonpath`` compares path components
     literally, so an unresolved ``site-packages/../../../etc/passwd`` would
@@ -86,6 +101,8 @@ def _inside_distribution(
     trees = [root]
     if target is not None:
         trees.extend((target.data, target.headers))
+    else:
+        trees.extend(_scheme_trees())
     for tree in trees:
         try:
             if os.path.commonpath((resolved, tree)) == tree:
