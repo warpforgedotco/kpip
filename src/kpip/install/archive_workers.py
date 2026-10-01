@@ -14,8 +14,8 @@ main interpreter reads the entry's manifest from the cache, as it would have
 after unpacking it itself. A job that fails for any reason is done again in the
 main interpreter, which raises what failed, so errors read as they always have.
 Without subinterpreters -- before 3.14, PyPy, a compiled kpip built without
-bytecode for them, or ``KPIP_SUBINTERPRETERS=0`` -- :func:`start_archive_workers`
-returns None and wheels unpack on threads as before.
+bytecode for them, or ``KPIP_SUBINTERPRETERS=0`` --
+:meth:`ArchiveWorkers.if_available` returns None and wheels unpack on threads as before.
 """
 
 from __future__ import annotations
@@ -116,6 +116,11 @@ class ArchiveWorkers:
     importing kpip into each cost a warm jupyter install 0.2 s.
     """
 
+    @classmethod
+    def if_available(cls) -> ArchiveWorkers | None:
+        """A pool, or None where there are no subinterpreters to run it."""
+        return cls() if _available() else None
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
@@ -204,12 +209,3 @@ class ArchiveWorkers:
 
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
-
-
-def start_archive_workers() -> ArchiveWorkers | None:
-    """A pool of subinterpreters, started by its first wheel, or None where
-    there are none."""
-    if not _available():
-        return None
-
-    return ArchiveWorkers()

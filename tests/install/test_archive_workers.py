@@ -40,7 +40,7 @@ def _candidate(wheel: Path) -> object:
 
 @pytest.fixture
 def workers():
-    started = archive_workers.start_archive_workers()
+    started = archive_workers.ArchiveWorkers.if_available()
     if started is None:
         pytest.skip("no subinterpreters on this interpreter")
     yield started
@@ -89,7 +89,7 @@ def test_a_wheel_a_worker_fails_on_raises_as_the_main_path_does(
 def test_workers_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KPIP_SUBINTERPRETERS", "0")
 
-    assert archive_workers.start_archive_workers() is None
+    assert archive_workers.ArchiveWorkers.if_available() is None
 
 
 @pytest.mark.parametrize("frozen", [False, True])
@@ -108,7 +108,7 @@ def test_a_compiled_kpip_uses_workers_only_with_their_bytecode(
         lambda name: frozen and name == "kpip.install.archive_workers",
     )
 
-    started = archive_workers.start_archive_workers()
+    started = archive_workers.ArchiveWorkers.if_available()
 
     assert (started is not None) is frozen
     if started is not None:
@@ -165,7 +165,7 @@ def test_a_compiling_prepare_compiles_in_the_main_interpreter(
 
 def test_a_wheel_already_unpacked_starts_no_worker(tmp_path: Path) -> None:
     """A warm install finds every wheel unpacked and starts no subinterpreter."""
-    workers = archive_workers.start_archive_workers()
+    workers = archive_workers.ArchiveWorkers.if_available()
     if workers is None:
         pytest.skip("no subinterpreters on this interpreter")
     wheel = _wheel(tmp_path, "warmpkg", members=3)
