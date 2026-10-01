@@ -73,21 +73,17 @@ def get_venv_path_from_sysconfig(name: str, env_dir: str) -> str:
 class CreatedVenv:
     """Where a freshly created environment keeps its libraries and interpreter."""
 
-    __slots__ = ("bin_path", "identity", "lib_dirs", "python_executable")
+    __slots__ = ("bin_path", "lib_dirs", "python_executable")
 
     def __init__(
         self,
         lib_dirs: list[str],
         bin_path: str,
         python_executable: str,
-        identity: list[object] | None = None,
     ) -> None:
         self.lib_dirs = lib_dirs
         self.bin_path = bin_path
         self.python_executable = python_executable
-        # The environment's interpreter, as :func:`interpreter_identity`
-        # describes it; None for one kpip's own interpreter created.
-        self.identity = identity
 
     def __eq__(self, other: object) -> bool:
         return type(other) is CreatedVenv and (
@@ -113,24 +109,11 @@ def _bootstrap_environment() -> dict[str, str]:
     }
 
 
-_IDENTITY = (
-    "[sys.implementation.name, list(sys.version_info[:2]), "
-    "getattr(sys, 'abiflags', ''), sysconfig.get_platform(), "
-    "sysconfig.get_config_var('EXT_SUFFIX')]"
-)
-"""What wheels an interpreter takes, and where it looks for them: its
-implementation, version, ABI flags, platform and extension suffix."""
-
 _VENV_PATHS = (
     "import json, sys, sysconfig; "
     "print(json.dumps([sysconfig.get_path('purelib'), "
-    f"sysconfig.get_path('scripts'), sys.executable, {_IDENTITY}]))"
+    "sysconfig.get_path('scripts'), sys.executable]))"
 )
-
-
-def interpreter_identity() -> list[object]:
-    """:data:`_IDENTITY` for the Python running kpip -- a compiled kpip's own."""
-    return eval(_IDENTITY, {"sys": sys, "sysconfig": sysconfig})
 
 
 def _create_with_interpreter(
@@ -175,7 +158,7 @@ def _create_with_interpreter(
             capture_output=True,
             text=True,
         )
-        purelib, scripts, venv_python, identity = json.loads(described.stdout)
+        purelib, scripts, venv_python = json.loads(described.stdout)
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
         detail = str(e)
         if isinstance(e, subprocess.CalledProcessError):
@@ -188,7 +171,6 @@ def _create_with_interpreter(
         lib_dirs=[purelib],
         bin_path=scripts,
         python_executable=venv_python,
-        identity=identity,
     )
 
 
