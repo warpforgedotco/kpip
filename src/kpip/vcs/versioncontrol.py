@@ -175,17 +175,6 @@ class VcsSupport:
     def backends(self) -> list[VersionControl]:
         return list(self.registry_internal.values())
 
-    @property
-    def dirnames(self) -> list[str]:
-        return [backend.dirname for backend in self.backends]
-
-    @property
-    def all_schemes(self) -> list[str]:
-        schemes: list[str] = []
-        for backend in self.backends:
-            schemes.extend(backend.schemes)
-        return schemes
-
     def register(self, cls: type[VersionControl]) -> None:
         if not hasattr(cls, "name"):
             logger.warning("Cannot register VCS %s", cls.__name__)
@@ -193,10 +182,6 @@ class VcsSupport:
         if cls.name not in self.registry_internal:
             self.registry_internal[cls.name] = cls()
             logger.debug("Registered VCS backend: %s", cls.name)
-
-    def unregister(self, name: str) -> None:
-        if name in self.registry_internal:
-            del self.registry_internal[name]
 
     def get_backend_for_dir(self, location: str) -> VersionControl | None:
         """Return a VersionControl object if a repository of that type is found
@@ -241,11 +226,6 @@ class VcsSupport:
             if scheme in vcs_backend.schemes:
                 return vcs_backend
         return None
-
-    def get_backend(self, name: str) -> VersionControl | None:
-        """Return a VersionControl object or None."""
-        name = name.lower()
-        return self.registry_internal.get(name)
 
 
 vcs = VcsSupport()

@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from typing import TypeVar
 
 from kpip.core.caches import memoized
-from kpip.core.errors import InvalidWheelFilename
 from kpip.core.hashes import Hashes
 from kpip.core.packaging import (
     Requirement,
@@ -17,13 +16,12 @@ from kpip.core.packaging import (
 from kpip.core.release_control import ReleaseControl
 from kpip.core.target_python import get_supported
 from kpip.core.versions import ZERO_VERSION, Version
-from kpip.core.wheel import TargetContext, Wheel, WheelTag, legacy_build_tag
+from kpip.core.wheel import TargetContext, WheelTag
 from kpip.index.candidate_filters import (
     allowed_hashes,
     filter_unallowed_hashes,
     supported_tag_ranks,
 )
-from kpip.index.candidates import BestCandidateResult, InstallationCandidate
 from kpip.index.links import Link
 from kpip.index.source_models import (
     INSTALLABLE_ARTIFACT_KINDS,
@@ -176,27 +174,6 @@ class CandidateEvaluator:
         )
 
     @staticmethod
-    def evaluate_link(
-        link: Link,
-        requirement: Requirement,
-        *,
-        allow_yanked: bool,
-        allow_binary: bool,
-        allow_source: bool,
-        target: TargetContext | None,
-    ) -> CandidateRecord | RejectedCandidate:
-        parsed = InstallationCandidate.from_link(link, target=target)
-
-        return CandidateEvaluator.evaluate_parsed_link(
-            link,
-            parsed,
-            requirement,
-            allow_yanked=allow_yanked,
-            allow_binary=allow_binary,
-            allow_source=allow_source,
-        )
-
-    @staticmethod
     def evaluate_parsed_link(
         link: Link,
         parsed: CandidateRecord | RejectedCandidate,
@@ -337,104 +314,3 @@ class CandidateEvaluator:
     @staticmethod
     def reject(link: Link, reason: RejectionReason, detail: str) -> RejectedCandidate:
         return RejectedCandidate(link=link, reason=reason, detail=detail)
-
-    def compute_best_candidate(
-        self,
-        candidates: list[InstallationCandidate],
-    ) -> BestCandidateResult:
-        applicable = self.get_applicable_candidates(candidates)
-
-        best = self.sort_best_candidate(applicable)
-
-        return BestCandidateResult(candidates, applicable, best)
-
-    def sort_best_candidate(
-        self,
-        candidates: list[InstallationCandidate],
-    ) -> InstallationCandidate | None:
-        if not candidates:
-            return None
-
-        return max(candidates, key=self.sort_key_internal)
-
-    def sort_key_internal(
-        self,
-        candidate: InstallationCandidate,
-    ) -> tuple[int, int, object, int, int, int, int, tuple[int, str] | tuple[()]]:
-        digest = None
-
-        if candidate.link.hashes is not None:
-            digest = candidate.link.hashes.get("sha256")
-
-        allowed = self.allowed_hashes_internal
-
-        hash_rank = int(bool(allowed and digest in allowed))
-
-        yanked_rank = -1 if candidate.link.is_yanked else 0
-
-        wheel_rank = 0
-
-        egg_fragment_rank = 1
-
-        tag_rank = -1_000_000
-
-        build_tag: tuple[int, str] | tuple[()] = ()
-
-        if candidate.wheel is not None:
-            wheel_rank = 1
-
-            supported_matches = (
-                rank
-                for file_tag in candidate.wheel.tags
-                if (rank := self.supported_tag_ranks.get(str(file_tag).lower()))
-                is not None
-            )
-
-            best_rank = min(supported_matches, default=None)
-
-            if best_rank is not None:
-                tag_rank = -best_rank
-
-            build_tag = legacy_build_tag(candidate.wheel.build_tag)
-
-        elif (
-            candidate.link.kind is ArtifactKind.WHEEL
-            or candidate.link.filename.endswith(".whl")
-        ):
-            try:
-                wheel = Wheel(candidate.link.filename)
-
-                wheel_rank = 1
-
-                supported_matches = (
-                    rank
-                    for file_tag in wheel.file_tags
-                    if (rank := self.supported_tag_ranks.get(str(file_tag).lower()))
-                    is not None
-                )
-
-                best_rank = min(supported_matches, default=None)
-
-                if best_rank is not None:
-                    tag_rank = -best_rank
-
-                build_tag = wheel.build_tag
-
-            except InvalidWheelFilename:
-                pass
-
-        if candidate.link.egg_fragment is not None:
-            egg_fragment_rank = 0
-
-        binary_preference = wheel_rank if self.prefer_binary_internal else 0
-
-        return (
-            hash_rank,
-            yanked_rank,
-            candidate.version,
-            binary_preference,
-            wheel_rank,
-            egg_fragment_rank,
-            tag_rank,
-            build_tag,
-        )

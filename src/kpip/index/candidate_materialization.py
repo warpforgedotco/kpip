@@ -16,7 +16,7 @@ from itertools import chain, islice
 from threading import RLock
 
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
-from kpip.build.build_backend import BackendSpec, prepare_project_metadata
+from kpip.build.build_backend import prepare_project_metadata
 from kpip.core import run_options
 from kpip.core.appdirs import archive_entry_root
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
@@ -2482,7 +2482,3 @@ class CandidateMaterializer:
         )
 
         return candidates
-
-
-def validate_build_requirements(source: str | os.PathLike[str]) -> None:
-    BackendSpec.from_project(source)

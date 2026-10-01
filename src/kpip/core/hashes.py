@@ -6,12 +6,8 @@ import hashlib
 import os
 from typing import TYPE_CHECKING, Any
 
-from kpip.core.errors import HashMismatch, HashMissing, InstallationError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
-    from typing import BinaryIO, NoReturn
-
     # Every name here is only ever written in an annotation, and
     # annotations are strings in this module, so none of them needs to
     # exist at run time. ``typing`` in particular was being imported by
@@ -28,27 +24,6 @@ def file_hashes(path: str) -> dict[str, str]:
         while read := stream.readinto(buffer):
             digest.update(view[:read])
     return {"sha256": digest.hexdigest()}
-
-
-def read_chunks(file: BinaryIO, size: int = 1024 * 1024):
-    while True:
-        chunk = file.read(size)
-        if not chunk:
-            return
-        yield chunk
-
-
-def hash_file(path: str, blocksize: int = 1 << 20) -> tuple[Hash, int]:
-    digest = hashlib.sha256()
-    length = 0
-    with open(path, "rb") as file:
-        for chunk in read_chunks(file, blocksize):
-            length += len(chunk)
-            digest.update(chunk)
-    return digest, length
-
-
-FAVORITE_HASH = "sha256"
 
 
 class Hashes:
@@ -89,39 +64,6 @@ class Hashes:
     def is_hash_allowed(self, hash_name: str, hex_digest: str) -> bool:
         return hex_digest.lower() in self.allowed_internal.get(hash_name, [])
 
-    def check_against_chunks(self, chunks: Iterable[bytes]) -> None:
-        gots = {}
-        for hash_name in self.allowed_internal:
-            try:
-                gots[hash_name] = hashlib.new(hash_name)
-            except (ValueError, TypeError) as exc:
-                raise InstallationError(f"Unknown hash name: {hash_name}") from exc
-
-        for chunk in chunks:
-            for digest in gots.values():
-                digest.update(chunk)
-
-        for hash_name, digest in gots.items():
-            if digest.hexdigest() in self.allowed_internal[hash_name]:
-                return
-        self.raise_internal(gots)
-
-    def raise_internal(self, gots: dict[str, Hash]) -> NoReturn:
-        raise HashMismatch(self.allowed_internal, gots)
-
-    def check_against_file(self, file: BinaryIO) -> None:
-        self.check_against_chunks(read_chunks(file))
-
-    def check_against_path(self, path: str) -> None:
-        with open(path, "rb") as file:
-            self.check_against_file(file)
-
-    def has_one_of(self, hashes: Mapping[str, str]) -> bool:
-        return any(
-            self.is_hash_allowed(hash_name, hex_digest)
-            for hash_name, hex_digest in hashes.items()
-        )
-
     def __bool__(self) -> bool:
         return bool(self.allowed_internal)
 
@@ -140,13 +82,3 @@ class Hashes:
                 ),
             ),
         )
-
-
-class MissingHashes(Hashes):
-    """Hash checker that reports the computed favorite hash when missing."""
-
-    def __init__(self) -> None:
-        super().__init__(hashes={FAVORITE_HASH: []})
-
-    def raise_internal(self, gots: dict[str, Hash]) -> NoReturn:
-        raise HashMissing(gots[FAVORITE_HASH].hexdigest())

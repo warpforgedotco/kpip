@@ -2653,13 +2653,6 @@ class CandidateProvider:
 
         return self.load_catalog(requirement, cache_key)
 
-    def load_available_versions(
-        self,
-        requirement: Requirement,
-        cache_key: tuple[str, bool, bool] | None = None,
-    ) -> tuple[CandidateSummary, ...]:
-        return self.load_catalog(requirement, cache_key).summaries
-
     def load_catalog(
         self,
         requirement: Requirement,
@@ -3259,60 +3252,6 @@ class CandidateProvider:
 
         if self.materializer_internal is not None:
             self.materializer_internal.close()
-
-    def available_versions_for(
-        self,
-        requirement: Requirement,
-        version: Version,
-    ) -> tuple[CandidateSummary, ...]:
-        allow_binary, allow_source = self.allowed_formats_internal(requirement)
-
-        catalog_key = (
-            requirement.canonical_name,
-            allow_binary,
-            allow_source,
-        )
-
-        catalog = self.package_catalog_cache.get(catalog_key)
-
-        if catalog is None:
-            self.available_versions(requirement)
-
-            catalog = self.package_catalog_cache[catalog_key]
-
-        start = bisect_left(catalog.summary_versions, version)
-
-        stop = bisect_right(catalog.summary_versions, version)
-
-        return catalog.summaries[start:stop]
-
-    def candidate_work_cost(self, requirement: Requirement) -> int:
-        """Estimate metadata/build cost without initiating new I/O."""
-
-        key = requirement.canonical_name
-
-        cached = self.candidate_work_cost_cache.get(key)
-
-        if cached is not None:
-            return cached
-
-        links = self.link_cache.get(key)
-
-        if links is None:
-            return 1
-
-        cost = 1
-
-        for link in links:
-            if link.kind in SOURCE_ARTIFACT_KINDS:
-                cost = max(cost, 8)
-
-            elif not link.is_file:
-                cost = max(cost, 2)
-
-        self.candidate_work_cost_cache[key] = cost
-
-        return cost
 
     def matching_versions(
         self,

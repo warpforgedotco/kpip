@@ -9,7 +9,6 @@ from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, TypeVar
 
 from kpip.core import run_options
-from kpip.core.utils import enum
 
 logger = logging.getLogger(__name__)
 
@@ -70,21 +69,6 @@ def rmtree(path: str, ignore_errors: bool = False, onexc=None) -> None:
             onexc(os.rmdir, path, exc)
 
 
-def remove_temp_directory(path: str | os.PathLike[str]) -> None:
-    """Remove a temporary directory, including read-only VCS files."""
-    path_text = os.fspath(path)
-    try:
-        rmtree(path_text)
-    except FileNotFoundError:
-        return
-    except OSError:
-        rmtree(path_text, ignore_errors=True)
-
-
-tempdir_kinds = enum(
-    BUILD_ENV="build-env",
-    REQ_BUILD="req-build",
-)
 tempdir_manager: ExitStack | None = None
 
 

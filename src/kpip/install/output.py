@@ -428,28 +428,7 @@ class _Named(Protocol):
     def canonical_name(self) -> str: ...
 
 
-class _WithDependencies(_Named, Protocol):
-    @property
-    def dependencies(self) -> Any: ...
-
-
 _Candidate = TypeVar("_Candidate", bound=_Named)
-
-
-def dependency_graph(candidates: Sequence[_WithDependencies]) -> dict[str, set[str]]:
-    """Each candidate's dependencies among ``candidates``, for
-    :func:`installation_order` where no resolution graph is at hand."""
-
-    names = {candidate.canonical_name for candidate in candidates}
-
-    return {
-        candidate.canonical_name: {
-            dependency.canonical_name
-            for dependency in candidate.dependencies or ()
-            if dependency.canonical_name in names
-        }
-        for candidate in candidates
-    }
 
 
 _PYTHON_NODE = "<Python from Requires-Python>"

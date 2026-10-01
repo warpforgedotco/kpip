@@ -84,9 +84,6 @@ def split_plain_url(url: str) -> urllib.parse.SplitResult | None:
     return urllib.parse.SplitResult(scheme, netloc, path or "", "", "")
 
 
-_split_plain_url = split_plain_url
-"""Kept for callers that predate the public name."""
-
 PLAIN_URL = _PLAIN_URL
 """The shape ``split_plain_url`` admits, for a caller that needs only a part."""
 
@@ -583,10 +580,6 @@ class Link:
     @property
     def show_url(self) -> str:
         return posixpath.basename(self.url.split("#", 1)[0].split("?", 1)[0])
-
-    @property
-    def has_hash(self) -> bool:
-        return bool(self.hashes_internal)
 
     def egg_fragment_internal(self) -> str | None:
         url = self.url

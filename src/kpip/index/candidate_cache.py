@@ -15,37 +15,10 @@ from kpip.core.versions import ZERO_VERSION
 from kpip.core.wheel import WheelCandidate, wheel_candidate_from_path
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.cache import origin_hashes, wheel_cache_path
-from kpip.index.links import Link
 from kpip.index.source_models import ArtifactKind, CandidateRecord
 from kpip.index.vcs_urls import is_immutable_vcs_link, vcs_reference
 
 logger = logging.getLogger(__name__)
-
-
-def source_hashes_for_link(
-    link: Link,
-    *,
-    local_path: str | os.PathLike[str] | None = None,
-) -> dict[str, str]:
-    hashes = dict(link.hashes)
-
-    if hashes:
-        return hashes
-
-    local = (
-        os.fspath(local_path)
-        if local_path is not None
-        else ArtifactLocator().local_path(link.url)
-    )
-
-    if local is not None:
-        try:
-            return file_hashes(local)
-
-        except OSError:
-            return {}
-
-    return {}
 
 
 def cache_identity(url: str) -> str:

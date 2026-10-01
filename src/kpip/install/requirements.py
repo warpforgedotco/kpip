@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from kpip.build.metadata import InstalledMetadataDistribution
 from kpip.core.names import canonicalize_name
 from kpip.install.target import InstallTarget
 from kpip.install.uninstall import DistributionUninstaller
@@ -71,40 +70,3 @@ class RequirementInstaller:
             direct_url=requirement.download_info if requirement.is_direct else None,
         )
         requirement.install_succeeded = True
-
-    def install_all(self, requirements: list[InstallRequirement]) -> list[str]:
-        """Install prepared requirements and report the installed names."""
-        to_install = {
-            requirement.name: requirement
-            for requirement in requirements
-            if requirement.name
-        }
-        if to_install:
-            logger.info(
-                "Installing collected packages: %s",
-                ", ".join(to_install),
-            )
-
-        installed: list[str] = []
-        for requirement in to_install.values():
-            name = requirement.name
-            assert name is not None
-            self.install(requirement)
-            installed.append(name)
-        return installed
-
-
-def installed_packages_summary(
-    installed: list[str],
-    env: list[InstalledMetadataDistribution],
-) -> str:
-    """Return the concise summary shown after installing packages."""
-    installed.sort()
-    installed_versions = {
-        distribution.canonical_name: distribution.version for distribution in env
-    }
-    summary = []
-    for package in installed:
-        version = installed_versions.get(canonicalize_name(package))
-        summary.append(f"{package}-{version}" if version else package)
-    return f"Successfully installed {' '.join(summary)}" if summary else ""

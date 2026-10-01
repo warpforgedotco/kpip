@@ -23,7 +23,6 @@ from kpip.core.packaging import SpecifierSet, parse_requirement
 from kpip.core.wheel import read_metadata_message
 from kpip.index.candidate_materialization import (
     CandidateMaterializer,
-    validate_build_requirements,
 )
 from kpip.index.candidates import InstallationCandidate
 from kpip.index.links import Link
@@ -198,24 +197,6 @@ def test_editable_build(
         return ProjectBuilder(source_tree).build_editable(wheel_directory)
 
     assert benchmark(build_editable).endswith(".whl")
-
-
-def test_build_isolation_requirements_validation(
-    benchmark: BenchmarkFixture,
-    tmp_path: Path,
-) -> None:
-    project = tmp_path / "build-requirements"
-    project.mkdir()
-    (project / "pyproject.toml").write_text(
-        '[build-system]\nrequires = ["setuptools>=65", "wheel>=0.40", '
-        '"packaging>=23"]\nbuild-backend = "setuptools.build_meta"\n',
-        encoding="utf-8",
-    )
-
-    def validate() -> None:
-        validate_build_requirements(project)
-
-    benchmark(validate)
 
 
 def test_sdist_metadata_build_failure(

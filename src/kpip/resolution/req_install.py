@@ -4,13 +4,10 @@ import logging
 import os
 import tempfile
 from collections.abc import Iterable
-from tomllib import loads
 from typing import TYPE_CHECKING, Any, Protocol
 
 from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
-from kpip.core.direct_url import ArchiveInfo, DirInfo
 from kpip.core.errors import (
-    DiagnosticKpipError,
     InstallationError,
 )
 from kpip.core.hashes import Hashes
@@ -22,36 +19,14 @@ from kpip.core.packaging import (
     SpecifierSet,
     canonicalize_name,
     marker_applies,
-    parse_requirement,
 )
 from kpip.core.versions import Version
 from kpip.index.links import Link
-from kpip.resolution.input_paths import looks_like_path
 
 if TYPE_CHECKING:
     import email.message
 
 logger = logging.getLogger(__name__)
-
-
-class InvalidPyProjectBuildRequires(DiagnosticKpipError):
-    reference = "invalid-pyproject-build-system-requires"
-
-    def __init__(
-        self,
-        *,
-        package: str,
-        requirement: str,
-        error: str,
-    ) -> None:
-        super().__init__(
-            message=f"Getting requirements to build wheel for {package} failed.",
-            context=(
-                f"The value of `build-system.requires` for {package} contains an invalid "
-                f"requirement: {requirement!r} ({error})"
-            ),
-            hint_stmt="This package has an invalid `build-system.requires` value. It does not comply with PEP 518.",
-        )
 
 
 class MetadataProvider(Protocol):
@@ -71,25 +46,6 @@ class VcsInfo:
         self.vcs = vcs
 
 
-class DownloadInfo:
-    __slots__ = ("archive_info", "dir_info", "url", "vcs_info")
-
-    def __init__(
-        self,
-        url: str,
-        archive_info: ArchiveInfo | None = None,
-        dir_info: DirInfo | None = None,
-        vcs_info: VcsInfo | None = None,
-    ) -> None:
-        self.url = url
-
-        self.archive_info = archive_info
-
-        self.dir_info = dir_info
-
-        self.vcs_info = vcs_info
-
-
 class NoOpBuildEnvironment_internal:
     @property
     def python_executable(self) -> str:
@@ -100,17 +56,6 @@ class NoOpBuildEnvironment_internal:
 
     def __exit__(self, *exc_info: object) -> None:
         return None
-
-    def install_requirements(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
-
-    def check_requirements(
-        self,
-        requirements: Iterable[str],
-    ) -> tuple[set[str], set[str]]:
-        del requirements
-
-        return set(), set()
 
 
 class InstallRequirement:
@@ -287,12 +232,6 @@ class InstallRequirement:
         return self.link is not None and self.link.filename.endswith(".whl")
 
     @property
-    def supports_pyproject_editable(self) -> bool:
-        """Whether this requirement can use the editable build backend."""
-
-        return self.pep517_backend is not None
-
-    @property
     def is_direct(self) -> bool:
         """Whether this requirement was specified with a direct URL."""
 
@@ -306,12 +245,6 @@ class InstallRequirement:
             raise ValueError("requirement has no parsed requirement")
 
         return self.req.specifier.is_pinned
-
-    @property
-    def has_hash_options(self) -> bool:
-        """Whether command-line hash options were supplied."""
-
-        return bool(self.hash_options)
 
     def hashes(self, trust_internet: bool = True) -> Hashes:
         values = {
@@ -342,51 +275,6 @@ class InstallRequirement:
 
     def match_markers(self, extras_requested: Iterable[str] = ()) -> bool:
         return marker_applies(self.markers, extras=extras_requested)
-
-    def ensure_build_location(self, parent_dir: str) -> str:
-        root = os.path.realpath(os.path.dirname(parent_dir))
-
-        return tempfile.mkdtemp("-build", "kpip-", dir=root)
-
-    def ensure_has_source_dir(self, parent_dir: str) -> None:
-        """Allocate the source directory used while preparing this requirement."""
-
-        if self.source_dir is None:
-            self.source_dir = self.ensure_build_location(parent_dir)
-
-    def needs_unpacked_archive(self, archive_source: str | os.PathLike[str]) -> None:
-        if self.archive_source_internal is not None:
-            raise AssertionError("archive source already set")
-
-        self.archive_source_internal = os.fspath(archive_source)
-
-    def ensure_pristine_source_checkout(self) -> None:
-        """Populate or validate the source directory before preparation."""
-
-        if self.source_dir is None:
-            raise InstallationError(f"No source directory for {self}")
-
-        if self.archive_source_internal is not None:
-            return
-
-        try:
-            with os.scandir(os.fspath(self.source_dir)) as entries:
-                has_project_file = any(
-                    entry.name in {"pyproject.toml", "setup.py"} and entry.is_file()
-                    for entry in entries
-                )
-
-        except OSError:
-            has_project_file = False
-
-        if has_project_file:
-            raise InstallationError(
-                f"kpip can't proceed with requirement {self!r} because its source "
-                f"directory already contains an installable project",
-            )
-
-    def set_dist(self, distribution: MetadataProvider) -> None:
-        self.distribution_internal = distribution
 
     def get_dist(self) -> MetadataProvider:
         if self.distribution_internal is None:
@@ -462,160 +350,6 @@ class InstallRequirement:
             raw=self.req.raw,
         )
 
-    def load_pyproject_toml(self) -> dict[str, object]:
-        if self.source_dir is None:
-            raise InstallationError("Install requirement has no source directory")
-
-        source_dir = os.fspath(self.source_dir)
-
-        pyproject = os.path.join(source_dir, "pyproject.toml")
-
-        setup_py = os.path.join(source_dir, "setup.py")
-
-        setup_contents: str | None = None
-
-        try:
-            with open(pyproject, encoding="utf-8") as file:
-                data = loads(file.read())
-
-        except OSError:
-            try:
-                with open(setup_py, encoding="utf-8") as file:
-                    setup_contents = file.read()
-
-            except OSError:
-                raise InstallationError(
-                    f"{self} does not appear to be a Python project: neither "
-                    "'setup.py' nor 'pyproject.toml' found.",
-                ) from None
-
-            data = {
-                "build-system": {
-                    "requires": ["setuptools>=40.8.0,<82"],
-                    "build-backend": "setuptools.build_meta:__legacy__",
-                },
-            }
-
-        self.pyproject_data = data
-
-        build_system = data.get("build-system")
-
-        if not isinstance(build_system, dict):
-            return data
-
-        requires = build_system.get("requires")
-
-        if not isinstance(requires, list):
-            return data
-
-        self.pyproject_requires = [str(item) for item in requires]
-
-        parsed_requires: list[ParsedRequirement] = []
-
-        package = str(self)
-
-        for item in requires:
-            if not isinstance(item, str):
-                raise InvalidPyProjectBuildRequires(
-                    package=package,
-                    requirement=repr(item),
-                    error="build requirements must be strings",
-                )
-
-            if looks_like_path(item) or item.startswith(
-                ("git+", "hg+", "svn+", "bzr+"),
-            ):
-                raise InvalidPyProjectBuildRequires(
-                    package=package,
-                    requirement=item,
-                    error="direct references and local paths are not allowed",
-                )
-
-            try:
-                parsed = parse_requirement(item)
-
-            except ValueError as exc:
-                raise InvalidPyProjectBuildRequires(
-                    package=package,
-                    requirement=item,
-                    error=str(exc),
-                ) from exc
-
-            parsed_requires.append(parsed)
-
-            if parsed.url is not None:
-                raise InvalidPyProjectBuildRequires(
-                    package=package,
-                    requirement=item,
-                    error="direct references are not allowed",
-                )
-
-        backend = build_system.get("build-backend", "setuptools.build_meta")
-
-        setup_uses_pkg_resources = (
-            setup_contents is not None and "pkg_resources" in setup_contents
-        )
-
-        if (
-            isinstance(backend, str)
-            and backend.startswith("setuptools.build_meta")
-            and setup_contents is not None
-            and setup_uses_pkg_resources
-            and not any(
-                canonicalize_name(parsed.name) == "setuptools"
-                and not parsed.specifier.contains(Version("81"), allow_prereleases=True)
-                for parsed in parsed_requires
-            )
-        ):
-            self.pyproject_requires.append("setuptools<82")
-
-        self.requirements_to_check = []
-
-        return data
-
-    def configure_backend(self, python_executable: str) -> None:
-        if self.source_dir is None:
-            raise InstallationError("Install requirement has no source directory")
-
-        data = self.pyproject_data or self.load_pyproject_toml()
-
-        build_system = data.get("build-system")
-
-        backend = None
-
-        backend_path: tuple[str, ...] = ()
-
-        if isinstance(build_system, dict):
-            raw_backend = build_system.get("build-backend")
-
-            if isinstance(raw_backend, str):
-                backend = raw_backend
-
-            raw_backend_path = build_system.get("backend-path", [])
-
-            if isinstance(raw_backend_path, list):
-                backend_path = tuple(
-                    item for item in raw_backend_path if isinstance(item, str)
-                )
-
-        if backend is None:
-            backend = "setuptools.build_meta:__legacy__"
-
-        self.pep517_backend = BuildBackendHookCaller(
-            self.source_dir,
-            backend,
-            backend_path=list(backend_path),
-            python_executable=os.fspath(python_executable),
-        )
-
-    def editable_sanity_check(self) -> None:
-        """Validate that editable preparation has a backend to call."""
-
-        if self.editable and self.pep517_backend is None:
-            raise InstallationError(
-                f"Project {self} has no configured build backend for editable installation",
-            )
-
     def prepare_metadata(self) -> None:
         """Ask the configured backend to generate the project metadata."""
 
@@ -663,20 +397,6 @@ class InstallRequirement:
     def __repr__(self) -> str:
         return f"<InstallRequirement object: {self} editable={self.editable}>"
 
-    def format_debug(self) -> str:
-        names = {
-            name
-            for cls in type(self).__mro__
-            for name in getattr(cls, "__slots__", ())
-            if isinstance(name, str) and not name.startswith("__")
-        }
-
-        attributes = ", ".join(
-            f"{name}={getattr(self, name)!r}" for name in sorted(names)
-        )
-
-        return f"<{self.__class__.__name__} object: {{{attributes}}}>"
-
     def from_path(self) -> str | None:
         """Format the requirement and its source provenance."""
 
@@ -709,7 +429,3 @@ class InstallRequirement:
     @property
     def setup_py_path(self) -> str:
         return os.path.join(self.unpacked_source_directory, "setup.py")
-
-    @property
-    def pyproject_toml_path(self) -> str:
-        return os.path.join(self.unpacked_source_directory, "pyproject.toml")

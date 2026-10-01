@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 import logging
-import ntpath
 import os
 import threading
 import time
@@ -108,21 +107,6 @@ class FindLinksSource:
             links.extend(self.links_from_find_link(link))
 
         return links
-
-    def refresh_local_sources(self, path: str | None = None) -> None:
-        """Explicitly invalidate local discovery state."""
-
-        if path is None:
-            self.local_snapshots.clear()
-
-            self.local_file_links.clear()
-
-        else:
-            path_text = os.fspath(path)
-
-            self.local_snapshots.pop(path_text, None)
-
-            self.local_file_links.pop(path_text, None)
 
     def links_from_find_link(self, link: str) -> list[Link]:
         parsed_link = urllib.parse.urlsplit(link)
@@ -575,16 +559,6 @@ class SimpleIndexSource:
             index_url if index_url.endswith("/") else index_url + "/",
             canonicalize_name(canonical_name) + "/",
         )
-
-
-@lru_cache(maxsize=4096)
-def looks_like_path_requirement(value: str) -> bool:
-    return (
-        value.startswith((".", "/", "~"))
-        or os.sep in value
-        or (os.altsep is not None and os.altsep in value)
-        or bool(ntpath.splitdrive(value)[0])
-    )
 
 
 REFRESH_WORKERS = 32

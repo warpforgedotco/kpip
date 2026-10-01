@@ -35,19 +35,6 @@ def safe_extra(extra: str) -> str:
     return canonicalize_name(extra)
 
 
-def implementation_version_text() -> str:
-    """``implementation_version`` as PEP 508 defines it, for the target.
-
-    This is the *implementation's* version, not the language version: on PyPy
-    it is 7.3.x, not 3.10.x, and markers that gate on a PyPy release are
-    written against that number. Non-final builds carry the release level, so
-    a CPython alpha reports ``3.15.0a1`` rather than ``3.15.0``.
-    """
-    return interpreter_facts.target_interpreter(installing=False).markers[
-        "implementation_version"
-    ]
-
-
 _TARGET_PYTHON: str | None = None
 
 
@@ -598,19 +585,6 @@ class SpecifierSet:
             return exact
 
     @property
-    def has_arbitrary_clause(self) -> bool:
-        """Some ``===`` clause, whose operand is text rather than a version.
-
-        This decides how the containment memo is keyed. Every other operator
-        depends only on the comparison tuple, which is what a Version hashes
-        as; ``===`` compares the canonical *spelling*, and 1.0 and 1.0.0 are
-        one key but two spellings. Keying everything by text would cost a
-        property call and a string hash on the hot path for the sake of an
-        operator almost nothing uses.
-        """
-        return self._has_arbitrary
-
-    @property
     def is_pinned(self) -> bool:
         """Some ``==``/``===`` clause without a wildcard: the set admits at
         most one release (the yank and hash policy question)."""
@@ -745,12 +719,6 @@ class SpecifierSet:
 
 
 _write_specifiers = SpecifierSet.__dict__["specifiers"].__set__
-_write_is_pinned = SpecifierSet.__dict__["is_pinned"].__set__
-_write_exact_version = SpecifierSet.__dict__["exact_version"].__set__
-_write_contains = SpecifierSet.__dict__["_contains"].__set__
-_write_contains_with_prereleases = SpecifierSet.__dict__[
-    "_contains_with_prereleases"
-].__set__
 
 
 class Requirement:
