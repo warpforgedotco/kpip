@@ -204,3 +204,19 @@ def test_scripts_run_with_the_python_a_parent_kpip_names(
     assert shebang(None, gui=False) == b"#!/env/bin/python\n"
     # A named interpreter still wins.
     assert shebang("/opt/py", gui=False) == b"#!/opt/py\n"
+
+
+def test_the_build_environments_interpreter_is_quoted_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build environments live under %TEMP%: a profile name with a space."""
+    from kpip.install import wheel_scripts
+
+    monkeypatch.setattr(wheel_scripts.os, "name", "nt")
+    monkeypatch.setenv(
+        "KPIP_SCRIPT_PYTHON", r"C:\Users\John Smith\AppData\Local\Temp\env\python.exe"
+    )
+
+    assert wheel_scripts.shebang(None, gui=False) == (
+        b'#!"C:\\Users\\John Smith\\AppData\\Local\\Temp\\env\\python.exe"\n'
+    )

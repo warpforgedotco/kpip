@@ -127,7 +127,8 @@ def _create_with_interpreter(
             cwd=env_path,
             env=_bootstrap_environment(),
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         known = _layout_from_facts(env_path, python)
@@ -145,7 +146,8 @@ def _create_with_interpreter(
             cwd=env_path,
             env=_bootstrap_environment(),
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         purelib, scripts, venv_python = json.loads(described.stdout)
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
