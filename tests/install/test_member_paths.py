@@ -228,8 +228,9 @@ class TestCompiledParts:
         from kpip.install import bytecode
         from kpip.install.wheel_archive import compiled_parts, mapped_parts
 
-        other = types.SimpleNamespace(cache_tag="cpython-312")
+        other = types.SimpleNamespace(cache_tag="cpython-312", magic="00000000")
         monkeypatch.setattr(bytecode, "target_interpreter", lambda **_: other)
+        monkeypatch.setattr(bytecode, "is_compiled", lambda: True)
 
         parts = compiled_parts(mapped_parts("pkg/sub/mod.py"))
 
@@ -244,8 +245,9 @@ class TestCompiledParts:
         from kpip.install import bytecode
         from kpip.install.wheel_archive import compiled_parts, mapped_parts
 
-        other = types.SimpleNamespace(cache_tag=None)
+        other = types.SimpleNamespace(cache_tag=None, magic="00000000")
         monkeypatch.setattr(bytecode, "target_interpreter", lambda **_: other)
+        monkeypatch.setattr(bytecode, "is_compiled", lambda: True)
 
         assert compiled_parts(mapped_parts("pkg/sub/mod.py")) is None
 

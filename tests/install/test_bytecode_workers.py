@@ -149,6 +149,8 @@ def _target(monkeypatch: pytest.MonkeyPatch, **facts: object) -> None:
     }
     other = types.SimpleNamespace(**(defaults | facts))
     monkeypatch.setattr(bytecode, "target_interpreter", lambda **_: other)
+    # Not the Python running kpip, which is read from sys.implementation.
+    monkeypatch.setattr(bytecode, "is_compiled", lambda: True)
 
 
 def test_another_python_that_compiles_as_this_one_takes_this_ones_bytecode(
