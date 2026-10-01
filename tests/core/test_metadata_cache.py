@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from kpip.index.metadata_cache import NAME, WheelMetadataCache, metadata_identity
 
 
@@ -165,3 +167,24 @@ def test_metadata_cache_rejects_malformed_persisted_digests(tmp_path: Path) -> N
     prefetcher.prefetch_digests([good_identity, bad_identity])
     assert prefetcher.digests == {good_identity: "cd" * 32}
     assert prefetcher.get_digest(bad_identity) is None
+
+
+def test_a_database_another_kpip_holds_is_not_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Busy is not damaged: deleting it pulls it from under its writer."""
+    import sqlite3
+
+    cache = WheelMetadataCache(tmp_path / "cache")
+    cache.put(("/wheel.whl", 1, 2), {"Name": ["demo"]})
+    cache.flush()
+    database = tmp_path / "cache" / NAME
+
+    def busy(self: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    reopened = WheelMetadataCache(tmp_path / "cache")
+    monkeypatch.setattr(type(reopened), "_open", busy)
+
+    assert reopened.get(("/wheel.whl", 1, 2)) is None
+    assert database.is_file()
