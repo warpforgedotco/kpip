@@ -301,6 +301,11 @@ class NetworkSession:
 
         self.verify: bool | str = True
 
+        # Certificates are checked against the system's trust store, as
+        # pip's are since 24.2; --use-deprecated=legacy-certs checks them
+        # against certifi's bundle alone.
+        self.legacy_certs = False
+
         self.cert: str | None = None
 
         self.retry = Retry(
@@ -1033,7 +1038,8 @@ class NetworkSession:
         verify: bool | str,
         cert: str | tuple[str, str] | None,
     ) -> ssl.SSLContext:
-        """One shared ``SSLContext`` per TLS policy.
+        """One shared ``SSLContext`` per TLS policy: the system's trust store,
+        or with ``legacy_certs`` certifi's bundle.
 
         Without an explicit context, urllib3 builds a fresh one and re-parses
         the CA bundle for every new connection. The TLS policy is fixed per
@@ -1053,17 +1059,30 @@ class NetworkSession:
             if context is not None:
                 return context
 
+            bundle = verify if isinstance(verify, str) else self.environ_ca_bundle
+
             if verify is False:
                 context = create_urllib3_context(cert_reqs=ssl.CERT_NONE)
 
-            else:
+            elif self.legacy_certs:
                 context = create_urllib3_context(cert_reqs=ssl.CERT_REQUIRED)
 
-                context.load_verify_locations(
-                    verify
-                    if isinstance(verify, str)
-                    else self.environ_ca_bundle or certifi.where(),
-                )
+                context.load_verify_locations(bundle or certifi.where())
+
+            else:
+                # The operating system's trust store -- its keychain or
+                # certificate store, with the CAs an organization added --
+                # through truststore, as pip's default. A bundle --cert or
+                # REQUESTS_CA_BUNDLE names is trusted beside it, as pip
+                # loads it into the same context. Imported here, as pip
+                # imports it: loading the system's TLS libraries costs 5 ms,
+                # which only a command that verifies a server should pay.
+                from kpip._vendor import truststore
+
+                context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+                if bundle:
+                    context.load_verify_locations(bundle)
 
             if cert is not None:
                 if isinstance(cert, tuple):

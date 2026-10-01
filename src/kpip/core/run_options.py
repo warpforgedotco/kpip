@@ -18,6 +18,7 @@ class RunOptions:
         "exists_action",
         "isolated",
         "keyring_provider",
+        "legacy_certs",
         "no_cache_dir",
         "no_clean",
         "no_input",
@@ -40,6 +41,9 @@ class RunOptions:
         self.trusted_hosts: tuple[str, ...] = ()
         self.no_input = False
         self.keyring_provider: str | None = None
+        # --use-deprecated=legacy-certs: certifi's bundle rather than the
+        # system's trust store.
+        self.legacy_certs = False
         self.exists_action: tuple[str, ...] = ()
         self.isolated = False
         self.debug = False

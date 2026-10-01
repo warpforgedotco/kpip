@@ -15,6 +15,7 @@ uv run --group vendoring vendoring sync -v
 | certifi | 2026.7.22 | MPL-2.0 |
 | idna | 3.18 | BSD-3-Clause |
 | nab-resolver | [`bd5a5bdf72c8`](https://github.com/notatallshaw/nab/commit/bd5a5bdf72c876a9532a1e7a6215a42a36dcc630) | MIT |
+| truststore | 0.10.4 | MIT |
 
 The tool extracts license texts beside their packages, with single-module
 licenses at this directory's root. Tests verify that every expected license

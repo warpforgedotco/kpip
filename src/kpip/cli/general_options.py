@@ -74,6 +74,9 @@ def apply_general_options(options: argparse.Namespace) -> None:
     )
     current.no_input = bool(options.no_input)
     current.keyring_provider = options.keyring_provider
+    current.legacy_certs = "legacy-certs" in (
+        getattr(options, "use_deprecated", None) or ()
+    )
     current.exists_action = tuple(getattr(options, "exists_action", ()) or ())
     current.isolated = bool(options.isolated)
     current.debug = bool(getattr(options, "debug", False))

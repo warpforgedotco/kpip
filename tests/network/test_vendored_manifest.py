@@ -13,6 +13,7 @@ LICENSE_PATHS = (
     "certifi/LICENSE",
     "idna/LICENSE.md",
     "nab_resolver/LICENSE",
+    "truststore/LICENSE",
     "urllib3/LICENSE.txt",
 )
 
