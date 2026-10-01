@@ -250,24 +250,18 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     none can still resolve -- for the CPython it was built with -- but not
     install: ``installing`` says which the caller needs.
 
-    Callers ask once per link and once per module, so the answer is kept for
-    as long as what it was found from is unchanged: finding it again stats
-    the interpreter's path, or every ``PATH`` entry.
+    Callers ask once per link and once per module, and finding it again
+    stats the interpreter's path, or every ``PATH`` entry, so the answer is
+    kept: by ``--python``, which a command sets and restores, or for the
+    process, which never changes the environments or ``PATH`` it searched.
     """
-    environ = os.environ
-    python = environ.get("KPIP_PYTHON")
+    python = os.environ.get("KPIP_PYTHON")
     if python:
         key: tuple[object, ...] = ("python", python)
     elif not is_compiled():
         return own_interpreter()
     else:
-        key = (
-            "found",
-            installing,
-            environ.get("VIRTUAL_ENV"),
-            environ.get("CONDA_PREFIX"),
-            environ.get("PATH"),
-        )
+        key = ("found", installing)
     found = _interpreters.get(key)
     if found is None:
         found = _interpreters[key] = _find_target(python, installing=installing)
