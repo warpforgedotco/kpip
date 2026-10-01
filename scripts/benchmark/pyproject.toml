@@ -11,6 +11,7 @@ dependencies = [
 kpip-bench = "kpip_benchmark.cli:main"
 kpip-bench-compare = "kpip_benchmark.compare:main"
 kpip-bench-record = "kpip_benchmark.record:main"
+kpip-bench-codspeed = "kpip_benchmark.codspeed:main"
 
 [build-system]
 requires = ["hatchling"]

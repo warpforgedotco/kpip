@@ -134,6 +134,35 @@ always resolves from scratch regardless of what's already on disk at
 again under a different name, not a distinct measurement. Revisit if `kpip
 lock` ever grows preferred-versions-from-an-existing-lockfile support.
 
+## CodSpeed walltime of the compiled binary
+
+`kpip-bench-codspeed` lays out benchmarks of a compiled kpip for CodSpeed's
+exec harness, to run in walltime mode. They time the binary alone, with no uv to compare against: startup, `list`, offline locks and
+installs from the generated wheelhouse.
+
+```console
+uv run kpip-bench-codspeed ../compile/build/kpip --workspace .codspeed
+codspeed run -m walltime --config .codspeed/codspeed.yml
+```
+
+`prepare` copies the binary into the workspace, writes the offline workload, a
+virtual environment and `codspeed.yml`, then runs every command once. That run
+warms the cache, installs the workload into the environment and unpacks a
+onefile build. It also catches a failing command before CodSpeed runs it.
+
+The exec harness has no per-round setup, so every command must repeat
+unchanged:
+
+- A cold case passes `--no-cache-dir` instead of emptying the cache between
+  rounds.
+- `--target` installs pass `--ignore-installed`, so each round lays down
+  every file again.
+- The venv install finds everything already satisfied, which is the no-op
+  path.
+
+The harness runs only on Linux. Elsewhere, time the same binary with
+`kpip-bench --kpip-compiled`.
+
 ## Recording a baseline
 
 ```console

@@ -18,3 +18,5 @@ dist/
 
 # Recorded kpip-bench baselines (kpip-bench-record).
 benchmark-runs/
+# kpip-bench-codspeed's default workspace.
+.codspeed/
