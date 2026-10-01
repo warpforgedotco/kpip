@@ -1166,3 +1166,32 @@ def test_each_wheel_in_a_batch_gets_its_own_headers_directory(
     include = Path(target.headers).parent
     assert (include / "alpha-pkg" / "Alpha_Pkg.h").is_file()
     assert (include / "beta-pkg" / "beta_pkg.h").is_file()
+
+
+def test_a_package_directory_named_scripts_holds_modules(tmp_path: Path) -> None:
+    """Only a wheel's ``.data/scripts`` members are scripts whose ``#!python``
+    is rewritten; ``mypkg/scripts/helper.py`` is installed as shipped."""
+    wheel = tmp_path / "scripted-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("scripted/__init__.py", "")
+        archive.writestr("scripted/scripts/helper.py", "#!python\nprint(1)\n")
+        archive.writestr("scripted-1.0.data/scripts/tool", "#!python\nprint(2)\n")
+        archive.writestr(
+            "scripted-1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: scripted\nVersion: 1.0\n",
+        )
+        archive.writestr(
+            "scripted-1.0.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr("scripted-1.0.dist-info/RECORD", "")
+    target = tmp_path / "target"
+
+    install_wheel(
+        wheel, target=str(target), pycompile=False, script_executable="/env/python"
+    )
+
+    helper = target / "scripted" / "scripts" / "helper.py"
+    assert helper.read_text() == "#!python\nprint(1)\n"
+    tool = target / ("Scripts" if os.name == "nt" else "bin") / "tool"
+    assert tool.read_text().startswith("#!/env/python")

@@ -80,7 +80,11 @@ def direct_batch_preflight(
                 (relative_parts[-1] if relative_parts else "")
                 in {"INSTALLER", "REQUESTED", "direct_url.json"}
                 or (relative_parts[-1] if relative_parts else "") == "entry_points.txt"
-                or (len(relative_parts) >= 2 and relative_parts[-2] == "scripts")
+                or (
+                    len(relative_parts) >= 3
+                    and relative_parts[0].endswith(".data")
+                    and relative_parts[1] == "scripts"
+                )
             ):
                 return None
             destination_text = destination_internal_parts_text(

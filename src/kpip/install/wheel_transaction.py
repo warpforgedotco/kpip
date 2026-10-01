@@ -355,8 +355,12 @@ def install_wheel_internal(
                     len(relative_parts) == 2
                     and relative_parts[0] == validated_dist_info
                 )
+                # A wheel's scripts are its .data/scripts members; a package
+                # directory that happens to be named scripts holds modules.
                 script_member = (
-                    len(relative_parts) >= 2 and relative_parts[-2] == "scripts"
+                    len(relative_parts) >= 3
+                    and relative_parts[0].endswith(".data")
+                    and relative_parts[1] == "scripts"
                 )
                 is_record = own_metadata and relative_name == "RECORD"
                 direct_content = (
