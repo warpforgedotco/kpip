@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from kpip.core.interpreter import build_interpreter
+from kpip.core.subprocesses import VERBOSE, subprocess_logger
 from kpip.host.interpreter_facts import SAFE_PATH
 
 if TYPE_CHECKING:
@@ -112,31 +113,38 @@ class BuildBackendHookCaller:
                 environment["KPIP_BUILD_BACKEND_PATH"] = os.pathsep.join(
                     self.backend_path,
                 )
-            try:
-                subprocess.run(
-                    [self.python_executable, "-c", _CALLER, hook, directory],
-                    check=True,
-                    cwd=self.source_dir,
-                    env=environment,
-                    capture_output=True,
-                    # What a backend prints is in no one encoding:
-                    # its Python's code page, a compiler's, or UTF-8.
-                    encoding="utf-8",
-                    errors="replace",
+            completed = subprocess.run(
+                [self.python_executable, "-c", _CALLER, hook, directory],
+                check=False,
+                cwd=self.source_dir,
+                env=environment,
+                # One stream, in the order the backend wrote it, as pip
+                # shows a build's output.
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                # What a backend prints is in no one encoding:
+                # its Python's code page, a compiler's, or UTF-8.
+                encoding="utf-8",
+                errors="replace",
+            )
+            output = (completed.stdout or "").rstrip()
+            for line in output.splitlines():
+                subprocess_logger.log(VERBOSE, line)
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"backend hook {hook!r} failed" + (f": {output}" if output else "")
                 )
-            except subprocess.CalledProcessError as exc:
-                detail = (exc.stderr or exc.stdout or "").strip()
-                if detail:
-                    raise RuntimeError(
-                        f"backend hook {hook!r} failed: {detail}",
-                    ) from exc
-                raise
             with open(output_path, encoding="utf-8") as stream:
                 result = json.load(stream)
         if result.get("missing"):
             raise HookMissing(hook)
         if "error" in result:
-            raise RuntimeError(result["error"])
+            # The traceback alone says where the backend gave up, not why:
+            # the compiler error or the backend's own message before it is
+            # in what it printed.
+            raise RuntimeError(
+                "\n".join(part for part in (output, result["error"].rstrip()) if part)
+            )
         return result.get("return_val")
 
     def build_wheel(

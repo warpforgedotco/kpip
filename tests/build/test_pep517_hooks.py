@@ -5,7 +5,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 from kpip.build.pep517_hooks import BuildBackendHookCaller
+from kpip.core.subprocesses import VERBOSE
 
 BACKEND = """\
 import os
@@ -50,3 +52,46 @@ def test_the_projects_own_modules_do_not_shadow_the_standard_library(
     assert project not in path
     assert path[0] == str(Path(project) / "backend")
     assert project not in (pythonpath or "").split(":")
+
+
+FAILING_BACKEND = """\
+import sys
+
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    print("compiling _speedups.c")
+    print("error: Python.h: No such file or directory", file=sys.stderr)
+    raise SystemExit("error: command 'cc' failed")
+
+
+def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
+    print("reading the version")
+    raise ValueError("no version found")
+"""
+
+
+def test_a_failing_hook_says_what_the_backend_printed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The traceback says where a backend gave up; what it printed first --
+    the compiler's error -- says why, as pip shows it. At -v it is logged
+    as it would be had the hook succeeded."""
+    hook = caller(tmp_path, FAILING_BACKEND)
+
+    with caplog.at_level(VERBOSE, logger="kpip.subprocessor"):
+        with pytest.raises(RuntimeError) as raised:
+            hook.prepare_metadata_for_build_wheel(str(tmp_path))
+
+    message = str(raised.value)
+    assert "reading the version" in message
+    assert "ValueError: no version found" in message
+    assert "reading the version" in caplog.messages
+
+    # A backend that exits rather than raises.
+    with pytest.raises(RuntimeError) as raised:
+        hook.build_wheel(str(tmp_path))
+
+    message = str(raised.value)
+    assert "compiling _speedups.c" in message
+    assert "Python.h: No such file or directory" in message
+    assert "command 'cc' failed" in message
