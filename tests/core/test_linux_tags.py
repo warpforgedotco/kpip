@@ -229,3 +229,46 @@ def test_a_compiled_kpip_without_a_target_reads_its_own_binary(
     monkeypatch.setattr(libc, "own_command", lambda: [binary])
 
     assert libc.manylinux_arch_supported("i686")
+
+
+class _Probed:
+    def __init__(self, platform: str, pointer_bits: int) -> None:
+        self.platform = platform
+        self.pointer_bits = pointer_bits
+
+
+@pytest.mark.parametrize(
+    "kernel, bits, expected",
+    [
+        ("linux-x86_64", 32, "linux_i686"),
+        ("linux-aarch64", 32, "linux_armv8l"),
+        ("linux-x86_64", 64, "linux_x86_64"),
+        ("linux-armv7l", 32, "linux_armv7l"),
+    ],
+)
+def test_a_32_bit_python_on_a_64_bit_kernel_takes_32_bit_wheels(
+    monkeypatch: pytest.MonkeyPatch, kernel: str, bits: int, expected: str
+) -> None:
+    """sysconfig reads uname, which names the kernel, not the interpreter."""
+    monkeypatch.setattr(wheel.sys, "platform", "linux")
+    monkeypatch.setattr(
+        wheel.interpreter_facts,
+        "target_interpreter",
+        lambda **_: _Probed(kernel, bits),
+    )
+    assert wheel.current_platform_tag() == expected
+
+
+def test_armv8l_also_takes_armv7l_wheels(
+    linux_host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(wheel, "manylinux_arch_supported", lambda arch: True)
+    supported = linux_host("linux_armv8l", ("glibc", 2, 31))
+    platforms = list(dict.fromkeys(tag.platform for tag in supported))
+    assert platforms == [
+        "manylinux_2_31_armv8l",
+        "manylinux_2_31_armv7l",
+        "linux_armv8l",
+        "linux_armv7l",
+        "any",
+    ]

@@ -946,7 +946,22 @@ def current_platform_tag() -> str:
             machine = machine.replace("-", "_").replace(".", "_")
             return f"macosx_{major}_{minor}_{machine}"
 
-    return interpreter.platform.replace("-", "_").replace(".", "_")
+    platform_tag = interpreter.platform.replace("-", "_").replace(".", "_")
+
+    if interpreter.pointer_bits == 32:
+        # sysconfig names the kernel's machine, which for a 32-bit Python on
+        # a 64-bit kernel is the wrong one. packaging corrects it the same way.
+        platform_tag = _LINUX_32_BIT_PLATFORMS.get(platform_tag, platform_tag)
+
+    return platform_tag
+
+
+_LINUX_32_BIT_PLATFORMS = {
+    "linux_x86_64": "linux_i686",
+    "linux_aarch64": "linux_armv8l",
+}
+"""What a 32-bit Python on a 64-bit Linux kernel runs as, after packaging's
+``_linux_platforms``."""
 
 
 @memoized(1)
@@ -956,7 +971,8 @@ def current_platform_tags() -> tuple[str, ...]:
     On most systems this is one tag. On Linux it is two: the libc the
     interpreter is linked against, expressed as the newest manylinux or
     musllinux tag it satisfies, followed by the bare ``linux_<arch>`` that
-    ``sysconfig`` reports. Without the first entry no manylinux wheel is ever
+    ``sysconfig`` reports (each twice on armv8l, which also runs armv7l
+    wheels). Without the first entry no manylinux wheel is ever
     compatible, and effectively every binary package on PyPI falls back to
     building from source.
 
@@ -971,20 +987,24 @@ def current_platform_tags() -> tuple[str, ...]:
         return (platform_tag,)
 
     arch = platform_tag[len("linux_") :]
+    # armv8l runs armv7l code too, and packaging lists both, its own first.
+    archs = ("armv8l", "armv7l") if arch == "armv8l" else (arch,)
+    plain = tuple(f"linux_{arch}" for arch in archs)
     libc = detect()
 
     if libc is None:
-        return (platform_tag,)
+        return plain
 
     kind, major, minor = libc
 
-    if kind == GLIBC and manylinux_arch_supported(arch):
-        return (f"manylinux_{major}_{minor}_{arch}", platform_tag)
+    # As packaging, the ELF header decides for armv7l whenever it is listed.
+    if kind == GLIBC and manylinux_arch_supported(archs[-1]):
+        return (*(f"manylinux_{major}_{minor}_{arch}" for arch in archs), *plain)
 
     if kind == MUSL:
-        return (f"musllinux_{major}_{minor}_{arch}", platform_tag)
+        return (*(f"musllinux_{major}_{minor}_{arch}" for arch in archs), *plain)
 
-    return (platform_tag,)
+    return plain
 
 
 @memoized(4096)
