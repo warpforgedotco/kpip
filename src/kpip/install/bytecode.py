@@ -34,6 +34,7 @@ import subprocess
 import sys
 import threading
 
+from kpip.core.compiled import is_compiled
 from kpip.core.utils import default_worker_count
 from kpip.host.interpreter_facts import target_interpreter
 from kpip.install._compile_worker import SOURCE
@@ -165,14 +166,27 @@ class _Worker:
             process.kill()
 
 
+def _target_bytecode() -> tuple[str | None, str]:
+    """The target interpreter's cache tag and magic number.
+
+    This process's own when it is the target -- run from source, with no
+    ``--python`` -- read from ``sys.implementation`` rather than from every
+    fact the probe gathers, which a warm install did not otherwise need.
+    """
+    if not is_compiled() and not os.environ.get("KPIP_PYTHON"):
+        return sys.implementation.cache_tag, importlib.util.MAGIC_NUMBER.hex()
+
+    interpreter = target_interpreter(installing=False)
+
+    return interpreter.cache_tag, interpreter.magic
+
+
 def compiles_as_this_process() -> bool:
     """Whether the target interpreter's bytecode is what this process
     compiles: the same cache tag and magic number."""
-    interpreter = target_interpreter(installing=False)
-
-    return (
-        interpreter.cache_tag == sys.implementation.cache_tag
-        and interpreter.magic == importlib.util.MAGIC_NUMBER.hex()
+    return _target_bytecode() == (
+        sys.implementation.cache_tag,
+        importlib.util.MAGIC_NUMBER.hex(),
     )
 
 
@@ -184,11 +198,7 @@ def pyc_name(module: str, *, own: bool = False) -> str | None:
     ``cache_from_source`` would answer for this process: its cache tag, and
     its ``-O`` level, where kpip compiles unoptimized.
     """
-    cache_tag = (
-        sys.implementation.cache_tag
-        if own
-        else target_interpreter(installing=False).cache_tag
-    )
+    cache_tag = sys.implementation.cache_tag if own else _target_bytecode()[0]
 
     if cache_tag is None:
         return None
@@ -246,15 +256,14 @@ def bytecode_key(*, own: bool = False) -> str | None:
         cache_tag = sys.implementation.cache_tag
         magic = importlib.util.MAGIC_NUMBER.hex()
     else:
-        interpreter = target_interpreter(installing=False)
-        cache_tag, magic = interpreter.cache_tag, interpreter.magic
+        cache_tag, magic = _target_bytecode()
 
     return None if cache_tag is None else f"{cache_tag}-{magic}"
 
 
 def target_magic() -> bytes:
     """The magic number the target interpreter's ``.pyc`` files begin with."""
-    return bytes.fromhex(target_interpreter(installing=False).magic)
+    return bytes.fromhex(_target_bytecode()[1])
 
 
 def place_pyc(cached: str, source: str, output: str, magic: bytes) -> bytes | None:
