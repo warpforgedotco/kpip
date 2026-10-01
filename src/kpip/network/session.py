@@ -11,6 +11,7 @@ import time
 import urllib.parse
 import urllib.request
 
+from kpip.core.packaging import target_python_version
 from kpip.host.interpreter_facts import target_interpreter
 from kpip._vendor import certifi, urllib3
 from kpip._vendor.urllib3._collections import HTTPHeaderDict
@@ -413,7 +414,12 @@ class NetworkSession:
         if version is None:
             version = get_kpip_version()
 
-        python_version = "%d.%d.%d" % target_interpreter(installing=False).version
+        # The Python the requests are for, as pip names the one it runs
+        # under: the version a lock is made for when it names one -- with
+        # no interpreter to find -- else the target interpreter's.
+        python_version = target_python_version() or (
+            "%d.%d.%d" % target_interpreter(installing=False).version
+        )
 
         return f"kpip/{version} Python/{python_version}"
 
