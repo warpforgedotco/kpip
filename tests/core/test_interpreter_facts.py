@@ -272,3 +272,40 @@ def test_a_compiled_kpip_names_its_binary_and_the_python_it_installs_for(
     assert capsys.readouterr().out == (
         f"kpip {kpip.__version__} from {os.path.realpath(binary)} (python 3.11)\n"
     )
+
+
+def test_a_python3_that_does_not_answer_is_passed_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows, python3 is often the Microsoft Store's stub."""
+    stub = tmp_path / "python3"
+    stub.write_text("#!/bin/sh\nexit 9009\n")
+    stub.chmod(0o755)
+    real = tmp_path / "python"
+    real.symlink_to(sys.executable)
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    monkeypatch.delenv("KPIP_PYTHON", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert target_interpreter().version == tuple(sys.version_info[:3])
+
+
+def test_a_windows_conda_environment_keeps_python_at_its_top(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "python.exe").write_text("")
+    monkeypatch.setattr(interpreter_facts.os, "name", "nt")
+
+    assert identify(str(tmp_path)) == str(tmp_path / "python.exe")
+
+
+def test_a_projects_own_modules_do_not_stand_in_for_the_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "json.py").write_text("raise SystemExit('shadowed')\n")
+    (tmp_path / "platform.py").write_text("raise SystemExit('shadowed')\n")
+    monkeypatch.chdir(tmp_path)
+
+    assert probe(sys.executable).version == tuple(sys.version_info[:3])

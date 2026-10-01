@@ -12,15 +12,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
-import sys
 
 from kpip.core.compiled import is_compiled
-from kpip.core.errors import DiagnosticKpipError
+from kpip.core.errors import CommandError, DiagnosticKpipError
 from kpip.core.packaging import target_python_version
 from kpip.host import interpreter_facts
 
-_PROBE = "import sys, venv; print('%d.%d' % sys.version_info[:2])"
 
 _build_interpreters: dict[tuple[str | None, str | None, str | None], str] = {}
 
@@ -43,31 +40,6 @@ class NoBuildInterpreterError(DiagnosticKpipError):
         )
 
 
-def _environment_python(prefix: str) -> str:
-    if os.name == "nt":
-        return os.path.join(prefix, "Scripts", "python.exe")
-    return os.path.join(prefix, "bin", "python")
-
-
-def _probe(executable: str) -> str | None:
-    """The interpreter's ``major.minor`` if it runs and can create environments."""
-
-    try:
-        result = subprocess.run(
-            [executable, "-c", _PROBE],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except OSError, subprocess.SubprocessError:
-        return None
-
-    version = result.stdout.strip()
-
-    return version if result.returncode == 0 and version else None
-
-
 def _candidates(target: str) -> list[str]:
     candidates = []
 
@@ -75,7 +47,10 @@ def _candidates(target: str) -> list[str]:
         prefix = os.environ.get(variable)
 
         if prefix:
-            candidates.append(_environment_python(prefix))
+            candidates.extend(
+                os.path.join(prefix, *name.split("/"))
+                for name in interpreter_facts.environment_pythons()
+            )
 
     for name in (f"python{target}", "python3", "python"):
         found = shutil.which(name)
@@ -87,19 +62,34 @@ def _candidates(target: str) -> list[str]:
 
 
 def _discover() -> str:
-    target = target_python_version() or "%d.%d" % sys.version_info[:2]
+    # The version the build is for: the lock's, or the target's -- never the
+    # Python the binary bundles, which nothing is built for.
+    requested = target_python_version()
+    target = (
+        ".".join(requested.split(".")[:2])
+        if requested
+        else interpreter_facts.target_interpreter(installing=False).major_minor
+    )
     tried: list[str] = []
     fallback: str | None = None
 
     for candidate in _candidates(target):
-        if candidate in tried:
+        if candidate in tried or not os.path.exists(candidate):
             continue
 
         tried.append(candidate)
-        version = _probe(candidate)
 
-        if version is None:
+        try:
+            interpreter = interpreter_facts.probe(candidate)
+
+        except CommandError:
             continue
+
+        # It must be able to create the environment a build runs in.
+        if not interpreter.venv:
+            continue
+
+        version = interpreter.major_minor
 
         # The target's own version first: an sdist's metadata may depend on
         # the interpreter that prepares it.

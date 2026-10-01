@@ -29,8 +29,13 @@ module, which is what pip does too.
 """
 
 SOURCE = r"""
-import py_compile
 import sys
+
+# -c put the working directory first on sys.path: a py_compile.py there
+# must not stand in for the standard library's.
+del sys.path[0]
+
+import py_compile
 import warnings
 
 # A module that warns at compile time (SyntaxWarning, most often) is not

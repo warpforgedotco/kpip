@@ -22,6 +22,11 @@ from kpip.core.caches import register_table
 from kpip.core.errors import CommandError
 from kpip.core.compiled import is_compiled, is_own_interpreter
 
+SAFE_PATH = "import sys\ndel sys.path[0]\n"
+"""Run first by code given to another interpreter with ``-c``, which puts
+the working directory first on its ``sys.path``: a project's own
+``platform.py`` or ``json.py`` must not stand in for the standard library."""
+
 PROBE = r"""
 import importlib.util
 import json
@@ -68,6 +73,7 @@ def facts():
         "debug_refcount": hasattr(sys, "gettotalrefcount"),
         "user_site": site.getusersitepackages(),
         "user_site_enabled": bool(site.ENABLE_USER_SITE),
+        "venv": importlib.util.find_spec("venv") is not None,
         "schemes": dict(
             (name, sysconfig.get_paths(name, expand=False))
             for name in sysconfig.get_scheme_names()
@@ -117,6 +123,7 @@ class Interpreter:
         "stdlib",
         "user_site",
         "user_site_enabled",
+        "venv",
         "version",
     )
 
@@ -136,6 +143,8 @@ class Interpreter:
         self.debug_refcount: bool = facts["debug_refcount"]
         self.user_site: str = facts["user_site"]
         self.user_site_enabled: bool = facts["user_site_enabled"]
+        # Whether it can create the environments builds run in.
+        self.venv: bool = facts.get("venv", True)
         self.schemes: dict[str, dict[str, str]] = facts["schemes"]
         self.preferred: dict[str, str] = facts["preferred"]
         self.config: dict[str, object] = facts["config"]
@@ -196,7 +205,7 @@ def probe(executable: str) -> Interpreter:
     if found is None:
         try:
             result = subprocess.run(
-                [executable, "-c", PROBE],
+                [executable, "-c", SAFE_PATH + PROBE],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -225,14 +234,22 @@ def interpreter_at(executable: str) -> Interpreter:
     return probe(executable)
 
 
+def environment_pythons() -> tuple[str, ...]:
+    """Where an environment keeps its interpreter, relative to its prefix."""
+    if os.name == "nt":
+        return ("Scripts/python.exe", "python.exe", "bin/python")
+    return ("bin/python", "Scripts/python.exe")
+
+
 def identify(python: str) -> str:
     """The interpreter ``--python`` names: the file, or an environment's.
 
     As pip: a directory is taken for a virtual environment, and its
-    ``bin/python`` or ``Scripts/python.exe`` is the interpreter.
+    ``bin/python`` or ``Scripts/python.exe`` is the interpreter -- or, on
+    Windows, the ``python.exe`` a conda environment keeps at its top.
     """
     if os.path.isdir(python):
-        for name in ("bin/python", "Scripts/python.exe"):
+        for name in environment_pythons():
             candidate = os.path.join(python, name)
             if os.path.exists(candidate):
                 return os.path.abspath(candidate)
@@ -275,15 +292,23 @@ def _find_target(python: str | None, *, installing: bool) -> Interpreter:
         prefix = os.environ.get(variable)
         if prefix:
             return probe(identify(prefix))
+    tried = []
     for name in ("python3", "python"):
         found = shutil.which(name)
-        if found is not None:
+        if found is None or found in tried:
+            continue
+        tried.append(found)
+        try:
             return probe(found)
+        except CommandError:
+            # Not a Python that answers: on Windows, python3 is often the
+            # Microsoft Store's stub, beside a python that works.
+            continue
     if not installing:
         return own_interpreter()
     raise CommandError(
         "No Python interpreter to install for: activate an environment, "
-        "or name one with --python"
+        "or name one with --python" + (f" (tried {', '.join(tried)})" if tried else "")
     )
 
 
