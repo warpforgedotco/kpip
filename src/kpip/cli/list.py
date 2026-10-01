@@ -51,7 +51,9 @@ def run_list(args: list[str]) -> int:
         excludes=options.exclude,
         not_required=options.not_required,
         skip=stdlib_pkgs,
-        user_site=str(user_lib_path()),
+        # --path lists the directories given, and no target's user site:
+        # with no Python to install for, it still works.
+        user_site=None if options.path else user_lib_path(),
     )
 
     latest: dict[str, tuple[Any, str]] = {}

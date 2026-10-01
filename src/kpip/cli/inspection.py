@@ -17,7 +17,8 @@ def run_inspect(args: list[str]) -> int:
 
     distributions = InstalledDistributionStore(
         paths=options.path or None,
-        user_site=user_lib_path(),
+        # --path reads the directories given, and no target's user site.
+        user_site=None if options.path else user_lib_path(),
     ).iter(
         local_only=options.local,
         user_only=options.user,

@@ -309,3 +309,42 @@ def test_a_projects_own_modules_do_not_stand_in_for_the_probes(
     monkeypatch.chdir(tmp_path)
 
     assert probe(sys.executable).version == tuple(sys.version_info[:3])
+
+
+@pytest.fixture
+def no_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A compiled kpip on a machine with no Python to install for."""
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    for variable in ("VIRTUAL_ENV", "CONDA_PREFIX", "KPIP_PYTHON"):
+        monkeypatch.delenv(variable, raising=False)
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    return tmp_path
+
+
+def test_listing_a_path_needs_no_python(
+    no_python: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from kpip.cli.main import main
+
+    site = no_python / "site"
+    info = site / "demo-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n")
+
+    assert main(["list", "--path", str(site), "--format=freeze"]) == 0
+    assert main(["freeze", "--path", str(site)]) == 0
+    assert capsys.readouterr().out.count("demo==1.0") == 2
+
+
+def test_installing_without_a_python_fails_before_writing(
+    no_python: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from kpip.cli.main import main
+
+    target = no_python / "target"
+
+    assert main(["install", "--no-index", "--target", str(target), "demo"]) != 0
+    assert "No Python interpreter to install for" in capsys.readouterr().err
+    assert not target.exists()
