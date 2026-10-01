@@ -26,7 +26,7 @@ from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.index.links import Link
 from kpip.index.source_locations import resolve_source_location
 from kpip.network.deferred import DeferredNetworkSession
-from kpip.resolution.files import parse_requirements
+from kpip.resolution.files.parser import parse_requirements
 from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:

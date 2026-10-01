@@ -32,7 +32,7 @@ from kpip.install.uninstall import DistributionUninstaller
 from kpip.host.unpacking import unzip_file
 from kpip.install.wheel_transaction import WheelInstaller
 from kpip.resolution.api import ResolutionEngine
-from kpip.resolution.files import parse_requirements
+from kpip.resolution.files.parser import parse_requirements
 from pytest_codspeed import BenchmarkFixture
 
 

@@ -67,7 +67,7 @@ from kpip.index.vcs import git_revision, materialize_vcs, release_checkout
 from kpip.index.vcs_urls import vcs_reference
 from kpip.network.deferred import DeferredNetworkSession
 from kpip.resolution.api import ResolutionEngine
-from kpip.resolution.files import parse_requirements
+from kpip.resolution.files.parser import parse_requirements
 from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:

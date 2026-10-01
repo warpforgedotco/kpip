@@ -19,7 +19,7 @@ from kpip.core.errors import ResolutionError
 from kpip.core.packaging import parse_requirement
 from kpip.index.provider import CandidateProvider
 from kpip.resolution.api import ResolutionEngine
-from kpip.resolution.files import parse_requirements
+from kpip.resolution.files.parser import parse_requirements
 from kpip.resolution.models import ResolutionConfig
 from kpip.resolution.nab_provider import NabProvider
 from pytest_codspeed import BenchmarkFixture
