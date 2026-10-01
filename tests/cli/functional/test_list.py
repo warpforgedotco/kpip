@@ -112,7 +112,7 @@ def test_multiple_exclude_and_normalization(
     print(result.stdout)
     assert "Normalizable_Name" in result.stdout
     assert "kpip" in result.stdout
-    result = script.kpip("list", "--exclude", "normalizablE-namE", "--exclude", "pIp")
+    result = script.kpip("list", "--exclude", "normalizablE-namE", "--exclude", "kPiP")
     assert "Normalizable_Name" not in result.stdout
     assert "kpip" not in result.stdout
 

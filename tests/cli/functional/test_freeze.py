@@ -70,11 +70,10 @@ def test_basic_freeze(script: KpipTestEnvironment) -> None:
     check_output_internal(result.stdout, expected)
 
 
-def test_freeze_with_pip(script: KpipTestEnvironment) -> None:
-    """Test that kpip shows itself only when --all is used"""
+def test_freeze_shows_a_kpip_distribution(script: KpipTestEnvironment) -> None:
+    """kpip is never in an environment it serves: the one installed here
+    is a distribution like any other, frozen without --all."""
     result = script.kpip("freeze")
-    assert "kpip==" not in result.stdout
-    result = script.kpip("freeze", "--all")
     assert "kpip==" in result.stdout
 
 

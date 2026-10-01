@@ -40,7 +40,6 @@ from kpip.core.errors import (
     InstallationError,
     ResolutionError,
 )
-from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.metadata import find_installed, installed_index, user_lib_path
 from kpip.core.packaging import (
     canonicalize_name,
@@ -59,7 +58,7 @@ from kpip.host.environment_checks import (
 )
 from kpip.host.interpreter_facts import target_interpreter
 from kpip.index.candidate_materialization import LazyWheelCandidate
-from kpip.install.archive_workers import start_archive_workers
+from kpip.install.archive_workers import ArchiveWorkers
 from kpip.install.metadata import (
     ReportItem,
     direct_url_from_link,
@@ -647,7 +646,7 @@ def install_candidate(
 
 
 def warn_about_install_conflicts(changed_names: set[str]) -> None:
-    distributions = InstalledDistributionStore().iter(skip=KPIP_DISTRIBUTION_NAMES)
+    distributions = InstalledDistributionStore().iter()
     distributions_by_name = {dist.canonical_name: dist for dist in distributions}
     dependencies_by_name = installed_dependencies_by_name(distributions)
 
@@ -1180,9 +1179,9 @@ def run_install(args: list[str]) -> int:
 
         pycompile = not execution.options.no_compile
 
-        # Started before resolving, so the workers are up by the first wheel.
+        # Made before resolving, so the workers start with the first wheel.
         archive_workers = (
-            start_archive_workers()
+            ArchiveWorkers.if_available()
             if execution.cache_dir is not None and not execution.options.dry_run
             else None
         )

@@ -8,7 +8,7 @@ import sys
 from kpip.build import query
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.cli.parsers.inspection import create_check_parser
-from kpip.core import kpip_version, packaging, target_python
+from kpip.core import packaging, target_python
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +16,7 @@ logger = logging.getLogger(__name__)
 def run_check(args: list[str]) -> int:
     create_check_parser().parse_args(args)
 
-    distributions = InstalledDistributionStore().iter(
-        skip=kpip_version.KPIP_DISTRIBUTION_NAMES
-    )
+    distributions = InstalledDistributionStore().iter()
     package_set = query.package_set_from_dependencies(
         distributions,
         query.installed_dependencies_by_name(distributions),

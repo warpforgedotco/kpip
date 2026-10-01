@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import configparser
 import os
-import sys
 
 from kpip.core import run_options
 from kpip.core.appdirs import user_config_dir
 from kpip.core.errors import ConfigurationError
+from kpip.host.interpreter_facts import target_interpreter
 from kpip.index.config import DEFAULT_INDEX_URL
 
 if TYPE_CHECKING:
@@ -94,10 +94,10 @@ def config_locations() -> list[ConfigLocation]:
     locations = [ConfigLocation("global", global_path)]
     if not (env_path and os.path.exists(env_path)):
         locations.extend(ConfigLocation("user", path) for path in user_config_paths())
-    prefix = os.environ.get("VIRTUAL_ENV") or sys.prefix
-    executable_prefix = os.path.dirname(os.path.dirname(sys.executable))
-    if os.path.isfile(os.path.join(executable_prefix, "pyvenv.cfg")):
-        prefix = executable_prefix
+    # pip's site file is in the prefix of the Python it runs under; kpip's is
+    # in the prefix of the Python it installs for. Compiled, sys.prefix is
+    # kpip's own bundle.
+    prefix = target_interpreter(installing=False).prefix
     locations.append(ConfigLocation("site", os.path.join(prefix, CONFIG_BASENAME)))
     if env_path:
         locations.append(ConfigLocation("env", env_path))

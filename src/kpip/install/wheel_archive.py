@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 import base64
 import functools
 import hashlib
-import importlib.util
 import os
 import stat
 
 from kpip.core.errors import InstallationError
+from kpip.install.bytecode import pyc_name
 
 if TYPE_CHECKING:
     import zipfile
@@ -73,36 +73,29 @@ def mapped_parts(relative: str) -> tuple[str, ...]:
     return parts[2:]
 
 
-def compiled_parts(mapped: tuple[str, ...]) -> tuple[str, ...] | None:
+def compiled_parts(
+    mapped: tuple[str, ...], *, own: bool = False
+) -> tuple[str, ...] | None:
     """Where byte-compiling ``mapped`` lands its ``.pyc``, as path parts, or
     ``None`` when the member is not byte-compiled.
 
-    Uses the interpreter's own ``cache_from_source`` so the path reserved in
-    the collision trie, the path preflighted against the target, the path the
-    archive cache writes at fill time and the path the installer materializes
-    are all the same one. Scripts under ``bin``/``Scripts`` are not modules
-    and are left alone.
-
-    Only the *file name* comes from ``cache_from_source``; the directory is
-    rebuilt from ``mapped``. Two reasons. On Windows it joins with a
-    backslash, so splitting its result on ``/`` yields one part with
-    separators buried in it -- a wrong collision-trie key and a RECORD row
-    that violates the wheel spec. And under ``sys.pycache_prefix`` it answers
-    with a path somewhere else entirely, which an installer must ignore: the
-    bytecode belongs beside the module it was built from.
-
-    The name is taken after the last separator of either kind rather than
-    with ``os.path.basename``, which only recognizes the separators of the
-    platform it is running on. A member name cannot contain a backslash --
-    :func:`validate_member_parts` rejects those -- so any backslash here came
-    from the interpreter, whichever one answered.
+    One answer for the path reserved in the collision trie, the path
+    preflighted against the target, the path the archive cache writes at
+    fill time and the path the installer materializes. The name is the
+    target interpreter's (:func:`~kpip.install.bytecode.pyc_name`), or this
+    process's, ``own``, in the archive cache; the
+    directory is ``__pycache__`` beside the module, where an installer puts
+    it whatever ``sys.pycache_prefix`` says. Scripts under ``bin``/``Scripts``
+    are not modules and are left alone, and nothing is compiled for an
+    interpreter that reads no bytecode.
     """
     if not mapped[-1].endswith(".py") or mapped[0] in {"bin", "Scripts"}:
         return None
 
-    compiled = importlib.util.cache_from_source("/".join(mapped))
+    name = pyc_name(mapped[-1], own=own)
 
-    name = compiled.replace("\\", "/").rpartition("/")[2]
+    if name is None:
+        return None
 
     return (*mapped[:-1], "__pycache__", name)
 

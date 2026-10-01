@@ -14,7 +14,6 @@ import hashlib
 import io
 import marshal
 import os
-import py_compile
 import shutil
 import struct
 import tempfile
@@ -38,7 +37,7 @@ from kpip.index.metadata_cache import (
     get_wheel_metadata_cache,
     metadata_identity,
 )
-from kpip.install.bytecode import compile_jobs
+from kpip.install.bytecode import bytecode_key, compile_modules
 from kpip.install.wheel_archive import (
     compiled_parts,
     copy_member_with_metadata,
@@ -81,8 +80,11 @@ else:
     WheelRequest = tuple[str, bool, object | None]
 
 
-PYC_CACHE_SUBDIR = "pyc"
-"""Sibling of ``tree/`` holding the entry's byte-compiled modules.
+PYC_CACHE_PREFIX = "pyc-"
+"""Siblings of ``tree/`` holding the entry's byte-compiled modules, one per
+interpreter, named ``pyc-<cache tag>-<magic number>``
+(:func:`kpip.install.bytecode.bytecode_key`). Each is that interpreter's own
+bytecode, compiled by it the first time an install for it asks.
 
 Kept outside ``tree/`` on purpose: ``tree/`` is described by the manifest's
 ``entries`` tuple, which two independent readers decode as a list of wheel
@@ -92,9 +94,9 @@ rows would corrupt both. A sibling directory leaves the manifest untouched
 and makes ``--no-compile`` a matter of simply not reading it.
 
 Laid out by *mapped* (post-relocation) path, so it matches
-:func:`kpip.install.wheel_archive.compiled_parts` exactly. Absent for entries
-written before this cache learned to compile; the installer falls back to
-compiling in the stage, so a missing directory is a miss, never an error.
+:func:`kpip.install.wheel_archive.compiled_parts` exactly. A module missing
+from it -- one that would not compile -- is compiled in the stage, so a miss
+is never an error.
 """
 
 _LOCK_WAIT_SECONDS = 30.0
@@ -591,32 +593,66 @@ def _extract_members_threaded(
             archive.close()
 
 
-def pyc_root(entry_root: str) -> str:
-    """The entry's byte-compiled tree, a sibling of ``tree/``."""
-    return os.path.join(entry_root, PYC_CACHE_SUBDIR)
+def bytecode_tree(archive: CachedWheelArchive) -> str | None:
+    """The entry's byte-compiled modules for the target interpreter, compiled
+    by it the first time an install asks; ``None`` if it reads no bytecode,
+    or the tree could not be made.
+
+    Compiling holds the GIL, so batches go to the target interpreter's
+    worker processes (:mod:`kpip.install.bytecode`), and installs copy the
+    result rather than compiling. Compiled beside the entry and renamed into
+    place, so a concurrent fill of the same entry costs a duplicate compile
+    rather than a lock. Only ever in the main interpreter: a subinterpreter
+    takes no workers, and could compile only this process's bytecode.
+
+    A module that will not compile -- vendored Python 2 in a wheel, say -- is
+    left out, not fatal: the install compiles that one in the stage.
+    """
+    key = bytecode_key()
+
+    if key is None:
+        return None
+
+    entry_root = os.path.dirname(archive.tree)
+
+    target = os.path.join(entry_root, f"{PYC_CACHE_PREFIX}{key}")
+
+    if os.path.isdir(target):
+        return target
+
+    try:
+        temporary = tempfile.mkdtemp(prefix=".pyc-", dir=entry_root)
+
+    except OSError:
+        return None
+
+    try:
+        _compile_archive_pyc(archive.tree, temporary, archive.entries)
+
+        os.rename(temporary, target)
+
+        temporary = ""
+
+    except OSError:
+        # Another install renamed its copy into place first.
+        pass
+
+    finally:
+        if temporary:
+            shutil.rmtree(temporary, ignore_errors=True)
+
+    return target if os.path.isdir(target) else None
 
 
 def _compile_archive_pyc(
     tree: str,
     destination: str,
     entries: Iterable[ArchiveEntry],
-) -> int:
-    """Byte-compile the entry's modules once, into ``destination``.
-
-    Runs at fill time so that installing is a clone plus a path rewrite
-    rather than a compile. Returns how many modules were compiled.
-
-    Compiling holds the GIL, so it is the one part of extraction that threads
-    cannot overlap; batches go to worker processes
-    (:mod:`kpip.install.bytecode`), with anything they decline compiled here.
-
-    A module that will not compile -- vendored Python 2 in a wheel, say -- is
-    skipped, not fatal: the installer falls back to compiling that one in the
-    stage, exactly as it did before this cache existed.
-    """
+) -> None:
+    """Byte-compile the entry's modules into ``destination``, each naming
+    its path in the wheel: the target interpreter names its real path when
+    it imports it."""
     jobs: list[tuple[str, str, str]] = []
-
-    created: set[str] = set()
 
     for entry in entries:
         mapped = mapped_parts(entry[0])
@@ -626,51 +662,21 @@ def _compile_archive_pyc(
         if target is None:
             continue
 
-        output = os.path.join(destination, *target)
-
-        parent = os.path.dirname(output)
-
-        if parent not in created:
-            os.makedirs(parent, exist_ok=True)
-
-            created.add(parent)
-
         jobs.append(
             (
                 os.path.join(tree, *entry[0].split("/")),
-                output,
+                os.path.join(destination, *target),
                 "/".join(mapped),
             ),
         )
 
-    for source, output, display in compile_jobs(jobs):
-        _compile_one(source, output, display)
-
-    return sum(1 for _, output, _ in jobs if os.path.exists(output))
-
-
-def _compile_one(source: str, output: str, display: str) -> None:
-    """Compile one module in this process, for whatever a worker declined."""
-
-    try:
-        py_compile.compile(
-            source,
-            cfile=output,
-            dfile=display,
-            doraise=False,
-            quiet=2,
-        )
-
-    except OSError, ValueError, RecursionError, MemoryError:
-        pass
+    compile_modules(jobs)
 
 
 def _extract_archive(
     candidate: WheelInstallCandidate,
     digest: str,
     entry_root: str,
-    *,
-    pycompile: bool,
 ) -> CachedWheelArchive:
     shard = os.path.dirname(entry_root)
 
@@ -771,13 +777,6 @@ def _extract_archive(
                 f"Wheel {candidate.path} has no valid dist-info metadata",
             )
 
-        if pycompile:
-            _compile_archive_pyc(
-                tree,
-                os.path.join(temporary, PYC_CACHE_SUBDIR),
-                entries,
-            )
-
         manifest = (
             digest,
             dist_info,
@@ -815,10 +814,9 @@ def prepare_cached_wheel(
 ) -> CachedWheelArchive:
     """The wheel's archive cache entry, filled if need be.
 
-    Its modules are byte-compiled only for an install that compiles them:
-    compiling holds the GIL, and a cold ``--no-compile`` install of jupyter
-    spent more on byte code it never used than on extracting. An entry filled
-    without is compiled the first time a compiling install asks for it.
+    Its modules are byte-compiled, for the target interpreter, only for an
+    install that compiles them: a cold ``--no-compile`` install of jupyter
+    spent more on byte code it never used than on extracting.
     """
     layout = loaded_layout(candidate)
 
@@ -826,10 +824,10 @@ def prepare_cached_wheel(
         archive = layout
 
     else:
-        archive = _cached_wheel(candidate, cache_dir, pycompile=pycompile)
+        archive = _cached_wheel(candidate, cache_dir)
 
     if pycompile:
-        _ensure_pyc(archive)
+        bytecode_tree(archive)
 
     return archive
 
@@ -837,8 +835,6 @@ def prepare_cached_wheel(
 def _cached_wheel(
     candidate: WheelInstallCandidate,
     cache_dir: str,
-    *,
-    pycompile: bool,
 ) -> CachedWheelArchive:
     digest = wheel_digest(candidate, cache_dir)
 
@@ -861,37 +857,7 @@ def _cached_wheel(
         if cached is not None:
             return cached
 
-        return _extract_archive(candidate, digest, entry_root, pycompile=pycompile)
-
-
-def _ensure_pyc(archive: CachedWheelArchive) -> None:
-    """Byte-compile an entry filled without, once, for every later install.
-
-    Compiled beside the entry and renamed into place, so a concurrent fill
-    of the same entry costs a duplicate compile rather than a lock.
-    """
-
-    entry_root = os.path.dirname(archive.tree)
-
-    target = pyc_root(entry_root)
-
-    if os.path.isdir(target):
-        return
-
-    try:
-        temporary = tempfile.mkdtemp(prefix=".pyc-", dir=entry_root)
-    except OSError:
-        return
-
-    try:
-        _compile_archive_pyc(archive.tree, temporary, archive.entries)
-        os.rename(temporary, target)
-        temporary = ""
-    except OSError:
-        pass
-    finally:
-        if temporary:
-            shutil.rmtree(temporary, ignore_errors=True)
+        return _extract_archive(candidate, digest, entry_root)
 
 
 def prepare_cached_wheels(
@@ -907,7 +873,7 @@ def prepare_cached_wheels(
     if len(loaded) == len(candidates):
         if pycompile:
             for archive in loaded:
-                _ensure_pyc(archive)
+                bytecode_tree(archive)
         return tuple(loaded)
 
     digests = prefetch_wheel_digests(candidates, cache_dir)
@@ -930,7 +896,7 @@ def prepare_cached_wheels(
     if len(cached_archives) == len(candidates):
         if pycompile:
             for archive in cached_archives:
-                _ensure_pyc(archive)
+                bytecode_tree(archive)
         return tuple(cached_archives)
 
     if len(candidates) < PARALLEL_THRESHOLD:

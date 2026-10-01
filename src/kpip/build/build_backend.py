@@ -13,9 +13,9 @@ import importlib
 import io
 import os
 import re
-import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -28,27 +28,21 @@ from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
 from kpip.core import run_options
 from kpip.core.appdirs import command_cache_arguments
 from kpip.core.errors import BuildError
-from kpip.core.interpreter import (
-    build_interpreter,
-    is_compiled,
-    is_own_interpreter,
-    own_command,
-)
+from kpip.core.compiled import is_own_interpreter, own_command
+from kpip.core.interpreter import build_interpreter
 from kpip.core.metadata import installed_index
+from kpip.host.interpreter_facts import interpreter_at
 from kpip.core.packaging import (
     canonicalize_name,
-    marker_applies,
+    marker_applies_internal,
     parse_requirement,
 )
 from kpip.core.subprocesses import call_subprocess
 from kpip.core.temp_dir import build_directory
 from kpip.core.versions import InvalidVersion, Version
-from kpip.host.interpreter_facts import interpreter_at
-from kpip.host.locations.sysconfig_scheme import get_scheme
 from kpip.install.build_env.isolated_venv import (
     CreatedVenv,
     create_isolated_venv,
-    interpreter_identity,
 )
 
 LEGACY_SETUPTOOLS_REQUIREMENT = "setuptools>=40.8.0,<82"
@@ -269,19 +263,23 @@ def check_build_requirements(
     ``--check-build-dependencies`` pip checks the project's declared build
     requirements against the environment first, and says which are missing
     or installed in a version the requirement rules out.
-    """
-    if not is_own_interpreter(build_interpreter()):
-        # Only this interpreter's environment can be read from here.
-        return
 
-    installed = installed_index()
+    The environment is the build interpreter's, read from its ``sys.path``
+    and judged by its markers: compiled, kpip runs under no interpreter of
+    its own to read.
+    """
+    build = interpreter_at(build_interpreter())
+    installed = installed_index(list(sys.path) if build.is_own else build.path)
+    markers = {**build.markers, "extra": ""}
     missing: set[str] = set()
     conflicting: set[tuple[str, str]] = set()
 
     for text in requirements:
         requirement = parse_requirement(text)
 
-        if not marker_applies(requirement.marker, extras=()):
+        if requirement.marker and not marker_applies_internal(
+            requirement.marker, markers, set()
+        ):
             continue
 
         distribution = installed.get(requirement.canonical_name)
@@ -434,42 +432,6 @@ def _environments_root() -> str:
         return _prepared_environments_root[0]
 
 
-def _installs_build_requirements() -> bool:
-    """Whether kpip may install a build environment's requirements itself.
-
-    A bare environment and a kpip subprocess take 0.4 s where a pip-seeded
-    one and pip take 4.2 s, and the requirements come from kpip's own index
-    settings and cache, as uv's do. The kpip installing them must pick wheels
-    for the environment's interpreter and lay them out where it looks: kpip
-    under the build interpreter, as ``-m kpip``, or a compiled kpip for an
-    interpreter just like its own, which :func:`_runs_like` checks once the
-    environment exists. Any other interpreter keeps pip.
-    """
-    return is_compiled() or is_own_interpreter(build_interpreter())
-
-
-def _runs_like(venv: CreatedVenv) -> bool:
-    """Whether ``venv``'s interpreter takes the wheels this kpip would pick."""
-
-    return venv.identity is None or venv.identity == interpreter_identity()
-
-
-def _prefix_is_environment(env_path: str, venv: CreatedVenv) -> bool:
-    """Whether ``--prefix env_path`` installs where ``venv`` imports from."""
-
-    scheme = get_scheme(
-        "", interpreter=interpreter_at(build_interpreter()), prefix=env_path
-    )
-
-    libraries = {os.path.realpath(path) for path in venv.lib_dirs}
-
-    return (
-        os.path.realpath(scheme.purelib) in libraries
-        and os.path.realpath(scheme.platlib) in libraries
-        and os.path.realpath(scheme.scripts) == os.path.realpath(venv.bin_path)
-    )
-
-
 def _prepared_environment(
     source_dir: str | os.PathLike[str],
     spec: BackendSpec,
@@ -477,14 +439,20 @@ def _prepared_environment(
 ) -> CreatedVenv:
     """The isolated environment for ``spec``'s requirements, made once.
 
-    Standing one up is a virtualenv seeded with pip and a pip process to
-    install the backend's requirements into it: 4.2 s of a 4.5 s metadata
-    read, paid 19 times over by a cold airflow lock whose sdists all ask for
-    the same setuptools. Nothing but those requirements is ever installed
-    into it and a hook only reads it, so every build with the same
-    requirements, constraints and installer settings shares the first one's.
-    Raises ``subprocess.CalledProcessError`` when pip cannot install them;
-    a failure is not kept, so the next build tries again.
+    A bare environment the build interpreter creates, and kpip installing
+    the backend's requirements into it, as uv does: 0.4 s, where one seeded
+    with pip and a pip process to install them took 4.2 s of a 4.5 s
+    metadata read, paid 19 times over by a cold airflow lock whose sdists
+    all ask for the same setuptools. The kpip installing them is told the
+    environment's interpreter, as ``--python`` tells it, so it picks that
+    interpreter's wheels and lays them out where it looks, whatever version
+    it is.
+
+    Nothing but those requirements is ever installed into it and a hook only
+    reads it, so every build with the same requirements, constraints and
+    installer settings shares the first one's. Raises
+    ``subprocess.CalledProcessError`` when they cannot be installed; a
+    failure is not kept, so the next build tries again.
     """
     constraint_args = [
         argument
@@ -496,22 +464,7 @@ def _prepared_environment(
 
     environment.pop("KPIP_CONSTRAINT", None)
 
-    installs_itself = bool(spec.requirements) and _installs_build_requirements()
-
-    local_find_links = shlex.split(environment.get("KPIP_FIND_LINKS", ""))
-
-    install_options = [
-        option for link in local_find_links if link for option in ("--find-links", link)
-    ]
-
-    install_options.insert(0, "--ignore-installed")
-
-    no_index = environment.get("KPIP_NO_INDEX", "").lower()
-
-    if no_index in {"1", "true", "yes", "on"}:
-        install_options.insert(0, "--no-index")
-
-    else:
+    if environment.get("KPIP_NO_INDEX", "").lower() not in {"1", "true", "yes", "on"}:
         environment.pop("KPIP_NO_INDEX", None)
 
     # setuptools is the backend most builds need; building it from source
@@ -525,13 +478,9 @@ def _prepared_environment(
         else []
     )
 
-    install_options.extend(only_binary)
-
     key = (
         build_interpreter(),
-        installs_itself,
         spec.requirements,
-        tuple(install_options),
         tuple(constraint_args),
         # pip reads a relative constraint against the source directory.
         os.fspath(source_dir) if constraint_args else None,
@@ -558,25 +507,10 @@ def _prepared_environment(
 
         try:
             venv = create_isolated_venv(
-                env_path,
-                with_pip=bool(spec.requirements) and not installs_itself,
-                python=build_interpreter(),
+                env_path, with_pip=False, python=build_interpreter()
             )
 
-            if installs_itself and not (
-                _runs_like(venv) and _prefix_is_environment(env_path, venv)
-            ):
-                # Another interpreter, or a layout kpip's --prefix would not
-                # match: pip installs into the environment from inside it.
-                shutil.rmtree(env_path, ignore_errors=True)
-                # Made again empty: the interpreter creates it from inside.
-                os.mkdir(env_path)
-                venv = create_isolated_venv(
-                    env_path, with_pip=True, python=build_interpreter()
-                )
-                installs_itself = False
-
-            if installs_itself:
+            if spec.requirements:
                 subprocess.run(
                     [
                         *own_command(),
@@ -584,8 +518,6 @@ def _prepared_environment(
                         "--quiet",
                         "--no-compile",
                         "--ignore-installed",
-                        "--prefix",
-                        env_path,
                         *command_cache_arguments(),
                         *only_binary,
                         *constraint_args,
@@ -593,29 +525,13 @@ def _prepared_environment(
                     ],
                     check=True,
                     cwd=source_dir,
-                    # Its scripts run with the environment's Python.
+                    # For the environment's interpreter, into the
+                    # environment, its scripts run with it.
                     env={
                         **environment,
+                        "KPIP_PYTHON": venv.python_executable,
                         "KPIP_SCRIPT_PYTHON": venv.python_executable,
                     },
-                    capture_output=True,
-                    text=True,
-                )
-
-            elif spec.requirements:
-                subprocess.run(
-                    [
-                        venv.python_executable,
-                        "-m",
-                        "pip",
-                        "install",
-                        *install_options,
-                        *constraint_args,
-                        *spec.requirements,
-                    ],
-                    check=True,
-                    cwd=source_dir,
-                    env=environment,
                     capture_output=True,
                     text=True,
                 )
@@ -2323,9 +2239,6 @@ def wheel_text_internal() -> str:
 
 def entry_points_text_internal(project: ProjectMetadata) -> str:
     scripts = dict(project.scripts)
-
-    if project.name == "pip" and not scripts:
-        scripts = {"pip": "kpip.cli.main:main"}
 
     if not scripts:
         return ""

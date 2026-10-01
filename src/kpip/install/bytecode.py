@@ -4,10 +4,18 @@ Compiling is the dominant cost of filling the archive cache -- for a sixteen
 wheel set it was measured at 2.5s of a 2.7s fill -- and ``compile()`` holds
 the GIL, so the thread pool that extracts wheels cannot overlap any of it.
 
-The work therefore goes to child interpreters running
+The work therefore goes to child interpreters running the loop in
 :mod:`kpip.install._compile_worker`. They are started once and reused for
 every module in the session, because starting an interpreter costs about as
 much as compiling a small module.
+
+The bytecode is the target interpreter's: the Python kpip installs for,
+which need not be the one running kpip, and is not when kpip is compiled.
+The workers are always that interpreter. When it compiles just as this
+process does -- the same cache tag and magic number -- this process may
+compile what they decline, and the archive cache keeps their bytecode for
+later installs. Otherwise nothing is compiled here: this process's
+``marshal`` neither reads nor writes another version's code.
 
 Everything here is optional. If workers cannot be started, misbehave, or
 time out, the caller compiles in-process instead: this makes installs
@@ -18,15 +26,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 import atexit
+import importlib.util
 import os
+import py_compile
 import queue
 import subprocess
 import sys
 import threading
 
-from kpip.core.interpreter import is_compiled, own_command
+from kpip.core.compiled import is_compiled
 from kpip.core.utils import default_worker_count
-from kpip.install._compile_worker import WORKER_ARGUMENT
+from kpip.host.interpreter_facts import target_interpreter
+from kpip.install._compile_worker import SOURCE
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -155,33 +166,179 @@ class _Worker:
             process.kill()
 
 
-def _worker_script() -> str:
-    return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "_compile_worker.py"
+def _target_bytecode() -> tuple[str | None, str]:
+    """The target interpreter's cache tag and magic number.
+
+    This process's own when it is the target -- run from source, with no
+    ``--python`` -- read from ``sys.implementation`` rather than from every
+    fact the probe gathers, which a warm install did not otherwise need.
+    """
+    if not is_compiled() and not os.environ.get("KPIP_PYTHON"):
+        return sys.implementation.cache_tag, importlib.util.MAGIC_NUMBER.hex()
+
+    interpreter = target_interpreter(installing=False)
+
+    return interpreter.cache_tag, interpreter.magic
+
+
+def compiles_as_this_process() -> bool:
+    """Whether the target interpreter's bytecode is what this process
+    compiles: the same cache tag and magic number."""
+    return _target_bytecode() == (
+        sys.implementation.cache_tag,
+        importlib.util.MAGIC_NUMBER.hex(),
     )
 
 
-def _worker_command() -> list[str]:
-    """How to start a worker: this interpreter running the worker script, or
-    a compiled kpip, which has neither, as itself with the worker argument.
+def pyc_name(module: str, *, own: bool = False) -> str | None:
+    """The file name of the ``.pyc`` the target interpreter reads for the
+    module file ``module``, or ``None`` if it reads none; this process's,
+    ``own``, for the archive cache, which keeps only this process's bytecode.
 
-    The compiled one used to be started as ``sys.executable``, a ``python``
-    beside the binary that does not exist: no worker ever started, and it
-    compiled every module in the main process, one at a time.
+    ``cache_from_source`` would answer for this process: its cache tag, and
+    its ``-O`` level, where kpip compiles unoptimized.
+    """
+    cache_tag = sys.implementation.cache_tag if own else _target_bytecode()[0]
+
+    if cache_tag is None:
+        return None
+
+    return f"{module[:-3]}.{cache_tag}.pyc"
+
+
+def pyc_path(module_path: str) -> str | None:
+    """Where the target interpreter reads the bytecode of the module at
+    ``module_path``: ``__pycache__`` beside it, whatever
+    ``sys.pycache_prefix`` says. ``None`` if it reads none."""
+    directory, module = os.path.split(module_path)
+
+    name = pyc_name(module)
+
+    return None if name is None else os.path.join(directory, "__pycache__", name)
+
+
+def compile_in_process(job: CompileJob) -> None:
+    """Compile one module here. Only for bytecode this process compiles as
+    the target does: see :func:`compiles_as_this_process`."""
+    source, output, display = job
+
+    try:
+        py_compile.compile(
+            source,
+            cfile=output,
+            dfile=display,
+            doraise=False,
+            optimize=0,
+            quiet=2,
+        )
+
+    except OSError, ValueError, RecursionError, MemoryError:
+        pass
+
+
+def compile_modules(jobs: list[CompileJob]) -> None:
+    """Compile ``jobs`` as the target interpreter would: in its workers, and
+    what they decline here when this process compiles as the target does --
+    otherwise that goes without bytecode, as a module that will not compile
+    does."""
+    declined = compile_jobs(jobs)
+
+    if declined and compiles_as_this_process():
+        for job in declined:
+            compile_in_process(job)
+
+
+def bytecode_key(*, own: bool = False) -> str | None:
+    """What the target interpreter's bytecode is cached under -- its cache
+    tag and magic number -- or this process's, ``own``; ``None`` for one
+    that reads no bytecode."""
+    if own:
+        cache_tag = sys.implementation.cache_tag
+        magic = importlib.util.MAGIC_NUMBER.hex()
+    else:
+        cache_tag, magic = _target_bytecode()
+
+    return None if cache_tag is None else f"{cache_tag}-{magic}"
+
+
+def target_magic() -> bytes:
+    """The magic number the target interpreter's ``.pyc`` files begin with."""
+    return bytes.fromhex(_target_bytecode()[1])
+
+
+def place_pyc(cached: str, source: str, output: str, magic: bytes) -> bytes | None:
+    """Copy the cached ``.pyc`` of ``source``'s module to ``output``, its
+    header naming ``source``; what was written, or ``None`` if there is no
+    usable cached one.
+
+    The cache compiled the same bytes ``source`` holds, so only the header's
+    source mtime and size need changing -- not for a hash-based ``.pyc``,
+    whose hash still holds -- and the body is copied whatever version wrote
+    it. The ``co_filename`` inside names where it was compiled: the target
+    interpreter puts the module's real path there when it imports it.
+    """
+    try:
+        with open(cached, "rb") as file:
+            body = file.read()
+
+    except OSError:
+        return None
+
+    if len(body) < 16 or body[:4] != magic:
+        return None
+
+    if not int.from_bytes(body[4:8], "little") & 1:
+        try:
+            stat = os.stat(source)
+
+        except OSError:
+            return None
+
+        body = b"".join(
+            (
+                body[:8],
+                (int(stat.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little"),
+                (stat.st_size & 0xFFFFFFFF).to_bytes(4, "little"),
+                body[16:],
+            )
+        )
+
+    try:
+        try:
+            file = open(output, "wb")  # noqa: SIM115
+
+        except FileNotFoundError:
+            # The first module of its package: make __pycache__ once.
+            os.makedirs(os.path.dirname(output), exist_ok=True)
+
+            file = open(output, "wb")  # noqa: SIM115
+
+        with file:
+            file.write(body)
+
+    except OSError:
+        return None
+
+    return body
+
+
+def _worker_command() -> list[str]:
+    """How to start a worker: the target interpreter, handed the loop.
+
+    Text, with ``-c``: a compiled kpip has no script on disk to point it at,
+    and its ``sys.executable`` is a ``python`` beside the binary that does
+    not exist.
     """
 
-    if is_compiled():
-        return [*own_command(), WORKER_ARGUMENT]
-
-    return [sys.executable, _worker_script()]
+    return [target_interpreter(installing=False).executable, "-c", SOURCE]
 
 
-def _spawn() -> _Worker | None:
+def _spawn(command: list[str]) -> _Worker | None:
     """Start one worker, or ``None`` if it will not answer."""
 
     try:
         process = subprocess.Popen(  # noqa: S603
-            _worker_command(),
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -269,8 +426,10 @@ class CompilePool:
 
             self._started = True
 
+            command = _worker_command()
+
             for _ in range(self._limit):
-                worker = _spawn()
+                worker = _spawn(command)
 
                 if worker is None:
                     break
@@ -421,7 +580,8 @@ _POOL_LOCK = threading.Lock()
 def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     """Compile ``jobs`` across worker processes.
 
-    Returns the jobs no worker took, for the caller to compile in-process.
+    Returns the jobs no worker took, for the caller to compile in-process
+    if :func:`compiles_as_this_process`, else to leave without bytecode.
     """
     global _POOL
 

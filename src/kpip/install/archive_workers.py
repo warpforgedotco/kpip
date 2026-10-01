@@ -14,8 +14,8 @@ main interpreter reads the entry's manifest from the cache, as it would have
 after unpacking it itself. A job that fails for any reason is done again in the
 main interpreter, which raises what failed, so errors read as they always have.
 Without subinterpreters -- before 3.14, PyPy, a compiled kpip built without
-bytecode for them, or ``KPIP_SUBINTERPRETERS=0`` -- :func:`start_archive_workers`
-returns None and wheels unpack on threads as before.
+bytecode for them, or ``KPIP_SUBINTERPRETERS=0`` --
+:meth:`ArchiveWorkers.if_available` returns None and wheels unpack on threads as before.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ import sys
 import threading
 from concurrent.futures import InterpreterPoolExecutor
 
-from kpip.core.interpreter import is_compiled
+from kpip.core.compiled import is_compiled
 from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
-    _ensure_pyc,
     archive_entry_root,
+    bytecode_tree,
     load_archive,
     loaded_layout,
     prepare_cached_wheel,
@@ -73,10 +73,11 @@ class _Wheel:
         self.wheel_layout = None
 
 
-def unpack_in_worker(path: str, sha256: str, cache_dir: str, pycompile: bool) -> str:
-    """Fill the wheel's archive cache entry; its directory. Runs in a worker."""
+def unpack_in_worker(path: str, sha256: str, cache_dir: str) -> str:
+    """Fill the wheel's archive cache entry; its directory. Runs in a worker,
+    which leaves the bytecode to the main interpreter."""
 
-    archive = prepare_cached_wheel(_Wheel(path, sha256), cache_dir, pycompile=pycompile)
+    archive = prepare_cached_wheel(_Wheel(path, sha256), cache_dir, pycompile=False)
     return os.path.dirname(archive.tree)
 
 
@@ -115,6 +116,11 @@ class ArchiveWorkers:
     importing kpip into each cost a warm jupyter install 0.2 s.
     """
 
+    @classmethod
+    def if_available(cls) -> ArchiveWorkers | None:
+        """A pool, or None where there are no subinterpreters to run it."""
+        return cls() if _available() else None
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
@@ -148,7 +154,11 @@ class ArchiveWorkers:
         *,
         pycompile: bool,
     ) -> CachedWheelArchive:
-        """``prepare_cached_wheel(candidate, cache_dir)``, unpacked in a worker."""
+        """``prepare_cached_wheel(candidate, cache_dir)``, unpacked in a worker.
+
+        ``pycompile`` asks for the target interpreter's bytecode in the
+        entry, compiled here, in the main interpreter, once it is unpacked.
+        """
 
         archive = None
 
@@ -163,7 +173,7 @@ class ArchiveWorkers:
                 if archive is not None:
                     # Already unpacked: nothing for a worker to do.
                     if pycompile:
-                        _ensure_pyc(archive)
+                        bytecode_tree(archive)
 
                     return archive
 
@@ -176,7 +186,6 @@ class ArchiveWorkers:
                             os.fspath(candidate.path),  # ty: ignore[unresolved-attribute]
                             digest,
                             cache_dir,
-                            pycompile,
                         ).result(),
                         digest,
                     )
@@ -186,6 +195,9 @@ class ArchiveWorkers:
 
         if archive is None:
             return prepare_cached_wheel(candidate, cache_dir, pycompile=pycompile)  # ty: ignore[invalid-argument-type]
+
+        if pycompile:
+            bytecode_tree(archive)
 
         return archive
 
@@ -197,12 +209,3 @@ class ArchiveWorkers:
 
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
-
-
-def start_archive_workers() -> ArchiveWorkers | None:
-    """A pool of subinterpreters, started by its first wheel, or None where
-    there are none."""
-    if not _available():
-        return None
-
-    return ArchiveWorkers()

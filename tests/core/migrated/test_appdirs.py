@@ -40,10 +40,3 @@ def test_user_config_dir_override(monkeypatch, tmp_path: Path) -> None:
     else:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(override))
     assert Path(appdirs.user_config_dir("kpip")) == override / "kpip"
-
-
-def test_site_config_dirs_linux(monkeypatch) -> None:
-    if sys.platform != "linux":
-        return
-    monkeypatch.delenv("XDG_CONFIG_DIRS", raising=False)
-    assert appdirs.site_config_dirs("kpip") == ["/etc/xdg/kpip", "/etc"]

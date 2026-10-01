@@ -9,7 +9,6 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 from kpip.build.metadata import InstalledDistributionStore
-from kpip.core.kpip_version import KPIP_DISTRIBUTION_NAMES
 from kpip.core.light_metadata import parse_metadata_text
 from kpip.core.packaging import (
     Requirement,
@@ -200,9 +199,6 @@ def select_installed_distributions(
     """Return installed distributions after applying listing filters."""
 
     excluded = {canonicalize_name(name) for name in excludes}
-
-    if "pip" in excluded:
-        excluded.update(canonicalize_name(name) for name in KPIP_DISTRIBUTION_NAMES)
 
     distributions = list(
         InstalledDistributionStore(paths=paths, user_site=user_site).iter(

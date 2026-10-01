@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-import sys
 from hashlib import sha256
+
+from kpip.core.compiled import own_binary
 
 _identity: tuple[object, ...] | None = None
 
@@ -49,13 +50,16 @@ def _installed_record(root: str) -> bytes | None:
 
 
 def _compute() -> tuple[object, ...]:
-    if "__compiled__" in globals():
+    # Not sys.executable: compiled, that is a python beside the binary that
+    # does not exist, and the same path whatever kpip the binary holds.
+    binary = own_binary()
+    if binary is not None:
         try:
-            stat = os.stat(sys.executable)
+            stat = os.stat(binary)
         except OSError:
-            return ("compiled", sys.executable)
+            return ("compiled", binary)
 
-        return ("compiled", sys.executable, stat.st_mtime_ns, stat.st_size)
+        return ("compiled", binary, stat.st_mtime_ns, stat.st_size)
 
     return _source_identity(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

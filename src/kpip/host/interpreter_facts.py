@@ -20,9 +20,10 @@ import sys
 
 from kpip.core.caches import register_table
 from kpip.core.errors import CommandError
-from kpip.core.interpreter import is_compiled, is_own_interpreter
+from kpip.core.compiled import is_compiled, is_own_interpreter
 
 PROBE = r"""
+import importlib.util
 import json
 import platform
 import site
@@ -58,6 +59,7 @@ def facts():
         "version": list(sys.version_info[:3]),
         "implementation": sys.implementation.name,
         "cache_tag": sys.implementation.cache_tag,
+        "magic": importlib.util.MAGIC_NUMBER.hex(),
         "path": [entry for entry in sys.path if entry],
         "stdlib": sysconfig.get_path("stdlib"),
         "platform": sysconfig.get_platform(),
@@ -104,6 +106,7 @@ class Interpreter:
         "executable",
         "extension_suffixes",
         "implementation",
+        "magic",
         "markers",
         "path",
         "platform",
@@ -124,6 +127,7 @@ class Interpreter:
         self.version: tuple[int, int, int] = tuple(facts["version"])
         self.implementation: str = facts["implementation"]
         self.cache_tag: str | None = facts["cache_tag"]
+        self.magic: str = facts["magic"]
         self.path: list[str] = facts["path"]
         self.stdlib: str = facts["stdlib"]
         self.platform: str = facts["platform"]
@@ -245,12 +249,28 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     else the ``python3`` or ``python`` on ``PATH``. A compiled kpip that finds
     none can still resolve -- for the CPython it was built with -- but not
     install: ``installing`` says which the caller needs.
+
+    Callers ask once per link and once per module, and finding it again
+    stats the interpreter's path, or every ``PATH`` entry, so the answer is
+    kept: by ``--python``, which a command sets and restores, or for the
+    process, which never changes the environments or ``PATH`` it searched.
     """
     python = os.environ.get("KPIP_PYTHON")
     if python:
-        return probe(identify(python))
-    if not is_compiled():
+        key: tuple[object, ...] = ("python", python)
+    elif not is_compiled():
         return own_interpreter()
+    else:
+        key = ("found", installing)
+    found = _interpreters.get(key)
+    if found is None:
+        found = _interpreters[key] = _find_target(python, installing=installing)
+    return found
+
+
+def _find_target(python: str | None, *, installing: bool) -> Interpreter:
+    if python:
+        return probe(identify(python))
     for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
         prefix = os.environ.get(variable)
         if prefix:
@@ -267,4 +287,6 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     )
 
 
-_interpreters: dict[str | None, Interpreter] = register_table({})
+# Interpreters by the realpath of their executable, this process's under
+# None, and the target by what it was found from.
+_interpreters: dict[object, Interpreter] = register_table({})

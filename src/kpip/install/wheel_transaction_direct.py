@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import importlib.util
 import os
 from concurrent.futures import ThreadPoolExecutor
 
 from kpip.core.errors import InstallationError
 from kpip.core.wheel import WheelCandidate
+from kpip.install.bytecode import pyc_path
 from kpip.install.target import InstallTarget
 from kpip.install.transaction import InstallTransaction
 from kpip.install.wheel_archive import (
@@ -93,9 +93,9 @@ def direct_batch_preflight(
                 return None
             destinations.add(destination_text)
             if pycompile and os.path.splitext(destination_text)[1] == ".py":
-                compiled_destination = importlib.util.cache_from_source(
-                    destination_text,
-                )
+                compiled_destination = pyc_path(destination_text)
+                if compiled_destination is None:
+                    continue
                 if compiled_destination in destinations or os.path.lexists(
                     compiled_destination
                 ):

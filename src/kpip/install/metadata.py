@@ -23,6 +23,7 @@ from kpip.core.urls import path_to_url, url_to_path
 from kpip.core.packaging import requires_python_version
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.links import Link
+from kpip.host.interpreter_facts import target_interpreter
 from kpip.index.vcs import release_checkout
 from kpip.resolution.input_requirements import install_req_from_editable
 from kpip.vcs.versioncontrol import vcs
@@ -186,7 +187,8 @@ def prepare_editable_source(
     """Validate and prepare an editable source for the build service.
 
     A project from version control is checked out under ``src_dir``, which
-    is ``src`` in the environment unless ``--src`` names another directory.
+    is ``src`` in the target environment unless ``--src`` names another
+    directory. Compiled, ``sys.prefix`` is kpip's own bundle.
     """
     requirement = install_req_from_editable(editable)
     link = requirement.link
@@ -205,7 +207,7 @@ def prepare_editable_source(
             link.egg_fragment or os.path.basename(source_path),
         )
         checkout_dir = os.path.join(
-            src_dir or os.path.join(sys.prefix, "src"), checkout_name
+            src_dir or os.path.join(target_interpreter().prefix, "src"), checkout_name
         )
         try:
             shutil.rmtree(checkout_dir)

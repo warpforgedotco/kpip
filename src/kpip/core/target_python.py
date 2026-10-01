@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sysconfig
 from functools import lru_cache
 
 from .wheel import TargetContext, WheelTag, supported_wheel_tags
@@ -54,16 +53,13 @@ def get_supported_internal(
         )
     supported = supported_wheel_tags(target)
 
-    soabi = sysconfig.get_config_var("SOABI")
-    if soabi and "-" in soabi:
-        normalized: list[WheelTag] = []
-        for tag in supported:
-            normalized.append(
-                WheelTag(
-                    interpreter=tag.interpreter.replace("-", "_"),
-                    abi=tag.abi.replace("-", "_"),
-                    platform=tag.platform.replace("-", "_"),
-                ),
-            )
-        return tuple(normalized)
-    return tuple(supported)
+    # No tag holds a hyphen. This process's SOABI is not the one to ask
+    # whether one might: compiled, it is the bundled CPython's.
+    return tuple(
+        WheelTag(
+            interpreter=tag.interpreter.replace("-", "_"),
+            abi=tag.abi.replace("-", "_"),
+            platform=tag.platform.replace("-", "_"),
+        )
+        for tag in supported
+    )

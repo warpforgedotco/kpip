@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 
+from kpip.core.compiled import is_compiled
 from kpip.core.errors import DiagnosticKpipError
 from kpip.core.packaging import target_python_version
 from kpip.host import interpreter_facts
@@ -40,28 +41,6 @@ class NoBuildInterpreterError(DiagnosticKpipError):
                 "KPIP_BUILD_PYTHON to the interpreter to build with."
             ),
         )
-
-
-def is_compiled() -> bool:
-    """Whether this kpip is a compiled binary rather than Python source."""
-
-    return "__compiled__" in globals()
-
-
-def own_command() -> list[str]:
-    """This kpip, as a command to run another copy of it.
-
-    ``-m kpip`` under this interpreter; a compiled kpip is its own
-    executable, which is not ``sys.executable`` -- Nuitka points that at a
-    ``python`` beside the binary that does not exist -- but the one Nuitka
-    names for starting the program again.
-    """
-    compiled = globals().get("__compiled__")
-
-    if compiled is None:
-        return [sys.executable, "-m", "kpip"]
-
-    return [compiled.process_exe]
 
 
 def _environment_python(prefix: str) -> str:
@@ -165,9 +144,3 @@ def build_interpreter() -> str:
         _build_interpreters[key] = found
 
     return found
-
-
-def is_own_interpreter(executable: str) -> bool:
-    """Whether ``executable`` is the interpreter running this process."""
-
-    return not is_compiled() and executable == sys.executable

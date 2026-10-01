@@ -9,23 +9,20 @@ them into a real target directory.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import compileall
 import csv
 import errno
-import importlib.util
 import io
 import logging
-import marshal
 import os
 import shutil
 import tempfile
-import types
 from collections.abc import Set as AbstractSet
 from concurrent.futures import ThreadPoolExecutor
 
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.core.errors import InstallationError
 from kpip.host.clone import clone_path
+from kpip.install.bytecode import CompileJob, compile_modules, place_pyc, target_magic
 from kpip.install.wheel_archive import (
     compiled_parts,
     mapped_parts,
@@ -35,7 +32,7 @@ from kpip.install.wheel_archive import (
 from kpip.install.wheel_archive_cache import (
     INSTALL_WORKERS,
     prepare_cached_wheels,
-    pyc_root,
+    bytecode_tree,
 )
 from kpip.install.wheel_scripts import (
     entry_point_scripts,
@@ -45,7 +42,6 @@ from kpip.install.wheel_scripts import (
 from kpip.install.wheel_state import discover_installed_wheels, existing_paths
 
 if TYPE_CHECKING:
-    from types import CodeType
     from kpip.build.metadata import InstalledMetadataDistribution
     from kpip.core.direct_url import DirectUrl
     from kpip.install.target import InstallTarget
@@ -531,51 +527,6 @@ def _file_metadata(path: str) -> tuple[str, str]:
         return record_metadata_internal(file.read())
 
 
-def _rebind_code_filename(
-    code: CodeType,
-    filename: str,
-    code_type: type[CodeType],
-) -> CodeType:
-    """``code`` with ``co_filename`` -- and every nested code object's -- set.
-
-    The type is passed in and the ``isinstance`` test is done by the caller:
-    a module's constants are overwhelmingly not code objects, and at this
-    call volume a Python-level call per constant costs more than the rebind.
-    """
-    consts = code.co_consts
-
-    if not any(isinstance(const, code_type) for const in consts):
-        return code.replace(co_filename=filename)
-
-    return code.replace(
-        co_filename=filename,
-        co_consts=tuple(
-            _rebind_code_filename(const, filename, code_type)
-            if isinstance(const, code_type)
-            else const
-            for const in consts
-        ),
-    )
-
-
-def _timestamp_pyc(code: CodeType, source: os.stat_result) -> bytes:
-    """A timestamp-invalidated ``.pyc`` body for ``code``.
-
-    Byte-for-byte what ``compileall`` would have written next to a source with
-    ``source``'s mtime and size, so the interpreter validates it the same way.
-    """
-
-    return b"".join(
-        (
-            importlib.util.MAGIC_NUMBER,
-            (0).to_bytes(4, "little"),
-            (int(source.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little"),
-            (source.st_size & 0xFFFFFFFF).to_bytes(4, "little"),
-            marshal.dumps(code),
-        ),
-    )
-
-
 def _materialize_pyc(
     stage: str,
     install_root: str,
@@ -589,26 +540,19 @@ def _materialize_pyc(
     Members in ``skip`` are another wheel's copy in the stage, compiled by
     that wheel: this one's cached bytecode is of its own copy.
 
-    The archive cache compiled these once at fill time, so the work here is a
-    marshal round trip that rebinds ``co_filename`` to where the module will
-    actually live -- roughly nine times cheaper than compiling, and it names
-    the installed path rather than a staging directory that will not outlive
-    the install.
-
-    Members the cache has no ``.pyc`` for -- an entry written before the cache
-    learned to compile, a module that would not compile, a mismatched
-    interpreter magic -- fall back to compiling in the stage.
+    The archive cache holds the target interpreter's bytecode, so each is a
+    copy with its header renamed to the staged source (:func:`place_pyc`).
+    Members it has none for -- a module that would not compile, an entry the
+    cache could not compile -- are compiled in the stage.
     """
 
-    code_type = types.CodeType
+    tree = bytecode_tree(archive)
 
-    cached_root = pyc_root(os.path.dirname(archive.tree))
+    magic = target_magic() if tree is not None else b""
 
     rows: list[tuple[str, str, str]] = []
 
-    uncached: list[tuple[str, tuple[str, ...]]] = []
-
-    magic = importlib.util.MAGIC_NUMBER
+    uncached: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
 
     for relative, _, _, _ in archive.entries:
         if relative in skip:
@@ -623,65 +567,55 @@ def _materialize_pyc(
 
         source = os.path.join(stage, *mapped)
 
-        try:
-            with open(os.path.join(cached_root, *target), "rb") as file:
-                cached = file.read()
-
-        except OSError:
-            uncached.append((source, target))
-
-            continue
-
-        if len(cached) <= 16 or cached[:4] != magic:
-            uncached.append((source, target))
-
-            continue
-
-        try:
-            code = _rebind_code_filename(
-                marshal.loads(cached[16:]),
-                os.path.join(install_root, *mapped),
-                code_type,
+        body = (
+            None
+            if tree is None
+            else place_pyc(
+                os.path.join(tree, *target), source, os.path.join(stage, *target), magic
             )
+        )
 
-            body = _timestamp_pyc(code, os.stat(source))
-
-        except EOFError, OSError, ValueError, TypeError:
-            uncached.append((source, target))
+        if body is None:
+            uncached.append((source, mapped, target))
 
             continue
-
-        destination = os.path.join(stage, *target)
-
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-
-        with open(destination, "wb") as file:
-            file.write(body)
 
         rows.append(("/".join(target), *record_metadata_internal(body)))
 
-    rows.extend(_compile_uncached(stage, uncached))
+    rows.extend(_compile_uncached(stage, install_root, uncached))
 
     return rows
 
 
 def _compile_uncached(
     stage: str,
-    members: list[tuple[str, tuple[str, ...]]],
+    install_root: str,
+    members: list[tuple[str, tuple[str, ...], tuple[str, ...]]],
 ) -> list[tuple[str, str, str]]:
-    """Compile members the archive cache had no ``.pyc`` for, in the stage."""
+    """Compile members the archive cache had no ``.pyc`` for, in the stage,
+    naming where each module will live."""
     if not members:
         return []
 
-    rows: list[tuple[str, str, str]] = []
+    outputs: list[tuple[str, tuple[str, ...]]] = []
 
-    for source, target in members:
-        if not compileall.compile_file(source, force=True, quiet=1):
-            continue
+    jobs: list[CompileJob] = []
 
-        rows.append(("/".join(target), *_file_metadata(os.path.join(stage, *target))))
+    for source, mapped, target in members:
+        # py_compile makes the output's directory.
+        output = os.path.join(stage, *target)
 
-    return rows
+        outputs.append((output, target))
+
+        jobs.append((source, output, os.path.join(install_root, *mapped)))
+
+    compile_modules(jobs)
+
+    return [
+        ("/".join(target), *_file_metadata(output))
+        for output, target in outputs
+        if os.path.exists(output)
+    ]
 
 
 def _finalize_wheel(
