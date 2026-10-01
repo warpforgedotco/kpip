@@ -42,11 +42,6 @@ from kpip.install._compile_worker import SOURCE
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-try:
-    import _interpreters
-except ImportError:
-    _interpreters = None  # ty: ignore[invalid-assignment]
-
 CompileJob = tuple[str, str, str]
 """A module to compile: source path, ``.pyc`` path, and the name to record
 inside the code object."""
@@ -190,15 +185,14 @@ def compiles_as_this_process() -> bool:
     )
 
 
-def pyc_name(module: str, *, own: bool = False) -> str | None:
+def pyc_name(module: str) -> str | None:
     """The file name of the ``.pyc`` the target interpreter reads for the
-    module file ``module``, or ``None`` if it reads none; this process's,
-    ``own``, for the archive cache, which keeps only this process's bytecode.
+    module file ``module``, or ``None`` if it reads none.
 
     ``cache_from_source`` would answer for this process: its cache tag, and
     its ``-O`` level, where kpip compiles unoptimized.
     """
-    cache_tag = sys.implementation.cache_tag if own else _target_bytecode()[0]
+    cache_tag = _target_bytecode()[0]
 
     if cache_tag is None:
         return None
@@ -236,27 +230,29 @@ def compile_in_process(job: CompileJob) -> None:
         pass
 
 
-def compile_modules(jobs: list[CompileJob]) -> None:
+def compile_modules(jobs: list[CompileJob]) -> list[CompileJob]:
     """Compile ``jobs`` as the target interpreter would: in its workers, and
-    what they decline here when this process compiles as the target does --
-    otherwise that goes without bytecode, as a module that will not compile
-    does."""
+    what they decline here when this process compiles as the target does.
+
+    Returns the jobs nobody took -- otherwise they go without bytecode, as
+    a module that will not compile does -- so a cache can tell an
+    incomplete tree from a complete one.
+    """
     declined = compile_jobs(jobs)
 
     if declined and compiles_as_this_process():
         for job in declined:
             compile_in_process(job)
 
+        return []
 
-def bytecode_key(*, own: bool = False) -> str | None:
+    return declined
+
+
+def bytecode_key() -> str | None:
     """What the target interpreter's bytecode is cached under -- its cache
-    tag and magic number -- or this process's, ``own``; ``None`` for one
-    that reads no bytecode."""
-    if own:
-        cache_tag = sys.implementation.cache_tag
-        magic = importlib.util.MAGIC_NUMBER.hex()
-    else:
-        cache_tag, magic = _target_bytecode()
+    tag and magic number -- or ``None`` for one that reads no bytecode."""
+    cache_tag, magic = _target_bytecode()
 
     return None if cache_tag is None else f"{cache_tag}-{magic}"
 
@@ -364,20 +360,28 @@ def _spawn(command: list[str]) -> _Worker | None:
 class _Batch:
     """One caller's jobs, and the count still outstanding."""
 
-    __slots__ = ("done", "failed", "lock", "remaining")
+    __slots__ = ("cancelled", "compiled", "done", "failed", "lock", "remaining")
 
     def __init__(self, total: int) -> None:
         self.remaining = total
 
         self.failed: list[CompileJob] = []
 
+        self.compiled: set[CompileJob] = set()
+
+        # Given up on by its caller: what is still queued is not compiled.
+        self.cancelled = False
+
         self.lock = threading.Lock()
 
         self.done = threading.Event()
 
-    def finish(self, job: CompileJob | None) -> None:
+    def finish(self, job: CompileJob, *, compiled: bool) -> None:
         with self.lock:
-            if job is not None:
+            if compiled:
+                self.compiled.add(job)
+
+            else:
                 self.failed.append(job)
 
             self.remaining -= 1
@@ -463,14 +467,19 @@ class CompilePool:
 
             job, batch = item
 
+            if batch.cancelled:
+                batch.finish(job, compiled=False)
+
+                continue
+
             if worker.compile(job):
-                batch.finish(None)
+                batch.finish(job, compiled=True)
 
                 continue
 
             # A worker that breaks the protocol will keep breaking it, so this
             # consumer stops. The job goes back to its caller to compile.
-            batch.finish(job)
+            batch.finish(job, compiled=False)
 
             self._retire()
 
@@ -485,9 +494,12 @@ class CompilePool:
         with self._lock:
             self._live -= 1
 
-            self._broken = True
-
             last = self._live == 0
+
+            # The pool still works while one worker does: a module that
+            # broke one must not cost every later install its bytecode.
+            if last:
+                self._broken = True
 
         if not last:
             return
@@ -502,7 +514,7 @@ class CompilePool:
             if item is not None:
                 job, batch = item
 
-                batch.finish(job)
+                batch.finish(job, compiled=False)
 
     def compile(self, jobs: Iterable[CompileJob]) -> list[CompileJob] | None:
         """Compile ``jobs``, returning the ones a worker could not take.
@@ -532,10 +544,23 @@ class CompilePool:
         for job in pending:
             self._queue.put((job, batch))
 
-        # Bounded so a worker that stops answering cannot hang an install; the
-        # per-job timeout inside the worker already bounds each round trip.
-        if not batch.done.wait(COMPILE_TIMEOUT * 2):
-            return None
+        # Bounded so workers that stop answering cannot hang an install: by a
+        # whole timeout without one module done, not by the batch's total --
+        # on a slow machine a large wheel waits behind others' batches. Given
+        # up on, what is still queued is not compiled, and every module not
+        # yet done is the caller's.
+        last = batch.remaining
+
+        while not batch.done.wait(COMPILE_TIMEOUT):
+            with batch.lock:
+                if batch.remaining == last:
+                    batch.cancelled = True
+
+                    return rejected + [
+                        job for job in pending if job not in batch.compiled
+                    ]
+
+                last = batch.remaining
 
         rejected.extend(batch.failed)
 
@@ -588,9 +613,6 @@ def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     if not jobs:
         return []
 
-    if _in_subinterpreter():
-        return jobs
-
     with _POOL_LOCK:
         if _POOL is None:
             _POOL = CompilePool(MAX_WORKERS)
@@ -602,21 +624,6 @@ def compile_jobs(jobs: list[CompileJob]) -> list[CompileJob]:
     remaining = pool.compile(jobs)
 
     return jobs if remaining is None else remaining
-
-
-def _in_subinterpreter() -> bool:
-    """Whether this runs in a subinterpreter, e.g. an archive worker.
-
-    One takes no worker processes: each needs a daemon thread to read its
-    answers, which a subinterpreter refuses, so the job failed there and was
-    unpacked again in the main interpreter -- every install that compiles.
-    Nor does it need them. It is one of several unpacking side by side, each
-    with a lock of its own, so compiling in it is already in parallel.
-    """
-    if _interpreters is None:
-        return False
-
-    return _interpreters.get_current()[0] != _interpreters.get_main()[0]
 
 
 def shutdown() -> None:

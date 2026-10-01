@@ -264,23 +264,25 @@ def script_body(module: str, callable_: str) -> bytes:
 def shebang(executable: str | None, *, gui: bool) -> bytes:
     """distlib's shebang for ``executable``, or for the default interpreter.
 
-    An interpreter named for the scripts is used as given; the default one
-    is quoted when its path has a space. On POSIX, a path with a space, or
-    one too long for the kernel to read, is run through ``/bin/sh``.
+    An interpreter the caller names is used as given, as distlib uses one;
+    the default one, and the build environment's kpip names with
+    ``KPIP_SCRIPT_PYTHON`` -- under ``%TEMP%``, which a profile name with a
+    space puts one in -- are quoted when their path has a space. On POSIX, a
+    path with a space, or one too long for the kernel to read, is run
+    through ``/bin/sh``.
     """
-    named = executable or os.environ.get("KPIP_SCRIPT_PYTHON")
-    interpreter = named or environment_python()
+    interpreter = (
+        executable or os.environ.get("KPIP_SCRIPT_PYTHON") or environment_python()
+    )
     if gui and os.name == "nt":
         directory, name = os.path.split(interpreter)
         interpreter = os.path.join(directory, name.replace("python", "pythonw"))
-    if not named and " " in interpreter and not interpreter.startswith('"'):
+    if not executable and " " in interpreter and not interpreter.startswith('"'):
         interpreter = f'"{interpreter}"'
     encoded = interpreter.encode("utf-8")
 
     if os.name != "posix":
         simple = True
-    elif getattr(sys, "cross_compiling", False):
-        simple = False
     else:
         # "#!" and the newline count towards the kernel's limit.
         limit = 512 if sys.platform == "darwin" else 127

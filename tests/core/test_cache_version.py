@@ -30,7 +30,6 @@ from kpip.index import (
     candidate_metadata_cache,
     catalog_cache,
     metadata_cache,
-    release_facts_cache,
 )
 from kpip.install import wheel_install_plan_cache
 from kpip.core.appdirs import HTTP_CACHE_BUCKET
@@ -41,7 +40,6 @@ STORAGE_NAMES = (
     wheel_cache.WHEEL_CACHE_BUCKET,
     metadata_cache.NAME,
     candidate_metadata_cache.NAME,
-    release_facts_cache.NAME,
     ARCHIVE_CACHE_BUCKET,
     wheel_install_plan_cache.RESOLUTION_CACHE_BUCKET,
     wheel_install_plan_cache.REMOTE_EXACT_CONTEXT,
@@ -104,7 +102,6 @@ def test_every_storage_name_carries_its_own_version(name: str) -> None:
 
 
 _MARSHAL_STORES = (
-    release_facts_cache.NAME,
     ARCHIVE_CACHE_BUCKET,
     wheel_install_plan_cache.RESOLUTION_CACHE_BUCKET,
 )

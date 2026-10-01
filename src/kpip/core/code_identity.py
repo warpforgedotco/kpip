@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from hashlib import sha256
+from importlib.resources import files as package_files
 
 from kpip.core.compiled import own_binary
 
@@ -16,10 +17,9 @@ def code_identity() -> tuple[object, ...]:
     ``__version__`` does not: it stays put between releases and in every
     checkout. A cache keyed on it would replay results rendered by code that
     has since changed, so this looks at the code itself instead -- the
-    binary when kpip is compiled into one, else a digest of every module's
-    path, size and modification time, plus the installed ``RECORD``, whose
-    per-file hashes change with any content even when a reproducible build
-    gives every file the same timestamp.
+    build ID kpip-compile ships in the binary, a digest of the modules it
+    compiled, else a digest of every module's path, size and modification
+    time.
     """
 
     global _identity  # noqa: PLW0603 -- process-wide memo
@@ -30,30 +30,20 @@ def code_identity() -> tuple[object, ...]:
     return _identity
 
 
-def _installed_record(root: str) -> bytes | None:
-    """The ``RECORD`` of the distribution ``root`` was installed from, if any."""
-
-    parent = os.path.dirname(root)
-
-    try:
-        with os.scandir(parent) as entries:
-            for entry in entries:
-                name = entry.name.lower()
-
-                if name.startswith("kpip-") and name.endswith(".dist-info"):
-                    with open(os.path.join(entry.path, "RECORD"), "rb") as file:
-                        return file.read()
-    except OSError:
-        return None
-
-    return None
-
-
 def _compute() -> tuple[object, ...]:
-    # Not sys.executable: compiled, that is a python beside the binary that
-    # does not exist, and the same path whatever kpip the binary holds.
     binary = own_binary()
     if binary is not None:
+        # The same for every copy of one build, wherever it is moved.
+        try:
+            return (
+                "build",
+                package_files("kpip").joinpath("BUILD_ID").read_text("ascii"),
+            )
+        except OSError:
+            pass
+
+        # A binary built without one: the file that was run. Not
+        # sys.executable, a python beside the binary that does not exist.
         try:
             stat = os.stat(binary)
         except OSError:
@@ -87,10 +77,5 @@ def _source_identity(root: str) -> tuple[object, ...]:
             digest.update(
                 f"{path[prefix:]}\0{stat.st_size}\0{stat.st_mtime_ns}\n".encode()
             )
-
-    record = _installed_record(root)
-
-    if record is not None:
-        digest.update(record)
 
     return ("source", root, digest.hexdigest())

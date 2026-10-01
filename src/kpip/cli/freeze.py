@@ -57,7 +57,9 @@ def freeze(
 
     dists = InstalledDistributionStore(
         paths=paths,
-        user_site=user_lib_path(),
+        # --path freezes the directories given, and no target's user site:
+        # with no Python to install for, it still works.
+        user_site=None if paths else user_lib_path(),
     ).iter(local_only=local_only, user_only=user_only)
 
     for dist in dists:

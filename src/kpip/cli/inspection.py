@@ -7,7 +7,8 @@ from kpip.core.metadata import user_lib_path
 
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.cli.parsers.inspection import create_inspect_parser
-from kpip.core import kpip_version, packaging, urls
+import kpip
+from kpip.core import packaging, urls
 from kpip.core.metadata import stdlib_pkgs
 
 
@@ -16,7 +17,8 @@ def run_inspect(args: list[str]) -> int:
 
     distributions = InstalledDistributionStore(
         paths=options.path or None,
-        user_site=user_lib_path(),
+        # --path reads the directories given, and no target's user site.
+        user_site=None if options.path else user_lib_path(),
     ).iter(
         local_only=options.local,
         user_only=options.user,
@@ -51,7 +53,7 @@ def run_inspect(args: list[str]) -> int:
         json.dumps(
             {
                 "version": "1",
-                "kpip_version": kpip_version.get_kpip_version(),
+                "kpip_version": kpip.__version__,
                 "installed": installed,
                 "environment": packaging.default_environment(),
             },

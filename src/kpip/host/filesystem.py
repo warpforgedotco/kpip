@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import os
 import os.path
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import Callable
 from functools import wraps
-from tempfile import NamedTemporaryFile
 from time import perf_counter, sleep
-from typing import Any, BinaryIO, ParamSpec, TypeVar, cast
+from typing import BinaryIO, ParamSpec, TypeVar, cast
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -46,40 +44,6 @@ def format_size(size: float) -> str:
     return f"{size:.0f} bytes"
 
 
-@contextmanager
-def adjacent_tmp_file(
-    path: str,
-    *,
-    durable: bool = True,
-    **kwargs: Any,
-) -> Generator[BinaryIO, None, None]:
-    """Return a file-like object pointing to a tmp file next to path.
-
-    The file is created securely. With ``durable`` (the default) it is
-    fsynced to disk after the context reaches its end; pass
-    ``durable=False`` for data that may be regenerated, such as cache
-    entries, where an entry lost to a crash only costs a refetch and the
-    fsync would dominate the write.
-
-    kwargs will be passed to tempfile.NamedTemporaryFile to control
-    the way the temporary file will be opened.
-    """
-    with NamedTemporaryFile(
-        delete=False,
-        dir=os.path.dirname(path),
-        prefix=os.path.basename(path),
-        suffix=".tmp",
-        **kwargs,
-    ) as f:
-        result = cast("BinaryIO", f)
-        try:
-            yield result
-        finally:
-            result.flush()
-            if durable:
-                os.fsync(result.fileno())
-
-
 # Windows fails a rename while another handle is open, which a scanner or an
 # indexer takes transiently; POSIX rename is atomic and has no such failure,
 # so there the retry is a Python frame and a clock read per cache entry.
@@ -101,7 +65,3 @@ def set_file_permissions(target_file: BinaryIO, mode: int) -> None:
         os.chmod(target_file.fileno(), mode)
     elif os.chmod in os.supports_follow_symlinks:
         os.chmod(target_file.name, mode, follow_symlinks=False)
-
-
-def copy_directory_permissions(directory: str, target_file: BinaryIO) -> None:
-    set_file_permissions(target_file, os.stat(directory).st_mode & 0o666 | 0o600)

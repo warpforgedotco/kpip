@@ -258,6 +258,7 @@ def test_a_compiled_kpip_names_its_binary_and_the_python_it_installs_for(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Not a path inside its bundle, nor the Python it was built with."""
+    import kpip
     from kpip.cli import entrypoint
 
     binary = tmp_path / "kpip"
@@ -266,8 +267,223 @@ def test_a_compiled_kpip_names_its_binary_and_the_python_it_installs_for(
     monkeypatch.setattr(entrypoint, "own_binary", lambda: str(binary))
     monkeypatch.setattr(entrypoint, "target_interpreter", lambda **_: other)
 
-    entrypoint.print_version("1.0", "/bundle/kpip/__init__.py")
+    entrypoint.print_version()
 
     assert capsys.readouterr().out == (
-        f"kpip 1.0 from {os.path.realpath(binary)} (python 3.11)\n"
+        f"kpip {kpip.__version__} from {os.path.realpath(binary)} (python 3.11)\n"
     )
+
+
+def test_a_python3_that_does_not_answer_is_passed_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows, python3 is often the Microsoft Store's stub."""
+    stub = tmp_path / "python3"
+    stub.write_text("#!/bin/sh\nexit 9009\n")
+    stub.chmod(0o755)
+    real = tmp_path / "python"
+    real.symlink_to(sys.executable)
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    monkeypatch.delenv("KPIP_PYTHON", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert target_interpreter().version == tuple(sys.version_info[:3])
+
+
+def test_a_windows_conda_environment_keeps_python_at_its_top(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "python.exe").write_text("")
+    monkeypatch.setattr(interpreter_facts.os, "name", "nt")
+
+    assert identify(str(tmp_path)) == str(tmp_path / "python.exe")
+
+
+def test_a_projects_own_modules_do_not_stand_in_for_the_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "json.py").write_text("raise SystemExit('shadowed')\n")
+    (tmp_path / "platform.py").write_text("raise SystemExit('shadowed')\n")
+    monkeypatch.chdir(tmp_path)
+
+    assert probe(sys.executable).version == tuple(sys.version_info[:3])
+
+
+@pytest.fixture
+def no_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A compiled kpip on a machine with no Python to install for."""
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    for variable in ("VIRTUAL_ENV", "CONDA_PREFIX", "KPIP_PYTHON"):
+        monkeypatch.delenv(variable, raising=False)
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    return tmp_path
+
+
+def test_listing_a_path_needs_no_python(
+    no_python: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from kpip.cli.main import main
+
+    site = no_python / "site"
+    info = site / "demo-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n")
+
+    assert main(["list", "--path", str(site), "--format=freeze"]) == 0
+    assert main(["freeze", "--path", str(site)]) == 0
+    assert capsys.readouterr().out.count("demo==1.0") == 2
+
+
+def test_installing_without_a_python_fails_before_writing(
+    no_python: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from kpip.cli.main import main
+
+    target = no_python / "target"
+
+    assert main(["install", "--no-index", "--target", str(target), "demo"]) != 0
+    assert "No Python interpreter to install for" in capsys.readouterr().err
+    assert not target.exists()
+
+
+def test_a_probe_is_kept_across_runs_until_its_search_path_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A compiled kpip runs a Python for its facts on every command
+    otherwise; a new .pth file in site-packages changes them."""
+    import subprocess as subprocess_module
+
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+    site = tmp_path / "site"
+    site.mkdir()
+    monkeypatch.setenv("PYTHONPATH", str(site))
+    runs: list[object] = []
+    real_run = subprocess_module.run
+
+    def counting(*args: object, **kwargs: object) -> object:
+        runs.append(args)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(interpreter_facts.subprocess, "run", counting)
+
+    probe(sys.executable)
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+    probe(sys.executable)
+    assert len(runs) == 1
+
+    (site / "extra.pth").write_text("\n")
+    os.utime(site, ns=(1, 1))
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+    probe(sys.executable)
+    assert len(runs) == 2
+
+
+def test_a_new_environments_facts_are_what_it_would_say(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Remembered for the kpip that installs a build's requirements, which
+    would otherwise run the environment's Python to learn them."""
+    import json
+    import subprocess as subprocess_module
+
+    from kpip.install.build_env import isolated_venv
+
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+    env = tmp_path / "env"
+    env.mkdir()
+    # Probed as another Python is, not read in this process, whose site
+    # module keeps the user site of the home it started in.
+    creator = tmp_path / "python"
+    creator.symlink_to(sys.executable)
+
+    venv = isolated_venv.create_isolated_venv(
+        str(env), python=str(creator), with_pip=False
+    )
+    remembered, _ = interpreter_facts._cached_facts(venv.python_executable)
+    real = json.loads(
+        subprocess_module.run(
+            [
+                venv.python_executable,
+                "-c",
+                interpreter_facts.SAFE_PATH + interpreter_facts.PROBE,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+
+    assert remembered is not None
+    for key in real.keys() - {"config", "path"}:
+        assert remembered[key] == real[key], key
+    for key in ("base", "platbase"):
+        assert remembered["config"][key] == real["config"][key]
+    sites = [entry for entry in real["path"] if "site-packages" in entry]
+    assert [e for e in remembered["path"] if "site-packages" in e] == sites
+
+
+def test_a_shims_answer_is_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pyenv shim never changes while the version it picks does."""
+    import subprocess as subprocess_module
+
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+    shim = tmp_path / "python3"
+    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    shim.chmod(0o755)
+    runs: list[object] = []
+    real_run = subprocess_module.run
+    monkeypatch.setattr(
+        interpreter_facts.subprocess,
+        "run",
+        lambda *args, **kwargs: runs.append(args) or real_run(*args, **kwargs),
+    )
+
+    probe(str(shim))
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+    probe(str(shim))
+
+    assert len(runs) == 2
+
+
+def test_a_link_to_a_python_is_probed_as_itself(tmp_path: Path) -> None:
+    """A virtual environment's python links to its base's."""
+    link = tmp_path / "python"
+    link.symlink_to(sys.executable)
+
+    assert probe(str(link)) is not probe(sys.executable)
+
+
+def test_the_probe_works_under_safe_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PYTHONSAFEPATH", "1")
+
+    assert probe(sys.executable).version == tuple(sys.version_info[:3])
+
+
+def test_a_stale_virtual_env_matters_only_to_an_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    monkeypatch.delenv("KPIP_PYTHON", raising=False)
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "gone"))
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert target_interpreter(installing=False) is not None
+    with pytest.raises(CommandError, match="VIRTUAL_ENV names"):
+        target_interpreter()
+
+
+def test_version_says_when_there_is_no_python_to_install_for(
+    no_python: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not the bundled Python's version, which nothing is installed for."""
+    from kpip.cli import entrypoint
+
+    entrypoint.print_version()
+
+    assert capsys.readouterr().out.rstrip().endswith("(no Python found to install for)")

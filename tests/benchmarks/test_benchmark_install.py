@@ -22,7 +22,6 @@ import zipfile
 from pathlib import Path
 
 from benchmark_support import reset_caches
-from kpip.core.hashes import Hashes, hash_file
 from kpip.core.wheel import (
     read_metadata_message,
     validate_wheel,
@@ -196,13 +195,3 @@ def test_install_wheel_many_files(
         WheelInstaller(target, pycompile=False).install(many_files_wheel)
 
     benchmark(install)
-
-
-def test_hash_wheel_file(benchmark: BenchmarkFixture, payload_wheel: Path) -> None:
-    digest, _ = hash_file(str(payload_wheel))
-    hashes = Hashes({"sha256": [digest.hexdigest()]})
-
-    def check_hash() -> None:
-        hashes.check_against_path(str(payload_wheel))
-
-    benchmark(check_hash)

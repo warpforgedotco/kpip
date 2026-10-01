@@ -111,63 +111,6 @@ def test_source_archive_filename_normalizes_project_name() -> None:
     )
 
 
-def test_find_links_reuses_local_artifact_identity_until_refresh(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    artifact = tmp_path / "demo-1.0.tar.gz"
-    artifact.write_bytes(b"artifact")
-    source = FindLinksSource((str(tmp_path),))
-    from kpip.index import directory_index
-
-    scan = directory_index.os.scandir
-    calls = 0
-
-    def counting_scan(path: str):
-        nonlocal calls
-        calls += 1
-        return scan(path)
-
-    monkeypatch.setattr(directory_index.os, "scandir", counting_scan)
-    first = source.links_from_local_path(tmp_path)
-    second = source.links_from_local_path(tmp_path)
-
-    assert first[0].local_identity_internal is None
-    assert second[0].local_identity_internal is None
-    assert calls == 1
-
-    source.refresh_local_sources(str(tmp_path))
-    source.links_from_local_path(tmp_path)
-    assert calls == 2
-
-
-def test_find_links_caches_local_file_discovery(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    artifact = tmp_path / "demo-1.0.tar.gz"
-    artifact.write_bytes(b"artifact")
-    source = FindLinksSource((str(artifact),))
-    from kpip.index import source_locations
-
-    stat = source_locations.os.stat
-    calls = 0
-
-    def counting_stat(path: str):
-        nonlocal calls
-        calls += 1
-        return stat(path)
-
-    monkeypatch.setattr(source_locations.os, "stat", counting_stat)
-    assert source.links_from_local_path(artifact)
-    assert source.links_from_local_path(artifact)
-    assert calls == 0
-
-    source.refresh_local_sources(str(artifact))
-    source.links_from_local_path(artifact)
-    assert calls == 0
-
-
 @pytest.mark.parametrize(
     "url, repo_url, requested_revision",
     [
@@ -1041,30 +984,6 @@ def test_candidate_provider_parses_index_artifacts_once(
     assert evaluations == 1
     assert len(provider.find_candidates(parse_requirement("demo-pkg<2"))) == 1
     assert calls == 2
-
-
-def test_candidate_provider_reuses_catalog_for_exact_version_lookup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    wheelhouse = tmp_path / "packages"
-    wheelhouse.mkdir()
-    make_wheel(wheelhouse, "demo-pkg", "demo_pkg", "1.0")
-    make_wheel(wheelhouse, "demo-pkg", "demo_pkg", "2.0")
-    provider = CandidateProvider.from_options(
-        find_links=[str(wheelhouse)],
-        no_index=True,
-    )
-    requirement = parse_requirement("demo-pkg")
-
-    assert len(provider.available_versions_for(requirement, Version("1.0"))) == 1
-
-    def fail_catalog(requirement: Requirement) -> None:
-        raise AssertionError(f"reloaded populated version catalog: {requirement}")
-
-    monkeypatch.setattr(provider, "available_versions", fail_catalog)
-
-    assert len(provider.available_versions_for(requirement, Version("2.0"))) == 1
 
 
 def test_candidate_provider_skips_release_filter_for_stable_candidates(

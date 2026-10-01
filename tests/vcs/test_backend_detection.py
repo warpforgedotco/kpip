@@ -108,7 +108,7 @@ def test_registered_backend_outstays_a_builtin_marker(tmp_path: Path) -> None:
     try:
         found = vcs.get_backend_for_dir(str(tmp_path))
     finally:
-        vcs.unregister("custom")
+        vcs.registry_internal.pop("custom", None)
 
     assert found is not None
     assert found.name == "custom"

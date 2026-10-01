@@ -20,25 +20,6 @@ def enum(*sequential: str, **named: str) -> Any:
     return type("Enum", (), values)
 
 
-class ExecutionContext:
-    __slots__ = ("version",)
-
-    def __init__(self) -> None:
-        self.version: str | None = None
-
-
-context = ExecutionContext()
-
-
-def configure(*, version: str | None = None) -> None:
-    if version is not None:
-        context.version = version
-
-
-def current_version() -> str | None:
-    return context.version
-
-
 CURRENT_PYTHON_VERSION_INFO = sys.version_info
 CURRENT_PYTHON_VERSION = (
     f"{CURRENT_PYTHON_VERSION_INFO.major}.{CURRENT_PYTHON_VERSION_INFO.minor}"
@@ -77,9 +58,10 @@ def versioned_bucket(name: str, version: int, *, interpreter: bool = False) -> s
     Bumping one is the entire migration: the new name is a store this kpip
     has never written, and the old one is inert until ``kpip cache purge``.
 
-    ``interpreter`` appends the interpreter tag for stores whose payload is
-    not portable across interpreters -- ``marshal`` data, byte-compiled
-    modules -- so those are scoped per interpreter as well as per version.
+    ``interpreter`` appends the tag of the Python running kpip for stores
+    whose payload is its own ``marshal`` data, so those are scoped per
+    interpreter as well as per version. Bytecode for the target is kept by
+    the target's own cache tag and magic number instead.
     """
     tag = f"-{CACHE_INTERPRETER_TAG}" if interpreter else ""
 
@@ -122,9 +104,7 @@ def default_worker_count() -> int:
         if requested > 0:
             return requested
 
-    available = getattr(os, "process_cpu_count", None)
-
-    cores = available() if available is not None else os.cpu_count()
+    cores = os.process_cpu_count()
 
     return min(32, (cores or 1) + 4)
 

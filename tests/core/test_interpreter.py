@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from kpip.host import interpreter_facts
 
 from kpip.core import interpreter
 from kpip.core.interpreter import NoBuildInterpreterError, build_interpreter
@@ -21,15 +22,28 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(interpreter, "_build_interpreters", {})
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
     for variable in ("KPIP_BUILD_PYTHON", "VIRTUAL_ENV", "CONDA_PREFIX"):
         monkeypatch.delenv(variable, raising=False)
 
 
 def fake_python(directory: Path, name: str, version: str | None) -> Path:
     """An executable that answers the probe like an interpreter of ``version``, or fails."""
+    import json
+
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
-    body = f"echo {version}" if version is not None else "exit 1"
+    if version is None:
+        body = "exit 1"
+    else:
+        namespace: dict = {"__name__": "kpip_interpreter_probe"}
+        exec(interpreter_facts.PROBE, namespace)  # noqa: S102
+        facts = namespace["facts"]()
+        facts["executable"] = str(path)
+        facts["version"] = [*map(int, version.split(".")), 0]
+        answer = directory / f"{name}.json"
+        answer.write_text(json.dumps(facts))
+        body = f"/bin/cat '{answer}'"
     path.write_text(f"#!/bin/sh\n{body}\n")
     path.chmod(0o755)
     return path
@@ -103,21 +117,9 @@ def test_compiled_kpip_without_a_python_says_how_to_get_one(
     assert str(tmp_path / "python3") in str(raised.value.context)
 
 
-def test_another_interpreter_creates_its_own_build_environment(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """The environment comes from that interpreter, not this process's venv module."""
+def test_the_interpreter_creates_its_own_build_environment(tmp_path: Path) -> None:
+    """The environment comes from that interpreter, which describes it."""
     from kpip.install.build_env import isolated_venv
-
-    monkeypatch.setattr(isolated_venv, "is_own_interpreter", lambda executable: False)
-
-    def unexpected(*args: object, **kwargs: object) -> None:
-        pytest.fail("created the environment in-process")
-
-    import venv
-
-    monkeypatch.setattr(venv.EnvBuilder, "create", unexpected)
 
     created = isolated_venv.create_isolated_venv(
         str(tmp_path), with_pip=False, python=sys.executable

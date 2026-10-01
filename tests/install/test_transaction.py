@@ -502,3 +502,30 @@ def test_chmod_failure_after_replace_rolls_back_a_fresh_destination(
 
 def stat_mode(path: Path) -> int:
     return os.stat(path).st_mode & 0o777
+
+
+def test_a_backup_on_another_volume_is_renamed_beside_its_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Across volumes a move deletes after copying, which Windows refuses
+    for a loaded .pyd; a rename beside it it allows."""
+    from kpip.install import transaction as transaction_module
+    from kpip.install.transaction import InstallTransaction
+
+    monkeypatch.setattr(
+        transaction_module, "_same_volume", lambda path, directory: False
+    )
+    original = tmp_path / "module.pyd"
+
+    original.write_text("old")
+    rolled_back = InstallTransaction()
+    rolled_back.backup_if_needed(str(original))
+    assert not original.exists()
+    rolled_back.rollback()
+    assert original.read_text() == "old"
+
+    kept = InstallTransaction()
+    kept.backup_if_needed(str(original))
+    kept.finish_successfully()
+    assert not original.exists()
+    assert not list(tmp_path.glob("module.pyd.kpip-backup-*"))

@@ -227,3 +227,31 @@ def test_the_worker_loop_runs_given_as_text(tmp_path: Path) -> None:
     assert result.stdout.splitlines() == ["Ready", str(source)]
     code = marshal.loads(destination.read_bytes()[16:])
     assert code.co_filename == "pkg/module.py"
+
+
+def test_the_worker_loop_takes_paths_in_utf8_whatever_the_locale(
+    tmp_path: Path,
+) -> None:
+    """A pipe speaks the locale's code page; C:\\Users\\José came out mangled."""
+    import os
+    import subprocess
+
+    from kpip.install._compile_worker import SOURCE
+
+    directory = tmp_path / "José"
+    directory.mkdir()
+    source = directory / "module.py"
+    source.write_text("VALUE = 1\n")
+    destination = directory / "module.pyc"
+
+    result = subprocess.run(
+        [sys.executable, "-c", SOURCE],
+        input=f"{source}\t{destination}\tmodule.py\n".encode(),
+        capture_output=True,
+        timeout=30,
+        check=True,
+        env={**os.environ, "PYTHONIOENCODING": "latin-1", "PYTHONUTF8": "0"},
+    )
+
+    assert result.stdout.decode().splitlines() == ["Ready", str(source)]
+    assert destination.is_file()

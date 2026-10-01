@@ -364,11 +364,20 @@ def _entry_lock(path: str, entry_root: str, digest: str) -> Generator[None, None
     finally:
         os.close(descriptor)
 
+        # Only this kpip's own: another may have taken it for stale since.
         try:
-            os.unlink(path)
+            with open(path, encoding="ascii") as lock:
+                own = lock.read() == str(os.getpid())
 
-        except FileNotFoundError:
-            pass
+        except OSError, ValueError:
+            own = False
+
+        if own:
+            try:
+                os.unlink(path)
+
+            except FileNotFoundError:
+                pass
 
 
 def _record_metadata(
@@ -627,7 +636,10 @@ def bytecode_tree(archive: CachedWheelArchive) -> str | None:
         return None
 
     try:
-        _compile_archive_pyc(archive.tree, temporary, archive.entries)
+        # Published whole or not at all: a tree missing modules nobody took
+        # would stay that way, its directory found by every later install.
+        if _compile_archive_pyc(archive.tree, temporary, archive.entries):
+            return None
 
         os.rename(temporary, target)
 
@@ -648,10 +660,10 @@ def _compile_archive_pyc(
     tree: str,
     destination: str,
     entries: Iterable[ArchiveEntry],
-) -> None:
+) -> list[tuple[str, str, str]]:
     """Byte-compile the entry's modules into ``destination``, each naming
     its path in the wheel: the target interpreter names its real path when
-    it imports it."""
+    it imports it. Returns those nobody took."""
     jobs: list[tuple[str, str, str]] = []
 
     for entry in entries:
@@ -670,7 +682,7 @@ def _compile_archive_pyc(
             ),
         )
 
-    compile_modules(jobs)
+    return compile_modules(jobs)
 
 
 def _extract_archive(
@@ -785,6 +797,14 @@ def _extract_archive(
 
         with open(os.path.join(temporary, "manifest.bin"), "wb") as file:
             marshal.dump(manifest, file)
+
+        # Another kpip may have published it meanwhile -- one that took this
+        # entry's lock for stale while this one worked. Its entry is whole,
+        # and others may be reading it: keep it, and drop this copy.
+        published = load_archive(entry_root, digest)
+
+        if published is not None:
+            return published
 
         _remove_cache_path(entry_root)
 

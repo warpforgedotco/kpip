@@ -110,6 +110,48 @@ jobs:
           if grep -q "SystemError" "$RUNNER_TEMP/failed.err"; then
             exit 1
           fi
+      - name: Installs for another Python
+        # The binary bundles 3.15 and installs for whatever Python it is
+        # pointed at: its bytecode, its builds and its environment must be
+        # that Python's, which no source run can show.
+        run: |
+          kpip=$PWD/build/kpip
+          bin=bin
+          if [ "$RUNNER_OS" = Windows ]; then
+            kpip=$PWD/build/kpip.exe
+            bin=Scripts
+          fi
+          envs=$RUNNER_TEMP/envs
+          cache=$RUNNER_TEMP/kpip-cache
+          pyc_of() { find "$1" -name "*.$2.pyc" | grep -c . || true; }
+
+          # Bytecode is the target's own, compiled by its own interpreter.
+          uv venv --quiet --python 3.12 "$envs/first"
+          "$kpip" --python "$envs/first" install --cache-dir "$cache" rich
+          "$envs/first/$bin/python" -c "import rich.console"
+          test "$(pyc_of "$envs/first" cpython-312)" -gt 0
+          test "$(pyc_of "$envs/first" cpython-315)" -eq 0
+
+          # A warm install copies the cached bytecode, which imports without
+          # being compiled again: the import rewrites no .pyc.
+          uv venv --quiet --python 3.12 "$envs/warm"
+          VIRTUAL_ENV=$envs/warm "$kpip" install --cache-dir "$cache" rich
+          before=$(find "$envs/warm" -name '*.pyc' -exec cksum {} + | sort)
+          "$envs/warm/$bin/python" -c "import rich.console, rich.markdown, rich.table"
+          after=$(find "$envs/warm" -name '*.pyc' -exec cksum {} + | sort)
+          test "$before" = "$after"
+
+          # A source distribution is built in an environment for 3.12.
+          "$kpip" --python "$envs/first" install --no-cache-dir --no-binary six six
+          "$envs/first/$bin/python" -c "import six"
+
+          # The active environment is the one listed.
+          VIRTUAL_ENV=$envs/warm "$kpip" list | grep -q '^rich '
+
+          # Run from PATH, --version names the binary itself.
+          PATH=$(dirname "$kpip"):$PATH "$(basename "$kpip")" --version | tee "$RUNNER_TEMP/version.txt"
+          grep -q "kpip .* from .*build" "$RUNNER_TEMP/version.txt"
+          grep -q "(python 3\." "$RUNNER_TEMP/version.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kpip-${{ runner.os }}

@@ -12,12 +12,10 @@ import json
 import os
 import subprocess
 import tempfile
-from contextlib import contextmanager
 
 from kpip.core.interpreter import build_interpreter
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from typing import Any
 
 
@@ -86,11 +84,6 @@ class BuildBackendHookCaller:
 
         self.python_executable = python_executable
 
-    @contextmanager
-    def subprocess_runner(self, runner: Any) -> Iterator[None]:
-        del runner
-        yield
-
     def _call(self, hook: str, **kwargs: Any) -> Any:
         with tempfile.TemporaryDirectory(prefix="kpip-pep517-") as directory:
             input_path = os.path.join(directory, "input.json")
@@ -128,7 +121,10 @@ class BuildBackendHookCaller:
                     cwd=self.source_dir,
                     env=environment,
                     capture_output=True,
-                    text=True,
+                    # What a backend prints is in no one encoding:
+                    # its Python's code page, a compiler's, or UTF-8.
+                    encoding="utf-8",
+                    errors="replace",
                 )
             except subprocess.CalledProcessError as exc:
                 detail = (exc.stderr or exc.stdout or "").strip()

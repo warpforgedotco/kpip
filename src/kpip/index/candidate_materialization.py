@@ -16,7 +16,7 @@ from itertools import chain, islice
 from threading import RLock
 
 from kpip.build.build import build_wheel_from_source, unpack_source_internal
-from kpip.build.build_backend import BackendSpec, prepare_project_metadata
+from kpip.build.build_backend import prepare_project_metadata
 from kpip.core import run_options
 from kpip.core.appdirs import archive_entry_root
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
@@ -69,7 +69,6 @@ from kpip.index.candidate_metadata_cache import (
 from kpip.index.candidate_stream import CandidateStream
 from kpip.index.metadata_cache import get_wheel_metadata_cache
 from kpip.index.prefetch import Prefetcher
-from kpip.index.release_facts_cache import get_release_facts_cache
 from kpip.index.source_models import (
     SOURCE_ARTIFACT_KINDS,
     ArtifactKind,
@@ -666,12 +665,6 @@ class CandidateMaterializer:
             else None
         )
 
-        self.persistent_release_facts_cache = (
-            get_release_facts_cache(wheel_cache_dir)
-            if wheel_cache_dir is not None
-            else None
-        )
-
         self.artifacts = None
 
         self.invalid_links: set[str] = set()
@@ -1125,24 +1118,12 @@ class CandidateMaterializer:
         accepted_records = chain(initial_records, accepted_iterator)
 
         def generate() -> Iterator[WheelCandidate]:
-            invalid_versions: set[tuple[str, Version]] = set()
-
             for index, candidate in enumerate(accepted_records):
                 candidate = (
                     prefetched_records[index]
                     if index < len(prefetched_records)
                     else self.prepare_record(requirement, candidate)
                 )
-
-                identity = (candidate.canonical_name, candidate.version)
-
-                if identity in invalid_versions:
-                    continue
-
-                if self.release_is_invalid(candidate):
-                    invalid_versions.add(identity)
-
-                    continue
 
                 yield LazyWheelCandidate(candidate, requirement, self)
 
@@ -1158,34 +1139,11 @@ class CandidateMaterializer:
         For a caller that already holds the single record it wants -- the
         resolver's forward check reading one release -- without the stream,
         the prefetch decision and the generator a whole selection needs.
-        ``None`` when the release is known to be invalid.
         """
 
         candidate = self.prepare_record(requirement, record)
 
-        if self.release_is_invalid(candidate):
-            return None
-
         return LazyWheelCandidate(candidate, requirement, self)
-
-    def release_is_invalid(self, candidate: CandidateRecord) -> bool:
-        """Whether the release was recorded as unusable by an earlier run."""
-
-        cache = self.persistent_release_facts_cache
-
-        if cache is None or cache.get(self.negative_fact_key(candidate)) is None:
-            return False
-
-        self.invalid_links.add(candidate.link.url)
-
-        return True
-
-    def negative_fact_key(self, candidate: CandidateRecord) -> tuple[str, str, str]:
-        return (
-            candidate.canonical_name,
-            candidate.version.public,
-            self.artifact_fingerprint(candidate),
-        )
 
     def source_metadata_checks(
         self,
@@ -1848,8 +1806,8 @@ class CandidateMaterializer:
         A source distribution states its dependencies only through its build
         backend, and running that backend needs a build environment the
         target may not be able to have: a lock for 3.8 is prepared by
-        whichever interpreter kpip runs on, and a C extension pinned for 3.8
-        will not compile there. A wheel of the same release carries the very
+        whichever interpreter builds for kpip, and a C extension pinned for
+        3.8 will not compile there. A wheel of the same release carries the very
         metadata that backend would produce, and PEP 658 serves it beside the
         wheel, so the release answers for its own source distribution without
         anything being built or even downloaded.
@@ -2524,7 +2482,3 @@ class CandidateMaterializer:
         )
 
         return candidates
-
-
-def validate_build_requirements(source: str | os.PathLike[str]) -> None:
-    BackendSpec.from_project(source)

@@ -996,6 +996,12 @@ def run_install(args: list[str]) -> int:
     if installs_into_this_environment and not options.break_system_packages:
         check_externally_managed()
 
+    if not options.dry_run:
+        # Before anything is written: scripts name the Python they run with,
+        # and bytecode is that Python's, so even --target needs one. Found
+        # late, it failed with the target half-written.
+        target_interpreter()
+
     outcome = InstallOutcome(report_enabled=bool(options.report))
     reinstall = options.force_reinstall or options.ignore_installed
 

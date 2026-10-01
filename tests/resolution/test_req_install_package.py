@@ -3,7 +3,6 @@ from __future__ import annotations
 import email.message
 import os
 import sys
-import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -83,15 +82,7 @@ def test_requirement_identity_properties() -> None:
     assert pinned.specifier.contains("1.0")
     assert pinned.is_pinned
     assert not pinned.is_direct
-    assert not pinned.has_hash_options
     assert direct.is_direct
-
-
-def test_requirement_hash_options_are_owned_by_resolution() -> None:
-    requirement = install_req_from_line("demo")
-    requirement.hash_options["sha256"] = ["abc"]
-
-    assert requirement.has_hash_options
 
 
 def test_requirement_source_provenance_and_debug_format() -> None:
@@ -101,7 +92,6 @@ def test_requirement_source_provenance_and_debug_format() -> None:
 
     assert child.from_path() == "child->parent"
     assert from_file.from_path() == "other->requirements.txt"
-    assert "req=" in child.format_debug()
 
 
 def test_requirement_source_paths() -> None:
@@ -110,7 +100,6 @@ def test_requirement_source_paths() -> None:
 
     assert requirement.unpacked_source_directory == "/tmp/demo/"
     assert requirement.setup_py_path == "/tmp/demo/setup.py"
-    assert requirement.pyproject_toml_path == "/tmp/demo/pyproject.toml"
 
 
 def test_invalid_wheel_requirement_raises() -> None:
@@ -517,27 +506,6 @@ def test_get_url_from_path_installable_error(tmp_path: Path) -> None:
     assert "Neither 'setup.py' nor 'pyproject.toml' found" in str(exc.value)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="no need to test symlinks on Windows",
-)
-def test_tmp_build_directory() -> None:
-    requirement = InstallRequirement(None, None)
-    tmp_dir = tempfile.mkdtemp("-build", "kpip-")
-    try:
-        tmp_build_dir = requirement.ensure_build_location(tmp_dir)
-        assert os.path.dirname(tmp_build_dir) == os.path.realpath(
-            os.path.dirname(tmp_dir),
-        )
-        if os.path.realpath(tmp_dir) != os.path.abspath(tmp_dir):
-            assert os.path.dirname(tmp_build_dir) != os.path.dirname(tmp_dir)
-        else:
-            assert os.path.dirname(tmp_build_dir) == os.path.dirname(tmp_dir)
-    finally:
-        if os.path.isdir(tmp_dir):
-            os.rmdir(tmp_dir)
-
-
 def test_forward_slash_results_in_a_link(tmp_path: Path) -> None:
     install_dir = tmp_path / "foo" / "bar"
     setup_py_path = install_dir / "setup.py"
@@ -545,20 +513,3 @@ def test_forward_slash_results_in_a_link(tmp_path: Path) -> None:
     setup_py_path.write_text("")
     requirement = install_req_from_line(install_dir.as_posix())
     assert requirement.link is not None
-
-
-def test_load_pyproject_reads_legacy_setup_once(tmp_path: Path) -> None:
-    setup_py = tmp_path / "setup.py"
-    setup_py.write_text("import pkg_resources\n")
-    requirement = InstallRequirement(None, None)
-    requirement.source_dir = tmp_path
-
-    with mock.patch("builtins.open", wraps=open) as open_file:
-        requirement.load_pyproject_toml()
-
-    setup_opens = [
-        call
-        for call in open_file.call_args_list
-        if call.args and os.fspath(setup_py) in os.fspath(call.args[0])
-    ]
-    assert len(setup_opens) == 1

@@ -41,33 +41,53 @@ pip's familiar workflow that fast in Python?
 
 ## Installation
 
-Install kpip from PyPI with pip:
+kpip is a single binary, for Linux and Windows, with its own Python inside:
+it needs no Python to run, only one to install into. It is not installed
+with pip.
+
+Download `kpip-Linux` or `kpip-Windows` from the latest successful
+[Compile run](https://github.com/warpforgedotco/kpip/actions/workflows/compile.yml?query=branch%3Amain)
+on `main`, put the binary on your `PATH`, and on Linux make it executable:
 
 ```console
-pip install kpip
+chmod +x kpip
 kpip --version
 ```
 
-Or install it as an isolated tool with uv:
-
-```console
-uv tool install kpip
-kpip --version
-```
-
-Or run it from a source checkout:
+To upgrade, replace the binary. To build it yourself:
 
 ```console
 git clone https://github.com/warpforgedotco/kpip.git
-cd kpip
-uv sync --locked
-uv run kpip --version
+cd kpip/scripts/compile
+uv run kpip-compile build    # writes build/kpip
 ```
+
+Running kpip from a source checkout (`uv run kpip`) is for working on kpip
+itself; see [Development](#development).
+
+### Which Python kpip installs for
+
+Like pip, kpip installs into one Python's environment. Without `--python`, it
+is the first of:
+
+1. the active virtual environment (`VIRTUAL_ENV`);
+2. the active conda environment (`CONDA_PREFIX`);
+3. the first `python3` or `python` on `PATH` that runs;
+4. on Windows, the newest Python the python.org installer registered.
+
+`--python` names a Python or an environment directly. Source distributions
+are built with the same Python, unless `KPIP_BUILD_PYTHON` names another.
+
+| Variable | Effect |
+| --- | --- |
+| `KPIP_BUILD_PYTHON` | The Python source distributions are built with. |
+| `KPIP_CACHE_DIR`, `KPIP_NO_CACHE_DIR` | The cache directory, or no cache. |
+| `KPIP_CONFIG_FILE` | A configuration file to read; `os.devnull` reads none. |
 
 ## Quick start
 
-Create an environment, then point an isolated kpip installation at it with the
-global `--python` option:
+Create an environment, then point kpip at it with the global `--python`
+option -- or activate it, and leave `--python` out:
 
 ```console
 python -m venv .venv
@@ -96,8 +116,7 @@ every package afresh, and `--upgrade-package NAME` (`-P NAME`) just that one.
 `--refresh`, on `lock` and `install`, revalidates every cached index page
 before it is trusted, however long the index allowed it to be kept.
 
-To lock for a Python version other than the one running kpip, including
-versions below kpip's own 3.15 floor:
+To lock for a Python version other than the one kpip installs for:
 
 ```console
 kpip lock -r requirements.in --python-version 3.8
@@ -109,12 +128,10 @@ platform is not: this resolves for another Python, not another machine.
 A release whose dependencies the index does not publish is read from one of
 its own wheels, and built only when no wheel of it offers usable metadata --
 which a release that ships wheels can still come to. Building happens on the
-interpreter running kpip, not the one being locked for, so a release that
-cannot report its metadata here will fail the lock rather than be recorded
+Python kpip finds to build with -- `KPIP_BUILD_PYTHON`, else one of the
+version being locked for, else the one it installs for -- so a release that
+cannot report its metadata there will fail the lock rather than be recorded
 without its dependencies.
-
-If kpip is installed inside the environment it should manage, omit
-`--python .venv` and invoke `kpip` directly.
 
 ## Commands
 

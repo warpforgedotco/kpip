@@ -67,11 +67,19 @@ class SqliteBackedCache:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         try:
             conn = self._open()
-        except sqlite3.Error:
-            try:
-                os.remove(self.path)
-            except OSError:
-                pass
+        except sqlite3.OperationalError:
+            # Busy or locked: another kpip is writing it, and it is whole.
+            # The caller reads this as a miss; deleting it would pull it
+            # from under that kpip and orphan its write-ahead log.
+            raise
+        except sqlite3.DatabaseError:
+            # Not a database, or a damaged one: start again, with the log
+            # and shared memory that belonged to it.
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(self.path + suffix)
+                except OSError:
+                    pass
             conn = self._open()
 
         self.conn = conn

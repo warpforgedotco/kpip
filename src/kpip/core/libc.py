@@ -69,13 +69,6 @@ asserts an ABI (32-bit x86, and ARM hard-float EABI5), which is read off the
 interpreter's own ELF header instead.
 """
 
-LEGACY_MANYLINUX = {
-    "manylinux1": (2, 5),
-    "manylinux2010": (2, 12),
-    "manylinux2014": (2, 17),
-}
-"""The pre-PEP 600 aliases, as the glibc version each one stands for."""
-
 
 class _ELFInvalid(ValueError):
     pass
@@ -168,14 +161,6 @@ _EI_DATA_LSB = 1
 _EF_ARM_ABIMASK = 0xFF000000
 _EF_ARM_ABI_VER5 = 0x05000000
 _EF_ARM_ABI_FLOAT_HARD = 0x00000400
-
-
-def _open_elf(path: str) -> _ELFFile | None:
-    try:
-        with open(path, "rb") as handle:
-            return _ELFFile(handle)
-    except OSError, TypeError, ValueError:
-        return None
 
 
 def _interpreter_executable() -> str:

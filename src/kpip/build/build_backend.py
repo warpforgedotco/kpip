@@ -9,7 +9,6 @@ import email.parser
 import email.utils
 import fnmatch
 import hashlib
-import importlib
 import io
 import os
 import re
@@ -28,7 +27,7 @@ from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
 from kpip.core import run_options
 from kpip.core.appdirs import command_cache_arguments
 from kpip.core.errors import BuildError
-from kpip.core.compiled import is_own_interpreter, own_command
+from kpip.core.compiled import own_command
 from kpip.core.interpreter import build_interpreter
 from kpip.core.metadata import installed_index
 from kpip.host.interpreter_facts import interpreter_at
@@ -37,7 +36,6 @@ from kpip.core.packaging import (
     marker_applies_internal,
     parse_requirement,
 )
-from kpip.core.subprocesses import call_subprocess
 from kpip.core.temp_dir import build_directory
 from kpip.core.versions import InvalidVersion, Version
 from kpip.install.build_env.isolated_venv import (
@@ -253,6 +251,14 @@ class BackendSpec:
         )
 
 
+def _build_interpreter_has_setuptools() -> bool:
+    """Whether setuptools is installed for the build interpreter: read from
+    its sys.path, as a compiled kpip, with no Python of its own, must."""
+    build = interpreter_at(build_interpreter())
+    installed = installed_index(list(sys.path) if build.is_own else build.path)
+    return "setuptools" in installed
+
+
 def check_build_requirements(
     source_dir: str | os.PathLike[str],
     requirements: Iterable[str],
@@ -357,6 +363,10 @@ class BackendRunner:
         except subprocess.CalledProcessError as exc:
             detail = "\n".join(part for part in (exc.stdout, exc.stderr) if part)
 
+            # setuptools out of reach of the build environment -- --no-index,
+            # an offline machine -- but installed beside the build
+            # interpreter: the build runs with that one, as a build without
+            # isolation would.
             if (
                 not self.build_constraints
                 and self.spec.name.startswith("setuptools.build_meta")
@@ -366,12 +376,7 @@ class BackendRunner:
                     or "Could not find a version that satisfies the requirement setuptools"
                     in detail
                 )
-            ) and (
-                # Only this process's own interpreter can be asked
-                # in-process whether it has setuptools.
-                is_own_interpreter(build_interpreter())
-                and importlib.util.find_spec("setuptools.build_meta")  # type: ignore
-                is not None
+                and _build_interpreter_has_setuptools()
             ):
                 with build_directory("pip-build-metadata-") as metadata_dir:
                     caller = BuildBackendHookCaller(
@@ -836,7 +841,6 @@ class ProjectBuilder:
                     build_constraints=self.build_constraints,
                     build_isolation=self.build_isolation,
                 ).caller() as (caller, env_path),
-                caller.subprocess_runner(call_subprocess),
             ):
                 if (
                     validate_metadata_first
@@ -1043,70 +1047,69 @@ class ProjectBuilder:
 
                 metadata = None
 
-                with caller.subprocess_runner(call_subprocess):
-                    if editable:
-                        try:
-                            dist_info = caller.prepare_metadata_for_build_editable(
-                                metadata_path,
-                            )
+                if editable:
+                    try:
+                        dist_info = caller.prepare_metadata_for_build_editable(
+                            metadata_path,
+                        )
 
-                        except HookMissing:
-                            with tempfile.TemporaryDirectory(
-                                prefix="kpip-metadata-editable-",
-                            ) as wheel_directory:
-                                wheel_name = caller.build_editable(wheel_directory)
+                    except HookMissing:
+                        with tempfile.TemporaryDirectory(
+                            prefix="kpip-metadata-editable-",
+                        ) as wheel_directory:
+                            wheel_name = caller.build_editable(wheel_directory)
 
-                                assert wheel_name is not None
+                            assert wheel_name is not None
 
-                                wheel_path = os.path.join(wheel_directory, wheel_name)
+                            wheel_path = os.path.join(wheel_directory, wheel_name)
 
-                                if on_wheel_built is not None:
-                                    on_wheel_built(wheel_path)
+                            if on_wheel_built is not None:
+                                on_wheel_built(wheel_path)
 
-                                with zipfile.ZipFile(wheel_path) as wheel:
-                                    metadata_name = next(
-                                        name
-                                        for name in wheel.namelist()
-                                        if name.endswith(".dist-info/METADATA")
-                                    )
+                            with zipfile.ZipFile(wheel_path) as wheel:
+                                metadata_name = next(
+                                    name
+                                    for name in wheel.namelist()
+                                    if name.endswith(".dist-info/METADATA")
+                                )
 
-                                    metadata = email.parser.BytesParser().parsebytes(
-                                        wheel.read(metadata_name),
-                                    )
+                                metadata = email.parser.BytesParser().parsebytes(
+                                    wheel.read(metadata_name),
+                                )
 
-                            dist_info = None
+                        dist_info = None
 
-                    else:
-                        try:
-                            dist_info = caller.prepare_metadata_for_build_wheel(
-                                metadata_path,
-                            )
+                else:
+                    try:
+                        dist_info = caller.prepare_metadata_for_build_wheel(
+                            metadata_path,
+                        )
 
-                        except HookMissing:
-                            with tempfile.TemporaryDirectory(
-                                prefix="kpip-metadata-wheel-",
-                            ) as wheel_directory:
-                                wheel_name = caller.build_wheel(wheel_directory)
+                    except HookMissing:
+                        with tempfile.TemporaryDirectory(
+                            prefix="kpip-metadata-wheel-",
+                        ) as wheel_directory:
+                            wheel_name = caller.build_wheel(wheel_directory)
 
-                                assert wheel_name is not None
+                            assert wheel_name is not None
 
-                                wheel_path = os.path.join(wheel_directory, wheel_name)
+                            wheel_path = os.path.join(wheel_directory, wheel_name)
 
-                                if on_wheel_built is not None:
-                                    on_wheel_built(wheel_path)
+                            if on_wheel_built is not None:
+                                on_wheel_built(wheel_path)
 
-                                with zipfile.ZipFile(wheel_path) as wheel:
-                                    metadata_name = next(
-                                        name
-                                        for name in wheel.namelist()
-                                        if name.endswith(".dist-info/METADATA")
-                                    )
+                            with zipfile.ZipFile(wheel_path) as wheel:
+                                metadata_name = next(
+                                    name
+                                    for name in wheel.namelist()
+                                    if name.endswith(".dist-info/METADATA")
+                                )
 
-                                    metadata = email.parser.BytesParser().parsebytes(
-                                        wheel.read(metadata_name),
-                                    )
+                                metadata = email.parser.BytesParser().parsebytes(
+                                    wheel.read(metadata_name),
+                                )
 
-                            dist_info = None
+                        dist_info = None
 
                 if not editable and dist_info is None and metadata is None:
                     with tempfile.TemporaryDirectory(

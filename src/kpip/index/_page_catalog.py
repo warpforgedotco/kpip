@@ -1,8 +1,8 @@
 """Compiled page-to-catalog loop for :meth:`IndexPageParser.catalog_from_json`.
 
 Cython pure-Python-mode source: this file only works compiled, and
-``page_parsing`` keeps its own Python loop when the extension is absent (PyPy,
-a source checkout, a platform without a compiler).
+``page_parsing`` keeps its own Python loop for when the extension is absent:
+a source checkout, or one built without a compiler.
 
 A cold airflow lock compiles 587 index pages listing 265,000 files, and in
 Python each file was a dozen calls -- joining its URL, matching it, cutting its

@@ -21,13 +21,15 @@ look and which rules to keep.
 
 ## Process entry and dispatch
 
-The console script, `kpip.__init__:main` and `python -m kpip` all reach
+The compiled binary starts at `kpip/__main__.py`, which calls
+`cli.entrypoint:console_main`; from a source checkout, the `kpip` console
+script and `python -m kpip` reach the same place. Both run
 `cli.entrypoint:main`.
 
 ```text
 cli.entrypoint:main
   +--> handle_global_commands      help, --version, --require-virtualenv gate, unknown commands
-  +--> execution context, logging, temp dir (per CommandSpec flags)
+  +--> logging, temp dir (per CommandSpec flags)
   `--> run_command -> CommandSpec.load_runner
 ```
 

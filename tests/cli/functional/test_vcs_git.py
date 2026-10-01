@@ -15,7 +15,9 @@ from kpip_test_support import KpipTestEnvironment, create_test_package, git_comm
 
 
 def test_get_backend_for_scheme() -> None:
-    assert vcs.get_backend_for_scheme("git+https") is vcs.get_backend("Git")
+    backend = vcs.get_backend_for_scheme("git+https")
+    assert backend is not None
+    assert backend.name == "git"
 
 
 def get_head_sha(script: KpipTestEnvironment, dest: str) -> str:

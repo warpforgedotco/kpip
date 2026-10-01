@@ -241,27 +241,3 @@ class InstallationCandidate(CandidateRecord):
 
     def __str__(self) -> str:
         return f"{self.name!r} candidate (version {self.version} at {self.link})"
-
-
-class BestCandidateResult:
-    __slots__ = ("all_candidates", "applicable_candidates", "best_candidate")
-
-    def __init__(
-        self,
-        all_candidates: list[InstallationCandidate],
-        applicable_candidates: list[InstallationCandidate],
-        best_candidate: InstallationCandidate | None,
-    ) -> None:
-        self.all_candidates = all_candidates
-
-        self.applicable_candidates = applicable_candidates
-
-        self.best_candidate = best_candidate
-
-        assert set(self.applicable_candidates) <= set(self.all_candidates)
-
-        if self.best_candidate is None:
-            assert not self.applicable_candidates
-
-        else:
-            assert self.best_candidate in self.applicable_candidates

@@ -16,7 +16,7 @@ from benchmark_support import (
     simple_index_json,
     wheel_filenames,
 )
-from kpip.core.packaging import SpecifierSet, parse_requirement
+from kpip.core.packaging import Requirement, parse_requirement
 from kpip.core.wheel import (
     TargetContext,
     parse_wheel_file,
@@ -24,10 +24,11 @@ from kpip.core.wheel import (
     wheel_tag_rank,
 )
 from kpip.index.candidate_evaluators import CandidateEvaluator
-from kpip.index.candidates import BestCandidateResult, InstallationCandidate
+from kpip.index.candidates import InstallationCandidate
 from kpip.index.links import Link
 from kpip.index.page_parsing import IndexPageParser
 from kpip.index.provider import CandidateProvider
+from kpip.index.source_models import CandidateRecord, RejectedCandidate
 from pytest_codspeed import BenchmarkFixture
 
 PAGE_URL = "https://example.invalid/simple/package/"
@@ -48,6 +49,27 @@ def build_candidates() -> list[InstallationCandidate]:
         )
         candidates.append(InstallationCandidate("package", f"1.{index}.0", link))
     return candidates
+
+
+def evaluate_link(
+    link: Link,
+    requirement: Requirement,
+    *,
+    allow_yanked: bool,
+    allow_binary: bool,
+    allow_source: bool,
+    target: TargetContext | None,
+) -> CandidateRecord | RejectedCandidate:
+    """One link judged as the provider judges it: parsed for the target,
+    then evaluated against the requirement."""
+    return CandidateEvaluator.evaluate_parsed_link(
+        link,
+        InstallationCandidate.from_link(link, target=target),
+        requirement,
+        allow_yanked=allow_yanked,
+        allow_binary=allow_binary,
+        allow_source=allow_source,
+    )
 
 
 def test_parse_html_index_page(benchmark: BenchmarkFixture, index_html: str) -> None:
@@ -120,7 +142,7 @@ def test_target_environment_filtering(benchmark: BenchmarkFixture) -> None:
         reset_caches()
         return sum(
             isinstance(
-                CandidateEvaluator.evaluate_link(
+                evaluate_link(
                     link,
                     requirement,
                     allow_yanked=False,
@@ -161,7 +183,7 @@ def test_distribution_diversity(benchmark: BenchmarkFixture) -> None:
         reset_caches()
         return sum(
             isinstance(
-                CandidateEvaluator.evaluate_link(
+                evaluate_link(
                     link,
                     requirement,
                     allow_yanked=False,
@@ -175,41 +197,6 @@ def test_distribution_diversity(benchmark: BenchmarkFixture) -> None:
         )
 
     assert benchmark(evaluate_diverse) > 0
-
-
-def test_index_topology_ranking(benchmark: BenchmarkFixture) -> None:
-    filenames = (
-        "package-2.0.0.tar.gz",
-        "package-2.0.0-py3-none-any.whl",
-        "package-1.9.0-py3-none-any.whl",
-    )
-    candidates = [
-        InstallationCandidate(
-            "package",
-            filename.split("-", 2)[1].removesuffix(".tar.gz"),
-            Link.from_url(
-                f"https://example.invalid/{source}/{filename}",
-                source_url=source,
-            ),
-        )
-        for source in ("find-links", "index")
-        for filename in filenames
-    ]
-    default = CandidateEvaluator.create("package", specifier=SpecifierSet(">=1"))
-    binary = CandidateEvaluator.create(
-        "package",
-        specifier=SpecifierSet(">=1"),
-        prefer_binary=True,
-    )
-
-    def rank_sources() -> str:
-        best_default = default.compute_best_candidate(candidates).best_candidate
-        best_binary = binary.compute_best_candidate(candidates).best_candidate
-        assert best_default is not None
-        assert best_binary is not None
-        return f"{best_default.version}:{best_binary.version}"
-
-    assert benchmark(rank_sources) == "2.0.0:2.0.0"
 
 
 def test_index_fallback_and_duplicate_topology(
@@ -278,7 +265,7 @@ def test_universal_target_matrix(benchmark: BenchmarkFixture) -> None:
         reset_caches()
         return sum(
             isinstance(
-                CandidateEvaluator.evaluate_link(
+                evaluate_link(
                     link,
                     requirement,
                     allow_yanked=False,
@@ -313,7 +300,7 @@ def test_prerelease_and_yanked_policy(benchmark: BenchmarkFixture) -> None:
         reset_caches()
         strict = sum(
             isinstance(
-                CandidateEvaluator.evaluate_link(
+                evaluate_link(
                     link,
                     requirement,
                     allow_yanked=False,
@@ -327,7 +314,7 @@ def test_prerelease_and_yanked_policy(benchmark: BenchmarkFixture) -> None:
         )
         permissive = sum(
             isinstance(
-                CandidateEvaluator.evaluate_link(
+                evaluate_link(
                     link,
                     parse_requirement("package==2.0.0rc1"),
                     allow_yanked=True,
@@ -388,7 +375,7 @@ def test_evaluate_links(benchmark: BenchmarkFixture) -> None:
         reset_caches()
         return sum(
             isinstance(
-                CandidateEvaluator.evaluate_link(
+                evaluate_link(
                     link,
                     requirement,
                     allow_yanked=False,
@@ -402,20 +389,6 @@ def test_evaluate_links(benchmark: BenchmarkFixture) -> None:
         )
 
     assert benchmark(evaluate_all) > 0
-
-
-def test_compute_best_candidate(benchmark: BenchmarkFixture) -> None:
-    candidates = build_candidates()
-    evaluator = CandidateEvaluator.create(
-        "package",
-        specifier=SpecifierSet(">=1.20,<1.390"),
-    )
-
-    def compute_best() -> BestCandidateResult:
-        return evaluator.compute_best_candidate(candidates)
-
-    result = benchmark(compute_best)
-    assert result.best_candidate is not None
 
 
 def test_catalog_links_from_cache(

@@ -8,7 +8,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from kpip.build import build
 from kpip.build.build_backend import (
     BackendSpec,
     ProjectBuilder,
@@ -17,7 +16,6 @@ from kpip.build.build_backend import (
     prepare_project_metadata,
 )
 from kpip.core.errors import BuildError
-from kpip.index.candidate_materialization import validate_build_requirements
 
 
 def test_build_backend_builds_static_wheel_with_typed_marker(tmp_path: Path) -> None:
@@ -324,17 +322,6 @@ def test_declared_setuptools_backend_keeps_pkg_resources_available(
     )
 
 
-def test_newer_setuptools_build_requirement_is_valid(tmp_path: Path) -> None:
-    project = tmp_path / "new-setuptools-pkg"
-    project.mkdir()
-    project.joinpath("pyproject.toml").write_text(
-        "[build-system]\nrequires = ['setuptools>=64']\n",
-        encoding="utf-8",
-    )
-
-    validate_build_requirements(project)
-
-
 def test_static_source_metadata_precedes_backend_execution(tmp_path: Path) -> None:
     project = tmp_path / "static-metadata-pkg"
     project.mkdir()
@@ -392,15 +379,6 @@ def test_build_backend_rejects_invalid_package_version(tmp_path: Path) -> None:
 
     with pytest.raises(BuildError, match="use the project's build backend"):
         ProjectMetadataReader(project).read()
-
-
-def test_default_wheel_directories_are_isolated() -> None:
-    first = build.default_wheel_dir()
-    second = build.default_wheel_dir()
-
-    assert first != second
-    assert os.path.isdir(first)
-    assert os.path.isdir(second)
 
 
 def write_project(tmp_path: Path, name: str, package: str, version: str) -> Path:

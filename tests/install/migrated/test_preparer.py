@@ -1,3 +1,4 @@
+import email.parser
 import os
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -58,10 +59,10 @@ def metadata_internal(*lines: str, name: str = "pkg", version: str = "1.0") -> s
 
 
 def make_distribution(metadata: str) -> MetadataDistribution:
-    return MetadataDistribution.from_metadata_file_contents(
-        metadata.encode("utf-8"),
-        "pkg",
-    )
+    parsed = email.parser.BytesParser().parsebytes(metadata.encode("utf-8"))
+    if parsed.get("Name") is None:
+        parsed["Name"] = "pkg"
+    return MetadataDistribution(parsed, location=None, info_location=None)
 
 
 class TestCheckSidecarMatchesWheel:

@@ -96,10 +96,6 @@ def build_editable_from_source(
     return wheel_path
 
 
-def default_wheel_dir() -> str:
-    return default_wheel_dir_internal()
-
-
 def default_wheel_dir_internal() -> str:
     path = tempfile.mkdtemp(prefix="pip-build-wheelhouse-")
     if not run_options.current.no_clean:

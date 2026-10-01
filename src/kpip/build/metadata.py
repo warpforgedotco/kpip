@@ -95,19 +95,6 @@ class MetadataDistribution:
             ),
         )
 
-    @classmethod
-    def from_metadata_file_contents(
-        cls,
-        contents: bytes,
-        project_name: str,
-    ) -> MetadataDistribution:
-        metadata = email.parser.BytesParser().parsebytes(contents)
-
-        if metadata.get("Name") is None:
-            metadata["Name"] = project_name
-
-        return cls(metadata, location=None, info_location=None)
-
     @property
     def location(self) -> str | None:
         return self.location_internal
@@ -291,10 +278,6 @@ class InstalledMetadataDistribution:
     @property
     def installed_with_dist_info(self) -> bool:
         return bool(self.info_location and self.info_location.endswith(".dist-info"))
-
-    @property
-    def installed_with_setuptools_egg_info(self) -> bool:
-        return bool(self.info_location and self.info_location.endswith(".egg-info"))
 
     @property
     def direct_url(self) -> DirectUrl | None:
