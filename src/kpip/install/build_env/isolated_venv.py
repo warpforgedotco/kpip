@@ -1,49 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 import json
 import os
 import subprocess
-import sys
-import sysconfig
 
 from kpip.core.errors import DiagnosticKpipError
-from kpip.core.compiled import is_own_interpreter
-
-if TYPE_CHECKING:
-    from typing import Any
-
-try:
-    import virtualenv
-except ImportError:
-    virtualenv = None  # ty: ignore[invalid-assignment]
-
-try:
-    import venv
-except ImportError:
-    # Some distributions ship Python without it.
-    venv = None  # ty: ignore[invalid-assignment]
-
-
-class VenvImportError(DiagnosticKpipError):
-    reference = "venv-import-error"
-
-    def __init__(self) -> None:
-        hint_stmt = None
-        if sys.platform == "linux":
-            hint_stmt = (
-                "If this is an OS-provided Python, it's likely that your OS "
-                "package maintainers have split Python's standard library across "
-                "multiple OS packages."
-            )
-        super().__init__(
-            message="Cannot import the 'venv' module of the Python standard library",
-            context=(
-                "This is a symptom of a broken/modified Python, which cannot be used with kpip."
-            ),
-            note_stmt="This is an issue with the Python installation itself, not kpip.",
-            hint_stmt=hint_stmt,
-        )
 
 
 class VenvCreationError(DiagnosticKpipError):
@@ -60,14 +21,6 @@ class VenvCreationError(DiagnosticKpipError):
             context=context,
             hint_stmt=hint_stmt,
         )
-
-
-def get_venv_path_from_sysconfig(name: str, env_dir: str) -> str:
-    vars = {
-        "base": env_dir,
-        "platbase": env_dir,
-    }
-    return sysconfig.get_path(name, scheme="venv", vars=vars)
 
 
 class CreatedVenv:
@@ -177,79 +130,11 @@ def _create_with_interpreter(
 def create_isolated_venv(
     env_path: str,
     *,
+    python: str,
     with_pip: bool = True,
-    python: str | None = None,
 ) -> CreatedVenv:
-    """Create a fresh virtualenv (or stdlib ``venv`` fallback) at ``env_path``.
+    """A fresh environment at ``env_path`` for the interpreter ``python``,
+    which creates it: compiled, kpip has neither ``venv`` of its own to
+    create one with nor ``sysconfig`` that would describe it."""
 
-    Used by ``BackendRunner.caller()`` in ``build.build_backend`` (the
-    project builder used by ``kpip build``/``kpip wheel`` and metadata-only
-    resolution reads) to get "a working isolated venv at this path".
-    ``python`` is the interpreter the environment is for; when it is not the
-    one running kpip, that interpreter creates it.
-    """
-
-    if python is not None and not is_own_interpreter(python):
-        return _create_with_interpreter(env_path, with_pip=with_pip, python=python)
-
-    context: Any = None
-    if virtualenv is not None:
-        try:
-            arguments = [env_path, "--no-download", "--clear"]
-            if not with_pip:
-                arguments.append("--no-seed")
-            virtualenv.cli_run(arguments)
-        except (OSError, RuntimeError) as e:
-            raise VenvCreationError(str(e))
-    elif venv is not None:
-        env = venv.EnvBuilder(symlinks=(os.name != "nt"), with_pip=False)
-        try:
-            context = env.ensure_directories(env_path)
-            env.create(env_path)
-            bootstrap_environment = _bootstrap_environment()
-            if with_pip:
-                subprocess.run(
-                    [
-                        context.env_exec_cmd,
-                        "-m",
-                        "ensurepip",
-                        "--upgrade",
-                        "--default-pip",
-                    ],
-                    check=True,
-                    cwd=env_path,
-                    env=bootstrap_environment,
-                    capture_output=True,
-                    text=True,
-                )
-        except (OSError, subprocess.CalledProcessError) as e:
-            detail = str(e)
-            if isinstance(e, subprocess.CalledProcessError):
-                output = "\n".join(part for part in (e.stdout, e.stderr) if part)
-                if output:
-                    detail = f"{detail}: {output}"
-            raise VenvCreationError(detail)
-    else:
-        raise VenvImportError
-
-    if context is not None:
-        lib_dirs = [context.lib_path]
-        bin_path = context.bin_path
-    else:
-        lib_dirs = [get_venv_path_from_sysconfig("purelib", env_path)]
-        bin_path = get_venv_path_from_sysconfig("scripts", env_path)
-
-    try:
-        python_executable = context.env_exec_cmd
-    except AttributeError:
-        try:
-            python_executable = context.env_exe
-        except AttributeError:
-            executable_name = "python.exe" if os.name == "nt" else "python"
-            python_executable = os.path.join(bin_path, executable_name)
-
-    return CreatedVenv(
-        lib_dirs=lib_dirs,
-        bin_path=bin_path,
-        python_executable=python_executable,
-    )
+    return _create_with_interpreter(env_path, with_pip=with_pip, python=python)

@@ -9,7 +9,6 @@ import email.parser
 import email.utils
 import fnmatch
 import hashlib
-import importlib
 import io
 import os
 import re
@@ -28,7 +27,7 @@ from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
 from kpip.core import run_options
 from kpip.core.appdirs import command_cache_arguments
 from kpip.core.errors import BuildError
-from kpip.core.compiled import is_own_interpreter, own_command
+from kpip.core.compiled import own_command
 from kpip.core.interpreter import build_interpreter
 from kpip.core.metadata import installed_index
 from kpip.host.interpreter_facts import interpreter_at
@@ -37,7 +36,6 @@ from kpip.core.packaging import (
     marker_applies_internal,
     parse_requirement,
 )
-from kpip.core.subprocesses import call_subprocess
 from kpip.core.temp_dir import build_directory
 from kpip.core.versions import InvalidVersion, Version
 from kpip.install.build_env.isolated_venv import (
@@ -356,34 +354,6 @@ class BackendRunner:
 
         except subprocess.CalledProcessError as exc:
             detail = "\n".join(part for part in (exc.stdout, exc.stderr) if part)
-
-            if (
-                not self.build_constraints
-                and self.spec.name.startswith("setuptools.build_meta")
-                and (
-                    "Cannot import 'setuptools.build_meta'" in detail
-                    or "No matching distribution found for setuptools" in detail
-                    or "Could not find a version that satisfies the requirement setuptools"
-                    in detail
-                )
-            ) and (
-                # Only this process's own interpreter can be asked
-                # in-process whether it has setuptools.
-                is_own_interpreter(build_interpreter())
-                and importlib.util.find_spec("setuptools.build_meta")  # type: ignore
-                is not None
-            ):
-                with build_directory("pip-build-metadata-") as metadata_dir:
-                    caller = BuildBackendHookCaller(
-                        os.fspath(self.source_dir),
-                        self.spec.name,
-                        backend_path=list(self.spec.backend_path) or None,
-                        python_executable=build_interpreter(),
-                    )
-
-                    yield caller, metadata_dir
-
-                return
 
             raise RuntimeError(detail or str(exc)) from exc
 
@@ -836,7 +806,6 @@ class ProjectBuilder:
                     build_constraints=self.build_constraints,
                     build_isolation=self.build_isolation,
                 ).caller() as (caller, env_path),
-                caller.subprocess_runner(call_subprocess),
             ):
                 if (
                     validate_metadata_first
@@ -1043,70 +1012,69 @@ class ProjectBuilder:
 
                 metadata = None
 
-                with caller.subprocess_runner(call_subprocess):
-                    if editable:
-                        try:
-                            dist_info = caller.prepare_metadata_for_build_editable(
-                                metadata_path,
-                            )
+                if editable:
+                    try:
+                        dist_info = caller.prepare_metadata_for_build_editable(
+                            metadata_path,
+                        )
 
-                        except HookMissing:
-                            with tempfile.TemporaryDirectory(
-                                prefix="kpip-metadata-editable-",
-                            ) as wheel_directory:
-                                wheel_name = caller.build_editable(wheel_directory)
+                    except HookMissing:
+                        with tempfile.TemporaryDirectory(
+                            prefix="kpip-metadata-editable-",
+                        ) as wheel_directory:
+                            wheel_name = caller.build_editable(wheel_directory)
 
-                                assert wheel_name is not None
+                            assert wheel_name is not None
 
-                                wheel_path = os.path.join(wheel_directory, wheel_name)
+                            wheel_path = os.path.join(wheel_directory, wheel_name)
 
-                                if on_wheel_built is not None:
-                                    on_wheel_built(wheel_path)
+                            if on_wheel_built is not None:
+                                on_wheel_built(wheel_path)
 
-                                with zipfile.ZipFile(wheel_path) as wheel:
-                                    metadata_name = next(
-                                        name
-                                        for name in wheel.namelist()
-                                        if name.endswith(".dist-info/METADATA")
-                                    )
+                            with zipfile.ZipFile(wheel_path) as wheel:
+                                metadata_name = next(
+                                    name
+                                    for name in wheel.namelist()
+                                    if name.endswith(".dist-info/METADATA")
+                                )
 
-                                    metadata = email.parser.BytesParser().parsebytes(
-                                        wheel.read(metadata_name),
-                                    )
+                                metadata = email.parser.BytesParser().parsebytes(
+                                    wheel.read(metadata_name),
+                                )
 
-                            dist_info = None
+                        dist_info = None
 
-                    else:
-                        try:
-                            dist_info = caller.prepare_metadata_for_build_wheel(
-                                metadata_path,
-                            )
+                else:
+                    try:
+                        dist_info = caller.prepare_metadata_for_build_wheel(
+                            metadata_path,
+                        )
 
-                        except HookMissing:
-                            with tempfile.TemporaryDirectory(
-                                prefix="kpip-metadata-wheel-",
-                            ) as wheel_directory:
-                                wheel_name = caller.build_wheel(wheel_directory)
+                    except HookMissing:
+                        with tempfile.TemporaryDirectory(
+                            prefix="kpip-metadata-wheel-",
+                        ) as wheel_directory:
+                            wheel_name = caller.build_wheel(wheel_directory)
 
-                                assert wheel_name is not None
+                            assert wheel_name is not None
 
-                                wheel_path = os.path.join(wheel_directory, wheel_name)
+                            wheel_path = os.path.join(wheel_directory, wheel_name)
 
-                                if on_wheel_built is not None:
-                                    on_wheel_built(wheel_path)
+                            if on_wheel_built is not None:
+                                on_wheel_built(wheel_path)
 
-                                with zipfile.ZipFile(wheel_path) as wheel:
-                                    metadata_name = next(
-                                        name
-                                        for name in wheel.namelist()
-                                        if name.endswith(".dist-info/METADATA")
-                                    )
+                            with zipfile.ZipFile(wheel_path) as wheel:
+                                metadata_name = next(
+                                    name
+                                    for name in wheel.namelist()
+                                    if name.endswith(".dist-info/METADATA")
+                                )
 
-                                    metadata = email.parser.BytesParser().parsebytes(
-                                        wheel.read(metadata_name),
-                                    )
+                                metadata = email.parser.BytesParser().parsebytes(
+                                    wheel.read(metadata_name),
+                                )
 
-                            dist_info = None
+                        dist_info = None
 
                 if not editable and dist_info is None and metadata is None:
                     with tempfile.TemporaryDirectory(
