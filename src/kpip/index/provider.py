@@ -45,6 +45,7 @@ from kpip.index.catalog_cache import (
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.index.links import Link
 from kpip.index.prefetch import Prefetcher, PrefetchPolicy
+from kpip.network.origins import secure_source
 from kpip.index.source_locations import (
     FindLinksSource,
     SimpleIndexSource,
@@ -299,9 +300,12 @@ class CandidateProvider:
                 ),
             )
 
+        # A plaintext index on a host nobody trusted is ignored, with pip's
+        # warning, rather than read: its pages could be rewritten in transit.
         sources.extend(
             SimpleIndexSource(url, tuple(trusted_hosts), session)
             for url in normalized_index_urls
+            if secure_source(url, trusted_hosts, session)
         )
 
         return cls(

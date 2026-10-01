@@ -18,6 +18,17 @@ class TooManyRedirectsError(KpipError):
         super().__init__(f"Too many redirects while fetching {url}")
 
 
+class InsecureRedirectError(KpipError):
+    """A request to a secure origin was redirected to an insecure one."""
+
+    def __init__(self, url: str, location: str) -> None:
+        super().__init__(
+            f"Refusing to follow the redirect from {url} to {location}: it is "
+            "not a trusted or secure host. If it is meant to be used anyway, "
+            "allow it with '--trusted-host'."
+        )
+
+
 class ConnectionFailedError(DiagnosticKpipError):
     reference = "connection-failed"
 

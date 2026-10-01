@@ -450,7 +450,14 @@ def why_nothing_fits(requirement: Any, provider: Any, versions: list[Any]) -> li
     if format_hint is not None:
         hints.append(format_hint)
 
-    if not versions and not provider.index_sources and not provider.find_links:
+    # Not for an index left out as insecure: that was warned about, and
+    # --no-index was never given.
+    if (
+        not versions
+        and provider.no_index
+        and not provider.index_sources
+        and not provider.find_links
+    ):
         hints.append(
             "hint: --no-index was given without --find-links, so there was "
             "nowhere to look"

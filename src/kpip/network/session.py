@@ -29,17 +29,18 @@ from kpip._vendor.urllib3.exceptions import (
 from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
 from kpip._vendor.urllib3.util.ssl_ import create_urllib3_context
 from kpip.core import latency
-from kpip.core.errors import CommandError
 from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
 from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
+    InsecureRedirectError,
     ProxyConnectionError,
     SSLVerificationError,
     TooManyRedirectsError,
 )
+from kpip.network.origins import is_secure_origin, is_trusted_host, trusted_host_key
 from kpip.network.freshness import (
     cached_response_is_fresh,
     decode_metadata,
@@ -1349,6 +1350,19 @@ class NetworkSession:
             try:
                 next_url = urllib.parse.urljoin(current_url, location)
 
+                # An HTTPS request must not be led off to plaintext: whatever
+                # comes back could have been rewritten in transit, with no
+                # sign of it to the caller, who asked for a secure origin.
+                # A URL that was plaintext to begin with is the caller's
+                # choice, as pip lets a direct URL be.
+                if not is_secure_origin(
+                    next_url, self.trusted_hosts
+                ) and is_secure_origin(current_url, self.trusted_hosts):
+                    raise InsecureRedirectError(
+                        redact_auth_from_url(current_url),
+                        redact_auth_from_url(next_url),
+                    )
+
                 if raw.status == 303 and current_method != "HEAD":
                     current_method = "GET"
                     current_body = None
@@ -1485,39 +1499,3 @@ class NetworkSession:
                 logger.exception("Failed to save credentials")
 
         return retry
-
-
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-
-
-def trusted_host_key(value: str) -> tuple[str, int | None]:
-    """``--trusted-host`` as ``(host, port)``: a port only if one is given.
-
-    pip marks "this host or host:port pair as trusted", so ``h:8080``
-    trusts that port alone; cutting at the first ":" also trusted every
-    other port on ``h``, and broke on an IPv6 literal.
-    """
-    parsed = urllib.parse.urlsplit("//" + value.strip())
-    try:
-        port = parsed.port
-    except ValueError as error:
-        # Not host-wide trust: an unusable port must not turn certificate
-        # checks off for every port on the host.
-
-        raise CommandError(
-            f"Invalid --trusted-host {value.strip()!r}: {error}"
-        ) from error
-    return (parsed.hostname or value.strip()).lower(), port
-
-
-def is_trusted_host(
-    trusted: set[tuple[str, int | None]], url: urllib.parse.SplitResult
-) -> bool:
-    host = (url.hostname or "").lower()
-    if (host, None) in trusted:
-        return True
-    try:
-        port = url.port
-    except ValueError:
-        return False
-    return (host, port or _DEFAULT_PORTS.get(url.scheme)) in trusted

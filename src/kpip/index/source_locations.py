@@ -27,6 +27,7 @@ from kpip.index.directory_index import (
 from kpip.index.links import SUPPORTED_EXTENSIONS, Link
 from kpip.index.page_parsing import IndexPageParser
 from kpip.index.source_models import ArtifactKind
+from kpip.network.origins import secure_source
 
 if TYPE_CHECKING:
     from concurrent.futures import Future
@@ -129,6 +130,11 @@ class FindLinksSource:
 
         if candidate.kind is not ArtifactKind.UNKNOWN:
             return [candidate]
+
+        # A page of links is read only from a secure origin, as pip reads
+        # one; an archive named outright is the user's own choice of file.
+        if not secure_source(normalized, self.trusted_hosts, self.session):
+            return []
 
         return IndexPageParser(
             trusted_hosts=self.trusted_hosts,
