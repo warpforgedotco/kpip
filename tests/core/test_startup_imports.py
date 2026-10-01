@@ -118,6 +118,8 @@ def test_already_satisfied_install_reports_each_requirement(tmp_path: Path) -> N
     env = {
         "KPIP_CACHE_DIR": str(tmp_path / "cache"),
         "PYTHONPATH": f"{site}{os.pathsep}{SRC}",
+        # The Python running kpip, which no environment names.
+        "KPIP_SYSTEM_PYTHON": "1",
     }
     snapshot = import_snapshot(
         ["install", "--find-links", str(wheelhouse), "simplewheel", "simplewheel>=1"],

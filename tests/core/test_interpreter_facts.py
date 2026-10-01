@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import sysconfig
 import types
@@ -29,6 +30,7 @@ def fresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "CONDA_PREFIX",
         "CONDA_DEFAULT_ENV",
         "_CONDA_ROOT",
+        "KPIP_SYSTEM_PYTHON",
     ):
         monkeypatch.delenv(name, raising=False)
     # Not the checkout's .venv, which a compiled kpip would install into.
@@ -580,12 +582,16 @@ def test_the_environment_the_working_directory_is_inside_is_found(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
-def test_a_dot_venv_that_is_no_environment_is_passed_over(
-    found, tmp_path: Path
+def test_a_dot_venv_that_is_no_virtual_environment_is_refused(
+    found, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / ".venv").mkdir()
+    """As uv: not looked past for one further up, nor taken."""
+    environment(tmp_path / ".venv")
+    environment(tmp_path / "project" / ".venv", conda=True)
+    monkeypatch.chdir(tmp_path / "project")
 
-    assert found() == found.on_path
+    with pytest.raises(CommandError, match=r"project/\.venv is not a virtual env"):
+        found()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
@@ -610,7 +616,7 @@ def test_activated_environments_come_before_a_dot_venv_and_conda_base_after(
     assert found() == str(active)
 
     monkeypatch.delenv("VIRTUAL_ENV")
-    (dot_venv.parent.parent / "pyvenv.cfg").unlink()
+    shutil.rmtree(dot_venv.parent.parent)
     monkeypatch.setenv("CONDA_PREFIX", str(base.parent.parent))
     monkeypatch.setenv("CONDA_DEFAULT_ENV", "base")
     assert found() == str(base)
@@ -658,3 +664,21 @@ def test_an_install_names_a_dot_venv_without_a_python(
 
     with pytest.raises(CommandError, match=r"the environment at .*\.venv, which"):
         target_interpreter()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_system_passes_over_environments_for_conda_base_and_path(
+    found, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As uv's --system: a system Python, not an environment."""
+    environment(tmp_path / ".venv")
+    monkeypatch.setenv(
+        "VIRTUAL_ENV", str(environment(tmp_path / "active").parent.parent)
+    )
+    monkeypatch.setenv("KPIP_SYSTEM_PYTHON", "1")
+    assert found() == found.on_path
+
+    base = environment(tmp_path / "conda", conda=True)
+    monkeypatch.setenv("CONDA_PREFIX", str(base.parent.parent))
+    monkeypatch.setenv("_CONDA_ROOT", str(base.parent.parent))
+    assert found() == str(base)

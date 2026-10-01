@@ -24,6 +24,10 @@ def run_uninstall(args: list[str]) -> int:
 
     options = parser.parse_args(args)
 
+    if options.system:
+        # Before the target is looked for: --system changes where.
+        os.environ["KPIP_SYSTEM_PYTHON"] = "1"
+
     packages = list(options.packages)
 
     for filename in options.requirement_files:
@@ -41,7 +45,7 @@ def run_uninstall(args: list[str]) -> int:
     if not packages:
         parser.error("You must give at least one package to uninstall")
 
-    check_system_python(options.system)
+    check_system_python()
     if not options.break_system_packages:
         check_externally_managed()
 

@@ -73,14 +73,16 @@ is the first of:
 1. the active virtual environment (`VIRTUAL_ENV`);
 2. the active conda environment (`CONDA_PREFIX`), unless it is conda's base;
 3. a `.venv` in the current directory or the nearest one above it, or the
-   environment the current directory is inside;
+   environment the current directory is inside; as uv, a `.venv` without a
+   `pyvenv.cfg` is an error, not passed over;
 4. conda's base environment, when it is the active one;
 5. the first `python3` or `python` on `PATH` that runs;
 6. on Windows, the newest Python the python.org installer registered.
 
-This is uv's order. As uv does, `install` and `uninstall` refuse to change a
-Python found on `PATH` (5-6) unless it is a virtual environment's, or
-`--system` (or `KPIP_SYSTEM_PYTHON=1`) says to: it is often the system's own.
+This is uv's order, and as uv does, `install` and `uninstall` refuse to
+change a Python found on `PATH` (5-6), often the system's own, unless
+`--system` (or `KPIP_SYSTEM_PYTHON=1`) says to. `--system` also passes over
+1-3, as uv's does: it asks for a system Python, not an environment.
 `--target`, `--prefix` and `--root` write elsewhere, and need no `--system`.
 
 `--python` names a Python or an environment directly. Source distributions

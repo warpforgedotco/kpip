@@ -8,9 +8,12 @@ import logging
 import os
 import sys
 
-from kpip.core.compiled import is_compiled
 from kpip.core.errors import CommandError, KpipError
-from kpip.host.interpreter_facts import active_environments, target_interpreter
+from kpip.host.interpreter_facts import (
+    active_environments,
+    system_requested,
+    target_interpreter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,32 +80,20 @@ def _marker_error(marker: str) -> str | None:
     return None
 
 
-def check_system_python(system: bool) -> None:
-    """Refuse to change a Python nobody chose, as uv does, without ``--system``.
+def check_system_python() -> None:
+    """Refuse, as uv does, to change a Python nobody chose without ``--system``.
 
-    One is chosen by ``--python``, by being an active or ``.venv``
-    environment, or by being a virtual environment's Python. Only the
-    ``python3`` or ``python`` kpip falls back to on ``PATH`` is left: often
-    the system's own, which an install into would change for everything
-    that uses it.
+    One is chosen by ``--python`` or by being an active or ``.venv``
+    environment. What is left is the ``python3`` or ``python`` on ``PATH``
+    -- even a virtual environment's, as uv -- and the source run's own:
+    often the system's, which an install would change for everything that
+    uses it.
     """
-    if system or os.environ.get("KPIP_SYSTEM_PYTHON", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    ):
-        return
-    # A source run changes the Python running it, which the developer chose.
-    if not is_compiled() or os.environ.get("KPIP_PYTHON") or active_environments():
-        return
-    interpreter = target_interpreter()
-    if interpreter.in_virtualenv:
+    if system_requested() or os.environ.get("KPIP_PYTHON") or active_environments():
         return
     raise CommandError(
-        f"No virtual environment found, and {interpreter.executable} on PATH "
-        "is not one: activate an environment, create a .venv, name a Python "
-        "with --python, or pass --system to change this one"
+        "No virtual environment found: activate one, create a .venv, name a "
+        "Python with --python, or pass --system to change the Python on PATH"
     )
 
 

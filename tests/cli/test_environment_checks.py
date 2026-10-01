@@ -251,54 +251,40 @@ def test_build_requirements_are_checked_in_the_build_interpreters_environment(
 
 
 @pytest.fixture
-def python_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """A compiled kpip with no environment, its target the Python on PATH."""
-    interpreter = types.SimpleNamespace(
-        executable="/usr/bin/python3", in_virtualenv=False
-    )
-    monkeypatch.setattr(environment_checks, "is_compiled", lambda: True)
+def python_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No environment to install into: only the Python on PATH is left."""
     monkeypatch.setattr(environment_checks, "active_environments", list)
-    monkeypatch.setattr(environment_checks, "target_interpreter", lambda: interpreter)
     for name in ("KPIP_PYTHON", "KPIP_SYSTEM_PYTHON"):
         monkeypatch.delenv(name, raising=False)
-    return interpreter
 
 
-def test_a_python_on_path_is_changed_only_with_system(python_on_path) -> None:
-    """As uv: nobody chose it, and it is often the system's own."""
-    with pytest.raises(CommandError, match="/usr/bin/python3 on PATH.*--system"):
-        check_system_python(False)
-
-    check_system_python(True)
-
-
-def test_system_can_be_said_by_the_environment(
-    python_on_path, monkeypatch: pytest.MonkeyPatch
+def test_a_python_on_path_is_changed_only_with_system(
+    python_on_path: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("KPIP_SYSTEM_PYTHON", "1")
+    """As uv: nobody chose it, and it is often the system's own -- even a
+    virtual environment's, which nothing says is the one meant."""
+    with pytest.raises(CommandError, match="No virtual environment found.*--system"):
+        check_system_python()
 
-    check_system_python(False)
+    monkeypatch.setenv("KPIP_SYSTEM_PYTHON", "1")
+    check_system_python()
 
 
 def test_a_chosen_python_needs_no_system(
-    python_on_path, monkeypatch: pytest.MonkeyPatch
+    python_on_path: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    python_on_path.in_virtualenv = True
-    check_system_python(False)
-
-    python_on_path.in_virtualenv = False
     monkeypatch.setattr(
         environment_checks, "active_environments", lambda: [("conda", "/conda")]
     )
-    check_system_python(False)
+    check_system_python()
 
     monkeypatch.setattr(environment_checks, "active_environments", list)
     monkeypatch.setenv("KPIP_PYTHON", "/usr/bin/python3")
-    check_system_python(False)
+    check_system_python()
 
 
 def test_install_refuses_a_python_on_path_before_writing(
-    python_on_path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    python_on_path: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from kpip.cli.main import main
 
@@ -306,3 +292,24 @@ def test_install_refuses_a_python_on_path_before_writing(
     assert "pass --system" in capsys.readouterr().err
     assert main(["uninstall", "-y", "demo"]) != 0
     assert "pass --system" in capsys.readouterr().err
+
+
+def test_system_is_said_for_the_command_alone(
+    python_on_path: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--system reaches the search for the target, and goes with the
+    command that took it."""
+    from kpip.cli.main import main
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(
+        install,
+        "check_system_python",
+        lambda: seen.append(os.environ.get("KPIP_SYSTEM_PYTHON")) or exit(9),
+    )
+
+    with pytest.raises(SystemExit):
+        main(["install", "--system", "--no-index", "demo"])
+
+    assert seen == ["1"]
+    assert "KPIP_SYSTEM_PYTHON" not in os.environ

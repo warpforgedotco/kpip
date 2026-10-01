@@ -466,6 +466,17 @@ def environment_pythons() -> tuple[str, ...]:
     return ("bin/python", "Scripts/python.exe")
 
 
+def system_requested() -> bool:
+    """Whether ``--system`` (or ``KPIP_SYSTEM_PYTHON``) asks for a system
+    Python: ``install`` and ``uninstall`` set it from the option."""
+    return os.environ.get("KPIP_SYSTEM_PYTHON", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def active_environments() -> list[tuple[str, str]]:
     """The environments an install is for, before any Python on ``PATH``:
     how each was found, and its prefix, in the order uv looks.
@@ -473,14 +484,17 @@ def active_environments() -> list[tuple[str, str]]:
     The activated virtual environment; a named conda environment; a
     ``.venv`` in the working directory or one above it, or the environment
     the working directory is inside; then conda's base environment, which
-    is a system Python more than an environment someone chose.
+    is a system Python more than an environment someone chose. With
+    ``--system``, as uv, only the last: the rest are passed over.
     """
     found: list[tuple[str, str]] = []
+    conda = os.environ.get("CONDA_PREFIX")
+    base = bool(conda) and _is_conda_base(conda)
+    if system_requested():
+        return [(f"CONDA_PREFIX names {conda}", conda)] if conda and base else []
     virtual_env = os.environ.get("VIRTUAL_ENV")
     if virtual_env:
         found.append((f"VIRTUAL_ENV names {virtual_env}", virtual_env))
-    conda = os.environ.get("CONDA_PREFIX")
-    base = bool(conda) and _is_conda_base(conda)
     if conda and not base:
         found.append((f"CONDA_PREFIX names {conda}", conda))
     discovered = _working_directory_environment()
@@ -489,12 +503,6 @@ def active_environments() -> list[tuple[str, str]]:
     if conda and base:
         found.append((f"CONDA_PREFIX names {conda}", conda))
     return found
-
-
-def _is_environment(directory: str) -> bool:
-    return os.path.isfile(os.path.join(directory, "pyvenv.cfg")) or os.path.isdir(
-        os.path.join(directory, "conda-meta")
-    )
 
 
 def _working_directory_environment() -> str | None:
@@ -506,7 +514,11 @@ def _working_directory_environment() -> str | None:
         if os.path.isfile(os.path.join(directory, "pyvenv.cfg")):
             return directory
         dot_venv = os.path.join(directory, ".venv")
-        if _is_environment(dot_venv):
+        if os.path.isdir(dot_venv) or os.path.islink(dot_venv):
+            # As uv: not passed over for one further up, which nobody
+            # meant -- nor taken, a conda environment included.
+            if not os.path.isfile(os.path.join(dot_venv, "pyvenv.cfg")):
+                raise NotAnEnvironment(dot_venv)
             return dot_venv
         parent = os.path.dirname(directory)
         if parent == directory:
@@ -576,7 +588,7 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     elif not is_compiled():
         return own_interpreter()
     else:
-        key = ("found", installing)
+        key = ("found", installing, system_requested())
     found = _interpreters.get(key)
     if found is None:
         found = _interpreters[key] = _find_target(python, installing=installing)
@@ -585,14 +597,27 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
 
 class EnvironmentWithoutPython(CommandError):
     """The environment an install is for has no Python that runs: what it
-    would be for is not there. ``where`` says how it was found."""
+    would be for is not there. ``summary`` says which, for ``--version``."""
 
     def __init__(self, where: str) -> None:
+        self.summary = f"{where}, which has no working Python"
         super().__init__(
-            f"{where}, which has no working Python: activate another "
-            "environment, deactivate this one, or name one with --python"
+            f"{self.summary}: activate another environment, deactivate this "
+            "one, or name one with --python"
         )
-        self.where = where
+
+
+class NotAnEnvironment(EnvironmentWithoutPython):
+    """A ``.venv`` with no ``pyvenv.cfg``: uv refuses it, rather than look
+    past it or guess what it is."""
+
+    def __init__(self, dot_venv: str) -> None:
+        self.summary = f"{dot_venv} is not a virtual environment"
+        CommandError.__init__(
+            self,
+            f"{self.summary}: it has no pyvenv.cfg. Recreate it, remove it, "
+            "or name a Python with --python",
+        )
 
 
 def registered_pythons() -> list[str]:

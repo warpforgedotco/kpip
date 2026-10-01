@@ -391,6 +391,10 @@ def validate_option_combinations(options: argparse.Namespace) -> None:
 def prepare_install(args: list[str], parser: Any) -> PreparedRequirements:
     options = parser.parse_args(normalize_install_args(args, INDEX_URL_OPTIONS))
 
+    if options.system:
+        # Before the target is looked for: --system changes where.
+        os.environ["KPIP_SYSTEM_PYTHON"] = "1"
+
     if options.target:
         # As pip: a target directory is a library of its own, which what the
         # running environment has installed does not satisfy. A requirement
@@ -995,7 +999,7 @@ def run_install(args: list[str]) -> int:
     )
 
     if installs_into_this_environment:
-        check_system_python(options.system)
+        check_system_python()
         if not options.break_system_packages:
             check_externally_managed()
 

@@ -219,7 +219,7 @@ def print_version() -> None:
     try:
         python = f"python {target_interpreter().major_minor}"
     except EnvironmentWithoutPython as exc:
-        python = f"{exc.where}, which has no working Python"
+        python = exc.summary
     except CommandError:
         python = "no Python found to install for"
 
@@ -429,7 +429,8 @@ def main(
     collection_paused = False
 
     managed_environment = {
-        name: os.environ.get(name) for name in ("KPIP_RESOLVER_DEBUG", "KPIP_PYTHON")
+        name: os.environ.get(name)
+        for name in ("KPIP_RESOLVER_DEBUG", "KPIP_PYTHON", "KPIP_SYSTEM_PYTHON")
     }
     try:
         run_options.reset()
