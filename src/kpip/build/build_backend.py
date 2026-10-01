@@ -2240,9 +2240,6 @@ def wheel_text_internal() -> str:
 def entry_points_text_internal(project: ProjectMetadata) -> str:
     scripts = dict(project.scripts)
 
-    if project.name == "pip" and not scripts:
-        scripts = {"pip": "kpip.cli.main:main"}
-
     if not scripts:
         return ""
 
