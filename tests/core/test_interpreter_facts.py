@@ -424,3 +424,55 @@ def test_a_new_environments_facts_are_what_it_would_say(
         assert remembered["config"][key] == real["config"][key]
     sites = [entry for entry in real["path"] if "site-packages" in entry]
     assert [e for e in remembered["path"] if "site-packages" in e] == sites
+
+
+def test_a_shims_answer_is_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pyenv shim never changes while the version it picks does."""
+    import subprocess as subprocess_module
+
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+    shim = tmp_path / "python3"
+    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    shim.chmod(0o755)
+    runs: list[object] = []
+    real_run = subprocess_module.run
+    monkeypatch.setattr(
+        interpreter_facts.subprocess,
+        "run",
+        lambda *args, **kwargs: runs.append(args) or real_run(*args, **kwargs),
+    )
+
+    probe(str(shim))
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+    probe(str(shim))
+
+    assert len(runs) == 2
+
+
+def test_a_link_to_a_python_is_probed_as_itself(tmp_path: Path) -> None:
+    """A virtual environment's python links to its base's."""
+    link = tmp_path / "python"
+    link.symlink_to(sys.executable)
+
+    assert probe(str(link)) is not probe(sys.executable)
+
+
+def test_the_probe_works_under_safe_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PYTHONSAFEPATH", "1")
+
+    assert probe(sys.executable).version == tuple(sys.version_info[:3])
+
+
+def test_a_stale_virtual_env_matters_only_to_an_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    monkeypatch.delenv("KPIP_PYTHON", raising=False)
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "gone"))
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert target_interpreter(installing=False) is not None
+    with pytest.raises(CommandError, match="VIRTUAL_ENV names"):
+        target_interpreter()

@@ -58,6 +58,8 @@ def _candidates(target: str) -> list[str]:
         if found is not None:
             candidates.append(found)
 
+    candidates.extend(interpreter_facts.registered_pythons())
+
     return candidates
 
 
@@ -91,13 +93,17 @@ def _discover() -> str:
 
         version = interpreter.major_minor
 
+        # The interpreter that answered, not the file found: a pyenv-win
+        # .bat shim cannot be handed code with -c.
+        executable = interpreter.executable or candidate
+
         # The target's own version first: an sdist's metadata may depend on
         # the interpreter that prepares it.
         if version == target:
-            return candidate
+            return executable
 
         if fallback is None:
-            fallback = candidate
+            fallback = executable
 
     if fallback is not None:
         return fallback

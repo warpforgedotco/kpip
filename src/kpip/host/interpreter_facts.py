@@ -15,10 +15,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from kpip.core import run_options
 from kpip.core.appdirs import resolve_cache_dir
@@ -27,10 +29,17 @@ from kpip.core.errors import CommandError
 from kpip.core.utils import versioned_bucket
 from kpip.core.compiled import is_compiled, is_own_interpreter
 
-SAFE_PATH = "import sys\ndel sys.path[0]\n"
-"""Run first by code given to another interpreter with ``-c``, which puts
-the working directory first on its ``sys.path``: a project's own
-``platform.py`` or ``json.py`` must not stand in for the standard library."""
+try:
+    import winreg
+except ImportError:
+    winreg = None  # ty: ignore[invalid-assignment]
+
+SAFE_PATH = 'import sys\nif sys.path and sys.path[0] == "":\n    del sys.path[0]\n'
+"""Run first by code given to another interpreter with ``-c`` or on its
+standard input, which puts the working directory first on its
+``sys.path``: a project's own ``platform.py`` or ``json.py`` must not stand
+in for the standard library. Only that entry: under ``PYTHONSAFEPATH``, or
+an embeddable Python's ``._pth``, the first is the standard library's."""
 
 PROBE = r"""
 import importlib.util
@@ -212,29 +221,53 @@ def probe(executable: str) -> Interpreter:
     A compiled kpip has no Python of its own, so every command runs one --
     35 to 50 ms -- unless an earlier run left its answer in the cache
     (:func:`_cached_facts`).
+
+    The probe goes on its standard input rather than with ``-c``: a
+    ``.bat`` shim, as pyenv-win puts on ``PATH``, runs through ``cmd.exe``,
+    which ends an argument at its first newline. Kept by the path as given,
+    not resolved: a virtual environment's ``python`` links to its base's.
     """
-    key = os.path.realpath(executable)
+    key = os.path.abspath(executable)
     found = _interpreters.get(key)
     if found is None:
         facts, store = _cached_facts(executable)
         if facts is None:
-            try:
-                result = subprocess.run(
-                    [executable, "-c", SAFE_PATH + PROBE],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                facts = json.loads(result.stdout)
-            except (OSError, subprocess.CalledProcessError, ValueError) as exc:
-                raise CommandError(
-                    f"Could not read the Python interpreter {executable}: {exc}"
-                ) from exc
+            started = time.time_ns()
+            facts = _run_probe(executable)
             if store is not None:
-                _store_facts(store, facts)
+                _store_facts(store, facts, executable, started)
         found = Interpreter(facts)
         _interpreters[key] = found
     return found
+
+
+def _run_probe(executable: str) -> dict:
+    try:
+        result = subprocess.run(
+            [executable, "-"],
+            input=SAFE_PATH + PROBE,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        raise CommandError(f"Could not run the Python interpreter {executable}: {exc}")
+    if result.returncode != 0:
+        said = result.stderr.strip().splitlines()
+        raise CommandError(
+            f"Could not run the Python interpreter {executable} "
+            f"(exit status {result.returncode})"
+            + (f": {said[-1]}" if said else "")
+            + ". Name a working one with --python."
+        )
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        raise CommandError(
+            f"The Python interpreter {executable} did not answer as one: "
+            "name a working one with --python."
+        ) from None
 
 
 _PROBE_CACHE = versioned_bucket("interpreters", 1)
@@ -248,8 +281,12 @@ _PROBE_ENVIRONMENT = (
     "PYTHONNOUSERSITE",
     "PYTHONPATH",
     "PYTHONPLATLIBDIR",
+    "PYTHONSAFEPATH",
     "PYTHONUSERBASE",
 )
+
+_PROBE_CACHE_ENTRIES = 256
+"""Probes kept: each build environment leaves one."""
 
 
 def _stamp(path: str) -> list[int] | None:
@@ -354,12 +391,28 @@ def remember_environment(
         "preferred": {**base["preferred"], "prefix": "venv"},
         "config": {**base["config"], "base": env_path, "platbase": env_path},
     }
-    _store_facts(store, facts)
+    _store_facts(store, facts, executable)
 
 
-def _store_facts(store: tuple[str, list], facts: dict) -> None:
+def _store_facts(
+    store: tuple[str, list], facts: dict, executable: str, started: int | None = None
+) -> None:
+    """Keep ``facts`` for the next run, unless they may not hold for it.
+
+    Not when the file run is not the interpreter that answered -- a pyenv,
+    asdf or mise shim, which never changes while the version it picks does
+    -- nor when a directory on its ``sys.path`` changed while it was probed
+    (``started``): its facts may predate the change.
+    """
     path, key = store
+    if os.path.realpath(facts.get("executable") or "") != os.path.realpath(executable):
+        return
     directories = [*facts.get("path", ()), facts.get("user_site")]
+    if started is not None:
+        for directory in directories:
+            stamp = _stamp(directory) if directory else None
+            if stamp is not None and stamp[0] >= started:
+                return
     entry = {
         "key": key,
         "directories": [
@@ -373,8 +426,23 @@ def _store_facts(store: tuple[str, list], facts: dict) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as file:
             json.dump(entry, file)
         os.replace(temporary, path)
+        _prune(os.path.dirname(path))
     except OSError:
         pass
+
+
+def _prune(directory: str) -> None:
+    """Keep the newest :data:`_PROBE_CACHE_ENTRIES` probes."""
+    with os.scandir(directory) as entries:
+        kept = [entry for entry in entries if entry.name.endswith(".json")]
+    if len(kept) <= _PROBE_CACHE_ENTRIES:
+        return
+    kept.sort(key=lambda entry: entry.stat().st_mtime_ns)
+    for entry in kept[: len(kept) - _PROBE_CACHE_ENTRIES]:
+        try:
+            os.unlink(entry.path)
+        except OSError:
+            pass
 
 
 def search_path() -> list[str]:
@@ -442,16 +510,71 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     return found
 
 
+def registered_pythons() -> list[str]:
+    """The Pythons Windows has registered (PEP 514), newest first.
+
+    The python.org installer leaves ``python`` off ``PATH`` unless asked,
+    and registers the interpreter instead, as the ``py`` launcher and uv
+    find it. Nothing elsewhere.
+    """
+    if sys.platform != "win32" or winreg is None:
+        return []
+    found: list[tuple[tuple[int, ...], str]] = []
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            company = winreg.OpenKey(root, r"Software\Python\PythonCore")
+        except OSError:
+            continue
+        with company:
+            index = 0
+            while True:
+                try:
+                    tag = winreg.EnumKey(company, index)
+                except OSError:
+                    break
+                index += 1
+                try:
+                    with winreg.OpenKey(company, rf"{tag}\InstallPath") as install:
+                        try:
+                            executable = winreg.QueryValueEx(install, "ExecutablePath")[
+                                0
+                            ]
+                        except OSError:
+                            executable = os.path.join(
+                                winreg.QueryValueEx(install, "")[0], "python.exe"
+                            )
+                except OSError:
+                    continue
+                version = tuple(
+                    int(part) for part in re.findall(r"\d+", tag.split("-")[0])[:2]
+                )
+                if os.path.isfile(executable):
+                    found.append((version, executable))
+    found.sort(key=lambda item: item[0], reverse=True)
+    return list(dict.fromkeys(executable for _, executable in found))
+
+
 def _find_target(python: str | None, *, installing: bool) -> Interpreter:
     if python:
         return probe(identify(python))
     for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
         prefix = os.environ.get(variable)
-        if prefix:
+        if not prefix:
+            continue
+        try:
             return probe(identify(prefix))
+        except CommandError as exc:
+            if installing:
+                raise CommandError(
+                    f"{variable} names {prefix}, which has no working Python: "
+                    "activate another environment, deactivate this one, or "
+                    "name one with --python"
+                ) from exc
+            # Nothing is installed: resolving needs no environment.
+            continue
     tried = []
-    for name in ("python3", "python"):
-        found = shutil.which(name)
+    candidates = [shutil.which(name) for name in ("python3", "python")]
+    for found in [*candidates, *registered_pythons()]:
         if found is None or found in tried:
             continue
         tried.append(found)
@@ -464,8 +587,15 @@ def _find_target(python: str | None, *, installing: bool) -> Interpreter:
     if not installing:
         return own_interpreter()
     raise CommandError(
-        "No Python interpreter to install for: activate an environment, "
-        "or name one with --python" + (f" (tried {', '.join(tried)})" if tried else "")
+        "No Python interpreter to install for: VIRTUAL_ENV and CONDA_PREFIX "
+        "are unset, and "
+        + (
+            f"none of {', '.join(tried)} answered"
+            if tried
+            else "there is no python3 or python on PATH"
+            + (" nor a registered Python" if os.name == "nt" else "")
+        )
+        + ". Activate an environment, or name a Python with --python."
     )
 
 
