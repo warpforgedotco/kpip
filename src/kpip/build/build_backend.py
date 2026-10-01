@@ -853,7 +853,9 @@ class ProjectBuilder:
                     os.mkdir(preflight_path)
 
                     try:
-                        caller.prepare_metadata_for_build_wheel(preflight_path)
+                        caller.prepare_metadata_for_build_wheel(
+                            preflight_path, config_settings=config_settings
+                        )
 
                     except HookMissing:
                         pass
@@ -994,8 +996,13 @@ class ProjectBuilder:
         *,
         editable: bool = False,
         on_wheel_built: Callable[[str], None] | None = None,
+        config_settings: dict[str, Any] | None = None,
     ) -> ProjectMetadata:
         """Read metadata through the project's declared build backend.
+
+        ``config_settings`` reach the metadata hooks, and the build that
+        stands in for a missing one, as they reach the build itself: a
+        setting can change what the backend says the project depends on.
 
         A backend without the optional ``prepare_metadata_for_build_wheel``/
         ``prepare_metadata_for_build_editable`` hook forces the fallback
@@ -1052,13 +1059,16 @@ class ProjectBuilder:
                     try:
                         dist_info = caller.prepare_metadata_for_build_editable(
                             metadata_path,
+                            config_settings=config_settings,
                         )
 
                     except HookMissing:
                         with tempfile.TemporaryDirectory(
                             prefix="kpip-metadata-editable-",
                         ) as wheel_directory:
-                            wheel_name = caller.build_editable(wheel_directory)
+                            wheel_name = caller.build_editable(
+                                wheel_directory, config_settings=config_settings
+                            )
 
                             assert wheel_name is not None
 
@@ -1084,13 +1094,16 @@ class ProjectBuilder:
                     try:
                         dist_info = caller.prepare_metadata_for_build_wheel(
                             metadata_path,
+                            config_settings=config_settings,
                         )
 
                     except HookMissing:
                         with tempfile.TemporaryDirectory(
                             prefix="kpip-metadata-wheel-",
                         ) as wheel_directory:
-                            wheel_name = caller.build_wheel(wheel_directory)
+                            wheel_name = caller.build_wheel(
+                                wheel_directory, config_settings=config_settings
+                            )
 
                             assert wheel_name is not None
 
@@ -1116,7 +1129,9 @@ class ProjectBuilder:
                     with tempfile.TemporaryDirectory(
                         prefix="kpip-metadata-wheel-",
                     ) as wheel_directory:
-                        wheel_name = caller.build_wheel(wheel_directory)
+                        wheel_name = caller.build_wheel(
+                            wheel_directory, config_settings=config_settings
+                        )
 
                         assert wheel_name is not None
 
@@ -1178,10 +1193,12 @@ def prepare_project_metadata(
     build_constraints: list[str] | None = None,
     build_isolation: bool = True,
     on_wheel_built: Callable[[str], None] | None = None,
+    config_settings: dict[str, Any] | None = None,
 ) -> ProjectMetadata:
     """Read metadata through the project's declared PEP 517 backend.
 
-    See ``ProjectBuilder.prepare_metadata`` for ``on_wheel_built``.
+    See ``ProjectBuilder.prepare_metadata`` for ``on_wheel_built`` and
+    ``config_settings``.
     """
 
     try:
@@ -1189,7 +1206,11 @@ def prepare_project_metadata(
             source_dir,
             build_constraints=build_constraints,
             build_isolation=build_isolation,
-        ).prepare_metadata(editable=editable, on_wheel_built=on_wheel_built)
+        ).prepare_metadata(
+            editable=editable,
+            on_wheel_built=on_wheel_built,
+            config_settings=config_settings,
+        )
 
     except BuildError as exc:
         if build_isolation and "Cannot import 'setuptools.build_meta'" in str(exc):
@@ -1197,7 +1218,11 @@ def prepare_project_metadata(
                 source_dir,
                 build_constraints=build_constraints,
                 build_isolation=False,
-            ).prepare_metadata(editable=editable, on_wheel_built=on_wheel_built)
+            ).prepare_metadata(
+                editable=editable,
+                on_wheel_built=on_wheel_built,
+                config_settings=config_settings,
+            )
 
         raise
 

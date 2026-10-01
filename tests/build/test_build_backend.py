@@ -754,3 +754,59 @@ def test_kpip_runs_again_as_itself() -> None:
     from kpip.core.compiled import own_command
 
     assert own_command() == [sys.executable, "-m", "kpip"]
+
+
+SETTINGS_BACKEND = """\
+import json
+import os
+
+
+def _dist_info(directory, config_settings):
+    dist_info = "settings_pkg-1.0.dist-info"
+    os.makedirs(os.path.join(directory, dist_info))
+    with open(os.path.join(directory, dist_info, "METADATA"), "w") as file:
+        file.write(
+            "Metadata-Version: 2.1\\nName: settings-pkg\\nVersion: 1.0\\n"
+            f"Summary: {json.dumps(config_settings)}\\n"
+        )
+    return dist_info
+
+
+def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
+    if config_settings is None:
+        raise ValueError("no config settings")
+    return _dist_info(metadata_directory, config_settings)
+
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    return "settings_pkg-1.0-py3-none-any.whl"
+"""
+
+
+def test_config_settings_reach_the_metadata_hooks(tmp_path: Path) -> None:
+    """A setting can change what a backend says the project depends on, so
+    prepare_metadata_for_build_wheel is given them as build_wheel is: for a
+    metadata read, and for the check made before a build."""
+    project = tmp_path / "settings-pkg"
+    (project / "backend").mkdir(parents=True)
+    project.joinpath("pyproject.toml").write_text(
+        "[build-system]\nrequires = []\nbuild-backend = 'settings_backend'\n"
+        "backend-path = ['backend']\n",
+        encoding="utf-8",
+    )
+    project.joinpath("backend", "settings_backend.py").write_text(
+        SETTINGS_BACKEND, encoding="utf-8"
+    )
+    settings = {"--build-option": "--with-speedups"}
+
+    metadata = prepare_project_metadata(
+        project, build_isolation=False, config_settings=settings
+    )
+
+    assert metadata.summary == '{"--build-option": "--with-speedups"}'
+
+    wheel = ProjectBuilder(project, build_isolation=False).build_wheel(
+        tmp_path / "wheels", config_settings=settings
+    )
+
+    assert wheel == "settings_pkg-1.0-py3-none-any.whl"
