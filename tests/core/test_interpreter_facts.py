@@ -380,3 +380,47 @@ def test_a_probe_is_kept_across_runs_until_its_search_path_changes(
     monkeypatch.setattr(interpreter_facts, "_interpreters", {})
     probe(sys.executable)
     assert len(runs) == 2
+
+
+def test_a_new_environments_facts_are_what_it_would_say(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Remembered for the kpip that installs a build's requirements, which
+    would otherwise run the environment's Python to learn them."""
+    import json
+    import subprocess as subprocess_module
+
+    from kpip.install.build_env import isolated_venv
+
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+    env = tmp_path / "env"
+    env.mkdir()
+    # Probed as another Python is, not read in this process, whose site
+    # module keeps the user site of the home it started in.
+    creator = tmp_path / "python"
+    creator.symlink_to(sys.executable)
+
+    venv = isolated_venv.create_isolated_venv(
+        str(env), python=str(creator), with_pip=False
+    )
+    remembered, _ = interpreter_facts._cached_facts(venv.python_executable)
+    real = json.loads(
+        subprocess_module.run(
+            [
+                venv.python_executable,
+                "-c",
+                interpreter_facts.SAFE_PATH + interpreter_facts.PROBE,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+
+    assert remembered is not None
+    for key in real.keys() - {"config", "path"}:
+        assert remembered[key] == real[key], key
+    for key in ("base", "platbase"):
+        assert remembered["config"][key] == real["config"][key]
+    sites = [entry for entry in real["path"] if "site-packages" in entry]
+    assert [e for e in remembered["path"] if "site-packages" in e] == sites

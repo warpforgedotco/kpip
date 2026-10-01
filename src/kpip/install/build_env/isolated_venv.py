@@ -5,7 +5,7 @@ import os
 import subprocess
 
 from kpip.core.errors import CommandError, DiagnosticKpipError
-from kpip.host.interpreter_facts import interpreter_at
+from kpip.host.interpreter_facts import interpreter_at, remember_environment
 
 
 class VenvCreationError(DiagnosticKpipError):
@@ -89,6 +89,11 @@ def _layout_from_facts(env_path: str, python: str) -> CreatedVenv | None:
     )
     if not os.path.exists(executable):
         return None
+    # The kpip that installs the build requirements is told this Python:
+    # what it would run it to learn follows from its creator's facts.
+    remember_environment(
+        interpreter, env_path, executable, paths["purelib"], paths["platlib"]
+    )
     return CreatedVenv(
         lib_dirs=[paths["purelib"]],
         bin_path=paths["scripts"],

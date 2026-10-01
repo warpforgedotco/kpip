@@ -116,6 +116,7 @@ class Interpreter:
         "debug_refcount",
         "executable",
         "extension_suffixes",
+        "facts",
         "implementation",
         "magic",
         "markers",
@@ -133,6 +134,8 @@ class Interpreter:
     )
 
     def __init__(self, facts: dict) -> None:
+        # As read, for the environments derived from it (remember_environment).
+        self.facts = facts
         self.executable: str = facts["executable"]
         self.prefix: str = facts["prefix"]
         self.base_prefix: str = facts["base_prefix"]
@@ -301,6 +304,57 @@ def _cached_facts(executable: str) -> tuple[dict | None, tuple[str, list] | None
         if _stamp(directory) != stamp:
             return None, (store, key)
     return cached.get("facts"), (store, key)
+
+
+def remember_environment(
+    creator: Interpreter, env_path: str, executable: str, purelib: str, platlib: str
+) -> None:
+    """Keep, for the next kpip to probe it, what a fresh environment
+    ``creator`` made at ``env_path`` would say of itself.
+
+    The kpip that installs a build environment's requirements is told the
+    environment's Python, and would run it only to learn what follows from
+    its creator's facts: its own executable and prefix, the ``venv`` scheme
+    preferred, no user site, its own site-packages where its creator's site
+    directories were on ``sys.path`` -- the environment's prefix first, on
+    Windows -- and its config's ``base`` and ``platbase``, which the install
+    schemes are laid out from. Its ``prefix`` and ``exec_prefix`` follow the
+    environment in some versions and stay the build's in others; no scheme
+    or decision of kpip's reads them. Only for a creator with a ``venv``
+    scheme, there from 3.11.
+    """
+    if "venv" not in creator.schemes:
+        return
+    _, store = _cached_facts(executable)
+    if store is None:
+        return
+    base = creator.facts
+    creator_sites = {creator.user_site}
+    try:
+        creator_paths = creator.paths(creator.preferred.get("prefix", "posix_prefix"))
+        creator_sites |= {creator_paths["purelib"], creator_paths["platlib"]}
+    except AttributeError, KeyError:
+        return
+    if os.name == "nt":
+        creator_sites.add(creator.prefix)
+    interpreter_path = []
+    for entry in base["path"]:
+        if entry in creator_sites:
+            break
+        interpreter_path.append(entry)
+    own_sites = [env_path, purelib] if os.name == "nt" else [purelib]
+    if platlib not in own_sites:
+        own_sites.append(platlib)
+    facts = {
+        **base,
+        "executable": executable,
+        "prefix": env_path,
+        "path": [*interpreter_path, *own_sites],
+        "user_site_enabled": False,
+        "preferred": {**base["preferred"], "prefix": "venv"},
+        "config": {**base["config"], "base": env_path, "platbase": env_path},
+    }
+    _store_facts(store, facts)
 
 
 def _store_facts(store: tuple[str, list], facts: dict) -> None:
