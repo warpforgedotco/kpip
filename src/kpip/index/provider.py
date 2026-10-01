@@ -128,8 +128,11 @@ class CandidateProvider:
         uploaded_prior_to: datetime.datetime | None = None,
         compute_source_hashes: bool = False,
         hashes_by_name: dict[str, Hashes] | None = None,
+        ignore_requires_python: bool = False,
     ) -> None:
         self.sources = sources
+
+        self.ignore_requires_python = ignore_requires_python
 
         self.find_links = find_links
 
@@ -280,6 +283,7 @@ class CandidateProvider:
         locked_links: dict[str, Link] | None = None,
         session: HttpSession | None = None,
         uploaded_prior_to: datetime.datetime | None = None,
+        ignore_requires_python: bool = False,
     ) -> CandidateProvider:
         normalized_find_links = list(find_links)
 
@@ -328,7 +332,36 @@ class CandidateProvider:
             locked_links=dict(locked_links or {}),
             session=session,
             uploaded_prior_to=uploaded_prior_to,
+            ignore_requires_python=ignore_requires_python,
         )
+
+    def ignore_index_requires_python(self) -> None:
+        """Stop rejecting files for the index's ``data-requires-python``.
+
+        ``--ignore-requires-python`` reaches the resolve in its config, not
+        the provider the command built before it, so the resolve turns it on
+        here, before asking for anything. Every verdict cached so far was
+        made the other way, and is dropped; the persistent choices stay, as
+        the target key they are filed under now differs.
+        """
+        if self.ignore_requires_python:
+            return
+
+        with self.cache_lock:
+            self.ignore_requires_python = True
+            self.catalog_supported_tags = None
+            self.catalog_target_key = None
+            for cache in (
+                self.catalog_choice_cache,
+                self.catalog_groups_cache,
+                self.catalog_candidate_cache,
+                self.candidate_selection_cache,
+                self.matching_versions_cache,
+                self.package_catalog_cache,
+                self.releases_after_cutoff_cache,
+                self.warm_catalog_cache,
+            ):
+                cache.clear()
 
     def collect_links(self, requirement: Requirement) -> list[Link]:
         locked = self.locked_links.get(requirement.canonical_name)
@@ -565,9 +598,14 @@ class CandidateProvider:
         if supported_tags is None or target_key is None:
             supported_tags = tuple(supported_wheel_tags(self.target))
 
-            target_key = sha256_hexdigest(
-                "\0".join(str(tag) for tag in supported_tags).encode(),
-            )
+            # A choice made ignoring data-requires-python is no choice for a
+            # resolve that honours it, so the two are filed apart.
+            key_parts = [str(tag) for tag in supported_tags]
+
+            if self.ignore_requires_python:
+                key_parts.append("ignore-requires-python")
+
+            target_key = sha256_hexdigest("\0".join(key_parts).encode())
 
             self.catalog_supported_tags = supported_tags
 
@@ -731,11 +769,12 @@ class CandidateProvider:
 
         return True
 
-    @staticmethod
     def _eligible_catalog_records(
+        self,
         catalog_key: tuple[str, bool, bool],
         artifacts: list[tuple[int, tuple[object, ...]]],
     ) -> Iterator[tuple[tuple[object, ...], int]]:
+        ignore_requires_python = self.ignore_requires_python
         for record_kind, record in artifacts:
             if record_kind == WHEEL_RECORD:
                 if not catalog_key[1]:
@@ -750,7 +789,7 @@ class CandidateProvider:
 
             requires_python = record[RECORD_REQUIRES_PYTHON]
 
-            if isinstance(requires_python, str):
+            if isinstance(requires_python, str) and not ignore_requires_python:
                 try:
                     if not CandidateEvaluator.requires_python_matches(
                         requires_python,
@@ -1420,6 +1459,7 @@ class CandidateProvider:
                     allow_yanked=self.allow_yanked,
                     allow_binary=allow_binary,
                     allow_source=allow_source,
+                    ignore_requires_python=self.ignore_requires_python,
                 )
 
                 if isinstance(result, CandidateRecord):
@@ -1585,6 +1625,7 @@ class CandidateProvider:
                     allow_yanked=self.allow_yanked,
                     allow_binary=allow_binary,
                     allow_source=allow_source,
+                    ignore_requires_python=self.ignore_requires_python,
                 )
             )
 
@@ -1720,6 +1761,7 @@ class CandidateProvider:
                     allow_yanked=self.allow_yanked,
                     allow_binary=allow_binary,
                     allow_source=allow_source,
+                    ignore_requires_python=self.ignore_requires_python,
                 )
 
                 if isinstance(result, CandidateRecord):
@@ -2294,16 +2336,7 @@ class CandidateProvider:
                 version for version in versions if version in allowed_versions
             )
 
-        supported_tags = supported_wheel_tags(self.target)
-
-        target_key = self.catalog_target_key
-
-        if target_key is None:
-            target_key = sha256_hexdigest(
-                "\0".join(str(tag) for tag in supported_tags).encode(),
-            )
-
-            self.catalog_target_key = target_key
+        supported_tags, target_key = self.catalog_target_internal()
 
         persistent_cache = getattr(self.session, "cache", None)
 
@@ -2723,6 +2756,8 @@ class CandidateProvider:
             # cannot change within one call.
             python_verdicts: dict[str, bool] = {}
 
+            ignore_python = self.ignore_requires_python
+
             cutoff = (
                 None
                 if self.uploaded_prior_to is None
@@ -2760,7 +2795,7 @@ class CandidateProvider:
                         if not kind_mask & allowed_kind_mask:
                             continue
 
-                        if isinstance(requires_python, str):
+                        if isinstance(requires_python, str) and not ignore_python:
                             matches = python_verdicts.get(requires_python)
 
                             if matches is None:
@@ -2838,7 +2873,7 @@ class CandidateProvider:
             if link.kind not in INSTALLABLE_ARTIFACT_KINDS:
                 continue
 
-            if link.requires_python:
+            if link.requires_python and not self.ignore_requires_python:
                 try:
                     if not CandidateEvaluator.requires_python_matches(
                         link.requires_python,

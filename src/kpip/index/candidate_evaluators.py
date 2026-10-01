@@ -182,6 +182,7 @@ class CandidateEvaluator:
         allow_yanked: bool,
         allow_binary: bool,
         allow_source: bool,
+        ignore_requires_python: bool = False,
     ) -> CandidateRecord | RejectedCandidate:
         """Apply requirement-specific policy to an already parsed link."""
 
@@ -238,7 +239,9 @@ class CandidateEvaluator:
                 f"{parsed.version} does not satisfy {requirement.specifier}",
             )
 
-        if link.requires_python:
+        # --ignore-requires-python covers the index's data-requires-python as
+        # much as the Requires-Python in a release's metadata.
+        if link.requires_python and not ignore_requires_python:
             try:
                 if not CandidateEvaluator.requires_python_matches(link.requires_python):
                     return CandidateEvaluator.reject(

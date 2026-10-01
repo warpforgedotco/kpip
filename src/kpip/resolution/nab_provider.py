@@ -200,6 +200,9 @@ class NabProvider:
         self.no_deps = self.context.no_deps
         self.constraints = self.context.constraints
         self.ignore_requires_python = self.context.ignore_requires_python
+        if self.ignore_requires_python and isinstance(self.provider, CandidateProvider):
+            # The index's data-requires-python as well as the metadata's.
+            self.provider.ignore_index_requires_python()
         self._preferences: dict[str, Version] = {}
         for name, text in self.context.preferences.items():
             try:

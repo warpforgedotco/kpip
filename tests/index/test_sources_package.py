@@ -1302,6 +1302,35 @@ def test_evaluate_links_rejects_incompatible_requires_python(tmp_path: Path) -> 
     ]
 
 
+def test_ignore_requires_python_covers_the_index_attribute(tmp_path: Path) -> None:
+    """--ignore-requires-python reached only the metadata's Requires-Python:
+    a file the index marks data-requires-python=">=99" stayed rejected, and
+    its release unlisted, whatever the flag said."""
+    from kpip.resolution.models import ResolutionConfig
+    from kpip.resolution.nab_provider import NabProvider
+
+    index = tmp_path / "simple"
+    write_simple_project_html(
+        index,
+        "demo-pkg",
+        '<a href="demo_pkg-1.0-py3-none-any.whl" data-requires-python=">=99"></a>',
+    )
+    requirement = parse_requirement("demo-pkg")
+    provider = CandidateProvider.from_options(index_url=index.as_uri())
+    # Asked first the other way, so a verdict cached then must not stick.
+    assert provider.evaluate_links(requirement).accepted == ()
+    assert not provider.available_versions(requirement)
+
+    NabProvider(provider, ResolutionConfig(ignore_requires_python=True))
+
+    assert [
+        candidate.version for candidate in provider.evaluate_links(requirement).accepted
+    ] == [Version("1.0")]
+    assert [
+        summary.version for summary in provider.available_versions(requirement)
+    ] == [Version("1.0")]
+
+
 def test_evaluate_links_rejects_unsupported_wheel_tags(tmp_path: Path) -> None:
     index = tmp_path / "simple"
     write_simple_project_html(
