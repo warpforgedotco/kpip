@@ -250,31 +250,33 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     none can still resolve -- for the CPython it was built with -- but not
     install: ``installing`` says which the caller needs.
 
-    The answer is kept for as long as what it was found from is unchanged:
-    callers ask once per module, and finding it again stats ``PATH``.
+    Callers ask once per link and once per module, so the answer is kept for
+    as long as what it was found from is unchanged: finding it again stats
+    the interpreter's path, or every ``PATH`` entry.
     """
     environ = os.environ
-    key = (
-        "target",
-        installing,
-        is_compiled(),
-        environ.get("KPIP_PYTHON"),
-        environ.get("VIRTUAL_ENV"),
-        environ.get("CONDA_PREFIX"),
-        environ.get("PATH"),
-    )
+    python = environ.get("KPIP_PYTHON")
+    if python:
+        key: tuple[object, ...] = ("python", python)
+    elif not is_compiled():
+        return own_interpreter()
+    else:
+        key = (
+            "found",
+            installing,
+            environ.get("VIRTUAL_ENV"),
+            environ.get("CONDA_PREFIX"),
+            environ.get("PATH"),
+        )
     found = _interpreters.get(key)
     if found is None:
-        found = _interpreters[key] = _find_target(installing=installing)
+        found = _interpreters[key] = _find_target(python, installing=installing)
     return found
 
 
-def _find_target(*, installing: bool) -> Interpreter:
-    python = os.environ.get("KPIP_PYTHON")
+def _find_target(python: str | None, *, installing: bool) -> Interpreter:
     if python:
         return probe(identify(python))
-    if not is_compiled():
-        return own_interpreter()
     for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
         prefix = os.environ.get(variable)
         if prefix:
