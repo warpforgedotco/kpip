@@ -15,11 +15,20 @@ from kpip.core.names import (
     installed_name_might_match,
 )
 from kpip.core.versions import version_of
-from kpip.install.bytecode import CompileJob, compile_modules, pyc_path
+from kpip.install.bytecode import (
+    CompileJob,
+    compile_modules,
+    place_pyc,
+    pyc_path,
+    target_magic,
+)
+from kpip.install.wheel_archive import compiled_parts, mapped_parts
+from kpip.install.wheel_archive_cache import bytecode_tree
 
 if TYPE_CHECKING:
     from kpip.build.metadata import InstalledMetadataDistribution
     from kpip.install.target import InstallTarget
+    from kpip.install.wheel_archive_cache import CachedWheelArchive
 
 
 class InstalledWheelDistribution:
@@ -187,7 +196,17 @@ def discover_installed_wheels(
 def compiled_files(
     stage_root: str,
     staged: Iterable[tuple[str, str, str, int | None]],
+    *,
+    archive: CachedWheelArchive | None = None,
+    members: Mapping[str, str] | None = None,
 ) -> list[tuple[str, str, str, int | None]]:
+    """The target interpreter's ``.pyc`` beside each staged module, naming
+    where the module will live, not the stage.
+
+    A module read from the archive cache entry ``archive`` -- ``members``
+    maps its staged path to its name in the wheel -- takes the entry's
+    cached bytecode (:func:`place_pyc`); the rest are compiled.
+    """
     python_files = [
         (source, destination)
         for source, destination, _, _ in staged
@@ -197,26 +216,47 @@ def compiled_files(
     if not python_files:
         return []
 
-    # The target interpreter's .pyc beside each module, naming where the
-    # module will live, not the stage.
+    tree = bytecode_tree(archive) if archive is not None and members else None
+
+    magic = target_magic() if tree is not None else b""
+
+    placed: list[tuple[str, str, str, int | None]] = []
+
     planned: list[tuple[str, str]] = []
 
     jobs: list[CompileJob] = []
 
     for source, destination in python_files:
-        output = pyc_path(os.fspath(source))
+        source_text = os.fspath(source)
+        output = pyc_path(source_text)
         compiled_destination = pyc_path(os.fspath(destination))
 
         if output is None or compiled_destination is None:
             continue
 
+        member = members.get(source_text) if members else None
+
+        if member is not None and tree is not None:
+            cached = compiled_parts(mapped_parts(member))
+
+            if (
+                cached is not None
+                and place_pyc(os.path.join(tree, *cached), source_text, output, magic)
+                is not None
+            ):
+                placed.append(
+                    (output, compiled_destination, compiled_destination, None)
+                )
+
+                continue
+
         planned.append((output, compiled_destination))
 
-        jobs.append((os.fspath(source), output, os.fspath(destination)))
+        jobs.append((source_text, output, os.fspath(destination)))
 
     compile_modules(jobs)
 
-    return [
+    return placed + [
         (output, compiled_destination, compiled_destination, None)
         for output, compiled_destination in planned
         if os.path.exists(output)

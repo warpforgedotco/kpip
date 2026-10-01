@@ -227,19 +227,90 @@ def compile_in_process(job: CompileJob) -> None:
 
 
 def compile_modules(jobs: list[CompileJob]) -> None:
-    """Compile ``jobs`` as the target interpreter would, at install time.
+    """Compile ``jobs`` as the target interpreter would: in its workers, and
+    what they decline here when this process compiles as the target does --
+    otherwise that goes without bytecode, as a module that will not compile
+    does."""
+    declined = compile_jobs(jobs)
 
-    Here, as before workers existed, when this process compiles as the
-    target does; otherwise in the target's own workers, and what they
-    decline goes without bytecode, as a module that will not compile does.
-    """
-    if compiles_as_this_process():
-        for job in jobs:
+    if declined and compiles_as_this_process():
+        for job in declined:
             compile_in_process(job)
 
-        return
 
-    compile_jobs(jobs)
+def bytecode_key(*, own: bool = False) -> str | None:
+    """What the target interpreter's bytecode is cached under -- its cache
+    tag and magic number -- or this process's, ``own``; ``None`` for one
+    that reads no bytecode."""
+    if own:
+        cache_tag = sys.implementation.cache_tag
+        magic = importlib.util.MAGIC_NUMBER.hex()
+    else:
+        interpreter = target_interpreter(installing=False)
+        cache_tag, magic = interpreter.cache_tag, interpreter.magic
+
+    return None if cache_tag is None else f"{cache_tag}-{magic}"
+
+
+def target_magic() -> bytes:
+    """The magic number the target interpreter's ``.pyc`` files begin with."""
+    return bytes.fromhex(target_interpreter(installing=False).magic)
+
+
+def place_pyc(cached: str, source: str, output: str, magic: bytes) -> bytes | None:
+    """Copy the cached ``.pyc`` of ``source``'s module to ``output``, its
+    header naming ``source``; what was written, or ``None`` if there is no
+    usable cached one.
+
+    The cache compiled the same bytes ``source`` holds, so only the header's
+    source mtime and size need changing -- not for a hash-based ``.pyc``,
+    whose hash still holds -- and the body is copied whatever version wrote
+    it. The ``co_filename`` inside names where it was compiled: the target
+    interpreter puts the module's real path there when it imports it.
+    """
+    try:
+        with open(cached, "rb") as file:
+            body = file.read()
+
+    except OSError:
+        return None
+
+    if len(body) < 16 or body[:4] != magic:
+        return None
+
+    if not int.from_bytes(body[4:8], "little") & 1:
+        try:
+            stat = os.stat(source)
+
+        except OSError:
+            return None
+
+        body = b"".join(
+            (
+                body[:8],
+                (int(stat.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little"),
+                (stat.st_size & 0xFFFFFFFF).to_bytes(4, "little"),
+                body[16:],
+            )
+        )
+
+    try:
+        try:
+            file = open(output, "wb")  # noqa: SIM115
+
+        except FileNotFoundError:
+            # The first module of its package: make __pycache__ once.
+            os.makedirs(os.path.dirname(output), exist_ok=True)
+
+            file = open(output, "wb")  # noqa: SIM115
+
+        with file:
+            file.write(body)
+
+    except OSError:
+        return None
+
+    return body
 
 
 def _worker_command() -> list[str]:

@@ -30,8 +30,8 @@ from concurrent.futures import InterpreterPoolExecutor
 from kpip.core.compiled import is_compiled
 from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
-    _ensure_pyc,
     archive_entry_root,
+    bytecode_tree,
     load_archive,
     loaded_layout,
     prepare_cached_wheel,
@@ -73,10 +73,11 @@ class _Wheel:
         self.wheel_layout = None
 
 
-def unpack_in_worker(path: str, sha256: str, cache_dir: str, pycompile: bool) -> str:
-    """Fill the wheel's archive cache entry; its directory. Runs in a worker."""
+def unpack_in_worker(path: str, sha256: str, cache_dir: str) -> str:
+    """Fill the wheel's archive cache entry; its directory. Runs in a worker,
+    which leaves the bytecode to the main interpreter."""
 
-    archive = prepare_cached_wheel(_Wheel(path, sha256), cache_dir, pycompile=pycompile)
+    archive = prepare_cached_wheel(_Wheel(path, sha256), cache_dir, pycompile=False)
     return os.path.dirname(archive.tree)
 
 
@@ -150,9 +151,8 @@ class ArchiveWorkers:
     ) -> CachedWheelArchive:
         """``prepare_cached_wheel(candidate, cache_dir)``, unpacked in a worker.
 
-        ``pycompile`` asks for the archive cache's bytecode, which is this
-        process's, under its names: callers skip it when the target does
-        not compile as this process does, since that install cannot use it.
+        ``pycompile`` asks for the target interpreter's bytecode in the
+        entry, compiled here, in the main interpreter, once it is unpacked.
         """
 
         archive = None
@@ -168,7 +168,7 @@ class ArchiveWorkers:
                 if archive is not None:
                     # Already unpacked: nothing for a worker to do.
                     if pycompile:
-                        _ensure_pyc(archive)
+                        bytecode_tree(archive)
 
                     return archive
 
@@ -181,7 +181,6 @@ class ArchiveWorkers:
                             os.fspath(candidate.path),  # ty: ignore[unresolved-attribute]
                             digest,
                             cache_dir,
-                            pycompile,
                         ).result(),
                         digest,
                     )
@@ -191,6 +190,9 @@ class ArchiveWorkers:
 
         if archive is None:
             return prepare_cached_wheel(candidate, cache_dir, pycompile=pycompile)  # ty: ignore[invalid-argument-type]
+
+        if pycompile:
+            bytecode_tree(archive)
 
         return archive
 

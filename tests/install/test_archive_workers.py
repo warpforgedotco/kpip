@@ -121,18 +121,18 @@ def test_nothing_crosses_but_paths_and_a_digest(tmp_path: Path) -> None:
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
 
     entry_root = archive_workers.unpack_in_worker(
-        os.fspath(wheel), digest, str(tmp_path / "cache"), False
+        os.fspath(wheel), digest, str(tmp_path / "cache")
     )
 
     assert os.path.isdir(os.path.join(entry_root, "tree", "plainpkg"))
 
 
-@pytest.mark.parametrize("pycompile", [False, True])
 def test_the_job_runs_in_a_subinterpreter(
-    tmp_path: Path, workers: archive_workers.ArchiveWorkers, pycompile: bool
+    tmp_path: Path, workers: archive_workers.ArchiveWorkers
 ) -> None:
-    """Not the fallback: kpip imports, unpacks and byte-compiles in the
-    worker itself."""
+    """Not the fallback: kpip imports and unpacks in the worker itself, and
+    leaves the bytecode to the main interpreter, whose workers are the
+    target interpreter's."""
     wheel = _wheel(tmp_path, "subpkg", members=3)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
 
@@ -143,14 +143,24 @@ def test_the_job_runs_in_a_subinterpreter(
             os.fspath(wheel),
             digest,
             str(tmp_path / "cache"),
-            pycompile,
         )
         .result()
     )
 
     assert os.path.isdir(os.path.join(entry_root, "tree", "subpkg"))
-    compiled = list(Path(entry_root).rglob("*.pyc"))
-    assert len(compiled) == (3 if pycompile else 0)
+    assert not list(Path(entry_root).rglob("*.pyc"))
+
+
+def test_a_compiling_prepare_compiles_in_the_main_interpreter(
+    tmp_path: Path, workers: archive_workers.ArchiveWorkers
+) -> None:
+    wheel = _wheel(tmp_path, "mainpkg", members=3)
+
+    archive = workers.prepare(
+        _candidate(wheel), str(tmp_path / "cache"), pycompile=True
+    )
+
+    assert len(list(Path(archive.tree).parent.rglob("*.pyc"))) == 3
 
 
 def test_a_wheel_already_unpacked_starts_no_worker(tmp_path: Path) -> None:

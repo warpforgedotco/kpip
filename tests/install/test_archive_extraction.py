@@ -173,12 +173,12 @@ def test_byte_code_is_compiled_only_for_an_install_that_compiles(
     (archive,) = prepare_cached_wheels(
         (_candidate(wheel),), str(cache), pycompile=False
     )
-    pyc = Path(cache_module.pyc_root(os.path.dirname(archive.tree)))
-    assert not pyc.exists()
+    entry_root = Path(os.path.dirname(archive.tree))
+    assert not list(entry_root.glob(f"{cache_module.PYC_CACHE_PREFIX}*"))
 
     (again,) = prepare_cached_wheels((_candidate(wheel),), str(cache), pycompile=True)
     assert again.tree == archive.tree
-    assert list(pyc.rglob("*.pyc"))
+    assert list(entry_root.glob(f"{cache_module.PYC_CACHE_PREFIX}*/**/*.pyc"))
 
 
 def test_extracted_files_take_the_umask_and_keep_executable_bits(

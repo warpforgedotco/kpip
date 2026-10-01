@@ -525,47 +525,67 @@ def _loaded_code(pyc: Path) -> object:
 
 
 def test_archive_cache_byte_compiles_at_fill_time(tmp_path: Path) -> None:
-    """The cache entry carries its own ``pyc/`` tree, laid out by mapped path."""
+    """The cache entry carries the target's ``pyc-*`` tree, laid out by
+    mapped path."""
     from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
-    from kpip.install.wheel_archive_cache import (
-        PYC_CACHE_SUBDIR,
-    )
+    from kpip.install.wheel_archive_cache import PYC_CACHE_PREFIX
 
     wheel = _make_wheel_with_members(tmp_path, "fillpkg", {"fillpkg/mod.py": "X = 1\n"})
     _, cache_dir = _install_one(tmp_path, wheel, "fillpkg")
 
-    cached = list((cache_dir / ARCHIVE_CACHE_BUCKET).rglob(f"{PYC_CACHE_SUBDIR}/*"))
+    cached = list((cache_dir / ARCHIVE_CACHE_BUCKET).rglob(f"{PYC_CACHE_PREFIX}*/*"))
 
     assert cached, "the archive cache did not byte-compile at fill time"
     assert list((cache_dir / ARCHIVE_CACHE_BUCKET).rglob("fillpkg/__pycache__/*.pyc"))
 
 
-def test_installed_pyc_names_the_installed_path_not_the_staging_directory(
-    tmp_path: Path,
-) -> None:
-    """``co_filename`` must be where the module actually lives.
+def _imported_filenames(target: Path, module: str, attribute: str) -> list[str]:
+    """``co_filename`` of ``module`` and of the code ``attribute`` names in
+    it, imported from its installed ``.pyc`` by a fresh interpreter."""
+    import json
+    import subprocess
+    import sys
 
-    The staging directory is renamed away at the end of the install, so a
-    ``.pyc`` naming it leaves every traceback from that module without source.
-    """
+    program = (
+        "import importlib, json, sys\n"
+        f"sys.path.insert(0, {str(target)!r})\n"
+        f"module = importlib.import_module({module!r})\n"
+        "assert module.__spec__.cached, 'no bytecode'\n"
+        f"code = eval({attribute!r}, vars(module))\n"
+        "print(json.dumps([module.__spec__.origin, code.co_filename]))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", program],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_an_imported_module_names_its_installed_path(tmp_path: Path) -> None:
+    """``co_filename`` must be where the module actually lives once
+    imported: CPython names it so whatever path the cached ``.pyc`` was
+    compiled under, so tracebacks show the installed source."""
     wheel = _make_wheel_with_members(
         tmp_path,
         "namepkg",
         {"namepkg/mod.py": "def f():\n    return 1\n"},
     )
     target, _ = _install_one(tmp_path, wheel, "namepkg")
-
     pyc = next((target / "namepkg" / "__pycache__").glob("mod.*.pyc"))
-    code = _loaded_code(pyc)
+    before = pyc.read_bytes()
 
-    assert code.co_filename == str(target / "namepkg" / "mod.py")
-    assert Path(code.co_filename).is_file()
+    origin, filename = _imported_filenames(target, "namepkg.mod", "f.__code__")
+
+    assert filename == origin == str(target / "namepkg" / "mod.py")
+    assert pyc.read_bytes() == before, "the import recompiled the module"
 
 
-def test_installed_pyc_rebinds_nested_code_objects(tmp_path: Path) -> None:
-    """Functions and classes carry their own code objects; all must be rebound."""
-    from types import CodeType
-
+def test_an_imported_modules_nested_code_names_its_installed_path(
+    tmp_path: Path,
+) -> None:
+    """Functions and classes carry their own code objects; all are named."""
     wheel = _make_wheel_with_members(
         tmp_path,
         "nestpkg",
@@ -581,22 +601,11 @@ def test_installed_pyc_rebinds_nested_code_objects(tmp_path: Path) -> None:
     )
     target, _ = _install_one(tmp_path, wheel, "nestpkg")
 
-    pyc = next((target / "nestpkg" / "__pycache__").glob("mod.*.pyc"))
-    expected = str(target / "nestpkg" / "mod.py")
+    origin, filename = _imported_filenames(
+        target, "nestpkg.mod", "C().method().__code__"
+    )
 
-    seen = 0
-
-    def walk(code: CodeType) -> None:
-        nonlocal seen
-        seen += 1
-        assert code.co_filename == expected
-        for const in code.co_consts:
-            if isinstance(const, CodeType):
-                walk(const)
-
-    walk(_loaded_code(pyc))
-
-    assert seen >= 4, "expected module, class body, method and closure"
+    assert filename == origin == str(target / "nestpkg" / "mod.py")
 
 
 def test_installed_pyc_is_not_stale_for_the_interpreter(tmp_path: Path) -> None:
@@ -634,9 +643,7 @@ def test_data_purelib_modules_are_compiled_at_their_relocated_path(
     )
     target, _ = _install_one(tmp_path, wheel, "datapkg")
 
-    pyc = next((target / "datapkg" / "__pycache__").glob("mod.*.pyc"))
-
-    assert _loaded_code(pyc).co_filename == str(target / "datapkg" / "mod.py")
+    assert list((target / "datapkg" / "__pycache__").glob("mod.*.pyc"))
     assert not (target / "datapkg-1.0.data").exists()
 
 
@@ -673,14 +680,11 @@ def test_no_compile_installs_no_bytecode(tmp_path: Path) -> None:
 
 
 def test_install_falls_back_when_the_cache_has_no_bytecode(tmp_path: Path) -> None:
-    """Entries written before the cache learned to compile have no ``pyc/``.
-    They must still install with bytecode, compiled in the stage."""
+    """An entry whose bytecode is gone still installs with bytecode."""
     import shutil as _shutil
 
     from kpip.core.appdirs import ARCHIVE_CACHE_BUCKET
-    from kpip.install.wheel_archive_cache import (
-        PYC_CACHE_SUBDIR,
-    )
+    from kpip.install.wheel_archive_cache import PYC_CACHE_PREFIX
 
     wheel = _make_wheel_with_members(
         tmp_path,
@@ -690,7 +694,7 @@ def test_install_falls_back_when_the_cache_has_no_bytecode(tmp_path: Path) -> No
     target, cache_dir = _install_one(tmp_path, wheel, "oldpkg")
     _shutil.rmtree(target)
 
-    for stale in (cache_dir / ARCHIVE_CACHE_BUCKET).rglob(PYC_CACHE_SUBDIR):
+    for stale in (cache_dir / ARCHIVE_CACHE_BUCKET).rglob(f"{PYC_CACHE_PREFIX}*"):
         _shutil.rmtree(stale)
 
     target, _ = _install_one(tmp_path, wheel, "oldpkg")

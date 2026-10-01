@@ -273,6 +273,9 @@ def install_wheel_internal(
         direct_metadata: dict[str, tuple[str, str]] = {}
         direct_content_size = 0
         clone_sources: set[str] = set()
+        # Staged modules read from the archive cache, by their name in the
+        # wheel: the entry holds their bytecode.
+        cached_modules: dict[str, str] = {}
 
         def write_direct(
             destination: str,
@@ -437,6 +440,12 @@ def install_wheel_internal(
                     else:
                         record_metadata[source_text] = metadata
                 mode = zip_mode(member)  # ty:ignore[invalid-argument-type]
+                if (
+                    pycompile
+                    and isinstance(member, CachedWheelInfo)
+                    and relative_name.endswith(".py")
+                ):
+                    cached_modules[source_text] = member.filename
                 staged.append((source_text, destination_text, destination_text, mode))
                 if is_record:
                     record_destination = destination_text
@@ -549,7 +558,13 @@ def install_wheel_internal(
                 )
 
         if pycompile:
-            compiled = compiled_files(stage_root_text, staged)
+            layout = getattr(candidate, "wheel_layout", None)
+            compiled = compiled_files(
+                stage_root_text,
+                staged,
+                archive=layout if isinstance(layout, CachedWheelArchive) else None,
+                members=cached_modules,
+            )
             staged.extend(compiled)
             if direct:
                 assert transaction is not None
