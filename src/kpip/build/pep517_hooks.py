@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from kpip.core.interpreter import build_interpreter
+from kpip.host.interpreter_facts import SAFE_PATH
 
 if TYPE_CHECKING:
     from typing import Any
@@ -25,7 +26,14 @@ class HookMissing(Exception):
         self.hook_name = hook_name
 
 
-_CALLER = r"""
+# Run from the project directory with ``-c``, which would put that directory
+# first on ``sys.path``: a project's own ``enum.py`` or ``json.py`` would
+# stand in for the standard library, or a ``setuptools`` directory for the
+# backend. PEP 517 keeps the source tree off the backend's path; only
+# ``backend-path``, which the caller puts there itself, goes on it.
+_CALLER = (
+    SAFE_PATH
+    + r"""
 import importlib
 import json
 import os
@@ -57,6 +65,7 @@ else:
         with open(os.path.join(control_dir, "output.json"), "w", encoding="utf-8") as stream:
             json.dump({"return_val": result}, stream)
 """
+)
 
 
 class BuildBackendHookCaller:
@@ -92,17 +101,6 @@ class BuildBackendHookCaller:
                 json.dump(kwargs, stream)
             environment = os.environ.copy()
             environment["KPIP_BUILD_BACKEND"] = self.backend
-            # The backend runs with the project on its path, as it would if
-            # it had been started from inside the directory. Passing it to
-            # the hook's own environment rather than setting it on this
-            # process is what lets two projects have their metadata prepared
-            # at once: a chdir and an os.environ write are process-wide, and
-            # concurrent builds would hand each other the wrong project.
-            search_path = [self.source_dir]
-            inherited = environment.get("PYTHONPATH")
-            if inherited:
-                search_path.append(inherited)
-            environment["PYTHONPATH"] = os.pathsep.join(search_path)
             if self.scripts_dir:
                 inherited_path = environment.get("PATH")
                 environment["PATH"] = (
