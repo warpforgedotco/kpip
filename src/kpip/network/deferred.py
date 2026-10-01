@@ -101,6 +101,8 @@ class DeferredNetworkSession:
             if general.timeout is not None:
                 session.timeout = Timeout(connect=general.timeout, read=general.timeout)
 
+            session.legacy_certs = general.legacy_certs
+
             assert session.auth is not None
 
             session.auth.prompting = not (self.no_input or general.no_input)
