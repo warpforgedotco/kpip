@@ -274,6 +274,33 @@ def request_kind(url: str) -> str:
     return "other"
 
 
+# What a shared truststore context passes on to the context of each
+# handshake: calls are replayed in order, settings read back from it.
+_RECORDED_CONTEXT_CALLS = (
+    "load_verify_locations",
+    "load_cert_chain",
+    "load_default_certs",
+    "set_default_verify_paths",
+    "set_alpn_protocols",
+    "set_npn_protocols",
+    "set_ciphers",
+    "set_ecdh_curve",
+)
+
+_COPIED_CONTEXT_SETTINGS = (
+    "minimum_version",
+    "maximum_version",
+    "options",
+    "verify_flags",
+    "post_handshake_auth",
+    "hostname_checks_common_name",
+    "keylog_filename",
+    "verify_mode",
+)
+
+_SETTABLE_CONTEXT_SETTINGS = frozenset((*_COPIED_CONTEXT_SETTINGS, "check_hostname"))
+
+
 @functools.cache
 def _trust_store_context_class() -> type[ssl.SSLContext]:
     """truststore's context, made safe to share between threads.
@@ -298,37 +325,76 @@ def _trust_store_context_class() -> type[ssl.SSLContext]:
         and nothing shared is ever turned off.
         """
 
-        def _settings(self) -> list[tuple[str, tuple, dict]]:
-            try:
-                return self.__dict__["kpip_settings"]
-            except KeyError:
-                settings: list[tuple[str, tuple, dict]] = []
-                self.__dict__["kpip_settings"] = settings
-                return settings
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.__dict__["kpip_calls"] = []
+            self.__dict__["kpip_calls_lock"] = threading.Lock()
 
-        def load_verify_locations(self, *args: Any, **kwargs: Any) -> None:
-            self._settings().append(("load_verify_locations", args, kwargs))
-            super().load_verify_locations(*args, **kwargs)
-
-        def load_cert_chain(self, *args: Any, **kwargs: Any) -> None:
-            self._settings().append(("load_cert_chain", args, kwargs))
-            super().load_cert_chain(*args, **kwargs)
-
-        def set_alpn_protocols(self, *args: Any, **kwargs: Any) -> None:
-            self._settings().append(("set_alpn_protocols", args, kwargs))
-            super().set_alpn_protocols(*args, **kwargs)
+        def _record(self, name: str, args: tuple, kwargs: dict) -> None:
+            # urllib3 calls some of these again for every connection; one
+            # record of each is enough, and keeps the list from growing.
+            call = (name, args, kwargs)
+            with self.__dict__["kpip_calls_lock"]:
+                calls = self.__dict__["kpip_calls"]
+                if call not in calls:
+                    calls.append(call)
 
         def _handshake_context(self) -> ssl.SSLContext:
             context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            for name, args, kwargs in list(self._settings()):
+            with self.__dict__["kpip_calls_lock"]:
+                calls = list(self.__dict__["kpip_calls"])
+            for name, args, kwargs in calls:
                 getattr(context, name)(*args, **kwargs)
+            # Settings are read back rather than recorded: what this context
+            # holds now is the answer, however often urllib3 set it. Host
+            # checking goes off first and back to its value last, since
+            # verification cannot be turned off while it is on.
+            check_hostname = self.check_hostname
+            context.check_hostname = False
+            for name in _COPIED_CONTEXT_SETTINGS:
+                value = getattr(self, name)
+                # Only what differs: a setting this OpenSSL cannot change
+                # still reads, and is left alone at its default.
+                if getattr(context, name) != value:
+                    setattr(context, name, value)
+            context.check_hostname = check_hostname
             return context
+
+        def __setattr__(self, name: str, value: Any) -> None:
+            # A setting that is neither copied nor recorded would reach this
+            # context only, and never a handshake: refused, not lost.
+            if not name.startswith("_") and name not in _SETTABLE_CONTEXT_SETTINGS:
+                raise AttributeError(
+                    f"{name} is not carried to the handshake context; "
+                    "add it to _COPIED_CONTEXT_SETTINGS"
+                )
+            super().__setattr__(name, value)
 
         def wrap_socket(self, sock: Any, *args: Any, **kwargs: Any) -> Any:
             return self._handshake_context().wrap_socket(sock, *args, **kwargs)
 
         def wrap_bio(self, *args: Any, **kwargs: Any) -> Any:
             return self._handshake_context().wrap_bio(*args, **kwargs)
+
+    def recorded(name: str) -> Any:
+        # truststore hands each of these to its inner context; one it does
+        # not define goes there too, rather than to the outer context, which
+        # no handshake uses.
+        delegated = name in vars(truststore.SSLContext)
+
+        def call(self: Any, *args: Any, **kwargs: Any) -> Any:
+            target = (
+                super(ThreadSafeTrustStoreContext, self) if delegated else self._ctx
+            )
+            result = getattr(target, name)(*args, **kwargs)
+            self._record(name, args, kwargs)
+            return result
+
+        call.__name__ = call.__qualname__ = name
+        return call
+
+    for name in _RECORDED_CONTEXT_CALLS:
+        setattr(ThreadSafeTrustStoreContext, name, recorded(name))
 
     return ThreadSafeTrustStoreContext
 

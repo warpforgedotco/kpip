@@ -91,3 +91,47 @@ def test_a_handshake_never_turns_verification_off_on_the_shared_context(
     assert len(handshake_contexts) == 2
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname
+
+
+def test_what_is_set_on_the_shared_context_reaches_each_handshake() -> None:
+    """urllib3 and callers set properties and call setters on the shared
+    context; a handshake made with a fresh one used to drop every setting
+    but three method calls."""
+    from kpip.network.session import trust_store_context
+
+    context = trust_store_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.options |= ssl.OP_NO_COMPRESSION
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.set_ciphers("ECDHE+AESGCM")
+
+    handshake = context._handshake_context()  # ty: ignore[unresolved-attribute]
+
+    assert handshake is not context
+    assert handshake.minimum_version == ssl.TLSVersion.TLSv1_3
+    assert handshake.options & ssl.OP_NO_COMPRESSION
+    assert not handshake.check_hostname
+    assert handshake.verify_mode == ssl.CERT_NONE
+    assert [cipher["name"] for cipher in handshake.get_ciphers()] == [
+        cipher["name"] for cipher in context.get_ciphers()
+    ]
+
+
+def test_a_call_urllib3_repeats_is_recorded_once() -> None:
+    from kpip.network.session import trust_store_context
+
+    context = trust_store_context()
+    for _ in range(3):
+        context.set_alpn_protocols(["http/1.1"])
+
+    assert context.kpip_calls == [  # ty: ignore[unresolved-attribute]
+        ("set_alpn_protocols", (["http/1.1"],), {})
+    ]
+
+
+def test_a_setting_no_handshake_would_see_is_refused() -> None:
+    from kpip.network.session import trust_store_context
+
+    with pytest.raises(AttributeError, match="sni_callback"):
+        trust_store_context().sni_callback = lambda *args: None
