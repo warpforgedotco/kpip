@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 1 Oct 2026 02:00:00 -0500
+Subject: [PATCH] Onefile: compress with a zstd built without threads
+
+With compression.zstd, the onefile payload was compressed with one worker
+per job. A zstd built without multithreading accepts no workers at all,
+and MonolithPy's is one, so packing the payload stopped with:
+
+    ValueError: compression parameter 'nb_workers' received an illegal
+    value 8; the valid range is [0, 0]
+
+The worker count is now capped at what the zstd in use accepts.
+---
+ nuitka/tools/onefile_compressor/OnefileCompressor.py | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/nuitka/tools/onefile_compressor/OnefileCompressor.py b/nuitka/tools/onefile_compressor/OnefileCompressor.py
+--- a/nuitka/tools/onefile_compressor/OnefileCompressor.py
++++ b/nuitka/tools/onefile_compressor/OnefileCompressor.py
+@@ -45,11 +45,17 @@
+     if expect_compression:
+         try:
+             from compression import zstd
++
++            # A zstd built without multithreading, as MonolithPy's is, accepts
++            # no workers at all and rejects any other count.
++            zstd_threads = min(
++                effective_threads, zstd.CompressionParameter.nb_workers.bounds()[1]
++            )
+ 
+             @contextmanager
+             def useCompressedFile(output_file):
+                 options = {
+-                    zstd.CompressionParameter.nb_workers: effective_threads,
++                    zstd.CompressionParameter.nb_workers: zstd_threads,
+                     zstd.CompressionParameter.compression_level: getCompressorLevel(
+                         low_memory
+                     ),
+-- 
+2.50.0
+

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 1 Oct 2026 02:00:00 -0500
+Subject: [PATCH] Include unistd.h after the prelude on macOS, for MonolithPy
+
+MonolithPy's Python.h includes mp_embed.h, which renames read, close,
+pread, pwrite, lseek, access and faccessat with macros before the system
+headers declare them, then defines its own inline versions. On macOS,
+MainProgram.c included <unistd.h> ahead of the prelude for the app
+bundle's getcwd and chdir, so the system declarations came first and every
+compile against MonolithPy stopped with:
+
+    mp_embed.h: error: static declaration of 'close' follows non-static
+    declaration
+
+The prelude includes <unistd.h> through Python.h anyway; the explicit
+include now follows it.
+---
+ nuitka/build/static_src/MainProgram.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/nuitka/build/static_src/MainProgram.c b/nuitka/build/static_src/MainProgram.c
+--- a/nuitka/build/static_src/MainProgram.c
++++ b/nuitka/build/static_src/MainProgram.c
+@@ -16,11 +16,13 @@
+ #include <windows.h>
+ #endif
+ 
++#include "nuitka/prelude.h"
++
++// After the prelude: MonolithPy's mp_embed.h, which Python.h includes, has
++// to come before the system headers to rename what it replaces.
+ #if defined(__APPLE__)
+ #include <unistd.h>
+ #endif
+-
+-#include "nuitka/prelude.h"
+ 
+ #if _NUITKA_ONEFILE_MODE && !defined(_WIN32)
+ #include <errno.h>
+-- 
+2.50.0
+
