@@ -13,8 +13,8 @@ A job crosses as a path and a digest and comes back as the entry's path; the
 main interpreter reads the entry's manifest from the cache, as it would have
 after unpacking it itself. A job that fails for any reason is done again in the
 main interpreter, which raises what failed, so errors read as they always have.
-Without subinterpreters -- before 3.14, PyPy, a compiled kpip built without
-bytecode for them, or ``KPIP_SUBINTERPRETERS=0`` --
+Without subinterpreters -- a compiled kpip built without bytecode for them,
+or ``KPIP_SUBINTERPRETERS=0`` --
 :meth:`ArchiveWorkers.if_available` returns None and wheels unpack on threads as before.
 """
 
@@ -23,7 +23,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import _imp
 import os
-import sys
 import threading
 from concurrent.futures import InterpreterPoolExecutor
 
@@ -96,9 +95,6 @@ def _available() -> bool:
         "no",
         "off",
     }:
-        return False
-
-    if sys.version_info < (3, 14) or sys.implementation.name != "cpython":
         return False
 
     # A compiled kpip's modules are compiled into the binary, where a new

@@ -279,8 +279,6 @@ def shebang(executable: str | None, *, gui: bool) -> bytes:
 
     if os.name != "posix":
         simple = True
-    elif getattr(sys, "cross_compiling", False):
-        simple = False
     else:
         # "#!" and the newline count towards the kernel's limit.
         limit = 512 if sys.platform == "darwin" else 127
