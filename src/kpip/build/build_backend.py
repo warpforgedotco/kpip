@@ -251,6 +251,14 @@ class BackendSpec:
         )
 
 
+def _build_interpreter_has_setuptools() -> bool:
+    """Whether setuptools is installed for the build interpreter: read from
+    its sys.path, as a compiled kpip, with no Python of its own, must."""
+    build = interpreter_at(build_interpreter())
+    installed = installed_index(list(sys.path) if build.is_own else build.path)
+    return "setuptools" in installed
+
+
 def check_build_requirements(
     source_dir: str | os.PathLike[str],
     requirements: Iterable[str],
@@ -354,6 +362,33 @@ class BackendRunner:
 
         except subprocess.CalledProcessError as exc:
             detail = "\n".join(part for part in (exc.stdout, exc.stderr) if part)
+
+            # setuptools out of reach of the build environment -- --no-index,
+            # an offline machine -- but installed beside the build
+            # interpreter: the build runs with that one, as a build without
+            # isolation would.
+            if (
+                not self.build_constraints
+                and self.spec.name.startswith("setuptools.build_meta")
+                and (
+                    "Cannot import 'setuptools.build_meta'" in detail
+                    or "No matching distribution found for setuptools" in detail
+                    or "Could not find a version that satisfies the requirement setuptools"
+                    in detail
+                )
+                and _build_interpreter_has_setuptools()
+            ):
+                with build_directory("pip-build-metadata-") as metadata_dir:
+                    caller = BuildBackendHookCaller(
+                        os.fspath(self.source_dir),
+                        self.spec.name,
+                        backend_path=list(self.spec.backend_path) or None,
+                        python_executable=build_interpreter(),
+                    )
+
+                    yield caller, metadata_dir
+
+                return
 
             raise RuntimeError(detail or str(exc)) from exc
 
