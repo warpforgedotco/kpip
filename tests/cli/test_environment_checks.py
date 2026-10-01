@@ -218,3 +218,31 @@ def test_no_clean_keeps_what_a_build_worked_in() -> None:
 
     assert os.path.isdir(kept)
     os.rmdir(kept)
+
+
+def test_build_requirements_are_checked_in_the_build_interpreters_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compiled, the build interpreter is never the Python running kpip:
+    its own sys.path and markers are what the check reads."""
+    import types
+
+    from kpip.build import build_backend
+    from kpip.core.packaging import default_environment
+
+    other_site = tmp_path / "other-site"
+    info = other_site / "simple-2.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Name: simple\nVersion: 2.0\n")
+    markers = {**default_environment(), "sys_platform": "elsewhere"}
+    other = types.SimpleNamespace(is_own=False, path=[str(other_site)], markers=markers)
+    monkeypatch.setattr(build_backend, "build_interpreter", lambda: "/opt/python")
+    monkeypatch.setattr(build_backend, "interpreter_at", lambda executable: other)
+    clear_installed_index()
+
+    check_build_requirements(
+        "/project", ["simple>=1", 'absent; sys_platform != "elsewhere"']
+    )
+
+    with pytest.raises(BuildError, match="missing: 'gone'"):
+        check_build_requirements("/project", ["simple", "gone"])

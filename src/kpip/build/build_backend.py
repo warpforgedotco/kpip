@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -30,9 +31,10 @@ from kpip.core.errors import BuildError
 from kpip.core.compiled import is_own_interpreter, own_command
 from kpip.core.interpreter import build_interpreter
 from kpip.core.metadata import installed_index
+from kpip.host.interpreter_facts import interpreter_at
 from kpip.core.packaging import (
     canonicalize_name,
-    marker_applies,
+    marker_applies_internal,
     parse_requirement,
 )
 from kpip.core.subprocesses import call_subprocess
@@ -261,19 +263,23 @@ def check_build_requirements(
     ``--check-build-dependencies`` pip checks the project's declared build
     requirements against the environment first, and says which are missing
     or installed in a version the requirement rules out.
-    """
-    if not is_own_interpreter(build_interpreter()):
-        # Only this interpreter's environment can be read from here.
-        return
 
-    installed = installed_index()
+    The environment is the build interpreter's, read from its ``sys.path``
+    and judged by its markers: compiled, kpip runs under no interpreter of
+    its own to read.
+    """
+    build = interpreter_at(build_interpreter())
+    installed = installed_index(list(sys.path) if build.is_own else build.path)
+    markers = {**build.markers, "extra": ""}
     missing: set[str] = set()
     conflicting: set[tuple[str, str]] = set()
 
     for text in requirements:
         requirement = parse_requirement(text)
 
-        if not marker_applies(requirement.marker, extras=()):
+        if requirement.marker and not marker_applies_internal(
+            requirement.marker, markers, set()
+        ):
             continue
 
         distribution = installed.get(requirement.canonical_name)
