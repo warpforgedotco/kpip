@@ -20,8 +20,6 @@ authors = [
     { name = "Kevin Turcios", email = "turcioskevinr@gmail.com" },
 ]
 
-# NOTE: requires-python is duplicated in __kpip-runner__.py.
-# When changing this value, please change the other copy as well.
 requires-python = ">=3.15"
 dependencies = []
 

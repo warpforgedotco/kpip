@@ -1,21 +1,11 @@
-"""Compatibility entrypoint for callers importing ``kpip.cli.main``."""
+"""``kpip.cli.main.main``, which the tests call to run kpip in-process."""
 
 from __future__ import annotations
 
 from kpip.cli import entrypoint
 
 
-def main(
-    args: list[str] | None = None,
-    *,
-    version: str | None = None,
-    location: str | None = None,
-) -> int:
-    """Delegate to :func:`kpip.cli.entrypoint.main`.
+def main(args: list[str] | None = None) -> int:
+    """Delegate to :func:`kpip.cli.entrypoint.main`."""
 
-    This compatibility wrapper preserves the historical ``kpip.cli.main.main``
-    entry point used by tests and external callers while routing all dispatch
-    through the canonical :mod:`kpip.cli.entrypoint` implementation.
-    """
-
-    return entrypoint.main(args, version=version, location=location)
+    return entrypoint.main(args)

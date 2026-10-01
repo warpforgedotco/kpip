@@ -20,25 +20,6 @@ def enum(*sequential: str, **named: str) -> Any:
     return type("Enum", (), values)
 
 
-class ExecutionContext:
-    __slots__ = ("version",)
-
-    def __init__(self) -> None:
-        self.version: str | None = None
-
-
-context = ExecutionContext()
-
-
-def configure(*, version: str | None = None) -> None:
-    if version is not None:
-        context.version = version
-
-
-def current_version() -> str | None:
-    return context.version
-
-
 CURRENT_PYTHON_VERSION_INFO = sys.version_info
 CURRENT_PYTHON_VERSION = (
     f"{CURRENT_PYTHON_VERSION_INFO.major}.{CURRENT_PYTHON_VERSION_INFO.minor}"

@@ -11,6 +11,7 @@ import time
 import urllib.parse
 import urllib.request
 
+import kpip
 from kpip.core.packaging import target_python_version
 from kpip.host.interpreter_facts import target_interpreter
 from kpip._vendor import certifi, urllib3
@@ -28,9 +29,7 @@ from kpip._vendor.urllib3.util import Retry, Timeout, make_headers
 from kpip._vendor.urllib3.util.ssl_ import create_urllib3_context
 from kpip.core import latency
 from kpip.core.errors import CommandError
-from kpip.core.kpip_version import get_kpip_version
 from kpip.core.urls import redact_auth_from_url, url_to_path
-from kpip.core.utils import current_version
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
 from kpip.network.exceptions import (
@@ -414,11 +413,6 @@ class NetworkSession:
 
     @staticmethod
     def user_agent() -> str:
-        version = current_version()
-
-        if version is None:
-            version = get_kpip_version()
-
         # The Python the requests are for, as pip names the one it runs
         # under: the version a lock is made for when it names one -- with
         # no interpreter to find -- else the target interpreter's.
@@ -426,7 +420,7 @@ class NetworkSession:
             "%d.%d.%d" % target_interpreter(installing=False).version
         )
 
-        return f"kpip/{version} Python/{python_version}"
+        return f"kpip/{kpip.__version__} Python/{python_version}"
 
     def get(self, url: str, **kwargs: Any) -> HttpResponseProtocol:
         return self.request("GET", url, **kwargs)
