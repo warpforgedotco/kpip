@@ -16,9 +16,7 @@ from kpip.core import caches
 from kpip.index import candidate_metadata_cache
 from kpip.index.candidate_metadata_cache import get_candidate_metadata_cache
 from kpip.index.metadata_cache import get_wheel_metadata_cache
-from kpip.index.release_facts_cache import get_release_facts_cache
 from kpip.index import metadata_cache
-from kpip.index import release_facts_cache
 
 SHA256_PLACEHOLDER = "a" * 64
 METADATA_PLACEHOLDER = "b" * 64
@@ -611,7 +609,6 @@ def flush_persistent_caches(cache_dir: str) -> None:
     """
     get_wheel_metadata_cache(cache_dir).flush()
     get_candidate_metadata_cache(cache_dir).flush()
-    get_release_facts_cache(cache_dir).flush()
 
 
 def reset_caches() -> None:
@@ -626,4 +623,3 @@ def reset_caches() -> None:
     caches.clear_all()
     metadata_cache._CACHE_INSTANCES.clear()
     candidate_metadata_cache.INSTANCES.clear()
-    release_facts_cache.INSTANCES.clear()
