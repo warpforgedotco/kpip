@@ -1,8 +1,8 @@
 """Compiled directory and hard-link loops for :func:`kpip.host.clone.clone_path`.
 
 Cython pure-Python-mode source: this file only works compiled, and ``clone``
-runs the same loops in Python when the extension is absent (PyPy, a source
-checkout, a platform without a compiler). Windows builds leave it out and
+runs the same loops in Python when the extension is absent: a source
+checkout, or one built without a compiler. Windows builds leave it out and
 keep the per-file walk.
 
 A warm install hard links every file of every cached wheel tree into place:

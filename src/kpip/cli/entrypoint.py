@@ -370,10 +370,9 @@ def collect_less_often() -> tuple[int, int, int] | None:
     ``KPIP_GC=default`` restores CPython's own settings.
 
     Returns the thresholds it replaced, or None if it changed nothing.  A
-    command normally runs in a process that is about to exit, but ``main``
-    is importable and is called in-process by tests and by anything
-    embedding kpip, and collection thresholds are interpreter-wide: they
-    are restored when the command finishes.
+    command normally runs in a process that is about to exit, but tests
+    call ``main`` in-process, and collection thresholds are
+    interpreter-wide: they are restored when the command finishes.
     """
     if os.environ.get("KPIP_GC") == "default":
         return None
