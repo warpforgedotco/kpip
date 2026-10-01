@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import logging
 import os
 
+from kpip.build.build_backend import export_build_index_options
 from kpip.cli.config import load_source_config
 from kpip.cli.dependency_groups import group_items, parse_dependency_groups
 from kpip.cli.package_finder import (
@@ -338,6 +339,15 @@ def prepare(
 
     if bundle.no_index:
         os.environ["KPIP_NO_INDEX"] = "1"
+
+    export_build_index_options(
+        index_url=bundle.index_url,
+        extra_index_urls=bundle.extra_index_urls,
+        trusted_hosts=getattr(options, "trusted_hosts", None) or [],
+        cert=options.cert,
+        client_cert=options.client_cert,
+        pre=getattr(options, "pre", False),
+    )
 
     if (
         not bundle.requirements

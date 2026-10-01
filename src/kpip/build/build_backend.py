@@ -10,6 +10,7 @@ import email.utils
 import fnmatch
 import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -438,6 +439,64 @@ def _environments_root() -> str:
         return _prepared_environments_root[0]
 
 
+BUILD_INDEX_OPTIONS_VARIABLE = "KPIP_BUILD_INDEX_OPTIONS"
+"""The command's index options, for the kpip filling a build environment."""
+
+
+def export_build_index_options(
+    *,
+    index_url: str | None,
+    extra_index_urls: list[str],
+    trusted_hosts: list[str],
+    cert: str | None,
+    client_cert: str | None,
+    pre: bool,
+) -> None:
+    """Hand the command's index options to the kpip filling a build
+    environment.
+
+    pip installs a build environment's requirements from the indexes, trusted
+    hosts and certificates the command was given, from the command line or a
+    requirements file, and with its ``--pre``. Left to its own configuration,
+    the kpip doing it would fetch them from pypi.org: a private
+    ``setuptools`` would come from the public index, and an air-gapped
+    machine could not build at all. Kept in the environment, as
+    ``KPIP_FIND_LINKS`` is, for the builds this command starts.
+    """
+    arguments = [
+        *(["--index-url", index_url] if index_url else []),
+        *(
+            argument
+            for url in extra_index_urls
+            for argument in ("--extra-index-url", url)
+        ),
+        *(argument for host in trusted_hosts for argument in ("--trusted-host", host)),
+        # The build environment is filled from the project's directory.
+        *(["--cert", os.path.abspath(cert)] if cert else []),
+        *(["--client-cert", os.path.abspath(client_cert)] if client_cert else []),
+        *(["--pre"] if pre else []),
+    ]
+
+    if arguments:
+        os.environ[BUILD_INDEX_OPTIONS_VARIABLE] = json.dumps(arguments)
+
+    else:
+        os.environ.pop(BUILD_INDEX_OPTIONS_VARIABLE, None)
+
+
+def _build_index_arguments(environment: dict[str, str]) -> list[str]:
+    """The index options ``export_build_index_options`` left in
+    ``environment``."""
+    value = environment.get(BUILD_INDEX_OPTIONS_VARIABLE)
+
+    if not value:
+        return []
+
+    arguments = json.loads(value)
+
+    return [argument for argument in arguments if isinstance(argument, str)]
+
+
 def _prepared_environment(
     source_dir: str | os.PathLike[str],
     spec: BackendSpec,
@@ -473,6 +532,13 @@ def _prepared_environment(
     if environment.get("KPIP_NO_INDEX", "").lower() not in {"1", "true", "yes", "on"}:
         environment.pop("KPIP_NO_INDEX", None)
 
+    index_args = _build_index_arguments(environment)
+
+    if index_args:
+        # The command's extra indexes already include the configured ones;
+        # read again from configuration they would be asked twice.
+        environment["KPIP_EXTRA_INDEX_URL"] = ""
+
     # setuptools is the backend most builds need; building it from source
     # would need a backend of its own.
     only_binary = (
@@ -488,6 +554,7 @@ def _prepared_environment(
         build_interpreter(),
         spec.requirements,
         tuple(constraint_args),
+        tuple(index_args),
         # pip reads a relative constraint against the source directory.
         os.fspath(source_dir) if constraint_args else None,
         tuple(
@@ -526,6 +593,7 @@ def _prepared_environment(
                         "--ignore-installed",
                         *command_cache_arguments(),
                         *only_binary,
+                        *index_args,
                         *constraint_args,
                         *spec.requirements,
                     ],

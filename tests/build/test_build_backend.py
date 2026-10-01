@@ -750,6 +750,68 @@ def test_kpip_installs_build_requirements_for_the_environments_python(
     assert env["KPIP_SCRIPT_PYTHON"] == python
 
 
+def test_a_build_environment_is_filled_from_the_commands_indexes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The kpip filling a build environment is told the command's index
+    URLs, trusted hosts, certificates and --pre, as pip's build environment
+    install is: left to its own configuration it would fetch a private
+    setuptools from pypi.org. A different index is a different
+    environment."""
+    from kpip.build.build_backend import (
+        BUILD_INDEX_OPTIONS_VARIABLE,
+        BackendRunner,
+        BackendSpec,
+        export_build_index_options,
+    )
+
+    monkeypatch.delenv(BUILD_INDEX_OPTIONS_VARIABLE, raising=False)
+    monkeypatch.chdir(tmp_path)
+    _, commands = _recording_environments(monkeypatch)
+    spec = BackendSpec("hatchling.build", ("hatchling",), ())
+
+    export_build_index_options(
+        index_url="https://mirror.example/simple",
+        extra_index_urls=["https://private.example/simple"],
+        trusted_hosts=["mirror.example"],
+        cert="ca.pem",
+        client_cert=None,
+        pre=True,
+    )
+    with BackendRunner(tmp_path, spec).caller():
+        pass
+
+    [(command, env)] = commands
+    assert command[command.index("--index-url") + 1] == "https://mirror.example/simple"
+    assert command[command.index("--extra-index-url") + 1] == (
+        "https://private.example/simple"
+    )
+    assert command[command.index("--trusted-host") + 1] == "mirror.example"
+    # Filled from the project's directory, not the command's.
+    assert command[command.index("--cert") + 1] == str(tmp_path / "ca.pem")
+    assert "--client-cert" not in command
+    assert "--pre" in command
+    assert command[-1] == "hatchling"
+    # The configured extra indexes are in the command's already.
+    assert env["KPIP_EXTRA_INDEX_URL"] == ""
+
+    export_build_index_options(
+        index_url="https://other.example/simple",
+        extra_index_urls=[],
+        trusted_hosts=[],
+        cert=None,
+        client_cert=None,
+        pre=False,
+    )
+    with BackendRunner(tmp_path, spec).caller():
+        pass
+
+    assert len(commands) == 2
+    command = commands[1][0]
+    assert command[command.index("--index-url") + 1] == "https://other.example/simple"
+    assert "--pre" not in command
+
+
 def test_kpip_runs_again_as_itself() -> None:
     from kpip.core.compiled import own_command
 
