@@ -1180,7 +1180,7 @@ def run_install(args: list[str]) -> int:
 
         pycompile = not execution.options.no_compile
 
-        # Started before resolving, so the workers are up by the first wheel.
+        # Made before resolving, so the workers start with the first wheel.
         archive_workers = (
             ArchiveWorkers.if_available()
             if execution.cache_dir is not None and not execution.options.dry_run
