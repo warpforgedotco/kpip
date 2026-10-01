@@ -84,12 +84,20 @@ def check_system_python() -> None:
     """Refuse, as uv does, to change a Python nobody chose without ``--system``.
 
     One is chosen by ``--python`` or by being an active or ``.venv``
-    environment. What is left is the ``python3`` or ``python`` on ``PATH``
-    -- even a virtual environment's, as uv -- and the source run's own:
+    environment. What is left is the ``python3`` or ``python`` on ``PATH``,
+    and the source run's own: taken, as uv takes it, when it is a virtual
+    environment's (a Dockerfile's ``PATH=/venv/bin:$PATH``), and otherwise
     often the system's, which an install would change for everything that
     uses it.
+
+    Unlike uv, conda's base environment counts as chosen when it is active.
     """
-    if system_requested() or os.environ.get("KPIP_PYTHON") or active_environments():
+    if (
+        system_requested()
+        or os.environ.get("KPIP_PYTHON")
+        or next(active_environments(), None) is not None
+        or target_interpreter().in_virtualenv
+    ):
         return
     raise CommandError(
         "No virtual environment found: activate one, create a .venv, name a "

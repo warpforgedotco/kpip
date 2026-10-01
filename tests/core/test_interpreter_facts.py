@@ -536,12 +536,18 @@ def environment(prefix: Path, *, conda: bool = False) -> Path:
     return prefix / "bin" / "python"
 
 
+class Probed(str):
+    """A probed interpreter that is only its path, and no environment's."""
+
+    in_virtualenv = False
+
+
 @pytest.fixture
 def found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A compiled kpip whose target is the path it would probe, with a
     python3 on PATH to fall back to."""
     monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
-    monkeypatch.setattr(interpreter_facts, "probe", lambda path: path)
+    monkeypatch.setattr(interpreter_facts, "probe", Probed)
     on_path = tmp_path / "path" / "python3"
     on_path.parent.mkdir()
     on_path.write_text("")
@@ -682,3 +688,50 @@ def test_system_passes_over_environments_for_conda_base_and_path(
     monkeypatch.setenv("CONDA_PREFIX", str(base.parent.parent))
     monkeypatch.setenv("_CONDA_ROOT", str(base.parent.parent))
     assert found() == str(base)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_a_broken_dot_venv_is_not_looked_at_past_a_chosen_environment(
+    found, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As uv, lazily: VIRTUAL_ENV wins before any .venv is looked for."""
+    (tmp_path / ".venv").mkdir()
+    active = environment(tmp_path / "active")
+    monkeypatch.setenv("VIRTUAL_ENV", str(active.parent.parent))
+
+    assert found() == str(active)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_a_broken_dot_venv_does_not_stop_what_installs_nothing(
+    found, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".venv").mkdir()
+    monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+
+    assert str(target_interpreter(installing=False)) == found.on_path
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake interpreters are files in bin")
+def test_system_passes_over_a_virtual_environments_python_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As uv's --system: the activated environment's bin is first on PATH."""
+    venv_bin = tmp_path / "venv" / "bin"
+    system_bin = tmp_path / "system" / "bin"
+    for directory in (venv_bin, system_bin):
+        directory.mkdir(parents=True)
+        (directory / "python3").write_text("")
+        (directory / "python3").chmod(0o755)
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    monkeypatch.setattr(
+        interpreter_facts,
+        "probe",
+        lambda path: types.SimpleNamespace(
+            executable=path, in_virtualenv=path.startswith(str(venv_bin))
+        ),
+    )
+    monkeypatch.setenv("PATH", f"{venv_bin}{os.pathsep}{system_bin}")
+    monkeypatch.setenv("KPIP_SYSTEM_PYTHON", "1")
+
+    assert target_interpreter().executable == str(system_bin / "python3")

@@ -43,7 +43,7 @@ class NoBuildInterpreterError(DiagnosticKpipError):
 def _candidates(target: str) -> list[str]:
     candidates = []
 
-    for _, prefix in interpreter_facts.active_environments():
+    for _, prefix in interpreter_facts.active_environments(strict=False):
         candidates.extend(
             os.path.join(prefix, *name.split("/"))
             for name in interpreter_facts.environment_pythons()

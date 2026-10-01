@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 
 from kpip.core import run_options
 from kpip.core.appdirs import resolve_cache_dir
@@ -477,7 +478,7 @@ def system_requested() -> bool:
     )
 
 
-def active_environments() -> list[tuple[str, str]]:
+def active_environments(*, strict: bool = True) -> Iterator[tuple[str, str]]:
     """The environments an install is for, before any Python on ``PATH``:
     how each was found, and its prefix, in the order uv looks.
 
@@ -486,23 +487,29 @@ def active_environments() -> list[tuple[str, str]]:
     the working directory is inside; then conda's base environment, which
     is a system Python more than an environment someone chose. With
     ``--system``, as uv, only the last: the rest are passed over.
+
+    Lazily, as uv: a ``.venv`` is not looked for once an earlier one is
+    taken. One without ``pyvenv.cfg`` raises ``NotAnEnvironment`` when
+    ``strict``; otherwise -- for what installs nothing -- it is passed over.
     """
-    found: list[tuple[str, str]] = []
     conda = os.environ.get("CONDA_PREFIX")
     base = bool(conda) and _is_conda_base(conda)
-    if system_requested():
-        return [(f"CONDA_PREFIX names {conda}", conda)] if conda and base else []
-    virtual_env = os.environ.get("VIRTUAL_ENV")
-    if virtual_env:
-        found.append((f"VIRTUAL_ENV names {virtual_env}", virtual_env))
-    if conda and not base:
-        found.append((f"CONDA_PREFIX names {conda}", conda))
-    discovered = _working_directory_environment()
-    if discovered is not None:
-        found.append((f"the environment at {discovered}", discovered))
+    if not system_requested():
+        virtual_env = os.environ.get("VIRTUAL_ENV")
+        if virtual_env:
+            yield f"VIRTUAL_ENV names {virtual_env}", virtual_env
+        if conda and not base:
+            yield f"CONDA_PREFIX names {conda}", conda
+        try:
+            discovered = _working_directory_environment()
+        except NotAnEnvironment:
+            if strict:
+                raise
+            discovered = None
+        if discovered is not None:
+            yield f"the environment at {discovered}", discovered
     if conda and base:
-        found.append((f"CONDA_PREFIX names {conda}", conda))
-    return found
+        yield f"CONDA_PREFIX names {conda}", conda
 
 
 def _working_directory_environment() -> str | None:
@@ -667,7 +674,7 @@ def registered_pythons() -> list[str]:
 def _find_target(python: str | None, *, installing: bool) -> Interpreter:
     if python:
         return probe(identify(python))
-    for where, prefix in active_environments():
+    for where, prefix in active_environments(strict=installing):
         try:
             return probe(identify(prefix))
         except CommandError as exc:
@@ -677,16 +684,27 @@ def _find_target(python: str | None, *, installing: bool) -> Interpreter:
             continue
     tried = []
     candidates = [shutil.which(name) for name in ("python3", "python")]
+    if system_requested():
+        # Past the activated environment's bin, which leads PATH.
+        candidates.extend(
+            shutil.which(name, path=directory)
+            for directory in os.environ.get("PATH", "").split(os.pathsep)
+            if directory
+            for name in ("python3", "python")
+        )
     for found in [*candidates, *registered_pythons()]:
         if found is None or found in tried:
             continue
         tried.append(found)
         try:
-            return probe(found)
+            interpreter = probe(found)
         except CommandError:
             # Not a Python that answers: on Windows, python3 is often the
             # Microsoft Store's stub, beside a python that works.
             continue
+        # As uv's --system: an environment's Python on PATH is not one.
+        if not (system_requested() and interpreter.in_virtualenv):
+            return interpreter
     if not installing:
         return own_interpreter()
     raise CommandError(

@@ -998,7 +998,9 @@ def run_install(args: list[str]) -> int:
         and options.prefix is None
     )
 
-    if installs_into_this_environment:
+    # --user is a choice of the Python on PATH, and of its user site, not
+    # of its site-packages.
+    if installs_into_this_environment and not options.user:
         check_system_python()
         if not options.break_system_packages:
             check_externally_managed()
