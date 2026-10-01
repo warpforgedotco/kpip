@@ -32,8 +32,15 @@ SOURCE = r"""
 import sys
 
 # -c put the working directory first on sys.path: a py_compile.py there
-# must not stand in for the standard library's.
-del sys.path[0]
+# must not stand in for the standard library's. Only that entry: under
+# PYTHONSAFEPATH the first is the standard library's.
+if sys.path and sys.path[0] == "":
+    del sys.path[0]
+
+# kpip writes and reads UTF-8; a pipe otherwise speaks the locale's code
+# page, which on Windows mangles a path like C:\Users\José.
+sys.stdin.reconfigure(encoding="utf-8")
+sys.stdout.reconfigure(encoding="utf-8")
 
 import py_compile
 import warnings
@@ -56,16 +63,27 @@ with warnings.catch_warnings():
         destination, _, display = rest.partition("\t")
 
         try:
-            py_compile.compile(
-                source,
-                cfile=destination,
-                dfile=display or None,
-                doraise=False,
-                optimize=0,
-                quiet=2,
-            )
+            try:
+                py_compile.compile(
+                    source,
+                    cfile=destination,
+                    dfile=display or None,
+                    doraise=False,
+                    optimize=0,
+                    quiet=2,
+                )
 
-        except (OSError, ValueError, RecursionError, MemoryError):
+            except TypeError:
+                # 3.7, before quiet.
+                py_compile.compile(
+                    source,
+                    cfile=destination,
+                    dfile=display or None,
+                    doraise=False,
+                    optimize=0,
+                )
+
+        except (OSError, ValueError, RecursionError, MemoryError, SyntaxError):
             pass
 
         print(source, flush=True)

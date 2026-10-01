@@ -216,16 +216,23 @@ def compile_in_process(job: CompileJob) -> None:
         pass
 
 
-def compile_modules(jobs: list[CompileJob]) -> None:
+def compile_modules(jobs: list[CompileJob]) -> list[CompileJob]:
     """Compile ``jobs`` as the target interpreter would: in its workers, and
-    what they decline here when this process compiles as the target does --
-    otherwise that goes without bytecode, as a module that will not compile
-    does."""
+    what they decline here when this process compiles as the target does.
+
+    Returns the jobs nobody took -- otherwise they go without bytecode, as
+    a module that will not compile does -- so a cache can tell an
+    incomplete tree from a complete one.
+    """
     declined = compile_jobs(jobs)
 
     if declined and compiles_as_this_process():
         for job in declined:
             compile_in_process(job)
+
+        return []
+
+    return declined
 
 
 def bytecode_key() -> str | None:
@@ -340,20 +347,28 @@ def _spawn(command: list[str]) -> _Worker | None:
 class _Batch:
     """One caller's jobs, and the count still outstanding."""
 
-    __slots__ = ("done", "failed", "lock", "remaining")
+    __slots__ = ("cancelled", "compiled", "done", "failed", "lock", "remaining")
 
     def __init__(self, total: int) -> None:
         self.remaining = total
 
         self.failed: list[CompileJob] = []
 
+        self.compiled: set[CompileJob] = set()
+
+        # Given up on by its caller: what is still queued is not compiled.
+        self.cancelled = False
+
         self.lock = threading.Lock()
 
         self.done = threading.Event()
 
-    def finish(self, job: CompileJob | None) -> None:
+    def finish(self, job: CompileJob, *, compiled: bool) -> None:
         with self.lock:
-            if job is not None:
+            if compiled:
+                self.compiled.add(job)
+
+            else:
                 self.failed.append(job)
 
             self.remaining -= 1
@@ -439,14 +454,19 @@ class CompilePool:
 
             job, batch = item
 
+            if batch.cancelled:
+                batch.finish(job, compiled=False)
+
+                continue
+
             if worker.compile(job):
-                batch.finish(None)
+                batch.finish(job, compiled=True)
 
                 continue
 
             # A worker that breaks the protocol will keep breaking it, so this
             # consumer stops. The job goes back to its caller to compile.
-            batch.finish(job)
+            batch.finish(job, compiled=False)
 
             self._retire()
 
@@ -461,9 +481,12 @@ class CompilePool:
         with self._lock:
             self._live -= 1
 
-            self._broken = True
-
             last = self._live == 0
+
+            # The pool still works while one worker does: a module that
+            # broke one must not cost every later install its bytecode.
+            if last:
+                self._broken = True
 
         if not last:
             return
@@ -478,7 +501,7 @@ class CompilePool:
             if item is not None:
                 job, batch = item
 
-                batch.finish(job)
+                batch.finish(job, compiled=False)
 
     def compile(self, jobs: Iterable[CompileJob]) -> list[CompileJob] | None:
         """Compile ``jobs``, returning the ones a worker could not take.
@@ -508,10 +531,23 @@ class CompilePool:
         for job in pending:
             self._queue.put((job, batch))
 
-        # Bounded so a worker that stops answering cannot hang an install; the
-        # per-job timeout inside the worker already bounds each round trip.
-        if not batch.done.wait(COMPILE_TIMEOUT * 2):
-            return None
+        # Bounded so workers that stop answering cannot hang an install: by a
+        # whole timeout without one module done, not by the batch's total --
+        # on a slow machine a large wheel waits behind others' batches. Given
+        # up on, what is still queued is not compiled, and every module not
+        # yet done is the caller's.
+        last = batch.remaining
+
+        while not batch.done.wait(COMPILE_TIMEOUT):
+            with batch.lock:
+                if batch.remaining == last:
+                    batch.cancelled = True
+
+                    return rejected + [
+                        job for job in pending if job not in batch.compiled
+                    ]
+
+                last = batch.remaining
 
         rejected.extend(batch.failed)
 
