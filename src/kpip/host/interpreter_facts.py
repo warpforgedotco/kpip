@@ -466,6 +466,78 @@ def environment_pythons() -> tuple[str, ...]:
     return ("bin/python", "Scripts/python.exe")
 
 
+def active_environments() -> list[tuple[str, str]]:
+    """The environments an install is for, before any Python on ``PATH``:
+    how each was found, and its prefix, in the order uv looks.
+
+    The activated virtual environment; a named conda environment; a
+    ``.venv`` in the working directory or one above it, or the environment
+    the working directory is inside; then conda's base environment, which
+    is a system Python more than an environment someone chose.
+    """
+    found: list[tuple[str, str]] = []
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    if virtual_env:
+        found.append((f"VIRTUAL_ENV names {virtual_env}", virtual_env))
+    conda = os.environ.get("CONDA_PREFIX")
+    base = bool(conda) and _is_conda_base(conda)
+    if conda and not base:
+        found.append((f"CONDA_PREFIX names {conda}", conda))
+    discovered = _working_directory_environment()
+    if discovered is not None:
+        found.append((f"the environment at {discovered}", discovered))
+    if conda and base:
+        found.append((f"CONDA_PREFIX names {conda}", conda))
+    return found
+
+
+def _is_environment(directory: str) -> bool:
+    return os.path.isfile(os.path.join(directory, "pyvenv.cfg")) or os.path.isdir(
+        os.path.join(directory, "conda-meta")
+    )
+
+
+def _working_directory_environment() -> str | None:
+    try:
+        directory = os.getcwd()
+    except OSError:
+        return None
+    while True:
+        if os.path.isfile(os.path.join(directory, "pyvenv.cfg")):
+            return directory
+        dot_venv = os.path.join(directory, ".venv")
+        if _is_environment(dot_venv):
+            return dot_venv
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return None
+        directory = parent
+
+
+def _is_conda_base(prefix: str) -> bool:
+    """Whether ``CONDA_PREFIX`` is conda's base environment, by uv's rule.
+
+    ``_CONDA_ROOT`` names base when conda sets it. Otherwise
+    ``CONDA_DEFAULT_ENV`` is the active environment's name, or its path when
+    it was created with ``-p``: an environment kept in a directory of its
+    own name is not base. Pixi never makes a base environment.
+    """
+    def same(a: str, b: str) -> bool:
+        return os.path.normcase(os.path.normpath(a)) == os.path.normcase(
+            os.path.normpath(b)
+        )
+
+    if os.path.isfile(os.path.join(prefix, "conda-meta", "pixi")):
+        return False
+    root = os.environ.get("_CONDA_ROOT")
+    if root and same(prefix, root):
+        return True
+    name = os.environ.get("CONDA_DEFAULT_ENV")
+    if not name or same(prefix, name):
+        return False
+    return os.path.basename(os.path.normpath(prefix)) != name
+
+
 def identify(python: str) -> str:
     """The interpreter ``--python`` names: the file, or an environment's.
 
@@ -487,7 +559,7 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
     """The Python kpip installs for, and resolves for.
 
     The one ``--python`` names; otherwise the one running kpip; and for a
-    compiled kpip, which has none, the active virtual or conda environment's,
+    compiled kpip, which has none, the first of ``active_environments()``,
     else the ``python3`` or ``python`` on ``PATH``. A compiled kpip that finds
     none can still resolve -- for the CPython it was built with -- but not
     install: ``installing`` says which the caller needs.
@@ -511,17 +583,15 @@ def target_interpreter(*, installing: bool = True) -> Interpreter:
 
 
 class EnvironmentWithoutPython(CommandError):
-    """The active environment, by ``VIRTUAL_ENV`` or ``CONDA_PREFIX``, has
-    no Python that runs: what an install would be for is not there."""
+    """The environment an install is for has no Python that runs: what it
+    would be for is not there. ``where`` says how it was found."""
 
-    def __init__(self, variable: str, prefix: str) -> None:
+    def __init__(self, where: str) -> None:
         super().__init__(
-            f"{variable} names {prefix}, which has no working Python: "
-            "activate another environment, deactivate this one, or "
-            "name one with --python"
+            f"{where}, which has no working Python: activate another "
+            "environment, deactivate this one, or name one with --python"
         )
-        self.variable = variable
-        self.prefix = prefix
+        self.where = where
 
 
 def registered_pythons() -> list[str]:
@@ -571,15 +641,12 @@ def registered_pythons() -> list[str]:
 def _find_target(python: str | None, *, installing: bool) -> Interpreter:
     if python:
         return probe(identify(python))
-    for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
-        prefix = os.environ.get(variable)
-        if not prefix:
-            continue
+    for where, prefix in active_environments():
         try:
             return probe(identify(prefix))
         except CommandError as exc:
             if installing:
-                raise EnvironmentWithoutPython(variable, prefix) from exc
+                raise EnvironmentWithoutPython(where) from exc
             # Nothing is installed: resolving needs no environment.
             continue
     tried = []
@@ -598,7 +665,7 @@ def _find_target(python: str | None, *, installing: bool) -> Interpreter:
         return own_interpreter()
     raise CommandError(
         "No Python interpreter to install for: VIRTUAL_ENV and CONDA_PREFIX "
-        "are unset, and "
+        "are unset, there is no .venv here or above, and "
         + (
             f"none of {', '.join(tried)} answered"
             if tried

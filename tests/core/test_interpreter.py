@@ -20,11 +20,12 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(autouse=True)
-def fresh(monkeypatch: pytest.MonkeyPatch) -> None:
+def fresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(interpreter, "_build_interpreters", {})
     monkeypatch.setattr(interpreter_facts, "_interpreters", {})
     for variable in ("KPIP_BUILD_PYTHON", "VIRTUAL_ENV", "CONDA_PREFIX"):
         monkeypatch.delenv(variable, raising=False)
+    monkeypatch.chdir(tmp_path)
 
 
 def fake_python(directory: Path, name: str, version: str | None) -> Path:
@@ -90,6 +91,18 @@ def test_compiled_kpip_prefers_the_active_environment(
     venv_python = fake_python(tmp_path / "venv" / "bin", "python", target)
     compiled(monkeypatch, tmp_path / "bin")
     monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "venv"))
+
+    assert build_interpreter() == str(venv_python)
+
+
+def test_compiled_kpip_builds_with_the_dot_venv_it_installs_into(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = "%d.%d" % sys.version_info[:2]
+    fake_python(tmp_path / "bin", f"python{target}", target)
+    venv_python = fake_python(tmp_path / ".venv" / "bin", "python", target)
+    (tmp_path / ".venv" / "pyvenv.cfg").write_text("")
+    compiled(monkeypatch, tmp_path / "bin")
 
     assert build_interpreter() == str(venv_python)
 

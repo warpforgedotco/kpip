@@ -21,10 +21,18 @@ from kpip.host.interpreter_facts import (
 
 
 @pytest.fixture(autouse=True)
-def fresh(monkeypatch: pytest.MonkeyPatch) -> None:
+def fresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(interpreter_facts, "_interpreters", {})
-    for name in ("KPIP_PYTHON", "VIRTUAL_ENV", "CONDA_PREFIX"):
+    for name in (
+        "KPIP_PYTHON",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "_CONDA_ROOT",
+    ):
         monkeypatch.delenv(name, raising=False)
+    # Not the checkout's .venv, which a compiled kpip would install into.
+    monkeypatch.chdir(tmp_path)
 
 
 @pytest.mark.parametrize("scheme", sorted(sysconfig.get_scheme_names()))
@@ -513,3 +521,140 @@ def test_version_names_an_active_environment_without_a_python(
             f"(VIRTUAL_ENV names {tmp_path / 'gone'}, which has no working Python)"
         )
     )
+
+
+def environment(prefix: Path, *, conda: bool = False) -> Path:
+    """An environment's directory with an interpreter where kpip looks."""
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "bin" / "python").write_text("")
+    if conda:
+        (prefix / "conda-meta").mkdir()
+    else:
+        (prefix / "pyvenv.cfg").write_text("")
+    return prefix / "bin" / "python"
+
+
+@pytest.fixture
+def found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A compiled kpip whose target is the path it would probe, with a
+    python3 on PATH to fall back to."""
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    monkeypatch.setattr(interpreter_facts, "probe", lambda path: path)
+    on_path = tmp_path / "path" / "python3"
+    on_path.parent.mkdir()
+    on_path.write_text("")
+    on_path.chmod(0o755)
+    monkeypatch.setenv("PATH", str(on_path.parent))
+
+    def target() -> str:
+        monkeypatch.setattr(interpreter_facts, "_interpreters", {})
+        return str(target_interpreter())
+
+    target.on_path = str(on_path)  # type: ignore[attr-defined]
+    return target
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_a_venv_in_a_directory_above_is_found_before_path(
+    found, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As uv: a project's .venv, with nothing activated."""
+    python = environment(tmp_path / "project" / ".venv")
+    (tmp_path / "project" / "src" / "pkg").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "project" / "src" / "pkg")
+    assert found() == str(python)
+
+    monkeypatch.chdir(tmp_path)
+    assert found() == found.on_path
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_the_environment_the_working_directory_is_inside_is_found(
+    found, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python = environment(tmp_path / "env")
+    (tmp_path / "env" / "lib").mkdir()
+    monkeypatch.chdir(tmp_path / "env" / "lib")
+
+    assert found() == str(python)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_a_dot_venv_that_is_no_environment_is_passed_over(
+    found, tmp_path: Path
+) -> None:
+    (tmp_path / ".venv").mkdir()
+
+    assert found() == found.on_path
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_activated_environments_come_before_a_dot_venv_and_conda_base_after(
+    found, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dot_venv = environment(tmp_path / ".venv")
+    named = environment(tmp_path / "conda" / "envs" / "work", conda=True)
+    base = environment(tmp_path / "conda" / "base", conda=True)
+    active = environment(tmp_path / "active")
+
+    monkeypatch.setenv("CONDA_PREFIX", str(base.parent.parent))
+    monkeypatch.setenv("CONDA_DEFAULT_ENV", "base")
+    monkeypatch.setenv("_CONDA_ROOT", str(base.parent.parent))
+    assert found() == str(dot_venv)
+
+    monkeypatch.setenv("CONDA_PREFIX", str(named.parent.parent))
+    monkeypatch.setenv("CONDA_DEFAULT_ENV", "work")
+    assert found() == str(named)
+
+    monkeypatch.setenv("VIRTUAL_ENV", str(active.parent.parent))
+    assert found() == str(active)
+
+    monkeypatch.delenv("VIRTUAL_ENV")
+    (dot_venv.parent.parent / "pyvenv.cfg").unlink()
+    monkeypatch.setenv("CONDA_PREFIX", str(base.parent.parent))
+    monkeypatch.setenv("CONDA_DEFAULT_ENV", "base")
+    assert found() == str(base)
+
+
+@pytest.mark.parametrize(
+    "prefix,default_env,root,pixi,base",
+    [
+        ("/opt/conda", "base", None, False, True),
+        ("/opt/conda", "base", "/opt/conda", False, True),
+        ("/opt/conda/envs/work", "work", "/opt/conda", False, False),
+        ("/work/env", "/work/env", None, False, False),
+        ("/opt/conda/envs/work", None, None, False, False),
+        ("/project/.pixi/envs/default", "default-env", None, True, False),
+    ],
+)
+def test_conda_base_is_told_apart_as_uv_does(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prefix: str,
+    default_env: str | None,
+    root: str | None,
+    pixi: bool,
+    base: bool,
+) -> None:
+    if pixi:
+        prefix = str(tmp_path / prefix.lstrip("/"))
+        (Path(prefix) / "conda-meta").mkdir(parents=True)
+        (Path(prefix) / "conda-meta" / "pixi").write_text("")
+    if default_env is not None:
+        monkeypatch.setenv("CONDA_DEFAULT_ENV", default_env)
+    if root is not None:
+        monkeypatch.setenv("_CONDA_ROOT", root)
+
+    assert interpreter_facts._is_conda_base(prefix) is base
+
+
+@pytest.mark.skipif(os.name == "nt", reason="environments keep python in bin")
+def test_an_install_names_a_dot_venv_without_a_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
+    (tmp_path / ".venv").mkdir()
+    (tmp_path / ".venv" / "pyvenv.cfg").write_text("")
+
+    with pytest.raises(CommandError, match=r"the environment at .*\.venv, which"):
+        target_interpreter()

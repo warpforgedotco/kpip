@@ -219,7 +219,7 @@ def print_version() -> None:
     try:
         python = f"python {target_interpreter().major_minor}"
     except EnvironmentWithoutPython as exc:
-        python = f"{exc.variable} names {exc.prefix}, which has no working Python"
+        python = f"{exc.where}, which has no working Python"
     except CommandError:
         python = "no Python found to install for"
 

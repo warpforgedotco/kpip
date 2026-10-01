@@ -71,9 +71,15 @@ Like pip, kpip installs into one Python's environment. Without `--python`, it
 is the first of:
 
 1. the active virtual environment (`VIRTUAL_ENV`);
-2. the active conda environment (`CONDA_PREFIX`);
-3. the first `python3` or `python` on `PATH` that runs;
-4. on Windows, the newest Python the python.org installer registered.
+2. the active conda environment (`CONDA_PREFIX`), unless it is conda's base;
+3. a `.venv` in the current directory or the nearest one above it, or the
+   environment the current directory is inside;
+4. conda's base environment, when it is the active one;
+5. the first `python3` or `python` on `PATH` that runs;
+6. on Windows, the newest Python the python.org installer registered.
+
+This is uv's order, except that with none of 1-4, kpip installs for the
+Python on `PATH`, as pip does, where uv asks for `--system`.
 
 `--python` names a Python or an environment directly. Source distributions
 are built with the same Python, unless `KPIP_BUILD_PYTHON` names another.

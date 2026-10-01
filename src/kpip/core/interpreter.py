@@ -43,14 +43,11 @@ class NoBuildInterpreterError(DiagnosticKpipError):
 def _candidates(target: str) -> list[str]:
     candidates = []
 
-    for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
-        prefix = os.environ.get(variable)
-
-        if prefix:
-            candidates.extend(
-                os.path.join(prefix, *name.split("/"))
-                for name in interpreter_facts.environment_pythons()
-            )
+    for _, prefix in interpreter_facts.active_environments():
+        candidates.extend(
+            os.path.join(prefix, *name.split("/"))
+            for name in interpreter_facts.environment_pythons()
+        )
 
     for name in (f"python{target}", "python3", "python"):
         found = shutil.which(name)
