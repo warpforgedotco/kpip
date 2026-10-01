@@ -483,3 +483,45 @@ def test_new_resolver_hash_from_a_constraint_is_checked(
 
     assert "THESE PACKAGES DO NOT MATCH THE HASHES" in result.stderr
     script.assert_not_installed("demo")
+
+
+@pytest.mark.parametrize("require_hashes", [False, True])
+def test_new_resolver_hash_from_a_direct_urls_fragment(
+    script: KpipTestEnvironment,
+    require_hashes: bool,
+) -> None:
+    """pip 26.2.1 takes a direct URL's ``#sha256=`` as the hash the user
+    wrote: it satisfies --require-hashes, and the download is checked
+    against it whether or not that is given."""
+    wheel_path = create_basic_wheel_for_package(script, "base", "0.1.0")
+    wheel_hash = hashlib.sha256(wheel_path.read_bytes()).hexdigest()
+    mode = ["--require-hashes"] if require_hashes else []
+
+    requirements_txt = script.scratch_path / "requirements.txt"
+    requirements_txt.write_text(f"base @ {wheel_path.as_uri()}#sha256={'0' * 64}\n")
+
+    result = script.kpip(
+        "install",
+        "--no-cache-dir",
+        "--no-index",
+        *mode,
+        "--requirement",
+        requirements_txt,
+        expect_error=True,
+    )
+
+    assert f"Got        {wheel_hash}" in result.stderr, str(result)
+    script.assert_not_installed("base")
+
+    requirements_txt.write_text(f"base @ {wheel_path.as_uri()}#sha256={wheel_hash}\n")
+
+    script.kpip(
+        "install",
+        "--no-cache-dir",
+        "--no-index",
+        *mode,
+        "--requirement",
+        requirements_txt,
+    )
+
+    script.assert_installed(base="0.1.0")

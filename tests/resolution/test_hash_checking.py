@@ -83,6 +83,41 @@ def test_direct_url_needs_no_pin_but_still_needs_a_hash() -> None:
     assert _failures(_requirement(url)) == {HashMissing}
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"demo @ https://example.invalid/demo-1.0-py3-none-any.whl#sha256={DIGEST}",
+        f"https://example.invalid/demo-1.0-py3-none-any.whl#sha256={DIGEST}",
+    ],
+)
+def test_a_direct_urls_own_hash_fragment_is_its_hash(line: str) -> None:
+    """pip 26.2.1 installs these with --require-hashes and no --hash."""
+    assert _failures(_requirement(line)) == set()
+
+
+def test_an_index_links_hash_is_not_the_users() -> None:
+    """A hash on a link the index handed back is not one the user wrote."""
+    from kpip.index.links import Link
+
+    item = _requirement("demo==1.0")
+    item.link = Link.from_url(
+        f"https://example.invalid/demo-1.0-py3-none-any.whl#sha256={DIGEST}",
+        source_url=None,
+    )
+    assert not item.hashes(trust_internet=False)
+    assert _failures(item) == {HashMissing}
+
+
+def test_a_user_supplied_direct_url_counts_its_hash_without_trusting_the_internet() -> (
+    None
+):
+    item = install_req_from_line(
+        f"demo @ https://example.invalid/demo-1.0-py3-none-any.whl#sha256={DIGEST}",
+        user_supplied=True,
+    )
+    assert item.hashes(trust_internet=False)
+
+
 def test_a_constraint_can_supply_the_pin() -> None:
     """pypa/pip#9243: `demo` in requirements, `demo==1.0` in constraints.
 

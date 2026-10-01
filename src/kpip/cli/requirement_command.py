@@ -417,9 +417,13 @@ def create_candidate_provider(
     provider.hashes_by_name = {}
 
     for item in requirements:
-        if item.req is None or not item.hash_options:
+        if item.req is None:
             continue
-        hashes = item.hashes()
+        # A direct URL's own #sha256= fragment is a hash the user wrote, and
+        # is checked as one; pip checks it whether or not --hash is given.
+        hashes = item.hashes(trust_internet=item.is_direct)
+        if not hashes:
+            continue
         previous = provider.hashes_by_name.get(item.req.canonical_name)
         provider.hashes_by_name[item.req.canonical_name] = (
             hashes if previous is None else intersect_hashes(previous, hashes)

@@ -251,7 +251,15 @@ class InstallRequirement:
             algorithm: list(digests) for algorithm, digests in self.hash_options.items()
         }
 
-        link = self.link if trust_internet else None
+        # Without trusting the internet, a hash an index page attached to
+        # a found link does not count, but one the user wrote into their
+        # own direct URL does: pip's rule.
+        if trust_internet:
+            link = self.link
+        elif self.is_direct and self.user_supplied:
+            link = self.original_link or self.link
+        else:
+            link = None
 
         if link is not None and link.hash and link.hash_name:
             existing = values.get(link.hash_name)

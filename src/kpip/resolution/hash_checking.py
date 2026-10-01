@@ -99,7 +99,10 @@ def check_requirement(
     ):
         errors.append(HashUnpinned(subject), subject)
 
-    if not requirement.hashes(trust_internet=False):
+    # Every requirement checked here is one the user wrote, so the hash in
+    # a direct URL's own fragment counts, as pip counts it; its link has not
+    # been swapped for a found one yet.
+    if not requirement.hashes(trust_internet=requirement.is_direct):
         errors.append(HashMissing(subject), subject)
 
 
