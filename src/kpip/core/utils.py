@@ -103,9 +103,7 @@ def default_worker_count() -> int:
         if requested > 0:
             return requested
 
-    available = getattr(os, "process_cpu_count", None)
-
-    cores = available() if available is not None else os.cpu_count()
+    cores = os.process_cpu_count()
 
     return min(32, (cores or 1) + 4)
 
