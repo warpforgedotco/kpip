@@ -12,6 +12,9 @@ from kpip.core.urls import path_to_url
 from kpip.resolution.files.models import RequirementsFileParseError
 
 
+STRONG_HASHES = ("sha256", "sha384", "sha512")
+
+
 def strip_matching_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         return value[1:-1]
@@ -27,6 +30,13 @@ def add_hash_option(
     name, sep, digest = raw.partition(":")
     if not sep or not digest:
         raise RequirementsFileParseError(original_line)
+    # pip's STRONG_HASHES: an md5 or sha1 digest is refused, not checked,
+    # since a collision would pass for the file the user meant.
+    if name not in STRONG_HASHES:
+        raise RequirementsFileParseError(
+            f"{original_line}\nAllowed hash algorithms for --hash are "
+            f"{', '.join(STRONG_HASHES)}."
+        )
     existing = target.get(name)
     if existing is None:
         target[name] = [digest]

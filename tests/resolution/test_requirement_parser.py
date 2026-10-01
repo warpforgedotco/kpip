@@ -201,6 +201,31 @@ def test_prefer_binary_takes_no_value(tmp_path: Path) -> None:
     assert options.prefer_binary is True
 
 
+@pytest.mark.parametrize("algorithm", ["md5", "sha1", "sha224"])
+def test_only_strong_hash_algorithms_are_accepted(
+    tmp_path: Path, algorithm: str
+) -> None:
+    """pip allows --hash with sha256, sha384 and sha512 alone."""
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text(f"demo==1 --hash={algorithm}:abc\n", encoding="utf-8")
+
+    with pytest.raises(
+        RequirementsFileParseError,
+        match="Allowed hash algorithms for --hash are sha256, sha384, sha512",
+    ):
+        parse_requirements(str(requirements), object())
+
+
+@pytest.mark.parametrize("algorithm", ["sha256", "sha384", "sha512"])
+def test_strong_hash_algorithms_are_accepted(tmp_path: Path, algorithm: str) -> None:
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text(f"demo==1 --hash {algorithm}:abc\n", encoding="utf-8")
+
+    (item,) = parse_requirements(str(requirements), object())
+
+    assert item.options["hashes"] == {algorithm: ["abc"]}
+
+
 def test_find_links_and_trusted_host_expand_environment_variables(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
