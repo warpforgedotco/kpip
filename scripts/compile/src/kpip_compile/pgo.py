@@ -72,8 +72,15 @@ def check_supported(platform: str = sys.platform) -> None:
         raise PgoError("--pgo supports macOS and Linux, not Windows")
 
 
-def training_steps(work: Path, cache: Path) -> list[TrainingStep]:
-    """The kpip invocations a profile is collected from, in order."""
+def training_steps(
+    work: Path,
+    cache: Path,
+    resolves: tuple[tuple[str, str | None], ...] = TRAINING_RESOLVES,
+) -> list[TrainingStep]:
+    """The kpip invocations a profile is collected from, in order.
+
+    ``resolves`` are the requirement sets locked, each three times.
+    """
     cache_dir = ["--cache-dir", str(cache)]
     steps = [
         TrainingStep(["--version"]),
@@ -86,7 +93,7 @@ def training_steps(work: Path, cache: Path) -> list[TrainingStep]:
 
     web = str(work / "web.txt")
     for name, python_version in (
-        (str(REQUIREMENTS_DIR / name), version) for name, version in TRAINING_RESOLVES
+        (str(REQUIREMENTS_DIR / name), version) for name, version in resolves
     ):
         target = ["--python-version", python_version] if python_version else []
         # The first lock of each fills the cache; the replays are removed

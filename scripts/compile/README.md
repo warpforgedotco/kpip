@@ -52,6 +52,26 @@ Requirements:
 - **Compiler:** Nuitka's default compiler: clang on macOS, gcc on Linux, or clang with `--clang` after `--`. With clang, `llvm-profdata` from the same LLVM is needed; on macOS it comes from Xcode.
 - **Windows:** not supported, since the training runs through a shell script.
 
+## Training MonolithPy's interpreter on kpip
+
+`--pgo` profiles kpip's own compiled code, not the CPython runtime it calls,
+where startup and small locks spend most of their time. When the binary is
+built with MonolithPy, that runtime has a profile of its own, from
+MonolithPy's profile-guided build, which by default trains on a slice of
+CPython's test suite. To train it on kpip as well, write the training script
+and build MonolithPy with it:
+
+```console
+uv run kpip-compile profile-task /tmp/kpip-profile-task.py
+MONOLITHPY_PROFILE_TASK=/tmp/kpip-profile-task.py bash build.mac.sh <target>
+```
+
+The script runs that slice of the test suite, then kpip from source over the
+startup, lock, install and inspection steps of `--pgo`'s training, with five of
+its requirement sets (`kpip_compile.interpreter_pgo`). The locks need network
+access. It runs on the interpreter the build has just made, instrumented, which
+is several times slower than the one it becomes.
+
 ## Vendored Nuitka
 
 `kpip-compile vendor` resolves the current commit of Nuitka's `develop`

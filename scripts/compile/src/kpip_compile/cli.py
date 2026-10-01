@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from kpip_compile.build import DEFAULT_OUTPUT_DIR, BuildOptions, build
+from kpip_compile.interpreter_pgo import write_launcher
 from kpip_compile.pgo import PgoError
 from kpip_compile.vendor import (
     NUITKA_BRANCH,
@@ -47,6 +48,15 @@ def _parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="Refetch even if the checkout is current."
     )
 
+    profile_task = commands.add_parser(
+        "profile-task",
+        help="Write the training MonolithPy's profile-guided build runs.",
+        description="Writes SCRIPT; build MonolithPy with "
+        "MONOLITHPY_PROFILE_TASK=SCRIPT to train its interpreter on kpip "
+        "as well as CPython's tests.",
+    )
+    profile_task.add_argument("script", type=Path)
+
     build_parser = commands.add_parser(
         "build",
         help="Compile kpip, vendoring Nuitka first if needed.",
@@ -80,6 +90,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    if args.command == "profile-task":
+        print(write_launcher(args.script))
+        return 0
 
     try:
         nuitka_dir = _vendor(force=args.command == "vendor" and args.force)
