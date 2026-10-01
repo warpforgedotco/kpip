@@ -476,3 +476,14 @@ def test_a_stale_virtual_env_matters_only_to_an_install(
     assert target_interpreter(installing=False) is not None
     with pytest.raises(CommandError, match="VIRTUAL_ENV names"):
         target_interpreter()
+
+
+def test_version_says_when_there_is_no_python_to_install_for(
+    no_python: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not the bundled Python's version, which nothing is installed for."""
+    from kpip.cli import entrypoint
+
+    entrypoint.print_version()
+
+    assert capsys.readouterr().out.rstrip().endswith("(no Python found to install for)")

@@ -20,7 +20,7 @@ from kpip.cli.logging_config import (
 )
 from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
 from kpip.core import run_options
-from kpip.core.errors import KpipError
+from kpip.core.errors import CommandError, KpipError
 from kpip.core.compiled import own_binary
 from kpip.core.temp_dir import global_tempdir_manager
 from kpip.host.interpreter_facts import target_interpreter
@@ -171,10 +171,23 @@ def extract_global_options(
     return result, verbosity, require_virtualenv, log_file
 
 
+GENERAL_OPTION_HELP = (
+    (
+        "--python PYTHON",
+        "The Python or environment to install for (default: the active one).",
+    ),
+    ("-v, --verbose", "Say more; repeat for more still."),
+    ("-q, --quiet", "Say less."),
+    ("--log FILE", "Also write a verbose log to FILE."),
+    ("--require-virtualenv", "Refuse to run outside a virtual environment."),
+    ("-V, --version", "Show kpip's version, and the Python it installs for."),
+)
+
+
 def print_help() -> None:
     print("Usage:")
 
-    print("  kpip <command> [options]")
+    print("  kpip [--python PYTHON] <command> [options]")
 
     print()
 
@@ -183,18 +196,31 @@ def print_help() -> None:
     for command in VISIBLE_COMMAND_NAMES:
         print(f"  {command}")
 
+    print()
+
+    print("General options:")
+
+    for option, description in GENERAL_OPTION_HELP:
+        print(f"  {option:<26}{description}")
+
+    print()
+
+    print("A command's own options: kpip <command> --help")
+
 
 def print_version() -> None:
     # Compiled, the package is inside the binary, and the Python it names is
     # the one it installs for: its own is only what it was built with.
     location = own_binary() or os.path.dirname(os.path.abspath(kpip.__file__))
 
-    python_version = target_interpreter(installing=False).major_minor
+    # Not the bundled Python's version when none is found: nothing would
+    # be installed for it.
+    try:
+        python = f"python {target_interpreter().major_minor}"
+    except CommandError:
+        python = "no Python found to install for"
 
-    print(
-        f"kpip {kpip.__version__} from {os.path.realpath(location)} "
-        f"(python {python_version})",
-    )
+    print(f"kpip {kpip.__version__} from {os.path.realpath(location)} ({python})")
 
 
 def print_command_help(command: str) -> int | None:
@@ -583,6 +609,22 @@ def exit_without_teardown(status: int) -> NoReturn:
     os._exit(status)
 
 
+ISSUES_URL = "https://github.com/warpforgedotco/kpip/issues"
+
+
 def console_main() -> NoReturn:
-    """The ``kpip`` command: run :func:`main`, then end the process."""
-    exit_without_teardown(main(keep_collection_paused=True))
+    """The ``kpip`` command: run :func:`main`, then end the process.
+
+    An error kpip did not expect is a bug in it: said so, with where to
+    report it, before its traceback -- as pip reports one.
+    """
+    try:
+        status = main(keep_collection_paused=True)
+    except Exception:
+        sys.stderr.write(
+            f"ERROR: kpip {kpip.__version__} hit an unexpected error. This is "
+            f"a bug in kpip: please report it, with the traceback below, at "
+            f"{ISSUES_URL}\n\n{traceback.format_exc()}"
+        )
+        status = 2
+    exit_without_teardown(status)
