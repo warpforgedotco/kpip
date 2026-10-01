@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from kpip_compile import build as build_module
 from kpip_compile.build import (
+    build_id,
     KPIP_PACKAGE,
     BuildOptions,
     ExtensionMismatchError,
@@ -173,3 +174,28 @@ def test_subinterpreter_modules_are_named_in_one_argument() -> None:
         argument.startswith("--subinterpreter-bytecode")
         for argument in nuitka_command(BuildOptions(platform="linux"), "1")
     )
+
+
+def test_the_build_id_is_shipped_as_package_data(tmp_path: Path) -> None:
+    build_id_file = tmp_path / "BUILD_ID"
+
+    command = nuitka_command(
+        BuildOptions(platform="linux"), "1", build_id_file=build_id_file
+    )
+
+    assert f"--include-data-files={build_id_file}=kpip/BUILD_ID" in command
+
+
+def test_the_build_id_changes_with_any_module_and_the_interpreter(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "kpip"
+    (package / "core").mkdir(parents=True)
+    module = package / "core" / "a.py"
+    module.write_text("A = 1\n")
+    first = build_id("cpython-315", package)
+
+    assert build_id("cpython-315", package) == first
+    assert build_id("cpython-315t", package) != first
+    module.write_text("A = 2\n")
+    assert build_id("cpython-315", package) != first

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from hashlib import sha256
+from importlib.resources import files as package_files
 
 from kpip.core.compiled import own_binary
 
@@ -16,8 +17,9 @@ def code_identity() -> tuple[object, ...]:
     ``__version__`` does not: it stays put between releases and in every
     checkout. A cache keyed on it would replay results rendered by code that
     has since changed, so this looks at the code itself instead -- the
-    binary when kpip is compiled into one, else a digest of every module's
-    path, size and modification time.
+    build ID kpip-compile ships in the binary, a digest of the modules it
+    compiled, else a digest of every module's path, size and modification
+    time.
     """
 
     global _identity  # noqa: PLW0603 -- process-wide memo
@@ -29,10 +31,19 @@ def code_identity() -> tuple[object, ...]:
 
 
 def _compute() -> tuple[object, ...]:
-    # Not sys.executable: compiled, that is a python beside the binary that
-    # does not exist, and the same path whatever kpip the binary holds.
     binary = own_binary()
     if binary is not None:
+        # The same for every copy of one build, wherever it is moved.
+        try:
+            return (
+                "build",
+                package_files("kpip").joinpath("BUILD_ID").read_text("ascii"),
+            )
+        except OSError:
+            pass
+
+        # A binary built without one: the file that was run. Not
+        # sys.executable, a python beside the binary that does not exist.
         try:
             stat = os.stat(binary)
         except OSError:

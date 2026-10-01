@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -64,6 +65,23 @@ def kpip_version(package_dir: Path = KPIP_PACKAGE) -> str:
     return match.group(1)
 
 
+def build_id(interpreter: str, package_dir: Path = KPIP_PACKAGE) -> str:
+    """What the binary's code is: a digest of kpip's modules, as built, and
+    the Python they are built into.
+
+    The binary ships it as ``kpip/BUILD_ID`` for the caches that replay what
+    an earlier kpip rendered (``kpip.core.code_identity``): two copies of one
+    build share them, and any change to a module retires them.
+    """
+    digest = hashlib.sha256(interpreter.encode())
+    for path in sorted(package_dir.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        digest.update(b"\0" + path.relative_to(package_dir).as_posix().encode() + b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def executable_name(options: BuildOptions) -> str:
     """The binary's name; a standalone folder already holds a ``kpip`` package."""
 
@@ -77,6 +95,7 @@ def nuitka_command(
     version: str,
     interpreter: str = "cpython-314",
     subinterpreter_modules: tuple[str, ...] = (),
+    build_id_file: Path | None = None,
 ) -> list[str]:
     is_windows = options.platform == "win32"
     command = [
@@ -114,6 +133,8 @@ def nuitka_command(
         # Bytecode for the subinterpreters kpip unpacks wheels on, which
         # cannot import compiled modules (kpip_compile.workers).
         command.append("--subinterpreter-bytecode=" + ",".join(subinterpreter_modules))
+    if build_id_file is not None:
+        command.append(f"--include-data-files={build_id_file}=kpip/BUILD_ID")
     if is_windows:
         # Nuitka never treats ``.exe`` files as package data on its own.
         launchers = KPIP_PACKAGE / "_launchers"
@@ -136,7 +157,12 @@ def _run_nuitka(
 
     modules = tuple(subinterpreter_modules(options.python))
     print(f"{len(modules)} modules for subinterpreters", flush=True)
-    command = nuitka_command(options, kpip_version(), interpreter, modules)
+    options.output_dir.mkdir(parents=True, exist_ok=True)
+    build_id_file = options.output_dir / "BUILD_ID"
+    build_id_file.write_text(build_id(interpreter), encoding="ascii")
+    command = nuitka_command(
+        options, kpip_version(), interpreter, modules, build_id_file
+    )
     env = dict(environ)
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(nuitka_dir), env.get("PYTHONPATH")))
