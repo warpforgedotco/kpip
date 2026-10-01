@@ -1,6 +1,6 @@
 """Minimal stdlib-only PEP 517 hook caller.
 
-The frontend only needs the four hooks below. Keeping the bridge here avoids a
+The frontend only needs the hooks below. Keeping the bridge here avoids a
 runtime dependency on ``pyproject-hooks`` while preserving isolated backend
 execution in the interpreter selected by the build environment.
 """
@@ -211,5 +211,25 @@ class BuildBackendHookCaller:
         return self._call(
             "prepare_metadata_for_build_editable",
             metadata_directory=metadata_directory,
+            config_settings=config_settings,
+        )
+
+    def get_requires_for_build_wheel(
+        self,
+        *,
+        config_settings: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._call(
+            "get_requires_for_build_wheel",
+            config_settings=config_settings,
+        )
+
+    def get_requires_for_build_editable(
+        self,
+        *,
+        config_settings: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._call(
+            "get_requires_for_build_editable",
             config_settings=config_settings,
         )

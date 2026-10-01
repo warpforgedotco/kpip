@@ -339,7 +339,20 @@ class BackendRunner:
         self.build_isolation = build_isolation
 
     @contextlib.contextmanager
-    def caller(self) -> Iterator[tuple[BuildBackendHookCaller, str]]:
+    def caller(
+        self,
+        *,
+        editable: bool = False,
+        config_settings: dict[str, Any] | None = None,
+    ) -> Iterator[tuple[BuildBackendHookCaller, str]]:
+        """A hook caller for the backend, and a directory for what it writes.
+
+        Isolated, the environment also gets what the backend's
+        ``get_requires_for_build_editable`` (``editable``) or
+        ``get_requires_for_build_wheel`` hook asks for, given
+        ``config_settings``. Without isolation the backend runs with what
+        the user has, and those hooks are not asked, as pip does not.
+        """
         if not self.build_isolation:
             if run_options.current.check_build_dependencies:
                 check_build_requirements(self.source_dir, self.spec.requirements)
@@ -393,18 +406,100 @@ class BackendRunner:
 
             raise RuntimeError(detail or str(exc)) from exc
 
-        # The environment is shared; what a build writes goes here.
-        with build_directory("pip-build-env-") as scratch:
-            caller = BuildBackendHookCaller(
-                os.fspath(self.source_dir),
-                self.spec.name,
-                backend_path=list(self.spec.backend_path) or None,
-                python_executable=venv.python_executable,
-                scripts_dir=venv.bin_path,
-                isolated=True,
+        caller = self._isolated_caller(venv)
+
+        # What the backend asks for beyond build-system.requires -- cmake
+        # and ninja for scikit-build-core, a setup.py's setup_requires --
+        # it can say only once those are installed, as pip asks it.
+        hook = (
+            caller.get_requires_for_build_editable
+            if editable
+            else caller.get_requires_for_build_wheel
+        )
+
+        try:
+            requested = hook(config_settings=config_settings)
+
+        except HookMissing:
+            requested = []
+
+        if not isinstance(requested, list) or not all(
+            isinstance(item, str) for item in requested
+        ):
+            raise BuildError(
+                f"Build backend {self.spec.name} returned {requested!r} for its "
+                "build requirements, not a list of strings",
             )
 
+        missing = _unsatisfied_requirements(venv, requested)
+
+        if missing:
+            try:
+                venv = _prepared_environment(
+                    self.source_dir,
+                    self.spec,
+                    self.build_constraints,
+                    backend_requirements=tuple(missing),
+                )
+
+            except subprocess.CalledProcessError as exc:
+                detail = "\n".join(part for part in (exc.stdout, exc.stderr) if part)
+
+                raise RuntimeError(detail or str(exc)) from exc
+
+            caller = self._isolated_caller(venv)
+
+        # The environment is shared; what a build writes goes here.
+        with build_directory("pip-build-env-") as scratch:
             yield caller, scratch
+
+    def _isolated_caller(self, venv: CreatedVenv) -> BuildBackendHookCaller:
+        return BuildBackendHookCaller(
+            os.fspath(self.source_dir),
+            self.spec.name,
+            backend_path=list(self.spec.backend_path) or None,
+            python_executable=venv.python_executable,
+            scripts_dir=venv.bin_path,
+            isolated=True,
+        )
+
+
+def _unsatisfied_requirements(venv: CreatedVenv, requirements: list[str]) -> list[str]:
+    """Those of ``requirements`` the environment does not satisfy, judged
+    by the build interpreter's markers, whose version the environment's
+    interpreter is: what pip installs into a build environment after the
+    backend names them."""
+    if not requirements:
+        return []
+
+    markers = {**interpreter_at(build_interpreter()).markers, "extra": ""}
+    installed = installed_index(list(venv.lib_dirs))
+    missing = []
+
+    for text in requirements:
+        try:
+            requirement = parse_requirement(text)
+
+        except ValueError as exc:
+            raise BuildError(
+                f"Build backend asked for an invalid build requirement: {text!r}",
+            ) from exc
+
+        if requirement.marker and not marker_applies_internal(
+            requirement.marker, markers, set()
+        ):
+            continue
+
+        distribution = installed.get(requirement.canonical_name)
+
+        if (
+            distribution is None
+            or distribution.version is None
+            or not requirement.is_satisfied_by(distribution.version)
+        ):
+            missing.append(text)
+
+    return missing
 
 
 class _PreparedEnvironment:
@@ -501,8 +596,15 @@ def _prepared_environment(
     source_dir: str | os.PathLike[str],
     spec: BackendSpec,
     build_constraints: list[str] | None,
+    *,
+    backend_requirements: tuple[str, ...] = (),
 ) -> CreatedVenv:
     """The isolated environment for ``spec``'s requirements, made once.
+
+    ``backend_requirements`` are those the backend's ``get_requires_for_*``
+    hook asked for and the environment for ``spec`` alone lacks. They make
+    an environment of their own, with ``spec``'s requirements, rather than
+    being added to the shared one, which other builds read.
 
     A bare environment the build interpreter creates, and kpip installing
     the backend's requirements into it, as uv does: 0.4 s, where one seeded
@@ -539,13 +641,15 @@ def _prepared_environment(
         # read again from configuration they would be asked twice.
         environment["KPIP_EXTRA_INDEX_URL"] = ""
 
+    requirements = (*spec.requirements, *backend_requirements)
+
     # setuptools is the backend most builds need; building it from source
     # would need a backend of its own.
     only_binary = (
         ["--only-binary", "setuptools"]
         if any(
             requirement.split("[", 1)[0].split(" ", 1)[0].lower() == "setuptools"
-            for requirement in spec.requirements
+            for requirement in requirements
         )
         else []
     )
@@ -553,6 +657,7 @@ def _prepared_environment(
     key = (
         build_interpreter(),
         spec.requirements,
+        backend_requirements,
         tuple(constraint_args),
         tuple(index_args),
         # pip reads a relative constraint against the source directory.
@@ -583,7 +688,7 @@ def _prepared_environment(
                 env_path, with_pip=False, python=build_interpreter()
             )
 
-            if spec.requirements:
+            if requirements:
                 subprocess.run(
                     [
                         *own_command(),
@@ -595,7 +700,7 @@ def _prepared_environment(
                         *only_binary,
                         *index_args,
                         *constraint_args,
-                        *spec.requirements,
+                        *requirements,
                     ],
                     check=True,
                     cwd=source_dir,
@@ -909,7 +1014,10 @@ class ProjectBuilder:
                     self.backend_spec,
                     build_constraints=self.build_constraints,
                     build_isolation=self.build_isolation,
-                ).caller() as (caller, env_path),
+                ).caller(editable=editable, config_settings=config_settings) as (
+                    caller,
+                    env_path,
+                ),
             ):
                 if (
                     validate_metadata_first
@@ -1113,7 +1221,7 @@ class ProjectBuilder:
                 self.backend_spec,
                 build_constraints=self.build_constraints,
                 build_isolation=self.build_isolation,
-            ).caller() as (
+            ).caller(editable=editable, config_settings=config_settings) as (
                 caller,
                 env_path,
             ):

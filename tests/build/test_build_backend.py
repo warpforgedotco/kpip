@@ -616,7 +616,17 @@ def _counting_environments(
     monkeypatch.setattr(build_backend, "_prepared_environments", {})
     monkeypatch.setattr(build_backend, "create_isolated_venv", create)
     monkeypatch.setattr(build_backend.subprocess, "run", run)
+    _backend_asks_for_nothing_more(monkeypatch)
     return counts
+
+
+def _backend_asks_for_nothing_more(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The backend's get_requires_for_build_* hooks, faked to ask for
+    nothing beyond build-system.requires: the environments are fake."""
+    from kpip.build.pep517_hooks import BuildBackendHookCaller
+
+    for hook in ("get_requires_for_build_wheel", "get_requires_for_build_editable"):
+        monkeypatch.setattr(BuildBackendHookCaller, hook, lambda self, **_: [])
 
 
 def test_builds_with_the_same_requirements_share_one_environment(
@@ -723,6 +733,7 @@ def _recording_environments(
     monkeypatch.setattr(build_backend, "own_command", lambda: ["/opt/kpip"])
     monkeypatch.setattr(build_backend, "create_isolated_venv", create)
     monkeypatch.setattr(build_backend.subprocess, "run", run)
+    _backend_asks_for_nothing_more(monkeypatch)
     return venvs, commands
 
 
@@ -810,6 +821,63 @@ def test_a_build_environment_is_filled_from_the_commands_indexes(
     command = commands[1][0]
     assert command[command.index("--index-url") + 1] == "https://other.example/simple"
     assert "--pre" not in command
+
+
+REQUIRES_BACKEND = """\
+def get_requires_for_build_wheel(config_settings=None):
+    return [config_settings["helper"]]
+
+
+def get_requires_for_build_editable(config_settings=None):
+    return ["editable-helper"]
+"""
+
+
+def test_an_isolated_build_gets_what_the_backend_asks_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """What get_requires_for_build_wheel or get_requires_for_build_editable
+    returns, given the config settings, is installed into the build
+    environment, as pip installs it: cmake for scikit-build-core, a
+    setup.py's setup_requires. Without isolation the hooks are not asked."""
+    from kpip.build import build_backend
+    from kpip.build.build_backend import BackendRunner, BackendSpec
+    from tests.wheel_helpers import make_wheel
+
+    wheelhouse = tmp_path / "wheels"
+    wheelhouse.mkdir()
+    make_wheel(wheelhouse, "wheel-helper", "wheel_helper", "1.0")
+    make_wheel(wheelhouse, "editable-helper", "editable_helper", "1.0")
+    monkeypatch.setattr(build_backend, "_prepared_environments", {})
+    monkeypatch.setenv("KPIP_FIND_LINKS", str(wheelhouse))
+    monkeypatch.setenv("KPIP_NO_INDEX", "1")
+    monkeypatch.setenv("KPIP_CACHE_DIR", str(tmp_path / "cache"))
+    project = tmp_path / "project"
+    (project / "backend").mkdir(parents=True)
+    project.joinpath("backend", "requires_backend.py").write_text(
+        REQUIRES_BACKEND, encoding="utf-8"
+    )
+    spec = BackendSpec("requires_backend", (), ("backend",))
+
+    def imports(python: str, module: str) -> bool:
+        return (
+            subprocess.run([python, "-c", f"import {module}"], check=False).returncode
+            == 0
+        )
+
+    with BackendRunner(project, spec).caller(
+        config_settings={"helper": "wheel-helper"}
+    ) as (caller, _):
+        assert imports(caller.python_executable, "wheel_helper")
+        assert not imports(caller.python_executable, "editable_helper")
+
+    with BackendRunner(project, spec).caller(editable=True) as (caller, _):
+        assert imports(caller.python_executable, "editable_helper")
+        assert not imports(caller.python_executable, "wheel_helper")
+
+    # Asked without isolation, the wheel hook would fail on no settings.
+    with BackendRunner(project, spec, build_isolation=False).caller() as (caller, _):
+        assert caller.python_executable == sys.executable
 
 
 def test_kpip_runs_again_as_itself() -> None:
