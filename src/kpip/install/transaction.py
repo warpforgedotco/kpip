@@ -105,6 +105,9 @@ class InstallTransaction:
         self.created_internal: list[str] = []
         self.destination_presence: dict[str, bool] = {}
         self.temporary_internal: str | None = None
+        # Backups beside their originals, for a volume the temporary
+        # directory is not on.
+        self.adjacent_backups: list[str] = []
         self.finished = False
 
     def add(
@@ -353,9 +356,17 @@ class InstallTransaction:
             return
         if self.temporary_internal is None:
             self.temporary_internal = tempfile.mkdtemp(prefix="kpip-install-stage-")
-        backup = os.path.join(self.temporary_internal, str(len(self.backups)))
-        os.makedirs(os.path.dirname(backup), exist_ok=True)
-        shutil.move(path_text, backup)
+        if _same_volume(path_text, self.temporary_internal):
+            backup = os.path.join(self.temporary_internal, str(len(self.backups)))
+            os.makedirs(os.path.dirname(backup), exist_ok=True)
+            shutil.move(path_text, backup)
+        else:
+            # Across volumes a move copies, then deletes, and Windows will
+            # not delete a .pyd a running process has loaded -- it will
+            # rename one. So the backup is the original, renamed beside it.
+            backup = f"{path_text}.kpip-backup-{os.getpid()}-{len(self.backups)}"
+            os.rename(path_text, backup)
+            self.adjacent_backups.append(backup)
         self.backups.append((path_text, backup))
 
     def remove_empty_parents(self, directory: str) -> None:
@@ -370,6 +381,16 @@ class InstallTransaction:
     def finish_successfully(self) -> None:
         if self.temporary_internal is not None:
             shutil.rmtree(self.temporary_internal, ignore_errors=True)
+        for backup in self.adjacent_backups:
+            if os.path.isdir(backup) and not os.path.islink(backup):
+                shutil.rmtree(backup, ignore_errors=True)
+            else:
+                try:
+                    os.unlink(backup)
+                except OSError:
+                    # Still loaded, on Windows: it goes when it is not.
+                    pass
+        self.adjacent_backups.clear()
         self.finished = True
 
     def __enter__(self) -> InstallTransaction:
@@ -378,6 +399,16 @@ class InstallTransaction:
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         if not self.finished:
             self.rollback()
+
+
+def _same_volume(path: str, directory: str) -> bool:
+    try:
+        return (
+            os.stat(os.path.dirname(os.path.abspath(path)) or os.curdir).st_dev
+            == os.stat(directory).st_dev
+        )
+    except OSError:
+        return True
 
 
 def normalized_internal(path: str) -> str:

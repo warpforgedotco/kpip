@@ -300,3 +300,18 @@ def test_lean_extraction_leaves_other_compression_to_zipfile(tmp_path: Path) -> 
         )
     finally:
         os.close(fd)
+
+
+def test_an_incomplete_bytecode_tree_is_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Modules nobody took would stay missing for every later install."""
+    wheel = _wheel_with(tmp_path, "demo", {"demo/__init__.py": "VALUE = 1\n"})
+    (archive,) = prepare_cached_wheels(
+        (_candidate(wheel),), str(tmp_path / "cache"), pycompile=False
+    )
+    monkeypatch.setattr(cache_module, "compile_modules", lambda jobs: jobs)
+
+    assert cache_module.bytecode_tree(archive) is None
+    entry_root = Path(os.path.dirname(archive.tree))
+    assert not list(entry_root.glob(f"{cache_module.PYC_CACHE_PREFIX}*"))

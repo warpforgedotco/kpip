@@ -121,7 +121,10 @@ class BuildBackendHookCaller:
                     cwd=self.source_dir,
                     env=environment,
                     capture_output=True,
-                    text=True,
+                    # What a backend prints is in no one encoding:
+                    # its Python's code page, a compiler's, or UTF-8.
+                    encoding="utf-8",
+                    errors="replace",
                 )
             except subprocess.CalledProcessError as exc:
                 detail = (exc.stderr or exc.stdout or "").strip()
