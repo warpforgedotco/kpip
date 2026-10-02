@@ -70,7 +70,10 @@ The script runs that slice of the test suite, then kpip from source over the
 startup, lock, install and inspection steps of `--pgo`'s training, with five of
 its requirement sets (`kpip_compile.interpreter_pgo`). The locks need network
 access. It runs on the interpreter the build has just made, instrumented, which
-is several times slower than the one it becomes.
+is several times slower than the one it becomes. kpip installs for the CPython
+`python3` on `PATH`, as a compiled kpip does: MonolithPy's own `monolithpy`
+tags match no published wheel, so installing for it would build every sdist.
+Each step that fails is named, with the last line it printed.
 
 ## Vendored Nuitka
 

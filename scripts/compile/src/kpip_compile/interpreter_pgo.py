@@ -52,17 +52,50 @@ sys.exit(main())
 """
 
 
+def target_python() -> str | None:
+    """A CPython on ``PATH`` for the training to install for.
+
+    Run from source, kpip installs for the Python running it: here the
+    MonolithPy being built, whose ``monolithpy`` tags no published wheel
+    carries, so its installs would build every sdist instead. A compiled
+    kpip installs for a CPython, as this one then does.
+    """
+    for name in ("python3", "python"):
+        found = shutil.which(name)
+        if found is None:
+            continue
+        tag = subprocess.run(
+            [found, "-c", "import sys; print(sys.implementation.cache_tag)"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        if (tag or "").startswith("cpython-"):
+            return found
+    return None
+
+
 def train(python: str) -> int:
     """Run the CPython slice, then kpip from source, with ``python``.
 
     A step that fails still left a profile behind, and the build ignores
-    the task's status, so failures are counted, not raised.
+    the task's status, so failures are counted and named, not raised.
     """
     print(f"interpreter pgo: {' '.join(CPYTHON_TASK)}", flush=True)
     subprocess.run([python, *CPYTHON_TASK], check=False)
 
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(REPO_ROOT / "src")
+    target = target_python()
+    if target is None:
+        print(
+            "interpreter pgo: no CPython on PATH; installs are for this "
+            "interpreter, and build sdists instead",
+            flush=True,
+        )
+    else:
+        print(f"interpreter pgo: installing for {target}", flush=True)
+        environment["KPIP_PYTHON"] = target
     with tempfile.TemporaryDirectory(prefix="kpip-interpreter-pgo-") as directory:
         work = Path(directory)
         cache = work / "cache"
@@ -82,14 +115,19 @@ def train(python: str) -> int:
                 env=environment,
                 cwd=work,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
                 check=False,
             )
             if result.returncode != 0:
                 failed += 1
-    print(
-        f"interpreter pgo: {len(steps)} kpip steps, {failed} failed", flush=True
-    )
+                lines = (result.stderr or "").strip().splitlines()
+                print(
+                    f"interpreter pgo [{number}/{len(steps)}] failed "
+                    f"({result.returncode}): {lines[-1] if lines else ''}",
+                    flush=True,
+                )
+    print(f"interpreter pgo: {len(steps)} kpip steps, {failed} failed", flush=True)
     return 0
 
 
