@@ -93,10 +93,15 @@ def project_version_from_filename(filename: str) -> tuple[str, Version] | None:
             break
     else:
         return None
-    name, sep, version = stem.rpartition("-")
-    if not sep or not name or not version:
-        return None
-    try:
-        return canonicalize_name(name), Version(version)
-    except ValueError:
-        return None
+    # A hyphen can be in the name or in the version -- pybbox-0.0.5-alpha is
+    # pybbox 0.0.5a0 -- so the version starts at the last hyphen that leaves
+    # one, as pip's split by the project's own name would find.
+    end = len(stem)
+    while (sep := stem.rfind("-", 0, end)) > 0:
+        try:
+            version = Version(stem[sep + 1 :])
+        except ValueError:
+            end = sep
+            continue
+        return canonicalize_name(stem[:sep]), version
+    return None

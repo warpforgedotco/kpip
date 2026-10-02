@@ -109,6 +109,15 @@ def test_source_archive_filename_normalizes_project_name() -> None:
         "demo-pkg",
         Version("1.0"),
     )
+    # A version with a hyphen of its own, as pybbox's sdists are named.
+    assert project_version_from_filename("pybbox-0.0.5-alpha.zip") == (
+        "pybbox",
+        Version("0.0.5a0"),
+    )
+    assert project_version_from_filename("my-pkg-2-1.0.tar.gz") == (
+        "my-pkg-2",
+        Version("1.0"),
+    )
 
 
 @pytest.mark.parametrize(
