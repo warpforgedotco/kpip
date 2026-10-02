@@ -328,6 +328,11 @@ def build_commands(
         extra_env: dict[str, str] | None = None,
         compiled: str | None = None,
     ) -> tuple[list[str], dict[str, str]]:
+        if compiled is not None:
+            # A compiled kpip has no Python of its own and installs for the
+            # first python3 on PATH; uv is told --python, so kpip is told the
+            # same interpreter, or the two resolve for different Pythons.
+            extra_env = {**(extra_env or {}), "KPIP_PYTHON": python}
         return kpip_command(
             args,
             workspace=workspace,
