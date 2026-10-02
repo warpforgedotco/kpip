@@ -63,7 +63,7 @@ def fresh_process_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(candidates, "_vcs_candidates", {})
 
 
-def _fake_builds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _fake_builds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
     """Stand in for the build backend, which the test environment lacks.
 
     Writes a minimal valid wheel for the source tree and records each build.
@@ -72,7 +72,7 @@ def _fake_builds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     def build(source: str, **kwargs: object) -> str:
         builds.append(source)
-        directory = tempfile.mkdtemp(prefix="kpip-test-wheel-")
+        directory = tempfile.mkdtemp(prefix="wheel-", dir=tmp_path)
         path = os.path.join(directory, "wheel_demo-1.0-py3-none-any.whl")
         with zipfile.ZipFile(path, "w") as wheel:
             wheel.writestr("wheel_demo.py", "")
@@ -136,7 +136,7 @@ def test_a_second_run_reuses_the_wheel_without_cloning(
     link = Link.from_url(url, source_url=None)
     requirement = parse_requirement("wheel-demo")
     record = CandidateRecord("wheel-demo", Version("1.0"), link)
-    builds = _fake_builds(monkeypatch)
+    builds = _fake_builds(monkeypatch, tmp_path)
 
     first = _materializer(tmp_path)
     built = list(first.iter_materialize(requirement, [record]))
@@ -163,7 +163,7 @@ def test_a_wheel_is_not_cached_under_a_commit_the_checkout_did_not_have(
     link = Link.from_url(url, source_url=None)
     requirement = parse_requirement("wheel-demo")
     record = CandidateRecord("wheel-demo", Version("1.0"), link)
-    builds = _fake_builds(monkeypatch)
+    builds = _fake_builds(monkeypatch, tmp_path)
     monkeypatch.setattr(
         candidate_materialization, "resolve_git_commit", lambda u, **k: "0" * 40
     )

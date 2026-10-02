@@ -134,6 +134,9 @@ select = ["E4", "E7", "E9", "F", "TC004"]
 
 [tool.pytest.ini_options]
 pythonpath = ["scripts/benchmark/src"]
+# A passing test's tmp_path is removed when the session ends; the suite
+# builds virtual environments and wheels in them, and kept every one.
+tmp_path_retention_policy = "failed"
 markers = [
     "bzr: tests requiring Bazaar",
     "enable_socket: allow network access for this test",

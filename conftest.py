@@ -297,6 +297,54 @@ def shard_collected_items(config: Config, items: list[pytest.Function]) -> None:
     items[:] = selected
 
 
+_CONTAINED_TEMP_PREFIX = "kpip-tests-"
+
+
+def _process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@pytest.fixture(scope="session", autouse=True)
+def contained_tempdir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """One temporary directory for everything the code under test makes there.
+
+    kpip removes its own temporary directories -- VCS checkouts, build
+    environments, downloads -- at exit, which a killed test process never
+    reaches: thousands piled up in the system temporary directory. Each test
+    process gets one directory for all of them, for tempfile here and TMPDIR
+    in the processes it starts, removed when it ends; a later run removes
+    those of processes that are gone.
+    """
+    # pytest's own directories stay where they are, under its retention.
+    tmp_path_factory.getbasetemp()
+    root = Path(tempfile.gettempdir())
+    for stale in root.glob(f"{_CONTAINED_TEMP_PREFIX}*"):
+        pid = stale.name.removeprefix(_CONTAINED_TEMP_PREFIX)
+        if pid.isdigit() and not _process_alive(int(pid)):
+            shutil.rmtree(stale, ignore_errors=True)
+    contained = root / f"{_CONTAINED_TEMP_PREFIX}{os.getpid()}"
+    contained.mkdir(exist_ok=True)
+    previous_tempdir = tempfile.tempdir
+    previous_environ = os.environ.get("TMPDIR")
+    tempfile.tempdir = str(contained)
+    os.environ["TMPDIR"] = str(contained)
+    try:
+        yield
+    finally:
+        tempfile.tempdir = previous_tempdir
+        if previous_environ is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = previous_environ
+        shutil.rmtree(contained, ignore_errors=True)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def resolver_variant(request: pytest.FixtureRequest) -> Iterator[str]:
     """Set environment variable to make kpip default to the correct resolver."""
