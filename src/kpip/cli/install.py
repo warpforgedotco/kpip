@@ -513,7 +513,9 @@ def _plan_context(options: Any, bundle: Any, target: Any) -> tuple[object, ...]:
         tuple(target.abis),
         # The interpreter planned for, when options do not name it.
         tuple(sorted(default_environment().items())),
-        supported_wheel_tags(target),
+        # The key is JSON, which takes the tags as their strings, not as the
+        # WheelTag objects supported_wheel_tags() gives.
+        tuple(str(tag) for tag in supported_wheel_tags(target)),
         options.upgrade_strategy,
         bool(options.force_reinstall),
     )
