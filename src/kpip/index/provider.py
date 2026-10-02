@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+import atexit
 import copy
 import datetime
 import logging
@@ -212,6 +213,12 @@ class CandidateProvider:
             tuple[str, str, str, bool, bool],
             dict[str, tuple[tuple[object, ...], int, int | None] | None],
         ] = {}
+
+        # Choices made this run and not yet written: flush_catalog_choices
+        # writes each once, at close or at exit.
+        self.dirty_catalog_choices: set[tuple[str, str, str, bool, bool]] = set()
+
+        self.catalog_choice_flush_registered = False
 
         self.catalog_groups_cache: dict[
             str,
@@ -640,6 +647,50 @@ class CandidateProvider:
             self.catalog_link_cache[url] = link
 
         return link
+
+    def _mark_catalog_choices_dirty(
+        self, identities: set[tuple[str, str, str, bool, bool]]
+    ) -> None:
+        """Remember choices to write, once, at close or at exit.
+
+        Writing them where they were made rewrote a project's whole choices
+        file -- and, through embed_summary_choices, decoded and rewrote its
+        whole summary -- every time the resolver asked about a few more of
+        its releases: a boto3 lock, backtracking through botocore's
+        catalog, spent 36 of its 53 s doing that. Choices are a cache, so a
+        run that dies first only loses them.
+        """
+        if not identities:
+            return
+
+        with self.cache_lock:
+            self.dirty_catalog_choices.update(identities)
+
+            # A provider a command never closes still writes them, as the
+            # process exits: kpip runs the atexit callbacks itself, after
+            # the executors that make choices have stopped.
+            if not self.catalog_choice_flush_registered:
+                self.catalog_choice_flush_registered = True
+
+                atexit.register(self.flush_catalog_choices)
+
+    def flush_catalog_choices(self) -> None:
+        """Write the choices made since the last flush, each once."""
+        with self.cache_lock:
+            dirty = self.dirty_catalog_choices
+
+            self.dirty_catalog_choices = set()
+
+        if not dirty:
+            return
+
+        persistent_cache = getattr(self.session, "cache", None)
+
+        for identity in dirty:
+            choices = self.catalog_choice_cache.get(identity)
+
+            if choices is not None:
+                save_choices(persistent_cache, *identity, choices)
 
     def _catalog_choices_for(
         self,
@@ -1171,32 +1222,7 @@ class CandidateProvider:
 
             result.extend(candidates)
 
-        for (
-            source_url,
-            generation,
-            choice_target,
-            allow_binary,
-            allow_source,
-        ) in dirty_choices:
-            choices = self.catalog_choice_cache[
-                (
-                    source_url,
-                    generation,
-                    choice_target,
-                    allow_binary,
-                    allow_source,
-                )
-            ]
-
-            save_choices(
-                persistent_cache,
-                source_url,
-                generation,
-                choice_target,
-                allow_binary,
-                allow_source,
-                choices,
-            )
+        self._mark_catalog_choices_dirty(dirty_choices)
 
         return tuple(result)
 
@@ -2131,15 +2157,7 @@ class CandidateProvider:
             )
 
         if dirty:
-            save_choices(
-                persistent_cache,
-                source_url,
-                generation,
-                target_key,
-                allow_binary,
-                allow_source,
-                choices,
-            )
+            self._mark_catalog_choices_dirty({cache_identity})
 
         if self.prefer_binary:
             descriptors = [
@@ -2440,16 +2458,7 @@ class CandidateProvider:
             if best is not None:
                 descriptor_list.append(best)
 
-        for dirty_identity in dirty_choices:
-            save_choices(
-                persistent_cache,
-                dirty_identity[0],
-                dirty_identity[1],
-                dirty_identity[2],
-                dirty_identity[3],
-                dirty_identity[4],
-                self.catalog_choice_cache[dirty_identity],
-            )
+        self._mark_catalog_choices_dirty(dirty_choices)
 
         exact_pin = any(
             specifier.operator in {"==", "==="} and not specifier.version.endswith(".*")
@@ -3299,6 +3308,8 @@ class CandidateProvider:
 
         if self.materializer_internal is not None:
             self.materializer_internal.close()
+
+        self.flush_catalog_choices()
 
     def matching_versions(
         self,

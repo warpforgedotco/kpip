@@ -140,6 +140,8 @@ def test_lazy_catalog_records_fills_missing_choice(
     assert records[0].wheel is not None
 
     target_key = provider.catalog_target_internal()[1]
+    # Choices are written when the provider is closed or the process exits.
+    provider.flush_catalog_choices()
     persisted = load_choices(cache, source_url, generation, target_key, True, True)
     assert "1.0.0" in persisted
     assert persisted["1.0.0"] is not None
@@ -247,6 +249,8 @@ def test_filled_choice_matches_full_path_choice(tmp_path: Path) -> None:
     )
     assert provider.lazy_catalog_records(parse_requirement("demo==1.0.0"))
     target_key = provider.catalog_target_internal()[1]
+    # Choices are written when the provider is closed or the process exits.
+    provider.flush_catalog_choices()
     lazy_choices = load_choices(cache, source_url, generation, target_key, True, True)
 
     full_cache, full_url, full_generation, _ = build(full_root)
@@ -260,6 +264,7 @@ def test_filled_choice_matches_full_path_choice(tmp_path: Path) -> None:
         primary_only=True,
     )
     full_target_key = full_provider.catalog_target_internal()[1]
+    full_provider.flush_catalog_choices()
     full_choices = load_choices(
         full_cache,
         full_url,
@@ -345,6 +350,8 @@ def test_summary_path_fills_missing_choice_without_demotion(
     )
     assert warm_provider.find_candidates(parse_requirement("demo==2.0"))
     target_key = warm_provider.catalog_target_internal()[1]
+    # Choices are written when the provider is closed or the process exits.
+    warm_provider.flush_catalog_choices()
     persisted = load_choices(cache, page_url, generation, target_key, True, True)
     assert set(persisted) == {"2.0"}
     warm_provider.close()
@@ -372,6 +379,7 @@ def test_summary_path_fills_missing_choice_without_demotion(
     assert next(records).version == Version("2.0")
     assert constructed == ["https://files.invalid/demo-2.0-py3-none-any.whl"]
 
+    provider.flush_catalog_choices()
     persisted = load_choices(cache, page_url, generation, target_key, True, True)
     assert set(persisted) == {"1.0", "2.0"}
     provider.close()

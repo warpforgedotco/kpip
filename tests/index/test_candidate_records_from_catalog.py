@@ -324,6 +324,8 @@ def test_primary_only_persists_choice_for_reuse(tmp_path: Path) -> None:
 
     assert len(result) == 1
 
+    # Choices are written when the provider is closed or the process exits.
+    provider.flush_catalog_choices()
     persisted = load_choices(
         cache,
         source_url,
