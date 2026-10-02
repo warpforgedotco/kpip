@@ -477,7 +477,9 @@ def _link_new_directory(
     try:
         source_root = os.fsencode(source)
         destination_root = os.fsencode(destination)
-        directories, modes, files, symlinks = _list_tree(source_root)
+        directories, modes, files, symlinks = _listings.get(source) or _list_tree(
+            source_root
+        )
 
         # Writable and searchable while filled, as _clone_absent makes them.
         error, index = link_tree.make_directories(
@@ -612,6 +614,29 @@ def _list_tree(
                     files.append(name)
 
     return directories, modes, files, symlinks
+
+
+Listing = tuple[list[bytes], list[int], list[bytes], list[bytes]]
+"""A tree's directories with their modes, files and symlinks; see _list_tree."""
+
+_listings: dict[str, Listing] = {}
+"""Source directory -> its listing, for trees known not to change: a clone
+links from it instead of walking the tree again. A plain dict: a reader and
+a writer racing see the listing or no listing, and either is correct."""
+
+
+def tree_listing(path: str) -> Listing:
+    """``path``'s listing, as a clone into a new directory lists it."""
+    return _list_tree(os.fsencode(path))
+
+
+def remember_listings(listings: dict[str, Listing]) -> None:
+    """Let clones of these directories use their listings, for this process.
+
+    Only for directories that never change once listed, such as the wheel
+    archive cache's trees: a listing that missed a file would leave it out.
+    """
+    _listings.update(listings)
 
 
 Overlaps = tuple[frozenset[str], frozenset[str]]

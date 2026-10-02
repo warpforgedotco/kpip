@@ -32,6 +32,7 @@ from kpip.core.direct_url import DirectUrl
 from kpip.core.errors import InstallationError
 from kpip.core.utils import default_worker_count
 from kpip.core.wheel import validate_wheel
+from kpip.host.clone import Listing, remember_listings, tree_listing
 from kpip.index.metadata_cache import (
     MetadataIdentity,
     get_wheel_metadata_cache,
@@ -600,6 +601,96 @@ def _extract_members_threaded(
 
         for archive in opened:
             archive.close()
+
+
+LISTING_NAME = "listing.bin"
+
+_listed: set[str] = set()
+"""Trees whose listings this process has handed to the clones."""
+
+_listed_lock = threading.Lock()
+
+
+def remember_tree_listings(archive: CachedWheelArchive) -> None:
+    """Let clones of ``archive``'s tree link from its listing, not walk it.
+
+    A published tree never changes, so its listing -- one per top-level
+    directory, as a clone lists them -- is stored beside it the first time an
+    install asks, and read from there after: walking a warm scispacy
+    install's 11,000 files took a fifth of its linking threads' time. A
+    listing that cannot be read or written leaves the clone walking the tree.
+    """
+    with _listed_lock:
+        if archive.tree in _listed:
+            return
+
+        _listed.add(archive.tree)
+
+    path = os.path.join(os.path.dirname(archive.tree), LISTING_NAME)
+
+    listings = _read_listings(path)
+
+    if listings is None:
+        listings = {}
+
+        try:
+            with os.scandir(archive.tree) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        listings[entry.name] = tree_listing(entry.path)
+
+        except OSError:
+            return
+
+        _write_listings(path, listings)
+
+    remember_listings(
+        {
+            os.path.join(archive.tree, name): listing
+            for name, listing in listings.items()
+        }
+    )
+
+
+def _read_listings(path: str) -> dict[str, Listing] | None:
+    try:
+        with open(path, "rb") as file:
+            value = marshal.load(file)
+
+    except EOFError, OSError, TypeError, ValueError:
+        return None
+
+    if not isinstance(value, dict) or not all(
+        isinstance(name, str) and isinstance(listing, tuple) and len(listing) == 4
+        for name, listing in value.items()
+    ):
+        return None
+
+    return value
+
+
+def _write_listings(path: str, listings: dict[str, Listing]) -> None:
+    """Publish ``listings`` whole, or not at all: a reader sees one or none."""
+    try:
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".listing-", dir=os.path.dirname(path)
+        )
+
+    except OSError:
+        return
+
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            marshal.dump(listings, file)
+
+        os.replace(temporary, path)
+
+    except OSError:
+        try:
+            os.unlink(temporary)
+
+        except OSError:
+            pass
 
 
 def bytecode_tree(archive: CachedWheelArchive) -> str | None:

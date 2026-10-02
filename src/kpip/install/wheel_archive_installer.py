@@ -33,6 +33,7 @@ from kpip.install.wheel_archive_cache import (
     INSTALL_WORKERS,
     prepare_cached_wheels,
     bytecode_tree,
+    remember_tree_listings,
 )
 from kpip.install.wheel_scripts import (
     entry_point_scripts,
@@ -1061,6 +1062,8 @@ def install_wheels_from_archive_cache(
         try:
 
             def clone_plan(plan: _WheelInstallPlan) -> None:
+                remember_tree_listings(plan.archive)
+
                 clone_path(
                     plan.archive.tree,
                     stage,
