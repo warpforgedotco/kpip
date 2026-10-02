@@ -115,6 +115,8 @@ OFFICIAL_WORKLOADS = (
         "flyte.in",
         "Large Flyte development and ML stack",
         compiled="compiled/flyte.txt",
+        # Its pins have no wheels, or no Requires-Python, past 3.11.
+        python="3.11",
     ),
     OfficialWorkload(
         "home-assistant",
@@ -148,6 +150,8 @@ OFFICIAL_WORKLOADS = (
         "scispacy.in",
         "Scientific Python and spaCy stack",
         compiled="compiled/scispacy.txt",
+        # Its pins have no wheels, or no Requires-Python, past 3.11.
+        python="3.11",
     ),
     OfficialWorkload(
         "slow",

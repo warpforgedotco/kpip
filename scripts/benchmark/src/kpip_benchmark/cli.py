@@ -193,6 +193,22 @@ def kpip_command(
     return command, env
 
 
+def python_for(uv_path: str, version: str) -> str:
+    """An interpreter of ``version``, as uv finds or installs it."""
+    found = subprocess.run(
+        [uv_path, "python", "find", version], capture_output=True, text=True
+    )
+    if found.returncode != 0:
+        subprocess.run([uv_path, "python", "install", version], check=True)
+        found = subprocess.run(
+            [uv_path, "python", "find", version],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    return found.stdout.strip()
+
+
 def uv_command(uv_path: str, args: list[str]) -> list[str]:
     return [uv_path, *args]
 
@@ -317,6 +333,13 @@ def build_commands(
     source_kind = manifest.get("source_kind", "requirements")
     constraint_requirements = manifest.get("constraint_requirements")
     recommended_python = manifest.get("recommended_python")
+    # What both tools resolve and install for: a workload curated for one
+    # Python is installed for that one too, not only locked for it.
+    target_python = (
+        python
+        if recommended_python is None
+        else python_for(uv_path, recommended_python)
+    )
     install_requirements = manifest.get("install_requirements")
     incremental_wheelhouse = manifest["incremental_wheelhouse"]
     incremental_base = manifest["incremental_base_requirements"]
@@ -328,11 +351,12 @@ def build_commands(
         extra_env: dict[str, str] | None = None,
         compiled: str | None = None,
     ) -> tuple[list[str], dict[str, str]]:
-        if compiled is not None:
+        if compiled is not None or recommended_python is not None:
             # A compiled kpip has no Python of its own and installs for the
-            # first python3 on PATH; uv is told --python, so kpip is told the
-            # same interpreter, or the two resolve for different Pythons.
-            extra_env = {**(extra_env or {}), "KPIP_PYTHON": python}
+            # first python3 on PATH, and kpip from source installs for the one
+            # it runs on; uv is told --python, so kpip is told the same
+            # interpreter, or the two resolve for different Pythons.
+            extra_env = {**(extra_env or {}), "KPIP_PYTHON": target_python}
         return kpip_command(
             args,
             workspace=workspace,
@@ -650,7 +674,7 @@ def build_commands(
             "--target",
             str(uv_target),
             "--python",
-            python,
+            target_python,
             "-r",
             install_requirements,
         ]
