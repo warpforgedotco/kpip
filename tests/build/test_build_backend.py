@@ -769,10 +769,9 @@ def test_a_build_environment_is_filled_from_the_commands_indexes(
     install is: left to its own configuration it would fetch a private
     setuptools from pypi.org. A different index is a different
     environment."""
-    from kpip.build.build_backend import (
+    from kpip.build.build_backend import BackendRunner, BackendSpec
+    from kpip.build.index_options import (
         BUILD_INDEX_OPTIONS_VARIABLE,
-        BackendRunner,
-        BackendSpec,
         export_build_index_options,
     )
 

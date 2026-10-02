@@ -96,7 +96,7 @@ def test_the_vcs_candidate_is_learned_once(
         builds.append(path)
         return real(path, *args, **kwargs)
 
-    monkeypatch.setattr(candidates, "prepare_project_metadata", counting)
+    monkeypatch.setattr("kpip.build.build_backend.prepare_project_metadata", counting)
     link = Link.from_url(repo, source_url=None)
 
     first = candidates.InstallationCandidate.from_vcs(link)

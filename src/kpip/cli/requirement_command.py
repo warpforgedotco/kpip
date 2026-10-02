@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import logging
 import os
 
-from kpip.build.build_backend import export_build_index_options
+from kpip.build.index_options import export_build_index_options
 from kpip.cli.config import load_source_config
 from kpip.cli.dependency_groups import group_items, parse_dependency_groups
 from kpip.cli.package_finder import (
@@ -32,7 +32,6 @@ from kpip.cli.requirements import (
     config_settings,
     requirements_from_script,
 )
-from kpip.cli.resolution_errors import resolution_error_message
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.errors import (
     CommandError,
@@ -542,6 +541,9 @@ def resolve(
     except (DistributionNotFound, ResolutionError) as exc:
         if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
             logger.info("conflict is caused by the requested requirements")
+        # The report, and the build it may need, only for a resolve that failed.
+        from kpip.cli.resolution_errors import resolution_error_message
+
         detail = resolution_error_message(
             str(exc),
             requirements,

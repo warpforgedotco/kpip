@@ -9,7 +9,6 @@ import os
 import tomllib
 import urllib.parse
 
-from kpip.build.build_backend import prepare_project_metadata
 from kpip.cli.package_finder import release_control_from
 from kpip.core.errors import InstallationError, KpipError
 from kpip.core.format_control import FormatControl
@@ -602,6 +601,8 @@ def bundle_install_requirements(
             source_path = os.path.realpath(raw_path)
 
             try:
+                from kpip.build.build_backend import prepare_project_metadata
+
                 metadata = prepare_project_metadata(
                     source_path,
                     build_isolation=False,
@@ -741,6 +742,8 @@ def bundle_install_requirements(
             source_path = os.path.realpath(item.local_file_path)
 
             try:
+                from kpip.build.build_backend import prepare_project_metadata
+
                 source_version = str(
                     prepare_project_metadata(
                         source_path,

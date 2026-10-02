@@ -1071,7 +1071,7 @@ def test_evaluate_links_propagates_unexpected_source_tree_error(
 
     provider = CandidateProvider.from_options(no_index=True)
     monkeypatch.setattr(
-        "kpip.index.candidates.prepare_project_metadata",
+        "kpip.build.build_backend.prepare_project_metadata",
         lambda *args_internal: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
@@ -1484,8 +1484,10 @@ def test_candidate_provider_only_builds_highest_ranked_source_candidate(
     assert built == []
     preferred = candidates[:2]
 
+    # Reading the preferred sdist's path builds it, and it alone: the older
+    # sdist is never built.
     assert Path(preferred[0].path).is_file()
-    assert built == []
+    assert built == [newest.name]
     assert [str(candidate.version) for candidate in preferred] == ["3.0", "1.0"]
 
 

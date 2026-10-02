@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import os
 
-from kpip.build.build_backend import prepare_project_metadata
 from kpip.core.errors import BuildError
 from kpip.core.versions import ZERO_VERSION, Version
 from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
@@ -126,6 +125,8 @@ class InstallationCandidate(CandidateRecord):
             )
 
         try:
+            from kpip.build.build_backend import prepare_project_metadata
+
             metadata = prepare_project_metadata(source_dir)
 
             version = Version(metadata.version)
@@ -218,6 +219,8 @@ class InstallationCandidate(CandidateRecord):
 
         try:
             local = materialize_vcs(link.url, emit_resolution=False)
+            from kpip.build.build_backend import prepare_project_metadata
+
             metadata = prepare_project_metadata(local)
             version = Version(metadata.version)
 

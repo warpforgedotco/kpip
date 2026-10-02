@@ -5,7 +5,6 @@ import logging
 import os.path
 import re
 import urllib.parse
-import urllib.request
 
 from kpip.core import run_options
 from kpip.core.errors import InstallationError
@@ -616,6 +615,9 @@ class Git(VersionControl):
         scheme, netloc, path, query, fragment = urlsplit(url)
 
         if scheme.endswith("file"):
+            # Only file URLs need it, and it brings http.client and email.
+            import urllib.request
+
             initial_slashes = path[: -len(path.lstrip("/"))]
 
             newpath = initial_slashes + urllib.request.url2pathname(path).replace(

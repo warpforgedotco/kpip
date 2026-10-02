@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from kpip.build import build as build_module
 from kpip.core.packaging import parse_requirement
 from kpip.core.versions import Version
 from kpip.index import candidate_materialization, candidates, vcs
@@ -86,7 +87,9 @@ def _fake_builds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             wheel.writestr("wheel_demo-1.0.dist-info/RECORD", "")
         return path
 
-    monkeypatch.setattr(candidate_materialization, "build_wheel_from_source", build)
+    # candidate_materialization imports it when it builds, so the patch goes
+    # where it is defined.
+    monkeypatch.setattr(build_module, "build_wheel_from_source", build)
     return builds
 
 

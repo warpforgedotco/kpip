@@ -9,7 +9,6 @@ import os
 import shutil
 import sys
 
-from kpip.build.build_backend import BackendSpec, prepare_project_metadata
 from kpip.build.metadata import InstalledMetadataDistribution, MetadataDistribution
 from kpip.core.direct_url import ArchiveInfo, DirectUrl, DirInfo, VcsInfo
 from kpip.core.errors import BuildError, CommandError, InstallationError
@@ -242,6 +241,8 @@ def prepare_editable_source(
 
     if prepare_metadata:
         try:
+            from kpip.build.build_backend import prepare_project_metadata
+
             metadata = prepare_project_metadata(
                 source_path,
                 editable=True,
@@ -249,6 +250,8 @@ def prepare_editable_source(
             )
         except BuildError as exc:
             if "build_editable" in str(exc):
+                from kpip.build.build_backend import BackendSpec
+
                 backend_spec = BackendSpec.from_project(source_path)
                 if (
                     backend_spec is not None
@@ -265,6 +268,8 @@ def prepare_editable_source(
                 "Cannot import 'setuptools.build_meta'" in str(exc)
                 or "pyproject.toml" in project_files
             ):
+                from kpip.build.build_backend import prepare_project_metadata
+
                 metadata = prepare_project_metadata(
                     source_path,
                     editable=True,

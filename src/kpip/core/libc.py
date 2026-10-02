@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING
 import os
 import re
 import struct
-import subprocess
 import sys
 
 try:
@@ -274,6 +273,9 @@ def _musl_version() -> tuple[int, int] | None:
     loader = _interpreter_elf_interpreter()
     if loader is None or "musl" not in loader:
         return None
+
+    # Only a musl loader is asked: glibc never needs subprocess here.
+    import subprocess
 
     try:
         completed = subprocess.run(  # noqa: S603

@@ -7,8 +7,6 @@ import os
 import shutil
 import tempfile
 
-from kpip.build.build import unpack_source
-from kpip.build.build_backend import prepare_project_metadata
 from kpip.cli.config import SourceConfig, load_source_config, resolve_sources
 from kpip.cli.dependency_groups import group_items, parse_dependency_groups
 from kpip.cli.lock_format import (
@@ -634,6 +632,8 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             continue
 
         if os.path.isdir(local_directory):
+            from kpip.build.build_backend import prepare_project_metadata
+
             metadata = prepare_project_metadata(
                 local_directory,
                 build_isolation=False,
@@ -663,6 +663,8 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             source = artifact_locator.ensure_local(item.link.url)
 
             if os.path.isdir(source):
+                from kpip.build.build_backend import prepare_project_metadata
+
                 metadata = prepare_project_metadata(source, build_isolation=False)
 
                 directory_packages.append(
@@ -676,7 +678,12 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
                 shutil.copyfile(source, archive)
 
+                # The build machinery is imported only once there is a source to build.
+                from kpip.build.build import unpack_source
+
                 project = unpack_source(archive, os.path.join(directory, "project"))
+
+                from kpip.build.build_backend import prepare_project_metadata
 
                 metadata = prepare_project_metadata(project, build_isolation=False)
 
@@ -713,6 +720,8 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             continue
 
         editable_path = os.path.realpath(value)
+
+        from kpip.build.build_backend import prepare_project_metadata
 
         metadata = prepare_project_metadata(editable_path)
 
@@ -985,8 +994,14 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
                     # learn the project name the way it would have.
                     package_name = candidate.name
 
+                    from kpip.build.build import unpack_source
+
                     with tempfile.TemporaryDirectory(prefix="kpip-lock-") as temp_dir:
                         try:
+                            from kpip.build.build_backend import (
+                                prepare_project_metadata,
+                            )
+
                             project = prepare_project_metadata(
                                 unpack_source(archive_path, temp_dir),
                                 build_isolation=False,

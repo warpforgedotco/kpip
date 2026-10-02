@@ -5,7 +5,6 @@ import os
 import string
 import sys
 import urllib.parse
-from urllib import request
 
 WINDOWS = sys.platform == "win32"
 
@@ -14,6 +13,10 @@ def path_to_url(path: str) -> str:
     path = normalize_windows_path(path)
     path = os.path.abspath(path)
     if WINDOWS:
+        # Only Windows paths need it; importing urllib.request brings
+        # http.client and email with it.
+        from urllib import request
+
         path = request.pathname2url(path)
     else:
         path = urllib.parse.quote(path, safe="/:")
@@ -37,6 +40,8 @@ def url_to_path(url: str) -> str:
         )
 
     if WINDOWS:
+        from urllib import request
+
         path = request.url2pathname(netloc + path)
     else:
         path = urllib.parse.unquote(netloc + path)

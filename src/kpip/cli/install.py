@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 import logging
 import os
 
-from kpip.build.build import build_editable_from_source
 from kpip.build.metadata import InstalledDistributionStore
 from kpip.build.query import (
     check_package_set,
@@ -820,6 +819,9 @@ def install_editables(
             editable, src_dir=execution.options.src_dir
         )
 
+        # The build machinery is imported only once there is a source to build.
+        from kpip.build.build import build_editable_from_source
+
         built = build_editable_from_source(
             source_path,
             config_settings=execution.bundle.editable_config_settings.get(editable),
@@ -1103,6 +1105,8 @@ def run_install(args: list[str]) -> int:
                 or metadata.optional_dependencies
             ):
                 continue
+
+            from kpip.build.build import build_editable_from_source
 
             built = build_editable_from_source(
                 source_path,

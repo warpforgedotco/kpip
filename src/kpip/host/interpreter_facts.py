@@ -16,10 +16,7 @@ import hashlib
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Iterator
 
@@ -245,6 +242,10 @@ def probe(executable: str) -> Interpreter:
 
 
 def _run_probe(executable: str) -> dict:
+    # subprocess, and locale behind it, only once a probe has to run: a
+    # command that never asks the target interpreter does not pay for it.
+    import subprocess
+
     try:
         result = subprocess.run(
             [executable, "-"],
@@ -423,6 +424,9 @@ def _store_facts(
         ],
         "facts": facts,
     }
+    # Only when the facts change: most runs read them and never write.
+    import tempfile
+
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
@@ -684,6 +688,8 @@ def _find_target(python: str | None, *, installing: bool) -> Interpreter:
                 raise EnvironmentWithoutPython(where) from exc
             # Nothing is installed: resolving needs no environment.
             continue
+    import shutil
+
     tried = []
     candidates = [shutil.which(name) for name in ("python3", "python")]
     if system_requested():

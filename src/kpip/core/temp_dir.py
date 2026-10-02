@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os.path
 import stat
-import tempfile
 import traceback
 from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, TypeVar
@@ -13,6 +12,7 @@ from kpip.core import run_options
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    import tempfile
     from collections.abc import Callable, Generator
     from typing import Any
 
@@ -31,6 +31,9 @@ def build_directory(prefix: str) -> tempfile.TemporaryDirectory[str]:
     ``--no-clean`` keeps it, as pip does, for looking at what a failed build
     left behind.
     """
+    # tempfile, and shutil behind it, only for a command that makes one.
+    import tempfile
+
     return tempfile.TemporaryDirectory(
         prefix=prefix,
         delete=not run_options.current.no_clean,
@@ -130,6 +133,8 @@ class TempDirectory:
             self.cleanup()
 
     def create_internal(self, kind: str) -> str:
+        import tempfile
+
         path = os.path.realpath(tempfile.mkdtemp(prefix=f"kpip-{kind}-"))
         logger.debug("Created temporary directory: %s", path)
         return path

@@ -9,7 +9,6 @@ from kpip.core import run_options
 from kpip.core.appdirs import http_cache_path
 from kpip.network.cache import SafeFileCache
 from kpip.network.freshness import cached_response_is_fresh, has_cached_validator
-from kpip.network.session import DEFAULT_RETRIES, NetworkSession, Timeout
 
 if TYPE_CHECKING:
     from typing import Any
@@ -85,6 +84,9 @@ class DeferredNetworkSession:
         with self.lock:
             if self.session is not None:
                 return self.session
+
+            # Only here: importing it is what this class defers.
+            from kpip.network.session import DEFAULT_RETRIES, NetworkSession, Timeout
 
             # What the session was not told itself, the command's general
             # options decide.

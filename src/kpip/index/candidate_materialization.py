@@ -15,8 +15,6 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import chain, islice
 from threading import RLock
 
-from kpip.build.build import build_wheel_from_source, unpack_source_internal
-from kpip.build.build_backend import prepare_project_metadata
 from kpip.core import run_options
 from kpip.core.appdirs import archive_entry_root
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
@@ -1557,6 +1555,9 @@ class CandidateMaterializer:
                     try:
                         if candidate.link.kind is ArtifactKind.SDIST:
                             prepared_temporary = build_directory("kpip-metadata-")
+                            # The build machinery is imported only once there is a source to build.
+                            from kpip.build.build import unpack_source_internal
+
                             path = unpack_source_internal(
                                 path,
                                 prepared_temporary.name,
@@ -1586,6 +1587,10 @@ class CandidateMaterializer:
                                 )
 
                         try:
+                            from kpip.build.build_backend import (
+                                prepare_project_metadata,
+                            )
+
                             project = prepare_project_metadata(
                                 path,
                                 build_constraints=self.build_constraints,
@@ -2305,6 +2310,8 @@ class CandidateMaterializer:
 
                     try:
                         try:
+                            from kpip.build.build import build_wheel_from_source
+
                             path = build_wheel_from_source(
                                 path,
                                 config_settings=config_settings,

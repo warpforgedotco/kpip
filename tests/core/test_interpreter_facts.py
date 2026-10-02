@@ -107,7 +107,7 @@ def test_a_compiled_kpip_with_no_python_to_install_for_says_so(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(interpreter_facts, "is_compiled", lambda: True)
-    monkeypatch.setattr(interpreter_facts.shutil, "which", lambda name: None)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
 
     with pytest.raises(CommandError, match="No Python interpreter to install for"):
         target_interpreter()
@@ -401,7 +401,7 @@ def test_a_probe_is_kept_across_runs_until_its_search_path_changes(
         runs.append(args)
         return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(interpreter_facts.subprocess, "run", counting)
+    monkeypatch.setattr(subprocess_module, "run", counting)
 
     probe(sys.executable)
     monkeypatch.setattr(interpreter_facts, "_interpreters", {})
@@ -472,7 +472,7 @@ def test_a_shims_answer_is_not_kept(
     runs: list[object] = []
     real_run = subprocess_module.run
     monkeypatch.setattr(
-        interpreter_facts.subprocess,
+        subprocess_module,
         "run",
         lambda *args, **kwargs: runs.append(args) or real_run(*args, **kwargs),
     )

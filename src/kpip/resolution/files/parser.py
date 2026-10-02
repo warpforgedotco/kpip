@@ -15,7 +15,7 @@ from kpip.core.errors import InstallationError
 from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.core.packaging import parse_requirement
 from kpip.index.prefetch import Prefetcher
-from kpip.network.session import trusted_host_key
+from kpip.network.origins import trusted_host_key
 from kpip.resolution.files.models import (
     ParsedRequirement,
     RequirementsFileParseError,
