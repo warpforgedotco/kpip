@@ -1299,7 +1299,15 @@ class CandidateProvider:
         *,
         allowed_versions: frozenset[Version] | None = None,
         primary_only: bool = False,
+        full_evaluation: bool = False,
     ) -> CandidateSelection:
+        """The candidates ``requirement`` accepts, and those it rejects and why.
+
+        ``full_evaluation`` evaluates every link rather than reading the
+        cached catalog, which drops the files whose Requires-Python leaves the
+        target out without recording them: a failed resolve's report needs
+        those to say why a release it lists was not chosen.
+        """
         accepted: list[CandidateRecord] = []
 
         rejected: list[RejectedCandidate] = []
@@ -1326,6 +1334,7 @@ class CandidateProvider:
             self.uploaded_prior_to,
             primary_only,
             allowed_version_key,
+            full_evaluation,
         )
 
         cached_selection = self.candidate_selection_cache.get(selection_key)
@@ -1345,10 +1354,13 @@ class CandidateProvider:
 
         exact_version = requirement.specifier.exact_version
 
-        catalog = self.package_catalog_cache.get(catalog_key)
+        catalog = (
+            None if full_evaluation else self.package_catalog_cache.get(catalog_key)
+        )
 
         if (
             catalog is None
+            and not full_evaluation
             and not requirement.is_unnamed_direct
             and not self.find_links
             and self.session is not None
@@ -1360,6 +1372,7 @@ class CandidateProvider:
 
         if (
             catalog is None
+            and not full_evaluation
             and not requirement.is_unnamed_direct
             and self.prefetcher is not None
             and self.prefetcher.pending(catalog_key)

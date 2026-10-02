@@ -366,7 +366,11 @@ def report_unsatisfied(requirement: str, parent: str | None, provider: Any) -> s
         return f"No matching distribution found for {requirement}"
 
     parsed = parse_requirement(requirement)
-    everything = provider.evaluate_links(parse_requirement(parsed.name))
+    # Every link, not the catalog: it drops the releases whose Requires-Python
+    # leaves the target out, and those are what this report has to name.
+    everything = provider.evaluate_links(
+        parse_requirement(parsed.name), full_evaluation=True
+    )
 
     versions = sorted({candidate.version for candidate in everything.accepted})
     yanked = yanked_versions(parsed.name, provider, versions)
@@ -420,7 +424,7 @@ def why_nothing_fits(requirement: Any, provider: Any, versions: list[Any]) -> li
     """``hint:`` lines on why the releases ``requirement`` matches were
     turned down, or on what does exist when none matches."""
     specifier = SpecifierSet(requirement.specifier.text)
-    selection = provider.evaluate_links(requirement)
+    selection = provider.evaluate_links(requirement, full_evaluation=True)
     rejected = [
         rejected
         for rejected in selection.rejected
