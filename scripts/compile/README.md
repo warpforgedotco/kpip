@@ -96,6 +96,7 @@ The patches live in a subdirectory so that `vendoring sync`, which applies
 | `0002-onefile-atomic-cached-unpacking.patch` | Cached mode writes each file under a temporary name and renames it into place, so concurrent first runs no longer truncate files that other processes are executing (`SIGBUS`). |
 | `0003-lazy-inspect-typing.patch` | Standalone programs no longer import `inspect` and `typing` at startup just to patch them. `inspect` and `types` are patched once something first imports them, and the typing types are taken from the built-in `_typing`. |
 | `0004-getattr-default.patch` | `getattr(obj, name, default)` gives the default only for `AttributeError`, as CPython does. Nuitka returned it for any error and left that error set, so a compiled kpip took an sdist that failed to build as having no dependencies and then crashed with `SystemError`. Upstream issue [Nuitka#4061](https://github.com/Nuitka/Nuitka/issues/4061). |
+| `0021-onefile-exec-cached-child.patch` | In cached mode the Linux and macOS bootstrap execs the program in its place instead of forking, running it and waiting: nothing is left to clean up after it, so the fork, the second process and the wait (about 4 ms a run) bought nothing. The shell gets the program's own exit status, including death by a signal, which `WEXITSTATUS` misreported. Temporary-directory mode and Windows are unchanged. |
 
 `_vendor/nuitka` is a git checkout whose `upstream` branch is the fetched
 `develop` commit, so `git diff` inside it shows exactly what the patches

@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Fri, 2 Oct 2026 17:13:24 -0500
+Subject: [PATCH] Onefile: exec the child in cached mode, rather than fork and
+ wait
+
+With a cached payload, nothing is left to clean up after the child, so the
+bootstrap has nothing to wait for. On Linux and macOS it forked, ran the
+child and waited, costing every run a second process and its fork and
+wait, about 4 ms, and the shell saw WEXITSTATUS of whatever the child left,
+read even for a child killed by a signal. The bootstrap now execs the child
+in its place: one process, the child's own exit status, and signals that
+reach it directly rather than forwarded. NUITKA_ONEFILE_PARENT is unset, so
+the child does not start a thread to watch a parent it no longer has.
+
+Temporary-directory mode keeps the fork, to remove the unpacked files once
+the child is done; Windows is unchanged.
+---
+ nuitka/build/static_src/OnefileBootstrap.c | 29 ++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
+index 379b311..fa49ebd 100644
+--- a/nuitka/build/static_src/OnefileBootstrap.c
++++ b/nuitka/build/static_src/OnefileBootstrap.c
+@@ -1837,6 +1837,34 @@ int main(int argc, char **argv) {
+     }
+ 
+     cleanupChildProcess(false);
++#else
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++    // A cached payload stays where it is: nothing is left to clean up once the
++    // child is done, so there is nothing to wait for either. The child replaces
++    // this process, which saves a fork and a process, and leaves the shell the
++    // child's own exit status, including death by a signal. There is no parent
++    // for the child to watch either.
++    unsetEnvironmentVariable("NUITKA_ONEFILE_PARENT");
++
++    // Make sure, we use the absolute program path for argv[0]
++    argv[0] = (char *)getBinaryPath();
++
++    // On WSL, the AVs can cause this, not sure about Linux in general, but
++    // we can wait for a bit.
++    int retry_count = 0;
++    while (retry_count < 10) {
++        execv(fork_binary, argv);
++
++        if (errno == ETXTBSY) {
++            usleep(100000); // 100ms delay
++            retry_count++;
++        } else {
++            break;
++        }
++    }
++
++    fatalErrorChild("Error, couldn't launch child (exec)", errno);
++    int exit_code = 2;
+ #else
+     pid_t pid = fork();
+     int exit_code;
+@@ -1885,6 +1913,7 @@ int main(int argc, char **argv) {
+ 
+         cleanupChildProcess(false);
+     }
++#endif
+ 
+ #endif
+ 
