@@ -53,7 +53,10 @@ from kpip.install.wheel_archive import (
 )
 from kpip.install.wheel_archive_cache import (
     INSTALL_WORKERS,
+    BytecodeRows,
     CachedWheelArchive,
+    bytecode_rows,
+    bytecode_tree,
     remember_tree_listings,
 )
 from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
@@ -371,20 +374,31 @@ def install_wheel_internal(
             )
             # A package directory nothing else installs into, new to the
             # target, is cloned whole, its members never staged one by one.
+            # Compiled, its bytecode comes whole from the cache's too, for a
+            # directory every module of which has some there.
             lazy_rows: dict[str, list[tuple[str, str, str, int]]] = {}
+            pyc_rows: BytecodeRows | None = None
+            pyc_tree: str | None = None
+            layout = getattr(candidate, "wheel_layout", None)
             if (
                 tree_archive is not None
+                and isinstance(layout, CachedWheelArchive)
                 and exclusive_tops
                 and not direct
-                and not pycompile
                 and existing is None
                 and os.name == "posix"
             ):
-                for top in exclusive_tops:
-                    if not top.endswith((".data", ".dist-info")) and os.path.isdir(
-                        os.path.join(tree_archive.tree, top)
-                    ):
-                        if not os.path.lexists(os.path.join(library_root, top)):
+                if pycompile:
+                    pyc_rows = bytecode_rows(layout)
+                    pyc_tree = bytecode_tree(layout)
+                if not pycompile or (pyc_rows is not None and pyc_tree is not None):
+                    for top in exclusive_tops:
+                        if (
+                            not top.endswith((".data", ".dist-info"))
+                            and (pyc_rows is None or top in pyc_rows)
+                            and os.path.isdir(os.path.join(tree_archive.tree, top))
+                            and not os.path.lexists(os.path.join(library_root, top))
+                        ):
                             lazy_rows[top] = []
             members = (
                 tree_archive.entries if tree_archive is not None else archive.infolist()
@@ -728,6 +742,11 @@ def install_wheel_internal(
                 (prefix + filename[cut:], digest, size)
                 for filename, digest, size, _ in rows
             )
+            if pyc_rows is not None:
+                record_rows.extend(
+                    (prefix + filename[cut:], digest, size)
+                    for filename, digest, size in pyc_rows[top]
+                )
         record_rows.sort()
         record_contents = record_text_of(record_rows).encode("utf-8")
         if direct:
@@ -762,12 +781,21 @@ def install_wheel_internal(
                 ) and _configured_link_mode() == "hardlink":
                     remember_tree_listings(layout)
                 for top, rows in lazy_rows.items():
+                    compiled = pyc_rows[top] if pyc_rows is not None else ()
                     active_transaction.add_lazy_tree(
                         os.path.join(layout.tree, top),
                         os.path.join(library_root, top),
                         functools.partial(
-                            _lazy_tree_files, layout.tree, rows, member_paths
+                            _lazy_tree_files,
+                            layout.tree,
+                            rows,
+                            pyc_tree,
+                            compiled,
+                            member_paths,
                         ),
+                        os.path.join(pyc_tree, top)
+                        if pyc_tree is not None and compiled
+                        else None,
                     )
                 for top, members in tree_members.items():
                     destination_root = os.path.join(library_root, top)
@@ -809,16 +837,26 @@ def install_wheel_internal(
 def _lazy_tree_files(
     tree: str,
     rows: list[tuple[str, str, str, int]],
+    pyc_tree: str | None,
+    compiled: tuple[tuple[str, str, str], ...],
     member_paths: MemberPaths,
 ) -> Iterator[tuple[str, str, int | None]]:
     """The clones a lazy tree's commit stages when it cannot clone it whole:
-    each manifest row's source, resolved destination and mode."""
+    each manifest row's source, resolved destination and mode, then each of
+    its cached bytecode files'."""
     for filename, _, _, entry_mode in rows:
         yield (
             os.path.join(tree, *filename.split("/")),
             member_paths.resolve(filename)[2],
             installed_mode(mode_from_external_attr(entry_mode << 16)),
         )
+    if pyc_tree is not None:
+        for filename, _, _ in compiled:
+            yield (
+                os.path.join(pyc_tree, *filename.split("/")),
+                member_paths.resolve(filename)[2],
+                None,
+            )
 
 
 def exclusive_tops_of(

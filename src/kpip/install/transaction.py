@@ -91,9 +91,17 @@ class StagedFile:
 class StagedTree:
     """A directory of an immutable cache whose files are staged one by one,
     which the commit may clone whole instead; or, lazy, whose files are
-    staged only if the commit cannot, by ``expand``."""
+    staged only if the commit cannot, by ``expand``. An ``overlay`` is a
+    second tree cloned into the first: its bytecode."""
 
-    __slots__ = ("destination_text", "expand", "members", "owner", "source_text")
+    __slots__ = (
+        "destination_text",
+        "expand",
+        "members",
+        "overlay",
+        "owner",
+        "source_text",
+    )
 
     def __init__(
         self,
@@ -102,12 +110,14 @@ class StagedTree:
         members: set[str],
         owner: str | None,
         expand: Callable[[], Iterable[tuple[str, str, int | None]]] | None = None,
+        overlay: str | None = None,
     ) -> None:
         self.source_text = source_text
         self.destination_text = destination_text
         self.members = members
         self.owner = owner
         self.expand = expand
+        self.overlay = overlay
 
 
 class InstallTransaction:
@@ -208,11 +218,15 @@ class InstallTransaction:
         source: str,
         destination: str,
         expand: Callable[[], Iterable[tuple[str, str, int | None]]],
+        overlay: str | None = None,
     ) -> None:
         """Stage ``source``'s tree onto ``destination`` without staging its
-        files: the commit clones it whole, or stages the clones ``expand``
-        gives, of each file's source, destination and mode, when it cannot."""
-        self.trees.append(StagedTree(source, destination, set(), self.owner, expand))
+        files: the commit clones it whole, and ``overlay``'s into it, or
+        stages the clones ``expand`` gives, of each file's source,
+        destination and mode, when it cannot."""
+        self.trees.append(
+            StagedTree(source, destination, set(), self.owner, expand, overlay)
+        )
 
     def _expand(self, tree: StagedTree) -> None:
         assert tree.expand is not None
@@ -527,17 +541,20 @@ def _clone_trees(trees: Collection[StagedTree]) -> None:
     linking an install's trees in turn left the other cores idle."""
     if len(trees) < 2:
         for tree in trees:
-            clone_path(tree.source_text, tree.destination_text)
+            _clone_tree(tree)
         return
     with ThreadPoolExecutor(
         max_workers=min(_TREE_WORKERS, len(trees)), thread_name_prefix="kpip-tree"
     ) as pool:
-        futures = [
-            pool.submit(clone_path, tree.source_text, tree.destination_text)
-            for tree in trees
-        ]
+        futures = [pool.submit(_clone_tree, tree) for tree in trees]
     for future in futures:
         future.result()
+
+
+def _clone_tree(tree: StagedTree) -> None:
+    clone_path(tree.source_text, tree.destination_text)
+    if tree.overlay is not None:
+        clone_path(tree.overlay, tree.destination_text)
 
 
 def _chmod_clone(path: str, mode: int) -> None:

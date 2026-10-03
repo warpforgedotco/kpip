@@ -44,6 +44,7 @@ from kpip.install.wheel_archive import (
     compiled_parts,
     copy_member_with_metadata,
     mapped_parts,
+    record_metadata_internal,
     validate_member_parts,
     zip_mode,
 )
@@ -772,7 +773,7 @@ def _read_listings(path: str) -> dict[str, Listing] | None:
     return value
 
 
-def _write_listings(path: str, listings: dict[str, Listing]) -> None:
+def _write_listings(path: str, listings: dict[str, Listing] | BytecodeRows) -> None:
     """Publish ``listings`` whole, or not at all: a reader sees one or none."""
     try:
         descriptor, temporary = tempfile.mkstemp(
@@ -794,6 +795,95 @@ def _write_listings(path: str, listings: dict[str, Listing]) -> None:
 
         except OSError:
             pass
+
+
+BytecodeRows = dict[str, tuple[tuple[str, str, str], ...]]
+
+
+def bytecode_rows(archive: CachedWheelArchive) -> BytecodeRows | None:
+    """For each package directory of the entry whose modules all have
+    bytecode in :func:`bytecode_tree`, its ``.pyc`` files' RECORD rows: path
+    in the wheel, hash and size. ``None`` without a bytecode tree.
+
+    Left out is a directory a module of which has none, one a ``.data``
+    member installs into, and one that ships ``__pycache__`` itself: their
+    bytecode is placed file by file. Read and hashed once, the first time an
+    install asks, and stored beside the tree.
+    """
+    tree = bytecode_tree(archive)
+
+    if tree is None:
+        return None
+
+    path = f"{tree}.rows"
+
+    try:
+        with open(path, "rb") as file:
+            rows = marshal.loads(file.read())
+
+    except EOFError, OSError, TypeError, ValueError:
+        rows = None
+
+    if not isinstance(rows, dict) or not all(
+        isinstance(top, str) and isinstance(value, tuple) for top, value in rows.items()
+    ):
+        rows = _bytecode_rows(archive, tree)
+
+        _write_listings(path, rows)
+
+    return rows
+
+
+def _bytecode_rows(archive: CachedWheelArchive, tree: str) -> BytecodeRows:
+    rows: dict[str, list[tuple[str, str, str]]] = {}
+
+    incomplete: set[str] = set()
+
+    for entry in archive.entries:
+        top, separator, _ = entry[0].partition("/")
+
+        if not separator or top.endswith(".dist-info"):
+            continue
+
+        try:
+            mapped = mapped_parts(entry[0])
+
+        except InstallationError:
+            continue
+
+        if top.endswith(".data"):
+            incomplete.add(mapped[0])
+
+            continue
+
+        found = rows.setdefault(top, [])
+
+        if "__pycache__" in mapped:
+            incomplete.add(top)
+
+            continue
+
+        compiled = compiled_parts(mapped)
+
+        if compiled is None:
+            continue
+
+        try:
+            with open(os.path.join(tree, *compiled), "rb") as file:
+                body = file.read()
+
+        except OSError:
+            incomplete.add(top)
+
+            continue
+
+        found.append(("/".join(compiled), *record_metadata_internal(body)))
+
+    return {
+        top: tuple(sorted(found))
+        for top, found in rows.items()
+        if top not in incomplete
+    }
 
 
 def bytecode_tree(archive: CachedWheelArchive) -> str | None:
