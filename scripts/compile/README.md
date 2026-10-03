@@ -31,6 +31,18 @@ unpacks into a fresh temporary directory on every run and removes it on
 exit. `--mode=standalone` builds a directory instead of a single file, with the
 binary at `build/kpip.dist/kpip.bin` (`kpip.exe` on Windows).
 
+## C modules
+
+`kpip_compile/native_plugin.py` is a Nuitka user plugin that compiles kpip's
+C sources into the binary as built-in modules, with Nuitka's own compiler,
+LTO and profile, on every platform. Each source registers itself before the
+interpreter starts, so no extension file is shipped or loaded, and kpip
+falls back to its Python twin wherever the module is absent. Today there is
+one: `src/kpip/host/_accel/_kpip_link_tree.c`, the loops that hard link a
+cached wheel tree into place with the GIL released, beside
+`_kpip_link_tree.py`. kpip's tests build it as an extension with the test
+interpreter (`cc`, or MSVC's `cl` on Windows) and run both.
+
 ## Profile-guided optimization
 
 ```console

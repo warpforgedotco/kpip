@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from kpip_compile.build import (
+    NATIVE_PLUGIN,
     build_id,
     KPIP_PACKAGE,
     BuildOptions,
@@ -156,3 +157,18 @@ def test_the_build_id_changes_with_any_module_and_the_interpreter(
     assert build_id("cpython-315t", package) != first
     module.write_text("A = 2\n")
     assert build_id("cpython-315", package) != first
+    second = build_id("cpython-315", package)
+    (package / "core" / "_native.c").write_text("int x;\n")
+    assert build_id("cpython-315", package) != second
+
+
+def test_kpips_c_modules_are_compiled_in_by_the_plugin() -> None:
+    command = nuitka_command(BuildOptions(platform="win32"), "1")
+
+    assert f"--user-plugin={NATIVE_PLUGIN}" in command
+    assert "--noinclude-data-files=kpip/**/*.c" in command
+    text = NATIVE_PLUGIN.read_text(encoding="utf-8")
+    for source in KPIP_PACKAGE.rglob("*.c"):
+        # Every C source is handed to Nuitka, and defines what builds it in.
+        assert f'"{source.name}"' in text
+        assert "#ifdef KPIP_LINK_TREE_BUILTIN" in source.read_text(encoding="utf-8")

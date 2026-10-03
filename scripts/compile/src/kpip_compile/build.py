@@ -14,6 +14,7 @@ from kpip_compile.vendor import PACKAGE_ROOT, REPO_ROOT
 
 KPIP_PACKAGE = REPO_ROOT / "src" / "kpip"
 DEFAULT_OUTPUT_DIR = PACKAGE_ROOT / "build"
+NATIVE_PLUGIN = Path(__file__).with_name("native_plugin.py")
 
 
 def onefile_tempdir_spec(interpreter: str) -> str:
@@ -68,7 +69,9 @@ def build_id(interpreter: str, package_dir: Path = KPIP_PACKAGE) -> str:
     build share them, and any change to a module retires them.
     """
     digest = hashlib.sha256(interpreter.encode())
-    for path in sorted(package_dir.rglob("*.py")):
+    # The C sources too, which native_plugin compiles into the binary.
+    sources = [*package_dir.rglob("*.py"), *package_dir.rglob("*.c")]
+    for path in sorted(sources):
         if "__pycache__" in path.parts:
             continue
         digest.update(b"\0" + path.relative_to(package_dir).as_posix().encode() + b"\0")
@@ -112,6 +115,10 @@ def nuitka_command(
         # Nuitka's automatic choice turns LTO off past 250 compiled modules,
         # even for PGO builds, and kpip is close to that.
         "--lto=yes",
+        # kpip's C modules, compiled in as built-ins (native_plugin), and so
+        # not shipped as package data.
+        f"--user-plugin={NATIVE_PLUGIN}",
+        "--noinclude-data-files=kpip/**/*.c",
     ]
     if subinterpreter_modules:
         # Bytecode for the subinterpreters kpip unpacks wheels on, which

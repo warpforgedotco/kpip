@@ -38,6 +38,12 @@ except ImportError:
     # Windows.
     fcntl = None  # ty: ignore[invalid-assignment]
 
+try:
+    # Compiled into the binary as a built-in; see _accel/_kpip_link_tree.c.
+    import _kpip_link_tree  # ty: ignore[unresolved-import]
+except ImportError:
+    from kpip.host._accel import _kpip_link_tree
+
 _FICLONE = 0x40049409
 
 _clonefile: CloneFile | None = None
@@ -356,55 +362,8 @@ def _hardlink(
     return True
 
 
-class _PythonLinkTree:
-    """The loops that make a new tree's directories and link its files.
-
-    ``os.link``, ``os.mkdir`` and ``os.chmod`` release the GIL around their
-    syscall, so these loops link in parallel on the threads that run them.
-    """
-
-    @staticmethod
-    def make_directories(root: bytes, names: list, modes: list) -> tuple:
-        for index, name in enumerate(names):
-            try:
-                os.mkdir(os.path.join(root, name), modes[index])
-
-            except OSError as exc:
-                return (exc.errno or errno.EIO, index)
-
-        return (0, len(names))
-
-    @staticmethod
-    def change_modes(root: bytes, names: list, modes: list) -> tuple:
-        for index, name in enumerate(names):
-            try:
-                os.chmod(os.path.join(root, name), modes[index])
-
-            except OSError as exc:
-                return (exc.errno or errno.EIO, index)
-
-        return (0, len(names))
-
-    @staticmethod
-    def link_files(
-        source_root: bytes, destination_root: bytes, names: list, start: int
-    ) -> tuple:
-        join = os.path.join
-
-        for index in range(start, len(names)):
-            name = names[index]
-
-            try:
-                os.link(join(source_root, name), join(destination_root, name))
-
-            except OSError as exc:
-                return (exc.errno or errno.EIO, index)
-
-        return (0, len(names))
-
-
-_link_tree: Any = _PythonLinkTree
-"""The link loops, :class:`_PythonLinkTree`.
+_link_tree: Any = _kpip_link_tree
+"""The link loops: the built-in ``_kpip_link_tree``, or its Python twin.
 
 False keeps every tree on the per-file walk.
 """
@@ -414,12 +373,11 @@ def _links_whole_trees(devices: Devices) -> bool:
     """Whether a new directory's tree can be hard linked in one pass.
 
     Only where the per-file walk would hard link every file anyway: hard link
-    mode on POSIX, a device pair that takes them, and -- on Linux, where the
-    walk tries a reflink first -- a pair it already knows it will not reflink.
+    mode, a device pair that takes them, and -- on Linux, where the walk
+    tries a reflink first -- a pair it already knows it will not reflink.
     """
     return (
-        os.name == "posix"
-        and _configured_link_mode() == "hardlink"
+        _configured_link_mode() == "hardlink"
         and devices not in _hardlink_unsupported
         and (
             not sys.platform.startswith("linux")
@@ -467,7 +425,8 @@ def _link_new_directory(
     """Hard link ``source``'s tree into ``destination``, just created.
 
     The tree is listed first, then its directories made and its files linked
-    in loops over the lists. Installs clone one wheel tree per
+    in loops over the lists -- in C, with the GIL released, in the binary,
+    which has ``_kpip_link_tree`` built in. Installs clone one wheel tree per
     thread, and one tree can hold most of an install's files -- 5,600 of
     jupyter's 12,000 -- so a large tree's files are split into slices linked
     on threads of their own, rather than leaving one thread to link them all

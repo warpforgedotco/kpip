@@ -11,14 +11,21 @@ everywhere.
 from __future__ import annotations
 
 import errno
+import importlib.util
 import os
+import shlex
+import shutil
 import stat
+import subprocess
 import sys
+import sysconfig
 import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 from kpip.host import clone
+from kpip.host._accel import _kpip_link_tree as python_link_tree
 
 FILES = ("pkg/__init__.py", "pkg/sub/mod.py", "pkg/tool")
 
@@ -360,11 +367,86 @@ def link_tree_through(monkeypatch: pytest.MonkeyPatch, module: object) -> None:
     monkeypatch.setattr(clone, "_link_tree", module)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX only")
+LINK_TREE_SOURCE = Path(python_link_tree.__file__).with_suffix(".c")
+
+
+@pytest.fixture(scope="session")
+def built_link_tree(tmp_path_factory: pytest.TempPathFactory) -> types.ModuleType:
+    """``_kpip_link_tree.c`` built against the test interpreter.
+
+    The binary has it compiled in as a built-in; built here as an extension,
+    the same loops run under the suite. Without a compiler the C cases skip,
+    except in CI, which must run them: MSVC's ``cl`` on Windows, ``cc``
+    elsewhere.
+    """
+    directory = tmp_path_factory.mktemp("link-tree")
+    output = directory / ("_kpip_link_tree" + sysconfig.get_config_var("EXT_SUFFIX"))
+    include = sysconfig.get_path("include")
+    if os.name == "nt":
+        compiler = shutil.which("cl")
+        command = [
+            "/nologo",
+            "/O2",
+            "/W3",
+            "/WX",
+            "/LD",
+            f"/I{include}",
+            str(LINK_TREE_SOURCE),
+            f"/Fo{directory}\\",
+            f"/Fe{output}",
+            "/link",
+            f"/LIBPATH:{Path(sys.base_prefix) / 'libs'}",
+        ]
+    else:
+        configured = shlex.split(sysconfig.get_config_var("CC") or "cc")
+        compiler = shutil.which(configured[0]) or shutil.which("cc")
+        command = [
+            "-O2",
+            "-Wall",
+            "-Werror",
+            "-fPIC",
+            "-I",
+            include,
+            str(LINK_TREE_SOURCE),
+            "-o",
+            str(output),
+            *(
+                ["-bundle", "-undefined", "dynamic_lookup"]
+                if sys.platform == "darwin"
+                else ["-shared"]
+            ),
+        ]
+    if compiler is None:
+        if os.environ.get("CI"):
+            pytest.fail("no C compiler to build _kpip_link_tree.c with")
+        pytest.skip("no C compiler")
+    built = subprocess.run(
+        [compiler, *command], capture_output=True, text=True, check=False
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+    spec = importlib.util.spec_from_file_location("_kpip_link_tree", output)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(params=["python", "c"])
+def link_loops(request: pytest.FixtureRequest) -> object:
+    """Each implementation of the loops: Python, and the C built in to the binary."""
+    if request.param == "python":
+        return python_link_tree
+    return request.getfixturevalue("built_link_tree")
+
+
 def test_the_tree_loops_link_the_same_tree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    whole_trees: None,
+    link_loops: object,
 ) -> None:
-    link_tree_through(monkeypatch, clone._PythonLinkTree)
+    link_tree_through(monkeypatch, link_loops)
     source = make_tree(tmp_path)
     (source / "pkg" / "sub").chmod(0o750)
     (source / "pkg" / "empty").mkdir()
@@ -374,17 +456,21 @@ def test_the_tree_loops_link_the_same_tree(
 
     for relative in FILES:
         assert same_inode(source, destination, relative)
-    assert (destination / "pkg" / "tool").stat().st_mode & 0o777 == 0o755
-    assert stat.S_IMODE((destination / "pkg" / "sub").stat().st_mode) == 0o750
     assert (destination / "pkg" / "empty").is_dir()
-    assert os.readlink(destination / "pkg" / "sub" / "alias") == "mod.py"
+    if os.name != "nt":
+        assert (destination / "pkg" / "tool").stat().st_mode & 0o777 == 0o755
+        assert stat.S_IMODE((destination / "pkg" / "sub").stat().st_mode) == 0o750
+        assert os.readlink(destination / "pkg" / "sub" / "alias") == "mod.py"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
 def test_the_tree_loops_keep_a_read_only_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    whole_trees: None,
+    link_loops: object,
 ) -> None:
-    link_tree_through(monkeypatch, clone._PythonLinkTree)
+    link_tree_through(monkeypatch, link_loops)
     source = tmp_path / "source"
     (source / "locked" / "inner").mkdir(parents=True)
     (source / "locked" / "inner" / "module.py").write_text("x = 1\n")
@@ -480,11 +566,13 @@ def test_a_link_count_limit_copies_one_file_and_resumes_the_loop(
         assert same_inode(source, destination, relative) == (relative != copied)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX only")
 def test_a_large_tree_is_linked_in_slices(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    whole_trees: None,
+    link_loops: object,
 ) -> None:
-    link_tree_through(monkeypatch, clone._PythonLinkTree)
+    link_tree_through(monkeypatch, link_loops)
     monkeypatch.setattr(clone, "_SPLIT_FILES", 2)
     monkeypatch.setattr(clone, "_SPLIT_WORKERS", 2)
     split: list[int] = []
@@ -503,10 +591,10 @@ def test_a_large_tree_is_linked_in_slices(
     assert sorted(split) == [1, 2]
     for relative in FILES:
         assert same_inode(source, destination, relative)
-    assert os.readlink(destination / "pkg" / "sub" / "alias") == "mod.py"
+    if os.name != "nt":
+        assert os.readlink(destination / "pkg" / "sub" / "alias") == "mod.py"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX only")
 def test_a_failed_slice_fails_the_clone_once_every_slice_is_done(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, whole_trees: None
 ) -> None:
@@ -522,7 +610,67 @@ def test_a_failed_slice_fails_the_clone_once_every_slice_is_done(
     assert not destination.exists()
 
 
-def test_the_whole_tree_route_is_posix_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(clone.os, "name", "nt")
+def test_windows_takes_the_whole_tree_route_in_hard_link_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(clone.sys, "platform", "win32")
 
+    assert clone._links_whole_trees((1, 1))
+    monkeypatch.setattr(clone, "_link_mode", "copy")
     assert not clone._links_whole_trees((1, 1))
+
+
+def test_the_loops_stop_at_the_first_failure_with_its_errno(
+    tmp_path: Path, link_loops: Any
+) -> None:
+    source, destination = tmp_path / "source", tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    for name in ("a", "b", "c"):
+        (source / name).write_text(name)
+    (destination / "b").write_text("racing writer")
+    names = [b"a", b"b", b"c"]
+
+    assert link_loops.link_files(
+        os.fsencode(source), os.fsencode(destination), names, 0
+    ) == (errno.EEXIST, 1)
+    assert link_loops.link_files(
+        os.fsencode(source), os.fsencode(destination), names, 2
+    ) == (0, 3)
+    assert link_loops.link_files(
+        os.fsencode(source), os.fsencode(destination), names, 3
+    ) == (0, 3)
+    assert same_inode(source, destination, "c")
+    if os.name != "nt":
+        # Windows reports a name past its limit as a missing path.
+        assert link_loops.link_files(
+            os.fsencode(source), os.fsencode(destination), [b"x" * 5000], 0
+        ) == (errno.ENAMETOOLONG, 0)
+
+    root = os.fsencode(destination)
+    nested = os.path.join(b"d", b"e")
+    assert link_loops.make_directories(root, [b"d", nested], [0o755, 0o700]) == (0, 2)
+    assert link_loops.make_directories(root, [b"f", b"d"], [0o755, 0o755]) == (
+        errno.EEXIST,
+        1,
+    )
+    assert link_loops.change_modes(root, [nested, b"missing"], [0o550, 0o550]) == (
+        errno.ENOENT,
+        1,
+    )
+    # Read-only, as each sees it: on Windows, the attribute os.chmod sets.
+    assert stat.S_IMODE((destination / "d" / "e").stat().st_mode) == (
+        0o555 if os.name == "nt" else 0o550
+    )
+    assert link_loops.change_modes(root, [nested], [0o755]) == (0, 1)
+
+
+def test_the_loops_refuse_names_the_os_module_refuses(
+    tmp_path: Path, link_loops: Any
+) -> None:
+    root = os.fsencode(tmp_path)
+
+    with pytest.raises(TypeError):
+        link_loops.make_directories(root, ["text"], [0o755])
+    with pytest.raises(ValueError):
+        link_loops.link_files(root, root, [b"nul\0name"], 0)
