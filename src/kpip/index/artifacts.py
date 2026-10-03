@@ -28,13 +28,28 @@ logger = logging.getLogger(__name__)
 DOWNLOAD_DIR: str | None = None
 
 
-def download_dir_internal() -> str:
+def download_dir_internal(beside: str | None = None) -> str:
+    """The process's directory of downloaded artifacts, made on first use:
+    in ``beside``'s directory when given, so the artifact cache's files can
+    be linked into it rather than copied, as they are across filesystems --
+    a tmpfs /tmp, often."""
     global DOWNLOAD_DIR
 
     if DOWNLOAD_DIR is None:
-        DOWNLOAD_DIR = tempfile.mkdtemp(prefix="kpip-index-downloads-")
+        directory = None
 
-        atexit.register(shutil.rmtree, DOWNLOAD_DIR, ignore_errors=True)
+        if beside is not None:
+            try:
+                os.makedirs(beside, exist_ok=True)
+                directory = tempfile.mkdtemp(prefix=".kpip-downloads-", dir=beside)
+            except OSError:
+                directory = None
+
+        DOWNLOAD_DIR = directory or tempfile.mkdtemp(prefix="kpip-index-downloads-")
+
+        from kpip.host.clone import remove_tree
+
+        atexit.register(remove_tree, DOWNLOAD_DIR)
 
     return DOWNLOAD_DIR
 
@@ -116,7 +131,9 @@ class ArtifactLocator:
         filename = self.filename(url_or_path)
 
         target = os.path.join(
-            download_dir_internal(),
+            download_dir_internal(
+                None if self.artifact_cache is None else self.artifact_cache.root
+            ),
             sha256_hexdigest(url_or_path.encode()),
             filename,
         )
