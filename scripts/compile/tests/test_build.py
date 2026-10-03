@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -155,9 +156,11 @@ def test_kpips_c_modules_are_compiled_in_by_the_plugin() -> None:
     assert "--noinclude-data-files=kpip/**/*.c" in command
     text = NATIVE_PLUGIN.read_text(encoding="utf-8")
     for source in KPIP_PACKAGE.rglob("*.c"):
-        # Every C source is handed to Nuitka, and defines what builds it in.
-        assert f'"{source.name}"' in text
-        assert "#ifdef KPIP_LINK_TREE_BUILTIN" in source.read_text(encoding="utf-8")
+        # Every C source is handed to Nuitka with the define that builds it
+        # in, and tests that define.
+        entry = re.search(rf'"{re.escape(source.name)}": \([^)]*?"(KPIP_\w+)"', text)
+        assert entry is not None, source.name
+        assert f"#ifdef {entry.group(1)}" in source.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("fast_compress", [False, True])
