@@ -570,3 +570,116 @@ def test_an_unshared_clone_takes_its_mode(
 
     assert stat_mode(source) == 0o644
     assert stat_mode(destination) == 0o755
+
+
+def _cache_tree(root: Path) -> Path:
+    """A cached package directory: pkg/__init__.py and pkg/sub/mod.py."""
+    tree = root / "cache" / "pkg"
+    (tree / "sub").mkdir(parents=True)
+    (tree / "__init__.py").write_text("init")
+    (tree / "sub" / "mod.py").write_text("mod")
+    return tree
+
+
+def _files(tree: Path, destination: Path) -> list[tuple[str, str, int | None]]:
+    return [
+        (str(tree / "__init__.py"), str(destination / "__init__.py"), None),
+        (str(tree / "sub" / "mod.py"), str(destination / "sub" / "mod.py"), None),
+    ]
+
+
+def _installed(destination: Path) -> dict[str, str]:
+    return {
+        os.path.relpath(os.path.join(directory, name), destination): open(
+            os.path.join(directory, name)
+        ).read()
+        for directory, _, names in os.walk(destination)
+        for name in names
+    }
+
+
+def test_a_lazy_tree_new_to_the_target_is_cloned_whole(tmp_path: Path) -> None:
+    tree = _cache_tree(tmp_path)
+    destination = tmp_path / "site" / "pkg"
+    expanded: list[bool] = []
+
+    def expand():
+        expanded.append(True)
+        return _files(tree, destination)
+
+    transaction = InstallTransaction()
+    transaction.add_lazy_tree(str(tree), str(destination), expand)
+    transaction.commit()
+
+    assert _installed(destination) == {"__init__.py": "init", "sub/mod.py": "mod"}
+    assert expanded == []
+
+
+def test_a_lazy_tree_whose_destination_exists_is_staged_file_by_file(
+    tmp_path: Path,
+) -> None:
+    tree = _cache_tree(tmp_path)
+    destination = tmp_path / "site" / "pkg"
+    destination.mkdir(parents=True)
+    (destination / "other.py").write_text("other")
+
+    transaction = InstallTransaction()
+    transaction.add_lazy_tree(
+        str(tree), str(destination), lambda: _files(tree, destination)
+    )
+    transaction.commit()
+
+    assert _installed(destination) == {
+        "__init__.py": "init",
+        "other.py": "other",
+        "sub/mod.py": "mod",
+    }
+
+
+def test_lazy_trees_sharing_a_destination_are_both_staged(tmp_path: Path) -> None:
+    first = _cache_tree(tmp_path / "first")
+    second = tmp_path / "second" / "cache" / "pkg"
+    second.mkdir(parents=True)
+    (second / "extra.py").write_text("extra")
+    destination = tmp_path / "site" / "pkg"
+
+    transaction = InstallTransaction()
+    transaction.owner = "first"
+    transaction.add_lazy_tree(
+        str(first), str(destination), lambda: _files(first, destination)
+    )
+    transaction.owner = "second"
+    transaction.add_lazy_tree(
+        str(second),
+        str(destination),
+        lambda: [(str(second / "extra.py"), str(destination / "extra.py"), None)],
+    )
+    transaction.commit()
+
+    assert _installed(destination) == {
+        "__init__.py": "init",
+        "extra.py": "extra",
+        "sub/mod.py": "mod",
+    }
+
+
+def test_a_lazy_tree_another_distribution_stages_into_is_staged_file_by_file(
+    tmp_path: Path,
+) -> None:
+    tree = _cache_tree(tmp_path)
+    destination = tmp_path / "site" / "pkg"
+
+    transaction = InstallTransaction()
+    transaction.owner = "first"
+    transaction.add_lazy_tree(
+        str(tree), str(destination), lambda: _files(tree, destination)
+    )
+    transaction.owner = "second"
+    transaction.add_contents(str(destination / "plugin.py"), b"plugin")
+    transaction.commit()
+
+    assert _installed(destination) == {
+        "__init__.py": "init",
+        "plugin.py": "plugin",
+        "sub/mod.py": "mod",
+    }

@@ -7,12 +7,14 @@ filesystem transaction engine. It deliberately does not invoke kpip again.
 from __future__ import annotations
 
 import csv
+import functools
 import io
 import logging
 import os
 import tempfile
 import zipfile
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from threading import Lock
@@ -40,6 +42,7 @@ from kpip.install.wheel_archive import (
     DestinationCache,
     MemberPaths,
     ResolvedRoots,
+    _resolved_parent_directory,
     copy_member_with_metadata,
     destination_internal_parts_text,
     installed_mode,
@@ -167,6 +170,7 @@ class WheelInstaller:
         stage_root: str | None = None,
         transaction: InstallTransaction | None = None,
         direct: bool = False,
+        exclusive_tops: frozenset[str] | None = None,
     ) -> WheelCandidate:
         return install_wheel_internal(
             path,
@@ -187,6 +191,7 @@ class WheelInstaller:
             transaction=transaction,
             direct=direct,
             target_inventory=self.target_inventory,
+            exclusive_tops=exclusive_tops,
         )
 
     def validate_batch(
@@ -224,7 +229,14 @@ def install_wheel_internal(
     transaction: InstallTransaction | None = None,
     direct: bool = False,
     target_inventory: InstalledTargetInventory | None = None,
+    exclusive_tops: frozenset[str] | None = None,
 ) -> WheelCandidate:
+    """Install the wheel at ``path``.
+
+    ``exclusive_tops`` are the top-level names no other wheel of the batch
+    installs: a cached wheel's package directory among them, new to the
+    target, is staged whole rather than file by file.
+    """
     if candidate is None:
         candidate = wheel_candidate_from_path(path, include_layout=False)
     target = target.for_distribution(candidate.canonical_name)
@@ -357,12 +369,34 @@ def install_wheel_internal(
             tree_archive = (
                 archive if isinstance(archive, CachedWheelTreeArchive) else None
             )
+            # A package directory nothing else installs into, new to the
+            # target, is cloned whole, its members never staged one by one.
+            lazy_rows: dict[str, list[tuple[str, str, str, int]]] = {}
+            if (
+                tree_archive is not None
+                and exclusive_tops
+                and not direct
+                and not pycompile
+                and existing is None
+                and os.name == "posix"
+            ):
+                for top in exclusive_tops:
+                    if not top.endswith((".data", ".dist-info")) and os.path.isdir(
+                        os.path.join(tree_archive.tree, top)
+                    ):
+                        if not os.path.lexists(os.path.join(library_root, top)):
+                            lazy_rows[top] = []
             members = (
                 tree_archive.entries if tree_archive is not None else archive.infolist()
             )
             for member in members:
                 if isinstance(member, tuple):
                     filename = member[0]
+                    if lazy_rows:
+                        rows = lazy_rows.get(filename.partition("/")[0])
+                        if rows is not None:
+                            rows.append(member)
+                            continue
                 elif member.is_dir():
                     continue
                 else:
@@ -679,6 +713,21 @@ def install_wheel_internal(
                     metadata[1],
                 ),
             )
+        for top, rows in lazy_rows.items():
+            prefix = record_relative_path(
+                _resolved_parent_directory(
+                    library_root,
+                    (top,),
+                    top,
+                    resolved_directories=resolved_directories,
+                    resolved_roots=resolved_roots,
+                )
+            )
+            cut = len(top)
+            record_rows.extend(
+                (prefix + filename[cut:], digest, size)
+                for filename, digest, size, _ in rows
+            )
         record_rows.sort()
         record_contents = record_text_of(record_rows).encode("utf-8")
         if direct:
@@ -708,8 +757,18 @@ def install_wheel_internal(
         if not direct:
             layout = getattr(candidate, "wheel_layout", None)
             if isinstance(layout, CachedWheelArchive):
-                if tree_members and _configured_link_mode() == "hardlink":
+                if (
+                    tree_members or lazy_rows
+                ) and _configured_link_mode() == "hardlink":
                     remember_tree_listings(layout)
+                for top, rows in lazy_rows.items():
+                    active_transaction.add_lazy_tree(
+                        os.path.join(layout.tree, top),
+                        os.path.join(library_root, top),
+                        functools.partial(
+                            _lazy_tree_files, layout.tree, rows, member_paths
+                        ),
+                    )
                 for top, members in tree_members.items():
                     destination_root = os.path.join(library_root, top)
                     if members and all(
@@ -745,6 +804,36 @@ def install_wheel_internal(
                 f"Successfully uninstalled {existing.raw_name}-{existing.raw_version}",
             )
     return candidate
+
+
+def _lazy_tree_files(
+    tree: str,
+    rows: list[tuple[str, str, str, int]],
+    member_paths: MemberPaths,
+) -> Iterator[tuple[str, str, int | None]]:
+    """The clones a lazy tree's commit stages when it cannot clone it whole:
+    each manifest row's source, resolved destination and mode."""
+    for filename, _, _, entry_mode in rows:
+        yield (
+            os.path.join(tree, *filename.split("/")),
+            member_paths.resolve(filename)[2],
+            installed_mode(mode_from_external_attr(entry_mode << 16)),
+        )
+
+
+def exclusive_tops_of(
+    candidates: Sequence[WheelCandidate],
+) -> list[frozenset[str] | None]:
+    """For each candidate, the top-level names no other of them installs;
+    None for all unless every one is in the archive cache, which knows them."""
+    tops: list[frozenset[str]] = []
+    for candidate in candidates:
+        layout = getattr(candidate, "wheel_layout", None)
+        if not isinstance(layout, CachedWheelArchive):
+            return [None] * len(candidates)
+        tops.append(frozenset(layout.summary[0]))
+    counts = Counter(top for names in tops for top in names)
+    return [frozenset(top for top in names if counts[top] == 1) for names in tops]
 
 
 def stage_parent(target: InstallTarget) -> str | None:
@@ -1008,6 +1097,7 @@ def _install_wheels_locked(
                 and not existing_distributions
             )
             cache_for_workers = destination_cache
+            exclusive = exclusive_tops_of(planned_candidates)
             if parallel:
                 cache_for_workers = ThreadSafePathCache()
 
@@ -1029,6 +1119,7 @@ def _install_wheels_locked(
                         destination_cache=cache_for_workers,  # ty:ignore[invalid-argument-type]
                         stage_root=os.path.join(batch_stage, str(index)),
                         transaction=local_transaction,
+                        exclusive_tops=exclusive[index],
                     )
                 except Exception:
                     local_transaction.rollback()
@@ -1089,6 +1180,7 @@ def _install_wheels_locked(
                                 destination_cache=destination_cache,
                                 stage_root=os.path.join(batch_stage, str(index)),
                                 transaction=transaction,
+                                exclusive_tops=exclusive[index],
                             )
                         )
                     candidates = tuple(installed)

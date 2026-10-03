@@ -8,7 +8,7 @@ import os
 import shutil
 import stat
 import tempfile
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 
 from kpip.core.errors import InstallationError
@@ -90,9 +90,10 @@ class StagedFile:
 
 class StagedTree:
     """A directory of an immutable cache whose files are staged one by one,
-    which the commit may clone whole instead."""
+    which the commit may clone whole instead; or, lazy, whose files are
+    staged only if the commit cannot, by ``expand``."""
 
-    __slots__ = ("destination_text", "members", "owner", "source_text")
+    __slots__ = ("destination_text", "expand", "members", "owner", "source_text")
 
     def __init__(
         self,
@@ -100,11 +101,13 @@ class StagedTree:
         destination_text: str,
         members: set[str],
         owner: str | None,
+        expand: Callable[[], Iterable[tuple[str, str, int | None]]] | None = None,
     ) -> None:
         self.source_text = source_text
         self.destination_text = destination_text
         self.members = members
         self.owner = owner
+        self.expand = expand
 
 
 class InstallTransaction:
@@ -200,27 +203,49 @@ class InstallTransaction:
         to be cloned onto ``destination`` in one pass if it does not exist."""
         self.trees.append(StagedTree(source, destination, members, self.owner))
 
-    def cloned_trees(self) -> dict[str, StagedTree]:
-        """The staged trees the commit clones whole, by destination file.
+    def add_lazy_tree(
+        self,
+        source: str,
+        destination: str,
+        expand: Callable[[], Iterable[tuple[str, str, int | None]]],
+    ) -> None:
+        """Stage ``source``'s tree onto ``destination`` without staging its
+        files: the commit clones it whole, or stages the clones ``expand``
+        gives, of each file's source, destination and mode, when it cannot."""
+        self.trees.append(StagedTree(source, destination, set(), self.owner, expand))
+
+    def _expand(self, tree: StagedTree) -> None:
+        assert tree.expand is not None
+        owner, self.owner = self.owner, tree.owner
+        try:
+            for source, destination, mode in tree.expand():
+                self.add_clone(source, destination, mode=mode)
+        finally:
+            self.owner = owner
+
+    def cloned_trees(self) -> tuple[dict[str, StagedTree], list[StagedTree]]:
+        """The staged trees the commit clones whole, and their staged files.
 
         A tree is cloned whole when its destination does not exist, its files
         are still staged by its own distribution, and nothing else staged
         lands inside it but files its distribution adds that the tree lacks,
-        such as bytecode.
+        such as bytecode. A lazy tree that is not has its files staged here.
         """
+        claimed: dict[str, int] = {}
+        for tree in self.trees:
+            claimed[tree.destination_text] = claimed.get(tree.destination_text, 0) + 1
         trees = {
             tree.destination_text: tree
             for tree in self.trees
-            if not os.path.lexists(tree.destination_text)
+            if claimed[tree.destination_text] == 1
+            and not os.path.lexists(tree.destination_text)
         }
-        if not trees:
-            return {}
         members: dict[str, StagedTree] = {}
         for tree in trees.values():
             for destination_text in tree.members:
                 members[destination_text] = tree
-        shortest = min(map(len, trees))
-        for item in self.staged_internal:
+        shortest = min(map(len, trees), default=0)
+        for item in self.staged_internal if trees else ():
             destination_text = item.destination_text
             tree = members.get(destination_text)
             owner = self.staged_owners[destination_text][0]
@@ -241,11 +266,14 @@ class InstallTransaction:
                 if grandparent == parent:
                     break
                 parent = grandparent
+        for tree in self.trees:
+            if tree.expand is not None and trees.get(tree.destination_text) is not tree:
+                self._expand(tree)
         return {
             destination_text: tree
             for destination_text, tree in members.items()
             if tree.destination_text in trees
-        }
+        }, list(trees.values())
 
     def delete(self, path: str) -> None:
         self.deletions.add(os.fspath(path))
@@ -333,7 +361,7 @@ class InstallTransaction:
         if self.finished:
             raise RuntimeError("installation transaction has already finished")
         try:
-            cloned = self.cloned_trees()
+            cloned, trees = self.cloned_trees()
             self.validate(cloned)
             created_directories: set[str] = set()
             backup_if_needed = self.backup_if_needed
@@ -344,7 +372,6 @@ class InstallTransaction:
             use_directory_fds = os.open in os.supports_dir_fd
             directory_fds: dict[str, int] = {}
             try:
-                trees = {id(tree): tree for tree in cloned.values()}.values()
                 for tree in trees:
                     parent_text = os.path.dirname(tree.destination_text) or os.curdir
                     if parent_text not in created_directories:
