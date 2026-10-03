@@ -1270,6 +1270,8 @@ def run_install(args: list[str]) -> int:
                 compute_source_hashes=bool(execution.options.report),
                 on_decided=prefetch,
             )
+            if providers:
+                providers[-1].flush_catalog_choices_soon()
 
         assert plan is not None
 

@@ -894,6 +894,9 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
             engines=resolvers,
         )
         provider = resolvers[-1].provider
+        flush_soon = getattr(provider, "flush_catalog_choices_soon", None)
+        if flush_soon is not None:
+            flush_soon()
 
     packages: list[dict] = [
         *editable_packages,

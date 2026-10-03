@@ -674,6 +674,17 @@ class CandidateProvider:
 
                 atexit.register(self.flush_catalog_choices)
 
+    def flush_catalog_choices_soon(self) -> None:
+        """Write the choices made so far on a thread of their own, while the
+        command goes on: the process's exit waits for it, then writes any
+        made since."""
+        import threading
+
+        if self.dirty_catalog_choices:
+            threading.Thread(
+                target=self.flush_catalog_choices, name="kpip-catalog-choices"
+            ).start()
+
     def flush_catalog_choices(self) -> None:
         """Write the choices made since the last flush, each once."""
         with self.cache_lock:
