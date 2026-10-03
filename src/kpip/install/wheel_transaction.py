@@ -32,7 +32,7 @@ from kpip.core.wheel import (
     wheel_candidate,
     wheel_candidate_from_path,
 )
-from kpip.host.clone import clone_path
+from kpip.host.clone import _configured_link_mode, clone_path
 from kpip.host.lock import environment_write_lock
 from kpip.install.target import InstallTarget
 from kpip.install.transaction import InstallTransaction, normalized_internal
@@ -47,7 +47,11 @@ from kpip.install.wheel_archive import (
     record_metadata_internal,
     validate_member_parts,
 )
-from kpip.install.wheel_archive_cache import INSTALL_WORKERS, CachedWheelArchive
+from kpip.install.wheel_archive_cache import (
+    INSTALL_WORKERS,
+    CachedWheelArchive,
+    remember_tree_listings,
+)
 from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
 from kpip.install.wheel_archive_runtime import CachedWheelInfo, open_wheel_archive
 from kpip.install.wheel_scripts import (
@@ -377,7 +381,16 @@ def install_wheel_internal(
                     and (not pycompile or os.path.splitext(relative_name)[1] != ".py")
                     and relative_name != "entry_points.txt"
                 )
-                if not direct and not direct_content:
+                # A cached member is cloned from the cache's tree, so nothing
+                # is staged for it but a .py copied for bytecode.
+                cached_clone = (
+                    isinstance(member, CachedWheelInfo)
+                    and not script_member
+                    and not is_record
+                    and relative_name != "entry_points.txt"
+                    and (not pycompile or os.path.splitext(relative_name)[1] != ".py")
+                )
+                if not direct and not direct_content and not cached_clone:
                     source_parent_text = os.path.dirname(source_text)
                     if source_parent_text not in stage_directories:
                         os.makedirs(source_parent_text, exist_ok=True)
@@ -531,6 +544,7 @@ def install_wheel_internal(
 
         if direct_url is not None:
             direct_url_source = os.path.join(dist_info_stage, "direct_url.json")
+            os.makedirs(dist_info_stage, exist_ok=True)
             with open(direct_url_source, "w", encoding="utf-8") as file:
                 file.write(direct_url.to_json())
             staged.append(
@@ -642,6 +656,8 @@ def install_wheel_internal(
         if not direct:
             layout = getattr(candidate, "wheel_layout", None)
             if isinstance(layout, CachedWheelArchive):
+                if tree_members and _configured_link_mode() == "hardlink":
+                    remember_tree_listings(layout)
                 for top, members in tree_members.items():
                     destination_root = os.path.join(library_root, top)
                     if members and all(
