@@ -749,3 +749,46 @@ def test_a_replacing_lazy_tree_staged_file_by_file_deletes_what_it_drops(
     assert installed["sub/mod.py"] == "mod"
     assert installed["plugin.py"] == "plugin"
     assert "gone/old.py" not in installed
+
+
+def test_files_outside_the_trees_are_placed_while_they_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The trees link on their threads while the files outside them are
+    placed, and a file inside one waits for it: a tree finds its destination
+    absent, as a clone into a new directory needs."""
+    site = tmp_path / "site"
+    first = _cache_tree(tmp_path / "first")
+    second = _cache_tree(tmp_path / "second")
+    clone_tree = transaction._clone_tree
+    absent_at_start: list[bool] = []
+
+    def watched(tree: object) -> None:
+        absent_at_start.append(not os.path.lexists(tree.destination_text))
+        clone_tree(tree)
+
+    monkeypatch.setattr(transaction, "_clone_tree", watched)
+    staged = InstallTransaction()
+    staged.owner = "first"
+    staged.add_lazy_tree(
+        str(first), str(site / "one"), lambda: _files(first, site / "one")
+    )
+    staged.add_contents(str(site / "one-1.0.dist-info" / "RECORD"), b"record")
+    staged.add_contents(str(site / "ONE" / "sub" / "late.txt"), b"late")
+    staged.owner = "second"
+    staged.add_lazy_tree(
+        str(second), str(site / "two"), lambda: _files(second, site / "two")
+    )
+    staged.add_contents(str(site / "single.py"), b"single")
+    staged.commit()
+
+    assert absent_at_start == [True, True]
+    # A file system that folds case put ONE/sub/late.txt inside one/.
+    assert {"__init__.py": "init", "sub/mod.py": "mod"}.items() <= _installed(
+        site / "one"
+    ).items()
+    assert _installed(site / "two") == {"__init__.py": "init", "sub/mod.py": "mod"}
+    assert (site / "one-1.0.dist-info" / "RECORD").read_bytes() == b"record"
+    assert (site / "single.py").read_bytes() == b"single"
+    assert (site / "ONE" / "sub" / "late.txt").read_bytes() == b"late"

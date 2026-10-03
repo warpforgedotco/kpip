@@ -9,7 +9,7 @@ import shutil
 import stat
 import tempfile
 from collections.abc import Callable, Collection, Iterable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from kpip.core.errors import InstallationError
 from kpip.host.clone import clone_path, link_into, remove_tree
@@ -414,10 +414,16 @@ class InstallTransaction:
                         makedirs(parent_text, exist_ok=True)
                         created_directories.add(parent_text)
                     append_created(tree.destination_text)
-                _clone_trees(trees)
-                for item in self.staged_internal:
-                    if cloned and item.destination_text in cloned:
-                        continue
+                # The trees link on their threads while the files outside
+                # them are placed; a file inside one waits for it. Paths are
+                # compared case-folded, as a file system may fold them.
+                linking = _start_clone_trees(trees)
+                tree_roots = tuple(
+                    os.path.join(tree.destination_text, "").casefold() for tree in trees
+                )
+                deferred: list[StagedFile] = []
+
+                def place(item: StagedFile) -> None:
                     backup_if_needed(item.destination_text)
                     destination_parent_text = (
                         os.path.dirname(item.destination_text) or os.curdir
@@ -463,6 +469,21 @@ class InstallTransaction:
                         )
                         if item.mode is not None:
                             chmod(item.destination_text, item.mode)
+
+                try:
+                    for item in self.staged_internal:
+                        if cloned and item.destination_text in cloned:
+                            continue
+                        if tree_roots and item.destination_text.casefold().startswith(
+                            tree_roots
+                        ):
+                            deferred.append(item)
+                            continue
+                        place(item)
+                finally:
+                    _finish_clone_trees(linking)
+                for item in deferred:
+                    place(item)
                 for path in sorted(self.deletions):
                     self.backup_if_needed(path)
                     self.remove_empty_parents(os.path.dirname(path))
@@ -575,17 +596,36 @@ _TREE_WORKERS = 8
 
 
 def _clone_trees(trees: Collection[StagedTree]) -> None:
-    """Clone each tree onto its destination, on threads when there are
-    several: the links are made with the GIL released, and one thread
-    linking an install's trees in turn left the other cores idle."""
+    """Clone each tree onto its destination; see ``_start_clone_trees``."""
+    _finish_clone_trees(_start_clone_trees(trees))
+
+
+def _start_clone_trees(
+    trees: Collection[StagedTree],
+) -> tuple[ThreadPoolExecutor, list[Future[None]]] | None:
+    """Start cloning each tree onto its destination, on threads when there
+    are several: the links are made with the GIL released, and one thread
+    linking an install's trees in turn left the other cores idle. One tree
+    or none is cloned here and now."""
     if len(trees) < 2:
         for tree in trees:
             _clone_tree(tree)
-        return
-    with ThreadPoolExecutor(
+        return None
+    pool = ThreadPoolExecutor(
         max_workers=min(_TREE_WORKERS, len(trees)), thread_name_prefix="kpip-tree"
-    ) as pool:
-        futures = [pool.submit(_clone_tree, tree) for tree in trees]
+    )
+    return pool, [pool.submit(_clone_tree, tree) for tree in trees]
+
+
+def _finish_clone_trees(
+    linking: tuple[ThreadPoolExecutor, list[Future[None]]] | None,
+) -> None:
+    """Wait for the clones ``_start_clone_trees`` started, raising the first
+    that failed once every one has stopped."""
+    if linking is None:
+        return
+    pool, futures = linking
+    pool.shutdown(wait=True)
     for future in futures:
         future.result()
 
