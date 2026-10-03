@@ -6,23 +6,15 @@ from typing import TYPE_CHECKING
 import atexit
 import errno
 import gc
-import logging
 import os
 import sys
-import traceback
 
 import kpip
 from kpip.cli.exit_codes import BROKEN_STDOUT, VIRTUALENV_NOT_FOUND
-from kpip.cli.logging_config import (
-    BrokenStdoutLoggingError,
-    configure_logging,
-    set_log_file,
-)
 from kpip.cli.registry import COMMAND_SPECS, CommandSpec, get_command
 from kpip.core import run_options
 from kpip.core.errors import CommandError, KpipError
 from kpip.core.compiled import own_binary
-from kpip.core.temp_dir import global_tempdir_manager
 from kpip.host.interpreter_facts import EnvironmentWithoutPython, target_interpreter
 
 if TYPE_CHECKING:
@@ -289,6 +281,8 @@ def handle_global_commands(
 
     if require_virtualenv:
         if not target_interpreter().in_virtualenv:
+            import logging
+
             logging.getLogger(__name__).critical(
                 "Could not find an activated virtualenv (required)."
             )
@@ -432,18 +426,43 @@ def main(
         name: os.environ.get(name)
         for name in ("KPIP_RESOLVER_DEBUG", "KPIP_PYTHON", "KPIP_SYSTEM_PYTHON")
     }
+
+    log_file: str | None = None
+
+    logging_configured = False
+
+    def configure() -> None:
+        """Set logging up once, before the first thing is logged."""
+        nonlocal logging_configured
+
+        if logging_configured:
+            return
+
+        from kpip.cli.logging_config import configure_logging, set_log_file
+
+        set_log_file(log_file)
+
+        configure_logging(verbosity)
+
+        logging_configured = True
+
+    def critical(message: str, *values: object) -> None:
+        import logging
+
+        configure()
+
+        logging.getLogger(__name__).critical(message, *values)
+
     try:
         run_options.reset()
 
         argv = list(sys.argv[1:] if args is None else args)
         argv, verbosity, require_virtualenv, log_file = extract_global_options(argv)
 
-        # Before anything can fail; the command sets it up again with the
-        # -v and -q it is given itself.
+        # The command sets it up again with the -v and -q it is given itself.
+        if require_virtualenv or log_file is not None:
+            configure()
 
-        set_log_file(log_file)
-
-        configure_logging(verbosity)
         if verbosity >= 2 or any(token in VERBOSITY_FLAGS for token in argv):
             os.environ["KPIP_RESOLVER_DEBUG"] = "1"
         argv, python = extract_python_option(argv)
@@ -480,6 +499,8 @@ def main(
         if spec is None:
             raise AssertionError(f"unhandled command: {argv[0]}")
 
+        configure()
+
         # Given before the command, -v and -q mean what they mean after it.
         argv[1:1] = ["-v"] * max(verbosity, 0) + ["-q"] * max(-verbosity, 0)
 
@@ -490,6 +511,8 @@ def main(
         restore_switch_interval = switch_threads_less_often()
 
         if spec.needs_tempdir:
+            from kpip.core.temp_dir import global_tempdir_manager
+
             with global_tempdir_manager():
                 status = run_command(argv, spec)
 
@@ -520,6 +543,10 @@ def main(
         print("ERROR: Pipe to stdout was broken", file=sys.stderr)
 
         if verbosity > 0:
+            import traceback
+
+            from kpip.cli.logging_config import BrokenStdoutLoggingError
+
             if isinstance(exc, BrokenStdoutLoggingError):
                 traceback.print_exc(file=sys.stderr)
 
@@ -533,7 +560,7 @@ def main(
         return BROKEN_STDOUT
 
     except KeyboardInterrupt:
-        logging.getLogger(__name__).critical("Operation cancelled by user")
+        critical("Operation cancelled by user")
 
         return 1
 
@@ -541,7 +568,7 @@ def main(
         if run_options.current.debug:
             raise
 
-        logging.getLogger(__name__).critical("%s", exc)
+        critical("%s", exc)
 
         return 1
 
@@ -549,7 +576,7 @@ def main(
         if not isinstance(exc, KpipError) or run_options.current.debug:
             raise
 
-        logging.getLogger(__name__).critical("%s", exc)
+        critical("%s", exc)
 
         return 1
 
@@ -625,6 +652,8 @@ def console_main() -> NoReturn:
     try:
         status = main(keep_collection_paused=True)
     except Exception:
+        import traceback
+
         sys.stderr.write(
             f"ERROR: kpip {kpip.__version__} hit an unexpected error. This is "
             f"a bug in kpip: please report it, with the traceback below, at "
