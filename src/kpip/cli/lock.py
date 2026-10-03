@@ -434,7 +434,7 @@ def replay_after_revalidation(
         if page_state(http_cache, record.pages) != FRESH:
             return False
 
-    write_lock_output(options.output, record.rendered)
+    write_lock_output(options.output, record.rendered, previous)
 
     return True
 
@@ -1067,7 +1067,7 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     rendered = render_lock(packages)
 
-    write_lock_output(options.output, rendered)
+    write_lock_output(options.output, rendered, previous)
 
     if page_cache is not None:
         page_cache.save_snapshot()

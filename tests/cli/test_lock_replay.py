@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -367,6 +368,25 @@ class TestReplayDecision:
         output.write_text(RENDERED + "# edited\n", encoding="utf-8")
 
         assert not self.replays(arguments)
+
+    def test_a_replay_leaves_an_identical_lock_untouched(
+        self, tmp_path: Path, requirements: Path
+    ) -> None:
+        cache_root = tmp_path / "cache"
+        output = tmp_path / "pylock.toml"
+        output.write_text(RENDERED, encoding="utf-8")
+        os.utime(output, ns=(1_000_000_000, 1_000_000_000))
+        record(
+            resolve_cache_dir(str(cache_root)),
+            key_for(
+                requirements,
+                previous_lock=previous_lock_digest(output.read_bytes(), []),
+            ),
+        )
+
+        assert self.replays(self.arguments(requirements, output, cache_root))
+        assert output.stat().st_mtime_ns == 1_000_000_000
+        assert output.read_text(encoding="utf-8") == RENDERED
 
     def test_no_cache_dir_never_replays(
         self, tmp_path: Path, requirements: Path

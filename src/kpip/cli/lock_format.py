@@ -5,6 +5,7 @@ Reading, preferring from and writing a lock file, for ``cli.lock``.
 
 from __future__ import annotations
 
+import os
 import tomllib
 
 from kpip.core.names import canonicalize_name
@@ -17,15 +18,35 @@ def toml_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def write_lock_output(output: str, rendered: str) -> None:
-    """Write a rendered lock to ``output``, or to stdout for ``-``."""
+def write_lock_output(
+    output: str, rendered: str, previous: bytes | None = None
+) -> None:
+    """Write a rendered lock to ``output``, or to stdout for ``-``.
+
+    ``previous`` is what :func:`read_previous_lock` found at ``output``. A
+    file that already holds exactly what would be written is left as it is,
+    modification time and all.
+    """
 
     if output == "-":
         print(rendered, end="")
 
-    else:
-        with open(output, "w", encoding="utf-8") as output_file:
-            output_file.write(rendered)
+        return
+
+    if previous is not None and previous == _encoded(rendered):
+        return
+
+    with open(output, "w", encoding="utf-8") as output_file:
+        output_file.write(rendered)
+
+
+def _encoded(rendered: str) -> bytes:
+    """The bytes :func:`write_lock_output` puts in a file for ``rendered``."""
+
+    if os.linesep != "\n":
+        rendered = rendered.replace("\n", os.linesep)
+
+    return rendered.encode("utf-8")
 
 
 def read_previous_lock(output: str, upgrade: bool) -> bytes | None:
