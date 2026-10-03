@@ -459,12 +459,7 @@ def _merge_move(source: str, destination: str) -> None:
 
 
 def _relocate_data(stage: str, archive: CachedWheelArchive) -> None:
-    data_roots = {
-        parts[0]
-        for relative, _, _, _ in archive.entries
-        if relative.partition("/")[0].endswith(".data")
-        and (parts := validate_member_parts(relative))
-    }
+    data_roots = [name for name in os.listdir(archive.tree) if name.endswith(".data")]
 
     for data_root in data_roots:
         root = os.path.join(stage, data_root)
