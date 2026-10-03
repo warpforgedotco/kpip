@@ -152,4 +152,3 @@ def test_recorded_pypi_pages_compile_the_same_either_way(workload: str) -> None:
 
     for key, body in pages:
         assert _compile(body, key, typed=True) == _compile(body, key, typed=False), key
-

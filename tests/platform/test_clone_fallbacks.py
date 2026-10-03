@@ -561,7 +561,7 @@ def test_a_link_count_limit_copies_one_file_and_resumes_the_loop(
     assert fake.calls == [0, 2]
     assert not clone._hardlink_unsupported
     files = clone._list_tree(os.fsencode(source))[2]
-    copied = os.fsdecode(files[1])
+    copied = Path(os.fsdecode(files[1])).as_posix()
     for relative in FILES:
         assert same_inode(source, destination, relative) == (relative != copied)
 
