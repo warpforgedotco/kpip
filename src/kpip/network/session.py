@@ -313,7 +313,10 @@ def _trust_store_context_class() -> type[ssl.SSLContext]:
     Imported here, as pip imports it: loading the system's TLS libraries
     costs 5 ms, which only a command that verifies a server should pay.
     """
+    import platform
+
     from kpip._vendor import truststore
+    from kpip._vendor.truststore import _api as truststore_api
 
     class ThreadSafeTrustStoreContext(truststore.SSLContext):
         """One context for every connection, a fresh one for each handshake.
@@ -328,12 +331,24 @@ def _trust_store_context_class() -> type[ssl.SSLContext]:
         threads; kpip's pools do. So what callers set on this one is
         recorded and replayed onto a new truststore context per handshake,
         and nothing shared is ever turned off.
+
+        With OpenSSL, where truststore never turns it off, every handshake
+        shares one plain context instead, the system's CAs loaded into it
+        once, rather than read again for each handshake as truststore
+        does. It is made again only when what was set on this one changes.
         """
+
+        shares_handshake_context = platform.system() not in ("Windows", "Darwin")
+        """Whether truststore verifies with OpenSSL: against the system's
+        CAs, which it loads afresh into the context on every handshake, and
+        never turning verification off."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
             self.__dict__["kpip_calls"] = []
             self.__dict__["kpip_calls_lock"] = threading.Lock()
+            self.__dict__["kpip_shared"] = None
+            self.__dict__["kpip_shared_lock"] = threading.Lock()
 
         def _record(self, name: str, args: tuple, kwargs: dict) -> None:
             # urllib3 calls some of these again for every connection; one
@@ -345,9 +360,35 @@ def _trust_store_context_class() -> type[ssl.SSLContext]:
                     calls.append(call)
 
         def _handshake_context(self) -> ssl.SSLContext:
-            context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             with self.__dict__["kpip_calls_lock"]:
                 calls = list(self.__dict__["kpip_calls"])
+            if not self.shares_handshake_context:
+                return self._configured(
+                    truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT), calls
+                )
+            key = (
+                tuple(calls),
+                self.check_hostname,
+                tuple(getattr(self, name) for name in _COPIED_CONTEXT_SETTINGS),
+            )
+            shared = self.__dict__["kpip_shared"]
+            if shared is not None and shared[0] == key:
+                return shared[1]
+            # Connections open together: one makes it, the rest wait for it.
+            with self.__dict__["kpip_shared_lock"]:
+                shared = self.__dict__["kpip_shared"]
+                if shared is not None and shared[0] == key:
+                    return shared[1]
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                with truststore_api._configure_context(context):
+                    pass
+                context = self._configured(context, calls)
+                self.__dict__["kpip_shared"] = (key, context)
+                return context
+
+        def _configured(
+            self, context: ssl.SSLContext, calls: list[tuple]
+        ) -> ssl.SSLContext:
             for name, args, kwargs in calls:
                 getattr(context, name)(*args, **kwargs)
             # Settings are read back rather than recorded: what this context

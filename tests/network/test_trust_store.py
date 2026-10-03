@@ -69,6 +69,9 @@ def test_a_handshake_never_turns_verification_off_on_the_shared_context(
     """truststore turns its context's verification off for each handshake;
     two at once left it off. Each handshake gets a context of its own, made
     with what was set on the shared one."""
+    from kpip.network.session import _trust_store_context_class
+
+    monkeypatch.setattr(_trust_store_context_class(), "shares_handshake_context", False)
     seen: list[tuple[object, object, object]] = []
 
     def wrap(self: object, sock: object, **_: object) -> object:
@@ -135,3 +138,41 @@ def test_a_setting_no_handshake_would_see_is_refused() -> None:
 
     with pytest.raises(AttributeError, match="sni_callback"):
         trust_store_context().sni_callback = lambda *args: None
+
+
+def test_with_openssl_handshakes_share_a_context_loaded_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With OpenSSL truststore never turns verification off, and reading the
+    system's CAs into a context for every handshake was most of what a
+    handshake cost: they share one, made again when a setting changes."""
+    from kpip._vendor.truststore import _api as truststore_api
+    from kpip.network.session import _trust_store_context_class, trust_store_context
+
+    monkeypatch.setattr(_trust_store_context_class(), "shares_handshake_context", True)
+    loads: list[object] = []
+    configure = truststore_api._configure_context
+
+    def counted(context: ssl.SSLContext) -> object:
+        loads.append(context)
+        return configure(context)
+
+    monkeypatch.setattr(truststore_api, "_configure_context", counted)
+    context = trust_store_context()
+    context.set_alpn_protocols(["http/1.1"])
+
+    first = context._handshake_context()  # ty: ignore[unresolved-attribute]
+    second = context._handshake_context()  # ty: ignore[unresolved-attribute]
+
+    assert first is second
+    assert type(first) is not type(context)
+    assert len(loads) == 1
+    assert first.verify_mode == ssl.CERT_REQUIRED
+    assert first.check_hostname
+
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    third = context._handshake_context()  # ty: ignore[unresolved-attribute]
+
+    assert third is not first
+    assert third.minimum_version == ssl.TLSVersion.TLSv1_3
+    assert len(loads) == 2
