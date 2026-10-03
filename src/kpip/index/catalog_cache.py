@@ -606,6 +606,15 @@ def summary_from_catalog(
     return generation, summary_groups, bool(unparsed), {}  # ty:ignore[invalid-return-type]
 
 
+try:
+    # Compiled into the binary as a built-in; see kpip/_acceleration/_kpip_catalog.c.
+    from _kpip_catalog import (  # ty: ignore[unresolved-import]
+        earliest_upload_text as _earliest_upload_text,
+    )
+except ImportError:
+    _earliest_upload_text = None
+
+
 def earliest_upload(artifacts: list[CatalogArtifact]) -> float | None:
     """When a release's first artifact was uploaded, as a POSIX timestamp.
 
@@ -615,6 +624,15 @@ def earliest_upload(artifacts: list[CatalogArtifact]) -> float | None:
     artifact says. A time without a zone is read as UTC, as the cutoff
     check reads it.
     """
+    if _earliest_upload_text is not None:
+        status, least = _earliest_upload_text(artifacts)
+        if status == 0:
+            return None
+        if status == 1:
+            try:
+                return parse_iso_datetime(least).timestamp()
+            except ValueError:
+                pass
     texts = [
         uploaded
         for _kind, record in artifacts

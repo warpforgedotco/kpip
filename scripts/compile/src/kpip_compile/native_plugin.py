@@ -33,6 +33,10 @@ NATIVE_SOURCES = {
         REPO_ROOT / "src" / "kpip" / "_acceleration" / "_kpip_unzip.c",
         "KPIP_UNZIP_BUILTIN",
     ),
+    "_kpip_catalog.c": (
+        REPO_ROOT / "src" / "kpip" / "_acceleration" / "_kpip_catalog.c",
+        "KPIP_CATALOG_BUILTIN",
+    ),
 }
 """File name in the build to its source and the define that builds it in."""
 

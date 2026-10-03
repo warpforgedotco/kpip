@@ -226,7 +226,44 @@ class IndexPageParser:
             )
             base_url = base_url or ensure_trailing_slash(url)
             record_from_fields = self.record_from_fields
-            keeps = None if release is None else release_filter(release)
+            keeps_version = None if release is None else release_version_filter(release)
+            keeps = None if release is None else release_filter(release, keeps_version)
+            if _compile_page is not None:
+                # Every file at a plain absolute URL is compiled in C; this
+                # compiles each other one as the loop below does.
+                def fallback(entry: Any) -> tuple[Any, Any] | None:
+                    file_url = entry.url
+                    if not isinstance(file_url, str):
+                        return None
+                    if keeps is not None and not keeps(file_url):
+                        return None
+                    metadata = entry.core_metadata
+                    if metadata is unset:
+                        metadata = entry.dist_info_metadata
+                        if metadata is unset:
+                            metadata = None
+                    return record_from_fields(
+                        base_url,
+                        url,
+                        file_url,
+                        entry.filename,
+                        entry.yanked,
+                        entry.hashes,
+                        entry.requires_python,
+                        entry.upload_time,
+                        entry.size,
+                        metadata,
+                    )
+
+                return _compile_page(
+                    page.files,
+                    unset,
+                    Version,
+                    WHEEL_RECORD,
+                    fallback,
+                    keeps,
+                    keeps_version,
+                )
             for entry in page.files:
                 file_url = entry.url
                 if not isinstance(file_url, str):
@@ -548,29 +585,26 @@ def metadata_file_from_value(value: str | None) -> MetadataFile | None:
 _ABSOLUTE_HTTP_PREFIXES = ("https://", "http://")
 
 
+try:
+    # Compiled into the binary as a built-in; see kpip/_acceleration/_kpip_catalog.c.
+    import _kpip_catalog  # ty: ignore[unresolved-import]
+
+    _compile_page = _kpip_catalog.compile_page
+except ImportError:
+    _compile_page = None
+
 PINNED_GENERATION = "pinned:"
 """How a generation of a catalog of one release's files begins."""
 
 
-def release_filter(release: Version) -> Callable[[str], bool]:
-    """Whether a file's URL can name a file of ``release``, or a local
-    version of it: false only when its name's version is not that.
-
-    The version is read from the URL's last segment, as the release a file
-    belongs to is, without parsing the rest of the name; a name it cannot
-    read a version from is kept, for the full parse to place.
-    """
+def release_version_filter(release: Version) -> Callable[[str], bool]:
+    """Whether a version as a file's name spells it is ``release``, or a
+    local version of it; a version that does not parse is kept, for the
+    full parse to place."""
     target = release.public_key
     known: dict[str, bool] = {}
 
-    def keeps(url: str) -> bool:
-        tail = url.partition("#")[0].partition("?")[0].rstrip("/")
-        tail = tail[tail.rfind("/") + 1 :]
-        if "%" in tail:
-            tail = urllib.parse.unquote(tail)
-        text = _version_text(tail)
-        if text is None:
-            return True
+    def keeps_version(text: str) -> bool:
         kept = known.get(text)
         if kept is None:
             try:
@@ -579,6 +613,30 @@ def release_filter(release: Version) -> Callable[[str], bool]:
                 kept = True
             known[text] = kept
         return kept
+
+    return keeps_version
+
+
+def release_filter(
+    release: Version, keeps_version: Callable[[str], bool] | None = None
+) -> Callable[[str], bool]:
+    """Whether a file's URL can name a file of ``release``, or a local
+    version of it: false only when its name's version is not that.
+
+    The version is read from the URL's last segment, as the release a file
+    belongs to is, without parsing the rest of the name; a name it cannot
+    read a version from is kept, for the full parse to place.
+    """
+    if keeps_version is None:
+        keeps_version = release_version_filter(release)
+
+    def keeps(url: str) -> bool:
+        tail = url.partition("#")[0].partition("?")[0].rstrip("/")
+        tail = tail[tail.rfind("/") + 1 :]
+        if "%" in tail:
+            tail = urllib.parse.unquote(tail)
+        text = _version_text(tail)
+        return True if text is None else keeps_version(text)
 
     return keeps
 
