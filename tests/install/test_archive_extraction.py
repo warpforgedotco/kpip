@@ -316,3 +316,44 @@ def test_an_incomplete_bytecode_tree_is_not_kept(
     assert cache_module.bytecode_tree(archive) is None
     entry_root = Path(os.path.dirname(archive.tree))
     assert not list(entry_root.glob(f"{cache_module.PYC_CACHE_PREFIX}*"))
+
+
+def test_extraction_stores_the_listing_a_walk_of_its_tree_finds(
+    tmp_path: Path,
+) -> None:
+    """A cold install read each new tree's listing by walking it; extraction
+    already knows every directory and file it wrote, and stores the listing
+    beside the tree for the install to read instead."""
+    from kpip.host.clone import tree_listing
+
+    wheel = _wheel_with(
+        tmp_path,
+        "listed",
+        {
+            "listed/__init__.py": "\n",
+            "listed/a/b/c/deep.py": "1\n",
+            "listed/a/side.py": "2\n",
+            "listed/z/last.py": "3\n",
+            "other/thing.py": "4\n",
+            "toplevel.py": "5\n",
+        },
+    )
+
+    (archive,) = prepare_cached_wheels((_candidate(wheel),), str(tmp_path / "cache"))
+
+    stored = cache_module._read_listings(
+        os.path.join(os.path.dirname(archive.tree), cache_module.LISTING_NAME)
+    )
+
+    assert stored is not None
+    tops = sorted(entry.name for entry in os.scandir(archive.tree) if entry.is_dir())
+    assert sorted(stored) == tops
+    for top in tops:
+        directories, modes, files, symlinks = stored[top]
+        walked = tree_listing(os.path.join(archive.tree, top))
+        assert dict(zip(directories, modes)) == dict(zip(walked[0], walked[1]))
+        assert sorted(files) == sorted(walked[2])
+        assert symlinks == walked[3] == []
+        for index, directory in enumerate(directories):
+            parent = os.path.dirname(directory)
+            assert not parent or parent in directories[:index]

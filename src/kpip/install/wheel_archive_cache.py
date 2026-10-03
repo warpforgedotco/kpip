@@ -14,6 +14,7 @@ import io
 import marshal
 import os
 import shutil
+import stat
 import struct
 import tempfile
 import threading
@@ -993,6 +994,45 @@ def _compile_archive_pyc(
     return compile_modules(jobs)
 
 
+def _extracted_listings(tree: str, members: list[str]) -> dict[str, Listing]:
+    """The listing of each top-level directory of a tree just extracted,
+    as ``remember_tree_listings`` would walk it: its directories, parents
+    first, with their modes, and its files. Extraction writes files and the
+    directories holding them, and nothing else."""
+    directories: dict[str, set[tuple[str, ...]]] = {}
+    files: dict[str, list[bytes]] = {}
+
+    for member in members:
+        top, *parts = member.split("/")
+
+        if not parts:
+            continue
+
+        files.setdefault(top, []).append(os.fsencode(os.path.join(*parts)))
+
+        known = directories.setdefault(top, set())
+
+        for end in range(1, len(parts)):
+            known.add(tuple(parts[:end]))
+
+    listings: dict[str, Listing] = {}
+
+    for top, names in files.items():
+        relatives = sorted(os.path.join(*parts) for parts in directories[top])
+
+        listings[top] = (
+            [os.fsencode(relative) for relative in relatives],
+            [
+                stat.S_IMODE(os.lstat(os.path.join(tree, top, relative)).st_mode)
+                for relative in relatives
+            ],
+            names,
+            [],
+        )
+
+    return listings
+
+
 def _extract_archive(
     candidate: WheelInstallCandidate,
     digest: str,
@@ -1107,6 +1147,11 @@ def _extract_archive(
 
         with open(os.path.join(temporary, "manifest.bin"), "wb") as file:
             marshal.dump(manifest, file)
+
+        _write_listings(
+            os.path.join(temporary, LISTING_NAME),
+            _extracted_listings(tree, [item[1] for item in work]),
+        )
 
         # Another kpip may have published it meanwhile -- one that took this
         # entry's lock for stale while this one worked. Its entry is whole,
