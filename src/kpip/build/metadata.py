@@ -357,7 +357,7 @@ class InstalledMetadataDistribution:
         return self.distribution_internal.dependencies(extras)
 
     def iter_raw_dependencies(self) -> list[str]:
-        return self.metadata.get_all("Requires-Dist", [])
+        return self.distribution_internal.raw_dependencies()
 
     def iter_provided_extras(self) -> list[str]:
         return [

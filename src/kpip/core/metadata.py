@@ -237,6 +237,10 @@ class InstalledDistribution:
 
         return headers
 
+    def raw_dependencies(self) -> list[str]:
+        """Its Requires-Dist values, as written."""
+        return self._fast_metadata_headers().get("requires-dist", [])
+
     def dependencies(self, extras: Iterable[str] = ()) -> list[Requirement]:
         result: list[Requirement] = []
 
