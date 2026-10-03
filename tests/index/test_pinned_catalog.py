@@ -121,3 +121,25 @@ def test_a_pinned_catalog_does_not_answer_an_unpinned_requirement(
         for summary in again.available_versions(parse_requirement("demo"))
     } == versions
     again.close()
+
+
+def test_a_pinned_requirement_never_parses_the_page_into_links(
+    tmp_path: Path,
+) -> None:
+    source = provider(tmp_path, pinned=True)
+
+    def forbidden(requirement: object) -> None:
+        raise AssertionError(f"parsed the page into links for {requirement}")
+
+    source.catalog_links = forbidden
+    requirement = parse_requirement("demo==1.0")
+
+    assert [str(record.version) for record in source.newest_accepted(requirement, 2)]
+    assert [
+        str(summary.version)
+        for summary in source.matching_versions(requirement, allow_prereleases=False)
+    ] == ["1.0"]
+    assert {
+        str(record.version) for record in source.evaluate_links(requirement).accepted
+    } == {"1.0"}
+    source.close()

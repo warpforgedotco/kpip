@@ -1391,11 +1391,7 @@ class CandidateProvider:
         if cached_selection is not None:
             return cached_selection
 
-        catalog_key = (
-            requirement.canonical_name,
-            allow_binary,
-            allow_source,
-        )
+        catalog_key = self.catalog_key(requirement)
 
         links: tuple[Link, ...] | None = None
 
@@ -3391,9 +3387,7 @@ class CandidateProvider:
 
         available = self.available_versions(requirement)
 
-        catalog = self.package_catalog_cache.get(
-            (requirement.canonical_name, allow_binary, allow_source),
-        )
+        catalog = self.package_catalog_cache.get(self.catalog_key(requirement))
 
         summary_versions = (
             catalog.summary_versions
