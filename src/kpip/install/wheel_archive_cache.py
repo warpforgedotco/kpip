@@ -503,7 +503,16 @@ def _record_metadata(
 
 
 def _borrow_extract_workers(wanted: int) -> int:
-    """Take up to ``wanted`` extraction threads, or as many as are spare."""
+    """Take up to ``wanted`` extraction threads, or as many as are spare.
+
+    None where the C loop extracts the members: it releases the interpreter
+    lock for a wheel's members on the thread unpacking it, wheels unpack side
+    by side on threads of their own, and the threads here extract member by
+    member in Python, taking turns at the lock with the solve.
+    """
+    if _extract_loop is not None:
+        return 0
+
     taken = 0
 
     while taken < wanted and _EXTRACT_PERMITS.acquire(blocking=False):
