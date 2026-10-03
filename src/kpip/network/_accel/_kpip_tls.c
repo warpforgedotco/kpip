@@ -4,8 +4,10 @@
  * ``ssl.SSLSocket.recv_into`` reads one TLS record, at most 16 KiB, per
  * call, and gives up and retakes the interpreter lock around each; a body
  * read a megabyte at a time is sixty-four handoffs of it, contended by
- * every other thread. ``fill`` loops ``SSL_read_ex`` until the buffer is
- * full, the stream ends, or the read fails, without the lock.
+ * every other thread. ``fill`` waits for the first byte as ``recv`` does,
+ * then goes on reading while more is already there -- in OpenSSL's buffer
+ * or the socket's -- all without the lock: a thread that waited for the
+ * lock while records arrived takes them all at once.
  *
  * Built into kpip's binary, where OpenSSL is linked statically beside
  * CPython (KPIP_TLS_BUILTIN). The SSL object is read from ``_ssl``'s
@@ -29,6 +31,7 @@ typedef struct ssl_st SSL;
 
 extern int SSL_read_ex(SSL *ssl, void *buffer, size_t count, size_t *read);
 extern int SSL_get_error(const SSL *ssl, int result);
+extern int SSL_pending(const SSL *ssl);
 extern void ERR_clear_error(void);
 
 #define KPIP_SSL_ERROR_WANT_READ 2
@@ -68,8 +71,9 @@ wait_ready(int fd, int writing, int timeout_ms)
 
 PyDoc_STRVAR(fill_doc,
 "fill(sslobj, fd, buffer, count, timeout_ms) -> int\n\n"
-"Read up to ``count`` bytes of ``sslobj``'s stream into ``buffer``: the\n"
-"number read, which is short only at the end of the stream. -1 when the\n"
+"Read up to ``count`` bytes of ``sslobj``'s stream into ``buffer``, as\n"
+"many as are there once one is: the number read, 0 at the end of the\n"
+"stream. -1 when the\n"
 "socket timed out before any byte, and -2 when the read failed before any:\n"
 "the caller reads again through ``ssl``, for its answer and its exception.");
 
@@ -105,6 +109,11 @@ fill(PyObject *self, PyObject *args)
     while (filled < count) {
         size_t got = 0;
 
+        /* Past the first record, only what is already there. */
+        if (filled > 0 && SSL_pending(ssl) <= 0 && wait_ready(fd, 0, 0) <= 0) {
+            break;
+        }
+
         ERR_clear_error();
 
         int result = SSL_read_ex(ssl, out + filled, (size_t)(count - filled), &got);
@@ -121,6 +130,10 @@ fill(PyObject *self, PyObject *args)
         }
 
         if (error == KPIP_SSL_ERROR_WANT_READ || error == KPIP_SSL_ERROR_WANT_WRITE) {
+            if (filled > 0) {
+                break;
+            }
+
             int ready = wait_ready(fd, error == KPIP_SSL_ERROR_WANT_WRITE, timeout_ms);
 
             if (ready > 0) {

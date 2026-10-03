@@ -1,14 +1,10 @@
-"""Large TLS reads under one release of the interpreter lock.
+"""TLS reads under one release of the interpreter lock.
 
-``ssl.SSLSocket.recv_into`` reads one TLS record per call, and gives up and
-retakes the interpreter lock around each: a wheel read a megabyte at a time
-is sixty-four handoffs of it, contended by every thread of the install. A
-read of at least ``FILL_THRESHOLD`` bytes goes to ``_kpip_tls.fill`` instead,
-which loops over the records in C without the lock.
-
-A read that large comes only from a body: ``http.client`` reads one to fill
-a buffer the caller wants filled, never past the body's end, and reads its
-headers through a buffer smaller than the threshold.
+``ssl.SSLSocket.recv_into`` reads one TLS record, at most 16 KiB, per call,
+and gives up and retakes the interpreter lock around each: a wheel read a
+megabyte at a time is sixty-four handoffs of it, contended by every thread
+of the install. ``_kpip_tls.fill`` waits for the first byte as ``recv``
+does, then takes every record already there, all without the lock.
 """
 
 from __future__ import annotations
@@ -23,35 +19,28 @@ except ImportError:
     _kpip_tls = None
 
 
-FILL_THRESHOLD = 256 * 1024
-"""The smallest read ``fill`` takes: above ``http.client``'s buffer size."""
-
-
 class FillingSSLSocket(ssl.SSLSocket):
-    """An ``SSLSocket`` whose large reads fill their buffer in C."""
+    """An ``SSLSocket`` whose reads take every record already there."""
 
     def recv_into(self, buffer: Any, nbytes: int | None = None, flags: int = 0) -> int:
         sslobj = self._sslobj  # ty: ignore[unresolved-attribute]
 
         if sslobj is not None and not flags:
-            count = nbytes or memoryview(buffer).nbytes
+            timeout = self.gettimeout()
 
-            if count >= FILL_THRESHOLD:
-                timeout = self.gettimeout()
+            got = _kpip_tls.fill(  # ty: ignore[unresolved-attribute]
+                sslobj,
+                self.fileno(),
+                buffer,
+                nbytes or memoryview(buffer).nbytes,
+                -1 if timeout is None else max(0, int(timeout * 1000)),
+            )
 
-                got = _kpip_tls.fill(  # ty: ignore[unresolved-attribute]
-                    sslobj,
-                    self.fileno(),
-                    buffer,
-                    count,
-                    -1 if timeout is None else max(0, int(timeout * 1000)),
-                )
+            if got >= 0:
+                return got
 
-                if got >= 0:
-                    return got
-
-                if got == -1:
-                    raise TimeoutError("The read operation timed out")
+            if got == -1:
+                raise TimeoutError("The read operation timed out")
 
         return super().recv_into(buffer, nbytes, flags)
 
