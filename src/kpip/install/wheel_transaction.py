@@ -353,6 +353,30 @@ def install_wheel_internal(
                     destination_text,
                     record_key,
                 ) = member_paths.resolve(member.filename)
+                # A package file of a cached wheel is a clone of the cache's
+                # copy, and a member of its top-level directory's tree.
+                if (
+                    not direct
+                    and isinstance(member, CachedWheelInfo)
+                    and len(relative_parts) > 1
+                    and not relative_parts[0].endswith((".data", ".dist-info"))
+                    and not (pycompile and relative_parts[-1].endswith(".py"))
+                ):
+                    source_text = member.source_path
+                    clone_sources.add(source_text)
+                    record_metadata[source_text] = member.record_metadata
+                    staged.append(
+                        (
+                            source_text,
+                            destination_text,
+                            destination_text,
+                            installed_mode(zip_mode(member)),  # ty:ignore[invalid-argument-type]
+                        )
+                    )
+                    top = relative_parts[0]
+                    if top not in mixed_tops:
+                        tree_members.setdefault(top, set()).add(destination_text)
+                    continue
                 relative_name = relative_parts[-1] if relative_parts else ""
                 mode = installed_mode(zip_mode(member))  # ty:ignore[invalid-argument-type]
                 if relative_parts and relative_parts[0].endswith(".dist-info"):

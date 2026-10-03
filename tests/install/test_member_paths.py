@@ -190,7 +190,9 @@ def test_shared_resolved_roots_survive_concurrent_misses(
     assert set(results) == {
         os.path.join(expected_root, "pkg", f"sub{index}") for index in range(3)
     }
-    assert len(directories) == 3
+    assert {key[1] for key in directories} == {"pkg"} | {
+        os.path.join("pkg", f"sub{index}") for index in range(3)
+    }
 
 
 class TestCompiledParts:
@@ -267,3 +269,37 @@ class TestCompiledParts:
 
         assert parts is not None
         assert parts[:3] == ("pkg", "sub", "__pycache__")
+
+
+def test_member_paths_with_caches_resolve_links_like_realpath(
+    target: InstallTarget,
+    tmp_path: Path,
+) -> None:
+    """With the shared caches a directory is resolved from the one above it;
+    links inside the root, links out of it, files in a directory's place and
+    directories not there yet must still resolve as realpath resolves them."""
+    site = Path(target.purelib)
+    (site / "pkg" / "real" / "deep").mkdir(parents=True)
+    (site / "pkg" / "linked").symlink_to(
+        site / "pkg" / "real", target_is_directory=True
+    )
+    (site / "pkg" / "afile").write_text("")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (site / "pkg" / "out").symlink_to(outside, target_is_directory=True)
+    names = (
+        "pkg/real/deep/a.py",
+        "pkg/linked/deep/b.py",
+        "pkg/linked/new/c.py",
+        "pkg/new/newer/d.py",
+        "pkg/afile/e.py",
+        "pkg/out/f.py",
+        "pkg/out/sub/g.py",
+        "fresh/one/two/h.py",
+    )
+    stage_root = os.fspath(tmp_path / "stage")
+    resolver = MemberPaths(
+        target, stage_root, resolved_directories={}, resolved_roots={}
+    )
+    for name in names:
+        assert _fast(resolver, name) == _slow(target, stage_root, name), name

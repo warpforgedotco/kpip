@@ -177,11 +177,17 @@ def _resolved_parent_directory(
             resolved_root = os.path.realpath(root_text)
             if resolved_roots is not None:
                 resolved_roots[root_text] = resolved_root
-        resolved_parent_text = (
-            resolved_root
-            if not parent_parts
-            else os.path.realpath(os.path.join(root_text, *parent_parts))
-        )
+        if not parent_parts:
+            resolved_parent_text = resolved_root
+        else:
+            resolved_parent_text = _resolved_child_directory(
+                root_text,
+                resolved_root,
+                parent_parts,
+                display_relative,
+                resolved_directories=resolved_directories,
+                resolved_roots=resolved_roots,
+            )
         try:
             if (
                 os.path.commonpath((resolved_parent_text, resolved_root))
@@ -196,6 +202,46 @@ def _resolved_parent_directory(
             resolved_directories[cache_key] = resolved_parent_text
         resolved_parent = resolved_parent_text
     return resolved_parent
+
+
+def _resolved_child_directory(
+    root: str,
+    resolved_root: str,
+    parent_parts: tuple[str, ...],
+    display_relative: tuple[str, ...] | str,
+    *,
+    resolved_directories: DestinationCache | None,
+    resolved_roots: ResolvedRoots | None,
+) -> str:
+    """``realpath`` of ``root`` joined with ``parent_parts``, from the
+    resolved directory above it when that is cached.
+
+    A member's parts hold no ``.`` or ``..``, so on POSIX the directory
+    resolves to the one above it joined with its name unless it is a
+    symbolic link: one lstat, where realpath lstats every component from
+    the root again. A link, or anything that is not a directory, takes
+    realpath.
+    """
+    if os.name == "posix" and resolved_directories is not None:
+        above = (
+            resolved_root
+            if len(parent_parts) == 1
+            else _resolved_parent_directory(
+                root,
+                parent_parts[:-1],
+                display_relative,
+                resolved_directories=resolved_directories,
+                resolved_roots=resolved_roots,
+            )
+        )
+        candidate = os.path.join(above, parent_parts[-1])
+        try:
+            mode = os.lstat(candidate).st_mode
+        except FileNotFoundError:
+            return candidate
+        if stat.S_ISDIR(mode):
+            return candidate
+    return os.path.realpath(os.path.join(root, *parent_parts))
 
 
 _DATA_KINDS = frozenset({"purelib", "platlib", "scripts", "data", "headers"})
