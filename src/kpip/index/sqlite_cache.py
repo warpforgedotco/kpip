@@ -1,20 +1,3 @@
-"""Shared SQLite connection/transaction lifecycle for kpip's persistent
-metadata caches.
-
-``WheelMetadataCache`` (metadata_cache.py) and ``CandidateMetadataCache``
-(candidate_metadata_cache.py) each need the same thing underneath very
-different schemas and payloads: lazily open a WAL-mode SQLite database (an
-absent database reads as empty rather than being created, so a run that
-only ever misses pays nothing), retry once from scratch if the file turns
-out to be corrupt, and gate writes behind a dirty flag with a
-commit-or-rollback transaction. That plumbing lived as two byte-for-byte
-copies -- drift here is a real bug, not just untidy: a fix to one (say, a
-change to the corrupt-file retry, or the busy_timeout) landing in only one
-cache would silently be a bug in the other, with no test surface that
-would notice, since both caches degrade the same way either way (a read
-that should hit disk just counts as a miss instead).
-"""
-
 from __future__ import annotations
 
 import atexit
