@@ -1011,7 +1011,10 @@ def install_wheels_transactionally(
         )
     if warn_script_location:
         warn_about_scripts_not_on_path(
-            [path for path, _, _ in requests], target.scripts, script_executable
+            [path for path, _, _ in requests],
+            target.scripts,
+            script_executable,
+            planned_candidates,
         )
     return installed
 
