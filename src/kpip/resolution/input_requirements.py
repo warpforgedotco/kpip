@@ -18,6 +18,19 @@ from kpip.resolution.input_paths import (
 from kpip.resolution.req_install import InstallRequirement
 
 
+_URL_SCHEMES = frozenset(("http", "https", "file", "ftp"))
+
+_VCS_NAMES = frozenset(("git", "hg", "svn", "bzr"))
+
+
+def installable_url(url: str) -> bool:
+    """Whether a requirement line's URL is one pip installs from: a plain
+    ``git://`` is not, as pip reads only ``git+git://`` as a checkout."""
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    vcs, plus, _ = scheme.partition("+")
+    return scheme in _URL_SCHEMES or bool(plus and vcs in _VCS_NAMES)
+
+
 def install_req_from_line(
     line: str,
     *,
@@ -80,6 +93,12 @@ def install_req_from_line(
                 url, marker = text, None
             else:
                 url, marker = prefix, text[marker_index + 2 :].strip()
+        if not installable_url(url):
+            raise InstallationError(
+                f"Invalid requirement: {text!r}. A URL to install from is http, "
+                "https, file or ftp, or names its version control system, as "
+                "git+https:// does."
+            )
         parsed = parse_requirement(url)
         return InstallRequirement(
             parsed,

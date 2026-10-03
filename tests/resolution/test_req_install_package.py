@@ -513,3 +513,29 @@ def test_forward_slash_results_in_a_link(tmp_path: Path) -> None:
     setup_py_path.write_text("")
     requirement = install_req_from_line(install_dir.as_posix())
     assert requirement.link is not None
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "git://github.com/alex/django-fixture-generator.git#egg=fixture_generator",
+        "hg://example.com/repo#egg=demo",
+    ],
+)
+def test_a_url_pip_does_not_install_from_is_an_invalid_requirement(line: str) -> None:
+    """As pip: a plain git:// is no checkout, and nothing is fetched to say so."""
+    with pytest.raises(InstallationError, match="Invalid requirement"):
+        install_req_from_line(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "git+git://example.com/repo.git#egg=demo",
+        "git+https://example.com/repo.git#egg=demo",
+        "https://example.com/demo-1.0.tar.gz",
+        "file:///tmp/demo-1.0.tar.gz",
+    ],
+)
+def test_a_url_pip_installs_from_is_a_requirement(line: str) -> None:
+    assert install_req_from_line(line).link is not None
