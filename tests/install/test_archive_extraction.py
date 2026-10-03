@@ -44,60 +44,6 @@ def _candidate(wheel: Path) -> object:
     )
 
 
-def _many_member_wheel(directory: Path, name: str, count: int) -> Path:
-    members = {
-        f"{name}/deep/nest/mod_{index:04d}.py": f"VALUE = {index}\n"
-        for index in range(count)
-    }
-    members[f"{name}/__init__.py"] = "\n"
-    return _wheel_with(directory, name, members)
-
-
-@pytest.mark.parametrize("threshold", [1, 10**9], ids=["threaded", "serial"])
-def test_extraction_is_identical_threaded_and_serial(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    threshold: int,
-) -> None:
-    monkeypatch.setattr(cache_module, "PARALLEL_EXTRACT_MEMBERS", threshold)
-
-    wheel = _many_member_wheel(tmp_path, "wide", 120)
-    cache_dir = tmp_path / f"cache-{threshold}"
-
-    (archive,) = prepare_cached_wheels((_candidate(wheel),), str(cache_dir))
-
-    expected = [
-        member.filename
-        for member in zipfile.ZipFile(wheel).infolist()
-        if not member.is_dir()
-    ]
-
-    assert [entry[0] for entry in archive.entries] == expected, (
-        "entries must follow the wheel's own member order, not completion order"
-    )
-
-    for relative, digest, size, _ in archive.entries:
-        body = Path(archive.tree, *relative.split("/")).read_bytes()
-        assert size == str(len(body))
-        assert digest.startswith("sha256=")
-
-
-def test_threaded_and_serial_extraction_agree_entry_for_entry(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    wheel = _many_member_wheel(tmp_path, "agree", 100)
-
-    monkeypatch.setattr(cache_module, "PARALLEL_EXTRACT_MEMBERS", 10**9)
-    (serial,) = prepare_cached_wheels((_candidate(wheel),), str(tmp_path / "s"))
-
-    monkeypatch.setattr(cache_module, "PARALLEL_EXTRACT_MEMBERS", 1)
-    (threaded,) = prepare_cached_wheels((_candidate(wheel),), str(tmp_path / "t"))
-
-    assert serial.entries == threaded.entries
-    assert serial.dist_info == threaded.dist_info
-
-
 def test_nested_directories_are_created_once_each(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -132,21 +78,6 @@ def test_nested_directories_are_created_once_each(
     suffix = os.path.join("tree", "deeppkg", "a", "b", "c")
     deepest = [path for path in made if path.endswith(suffix)]
     assert len(deepest) == 1, f"created the same directory {len(deepest)} times"
-
-
-def test_extract_permits_are_returned(tmp_path: Path) -> None:
-    """A wheel that borrows extraction threads must give them back, or the
-    next large wheel in the process silently extracts serially forever."""
-    wheel = _many_member_wheel(tmp_path, "permits", 80)
-
-    for index in range(3):
-        prepare_cached_wheels((_candidate(wheel),), str(tmp_path / f"cache{index}"))
-
-    taken = cache_module._borrow_extract_workers(cache_module.EXTRACT_WORKERS - 1)
-    try:
-        assert taken == max(0, cache_module.EXTRACT_WORKERS - 1)
-    finally:
-        cache_module._return_extract_workers(taken)
 
 
 def test_default_worker_count_scales_and_can_be_overridden(

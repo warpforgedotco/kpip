@@ -103,7 +103,7 @@ _STALE_LOCK_SECONDS = 300.0
 INSTALL_WORKERS = default_worker_count()
 
 EXTRACT_WORKERS = min(INSTALL_WORKERS, 4)
-"""Threads unpacking wheels into the archive cache, across and within wheels.
+"""Threads unpacking wheels into the archive cache, a wheel to each.
 
 Decompression releases the interpreter lock, but everything around it -- a
 member's header, its write, its record row -- takes it back, and more
@@ -123,19 +123,6 @@ Deliberately *not* ``INSTALL_WORKERS``: the pool's size and the point at
 which spinning one up pays for itself are unrelated, and tying them together
 sends every batch smaller than the machine's core count down the serial path.
 """
-
-PARALLEL_EXTRACT_MEMBERS = 64
-"""Members a wheel needs before extracting it across threads is worth it."""
-
-_EXTRACT_PERMITS = threading.BoundedSemaphore(max(1, EXTRACT_WORKERS - 1))
-"""Extraction threads this process may hand out *inside* a single wheel.
-
-Wheels are already extracted concurrently with one another, so within-wheel
-parallelism must not multiply with that. Permits are taken without blocking:
-a batch that already saturates the pool extracts each wheel serially, and a
-lone large wheel -- the case that actually needs it -- finds them all free.
-"""
-
 
 ArchiveEntry = tuple[str, str, str, int]
 
@@ -507,30 +494,6 @@ def _record_rows(text: str) -> dict[str, tuple[str, str]]:
     return result
 
 
-def _borrow_extract_workers(wanted: int) -> int:
-    """Take up to ``wanted`` extraction threads, or as many as are spare.
-
-    None where the C loop extracts the members: it releases the interpreter
-    lock for a wheel's members on the thread unpacking it, wheels unpack side
-    by side on threads of their own, and the threads here extract member by
-    member in Python, taking turns at the lock with the solve.
-    """
-    if _extract_loop is not None:
-        return 0
-
-    taken = 0
-
-    while taken < wanted and _EXTRACT_PERMITS.acquire(blocking=False):
-        taken += 1
-
-    return taken
-
-
-def _return_extract_workers(count: int) -> None:
-    for _ in range(count):
-        _EXTRACT_PERMITS.release()
-
-
 _HAS_PREAD = hasattr(os, "pread")
 
 _LEAN_MEMBER_LIMIT = 16 * 1024 * 1024
@@ -543,89 +506,22 @@ try:
     # Compiled into the binary as a built-in; see kpip/_acceleration/_kpip_unzip.c.
     import _kpip_unzip  # ty: ignore[unresolved-import]
 
-    _extract_loop = getattr(_kpip_unzip, "extract_members", None)
     _unpack = getattr(_kpip_unzip, "unpack", None)
 except ImportError:
-    _extract_loop = None
     _unpack = None
 
 
 def unpacks_without_the_lock() -> bool:
-    """Whether a wheel's members are extracted in C, the interpreter lock
-    released: then threads unpack wheels side by side, and beside the solve."""
-    return _extract_loop is not None
-
-
-_LEFT_TO_PYTHON = (0, -1, 0, 0, 0, b"", b"", 0)
-"""A member the C loop hands back at once."""
-
-
-def _unzip_row(item: _MemberWork) -> tuple[int, int, int, int, int, bytes, bytes, int]:
-    """What the C loop needs of a member, or a row it hands straight back:
-    for a member the RECORD gives no hash for, or ``_extract_member_lean``
-    would not take."""
-    member, _, destination, hint = item
-
-    if (
-        hint is None
-        or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
-        or member.flag_bits & 0x1
-        or member.file_size > _LEAN_MEMBER_LIMIT
-        or member.compress_size > _LEAN_MEMBER_LIMIT
-    ):
-        return _LEFT_TO_PYTHON
-
-    try:
-        name = member.orig_filename.encode(
-            "utf-8" if member.flag_bits & 0x800 else "cp437"
-        )
-
-    except UnicodeEncodeError:
-        return _LEFT_TO_PYTHON
-
-    mode = zip_mode(member)
-
-    return (
-        member.header_offset,
-        member.compress_type,
-        member.compress_size,
-        member.file_size,
-        member.CRC,
-        name,
-        os.fsencode(destination),
-        0o777 if mode is not None and mode & 0o111 else 0o666,
-    )
+    """Whether a wheel is unpacked in C, the interpreter lock released: then
+    threads unpack wheels side by side, and beside the solve."""
+    return _unpack is not None
 
 
 def _extract_members(
     archive: zipfile.ZipFile, work: list[_MemberWork], fd: int
 ) -> list[ArchiveEntry]:
-    """Extract ``work`` in order: in the C loop where it is built in, each
-    member it hands back extracted here, as ``_extract_member`` extracts it,
-    raising what that raises."""
-    if _extract_loop is None or fd < 0:
-        return [_extract_member(archive, item, fd) for item in work]
-
-    rows = [_unzip_row(item) for item in work]
-
-    entries: list[ArchiveEntry] = []
-
-    start = 0
-
-    while start < len(work):
-        _, index = _extract_loop(fd, rows, start)
-
-        for member, relative, _, hint in work[start:index]:
-            assert hint is not None
-
-            entries.append((relative, hint[0], hint[1], zip_mode(member) or 0))
-
-        if index < len(work):
-            entries.append(_extract_member(archive, work[index], fd))
-
-        start = index + 1
-
-    return entries
+    """Extract ``work`` in order, as ``_extract_member`` extracts each."""
+    return [_extract_member(archive, item, fd) for item in work]
 
 
 def _extract_member_lean(fd: int, item: _MemberWork) -> ArchiveEntry | None:
@@ -747,65 +643,6 @@ def _extract_member(
     )
 
     return (relative, metadata[0], metadata[1], mode or 0)
-
-
-def _extract_members_threaded(
-    path: str,
-    work: list[_MemberWork],
-    workers: int,
-) -> list[ArchiveEntry]:
-    """Extract ``work`` across ``workers`` threads, preserving order.
-
-    Each thread opens the wheel itself: a :class:`zipfile.ZipFile` serializes
-    reads on its own lock, so sharing one would give back exactly the
-    concurrency this is trying to buy. The ``ZipInfo`` records are shared --
-    they describe offsets into a file both handles have open, not state of
-    the handle that produced them. Decompression drops the GIL, so the
-    threads do overlap.
-    """
-
-    local = threading.local()
-
-    opened: list[zipfile.ZipFile] = []
-
-    lock = threading.Lock()
-
-    # ``pread`` needs no lock: the threads share one descriptor. Windows has
-    # no ``pread``, and keeps ``zipfile``.
-    fd = os.open(path, os.O_RDONLY) if _HAS_PREAD else -1
-
-    def extract(item: _MemberWork) -> ArchiveEntry:
-        if fd >= 0:
-            entry = _extract_member_lean(fd, item)
-
-            if entry is not None:
-                return entry
-
-        archive = getattr(local, "archive", None)
-
-        if archive is None:
-            archive = zipfile.ZipFile(path)
-
-            local.archive = archive
-
-            with lock:
-                opened.append(archive)
-
-        return _extract_member(archive, item)
-
-    try:
-        with ThreadPoolExecutor(
-            max_workers=workers,
-            thread_name_prefix="kpip-unzip",
-        ) as pool:
-            return list(pool.map(extract, work))
-
-    finally:
-        if fd >= 0:
-            os.close(fd)
-
-        for archive in opened:
-            archive.close()
 
 
 LISTING_NAME = "listing.bin"
@@ -1337,30 +1174,14 @@ def _extract_in_python(
 
             work.append((member, relative, destination, metadata))
 
-        workers = (
-            _borrow_extract_workers(EXTRACT_WORKERS - 1)
-            if len(work) >= PARALLEL_EXTRACT_MEMBERS
-            else 0
-        )
+        fd = os.open(candidate.path, os.O_RDONLY) if _HAS_PREAD else -1
 
         try:
-            if workers:
-                entries: list[ArchiveEntry] = _extract_members_threaded(
-                    candidate.path, work, workers + 1
-                )
-
-            else:
-                fd = os.open(candidate.path, os.O_RDONLY) if _HAS_PREAD else -1
-
-                try:
-                    entries = _extract_members(archive, work, fd)
-
-                finally:
-                    if fd >= 0:
-                        os.close(fd)
+            entries = _extract_members(archive, work, fd)
 
         finally:
-            _return_extract_workers(workers)
+            if fd >= 0:
+                os.close(fd)
 
     return dist_info, entries, [item[1] for item in work], seen
 
