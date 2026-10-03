@@ -15,7 +15,6 @@ does that for the installer's own rewrites.
 
 from __future__ import annotations
 
-import ctypes
 import errno
 import os
 import shutil
@@ -58,6 +57,8 @@ def _darwin_clone(source: str, destination: str) -> bool:
 
     if sys.platform != "darwin":
         return False
+
+    import ctypes
 
     if not _clonefile_loaded:
         _clonefile_loaded = True

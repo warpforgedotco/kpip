@@ -32,13 +32,6 @@ import re
 import struct
 import sys
 
-try:
-    import ctypes
-except ImportError:
-    # An interpreter built without libffi.
-    ctypes = None  # ty: ignore[invalid-assignment]
-
-
 from kpip.core.caches import memoized
 from kpip.core.compiled import is_compiled, own_command
 from kpip.host.interpreter_facts import target_interpreter
@@ -246,7 +239,10 @@ def _glibc_version_from_confstr() -> tuple[int, int] | None:
 
 
 def _glibc_version_from_ctypes() -> tuple[int, int] | None:
-    if ctypes is None:
+    try:
+        import ctypes
+    except ImportError:
+        # An interpreter built without libffi.
         return None
     try:
         namespace = ctypes.CDLL(None)
