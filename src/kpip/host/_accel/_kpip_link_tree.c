@@ -4,7 +4,8 @@
  * kpip-compile compiles this into the binary as the built-in
  * _kpip_link_tree (KPIP_LINK_TREE_BUILTIN); elsewhere clone runs the same
  * loops in Python, from _kpip_link_tree.py beside this file. Each function returns (0, len(names)) or the errno and
- * index of the first failure, which clone handles and resumes after.
+ * index of the first failure, which clone handles and resumes after;
+ * remove_tree, not built on Windows, returns an errno or 0.
  * Names are os.fsencode bytes: UTF-8 on Windows, widened for the W calls.
  */
 
@@ -20,6 +21,8 @@
 /* Bytes of UTF-8; widened, never more wide characters than bytes. */
 #define PATH_CAPACITY 32768
 #else
+#include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #define SEPARATOR '/'
@@ -378,10 +381,115 @@ done:
     return result;
 }
 
+#ifndef _WIN32
+
+/* Remove everything in the directory open at descriptor, which it closes:
+ * a directory's contents, then the directory; a link is removed, never
+ * followed. Passes repeat until one finds nothing, as entries removed
+ * while the directory is read may hide others from that read. An errno,
+ * or 0. */
+static int
+remove_entries(int descriptor)
+{
+    DIR *directory = fdopendir(descriptor);
+    if (directory == NULL) {
+        int error = errno ? errno : EIO;
+        close(descriptor);
+        return error;
+    }
+    int at = dirfd(directory);
+    int error = 0;
+    int found = 1;
+    while (found && !error) {
+        found = 0;
+        rewinddir(directory);
+        struct dirent *entry;
+        while (!error) {
+            errno = 0;
+            entry = readdir(directory);
+            if (entry == NULL) {
+                error = errno;
+                break;
+            }
+            const char *name = entry->d_name;
+            if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+                continue;
+            }
+            found = 1;
+            int is_directory = 0;
+#ifdef DT_DIR
+            if (entry->d_type == DT_DIR) {
+                is_directory = 1;
+            }
+            else if (entry->d_type == DT_UNKNOWN)
+#endif
+            {
+                struct stat status;
+                if (fstatat(at, name, &status, AT_SYMLINK_NOFOLLOW) == 0) {
+                    is_directory = S_ISDIR(status.st_mode);
+                }
+            }
+            if (is_directory) {
+                int child = openat(at, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, 0);
+                if (child < 0) {
+                    error = errno ? errno : EIO;
+                    break;
+                }
+                error = remove_entries(child);
+                if (!error && unlinkat(at, name, AT_REMOVEDIR) != 0) {
+                    error = errno ? errno : EIO;
+                }
+            }
+            else if (unlinkat(at, name, 0) != 0) {
+                error = errno ? errno : EIO;
+            }
+        }
+    }
+    closedir(directory);
+    return error;
+}
+
+PyDoc_STRVAR(remove_tree_doc,
+"remove_tree(path) -> errno\n\n"
+"Remove the directory at path and everything in it, following no link.");
+
+static PyObject *
+remove_tree(PyObject *module, PyObject *args)
+{
+    PyObject *path;
+    if (!PyArg_ParseTuple(args, "S", &path)) {
+        return NULL;
+    }
+    const char *text = PyBytes_AS_STRING(path);
+    if (memchr(text, '\0', PyBytes_GET_SIZE(path)) != NULL) {
+        PyErr_SetString(PyExc_ValueError, "embedded null byte");
+        return NULL;
+    }
+    int error = 0;
+    Py_BEGIN_ALLOW_THREADS
+    int descriptor = open(text, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, 0);
+    if (descriptor < 0) {
+        error = errno ? errno : EIO;
+    }
+    else {
+        error = remove_entries(descriptor);
+        if (!error && rmdir(text) != 0) {
+            error = errno ? errno : EIO;
+        }
+    }
+    Py_END_ALLOW_THREADS
+    return PyLong_FromLong(error);
+}
+
+#endif
+
 static PyMethodDef methods[] = {
     {"make_directories", make_directories, METH_VARARGS, make_directories_doc},
     {"change_modes", change_modes, METH_VARARGS, change_modes_doc},
     {"link_files", link_files, METH_VARARGS, link_files_doc},
+#ifndef _WIN32
+    {"remove_tree", remove_tree, METH_VARARGS, remove_tree_doc},
+#endif
     {NULL, NULL, 0, NULL},
 };
 

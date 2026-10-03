@@ -12,7 +12,7 @@ from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 
 from kpip.core.errors import InstallationError
-from kpip.host.clone import clone_path, link_into
+from kpip.host.clone import clone_path, link_into, remove_tree
 
 logger = logging.getLogger(__name__)
 
@@ -542,15 +542,24 @@ class InstallTransaction:
     def finish_successfully(self) -> None:
         if self.temporary_internal is not None:
             shutil.rmtree(self.temporary_internal, ignore_errors=True)
+        directories = []
         for backup in self.adjacent_backups:
             if os.path.isdir(backup) and not os.path.islink(backup):
-                shutil.rmtree(backup, ignore_errors=True)
+                directories.append(backup)
             else:
                 try:
                     os.unlink(backup)
                 except OSError:
                     # Still loaded, on Windows: it goes when it is not.
                     pass
+        if len(directories) > 1:
+            with ThreadPoolExecutor(
+                max_workers=min(_TREE_WORKERS, len(directories)),
+                thread_name_prefix="kpip-remove",
+            ) as pool:
+                list(pool.map(remove_tree, directories))
+        elif directories:
+            remove_tree(directories[0])
         self.adjacent_backups.clear()
         self.finished = True
 

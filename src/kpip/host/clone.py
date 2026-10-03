@@ -506,6 +506,17 @@ def _link_new_directory(
         raise
 
 
+def remove_tree(path: str) -> None:
+    """Remove the directory at ``path`` and everything in it, following no
+    link, as far as it can: in the link loops' C, with the GIL released,
+    where they are built in, else as ``shutil.rmtree(ignore_errors=True)``.
+    """
+    loop = getattr(_link_tree, "remove_tree", None) if _link_tree else None
+
+    if loop is None or loop(os.fsencode(path)):
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def link_into(source: str, destination: str, files: list[str]) -> None:
     """Clone ``files``, relative paths under ``source``, into ``destination``,
     which exists, making the directories they are in that it lacks.

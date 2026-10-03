@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import errno
 import os
+import shutil
 
 
 def make_directories(root: bytes, names: list, modes: list) -> tuple:
@@ -50,3 +51,17 @@ def link_files(
             return (exc.errno or errno.EIO, index)
 
     return (0, len(names))
+
+
+def remove_tree(path: bytes) -> int:
+    """Remove the directory at ``path`` and everything in it, following no
+    link; the errno of the first failure, or 0."""
+    failures: list[int] = []
+
+    def failed(function, failed_path, error) -> None:
+        if not failures:
+            failures.append(getattr(error, "errno", None) or errno.EIO)
+
+    shutil.rmtree(path, onexc=failed)
+
+    return failures[0] if failures else 0
