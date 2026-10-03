@@ -52,7 +52,7 @@ C sources into the binary as built-in modules, with Nuitka's own compiler,
 LTO and profile, on every platform. Each source registers itself before the
 interpreter starts, so no extension file is shipped or loaded, and kpip
 falls back to its Python twin wherever the module is absent. Today there is
-one: `src/kpip/host/_accel/_kpip_link_tree.c`, the loops that hard link a
+one: `src/kpip/_acceleration/_kpip_link_tree.c`, the loops that hard link a
 cached wheel tree into place with the GIL released, beside
 `_kpip_link_tree.py`. kpip's tests build it as an extension with the test
 interpreter (`cc`, or MSVC's `cl` on Windows) and run both.

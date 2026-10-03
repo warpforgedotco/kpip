@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from kpip.install import wheel_archive_cache as cache
 
-SOURCE = Path(cache.__file__).parents[1] / "host" / "_accel" / "_kpip_unzip.c"
+SOURCE = Path(cache.__file__).parents[1] / "_acceleration" / "_kpip_unzip.c"
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="the C loop is built where there is pread"

@@ -7,7 +7,7 @@ Each source in ``NATIVE_SOURCES`` is handed to Nuitka as an extra code file,
 which it compiles and links into the binary with its own compiler, LTO and
 profile, on every platform. With ``KPIP_LINK_TREE_BUILTIN`` defined, a
 source registers its module as a built-in before the interpreter starts (see
-``src/kpip/host/_accel/_kpip_link_tree.c``), so kpip imports it by name and
+``src/kpip/_acceleration/_kpip_link_tree.c``), so kpip imports it by name and
 no extension file is shipped or loaded.
 """
 
@@ -22,15 +22,15 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 NATIVE_SOURCES = {
     "_kpip_link_tree.c": (
-        REPO_ROOT / "src" / "kpip" / "host" / "_accel" / "_kpip_link_tree.c",
+        REPO_ROOT / "src" / "kpip" / "_acceleration" / "_kpip_link_tree.c",
         "KPIP_LINK_TREE_BUILTIN",
     ),
     "_kpip_tls.c": (
-        REPO_ROOT / "src" / "kpip" / "network" / "_accel" / "_kpip_tls.c",
+        REPO_ROOT / "src" / "kpip" / "_acceleration" / "_kpip_tls.c",
         "KPIP_TLS_BUILTIN",
     ),
     "_kpip_unzip.c": (
-        REPO_ROOT / "src" / "kpip" / "host" / "_accel" / "_kpip_unzip.c",
+        REPO_ROOT / "src" / "kpip" / "_acceleration" / "_kpip_unzip.c",
         "KPIP_UNZIP_BUILTIN",
     ),
 }

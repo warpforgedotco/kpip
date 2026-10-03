@@ -38,10 +38,10 @@ except ImportError:
     fcntl = None  # ty: ignore[invalid-assignment]
 
 try:
-    # Compiled into the binary as a built-in; see _accel/_kpip_link_tree.c.
+    # Compiled into the binary as a built-in; see kpip/_acceleration/_kpip_link_tree.c.
     import _kpip_link_tree  # ty: ignore[unresolved-import]
 except ImportError:
-    from kpip.host._accel import _kpip_link_tree
+    from kpip._acceleration import _kpip_link_tree
 
 _FICLONE = 0x40049409
 

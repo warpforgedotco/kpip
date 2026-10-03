@@ -540,7 +540,7 @@ _LOCAL_NAME_HEADROOM = 256
 """Bytes read past the local header on a guess at its name and extra field."""
 
 try:
-    # Compiled into the binary as a built-in; see host/_accel/_kpip_unzip.c.
+    # Compiled into the binary as a built-in; see kpip/_acceleration/_kpip_unzip.c.
     import _kpip_unzip  # ty: ignore[unresolved-import]
 
     _extract_loop = getattr(_kpip_unzip, "extract_members", None)

@@ -80,7 +80,7 @@ jobs:
   windows-clone:
     name: Clone / Windows
     # The suite runs on Linux; the hard link loops, in Python and in the C
-    # compiled into the binary (src/kpip/host/_accel/_kpip_link_tree.c),
+    # compiled into the binary (src/kpip/_acceleration/_kpip_link_tree.c),
     # take the whole-tree route on Windows too, so they are tested there.
     runs-on: windows-latest
     steps:

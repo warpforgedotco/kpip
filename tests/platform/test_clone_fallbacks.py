@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 from kpip.host import clone
-from kpip.host._accel import _kpip_link_tree as python_link_tree
+from kpip._acceleration import _kpip_link_tree as python_link_tree
 
 FILES = ("pkg/__init__.py", "pkg/sub/mod.py", "pkg/tool")
 
