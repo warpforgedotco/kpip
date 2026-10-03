@@ -543,6 +543,85 @@ _LEAN_MEMBER_LIMIT = 16 * 1024 * 1024
 _LOCAL_NAME_HEADROOM = 256
 """Bytes read past the local header on a guess at its name and extra field."""
 
+try:
+    # Compiled into the binary as a built-in; see host/_accel/_kpip_unzip.c.
+    import _kpip_unzip  # ty: ignore[unresolved-import]
+
+    _extract_loop = getattr(_kpip_unzip, "extract_members", None)
+except ImportError:
+    _extract_loop = None
+
+_LEFT_TO_PYTHON = (0, -1, 0, 0, 0, b"", b"", 0)
+"""A member the C loop hands back at once."""
+
+
+def _unzip_row(item: _MemberWork) -> tuple[int, int, int, int, int, bytes, bytes, int]:
+    """What the C loop needs of a member, or a row it hands straight back:
+    for a member the RECORD gives no hash for, or ``_extract_member_lean``
+    would not take."""
+    member, _, destination, hint = item
+
+    if (
+        hint is None
+        or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+        or member.flag_bits & 0x1
+        or member.file_size > _LEAN_MEMBER_LIMIT
+        or member.compress_size > _LEAN_MEMBER_LIMIT
+    ):
+        return _LEFT_TO_PYTHON
+
+    try:
+        name = member.orig_filename.encode(
+            "utf-8" if member.flag_bits & 0x800 else "cp437"
+        )
+
+    except UnicodeEncodeError:
+        return _LEFT_TO_PYTHON
+
+    mode = zip_mode(member)
+
+    return (
+        member.header_offset,
+        member.compress_type,
+        member.compress_size,
+        member.file_size,
+        member.CRC,
+        name,
+        os.fsencode(destination),
+        0o777 if mode is not None and mode & 0o111 else 0o666,
+    )
+
+
+def _extract_members(
+    archive: zipfile.ZipFile, work: list[_MemberWork], fd: int
+) -> list[ArchiveEntry]:
+    """Extract ``work`` in order: in the C loop where it is built in, each
+    member it hands back extracted here, as ``_extract_member`` extracts it,
+    raising what that raises."""
+    if _extract_loop is None or fd < 0:
+        return [_extract_member(archive, item, fd) for item in work]
+
+    rows = [_unzip_row(item) for item in work]
+
+    entries: list[ArchiveEntry] = []
+
+    start = 0
+
+    while start < len(work):
+        _, index = _extract_loop(fd, rows, start)
+
+        for member, relative, _, hint in work[start:index]:
+            assert hint is not None
+
+            entries.append((relative, hint[0], hint[1], zip_mode(member) or 0))
+
+        if index < len(work):
+            entries.append(_extract_member(archive, work[index], fd))
+
+        start = index + 1
+
+    return entries
+
 
 def _extract_member_lean(fd: int, item: _MemberWork) -> ArchiveEntry | None:
     """``_extract_member`` without ``zipfile``'s read path, or None.
@@ -1125,7 +1204,7 @@ def _extract_archive(
                     fd = os.open(candidate.path, os.O_RDONLY) if _HAS_PREAD else -1
 
                     try:
-                        entries = [_extract_member(archive, item, fd) for item in work]
+                        entries = _extract_members(archive, work, fd)
 
                     finally:
                         if fd >= 0:
