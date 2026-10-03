@@ -79,7 +79,7 @@ class ArtifactCache:
         receipt = self._receipt_path(url)
         try:
             with open(receipt, "rb") as file:
-                value = marshal.load(file)
+                value = marshal.loads(file.read())
         except EOFError, OSError, TypeError, ValueError:
             return None
         if not (

@@ -283,7 +283,7 @@ def load_archive(entry_root: str, digest: str) -> CachedWheelArchive | None:
 
     try:
         with open(manifest, "rb") as file:
-            value = marshal.load(file)
+            value = marshal.loads(file.read())
 
     except EOFError, OSError, TypeError, ValueError:
         return None
@@ -655,7 +655,7 @@ def remember_tree_listings(archive: CachedWheelArchive) -> None:
 def _read_listings(path: str) -> dict[str, Listing] | None:
     try:
         with open(path, "rb") as file:
-            value = marshal.load(file)
+            value = marshal.loads(file.read())
 
     except EOFError, OSError, TypeError, ValueError:
         return None

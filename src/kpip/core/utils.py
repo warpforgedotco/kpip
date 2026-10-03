@@ -133,7 +133,7 @@ def load_snapshot(path: str | os.PathLike[str]) -> object | None:
     """Load a marshal snapshot, treating missing or corrupt data as empty."""
     try:
         with open(path, "rb") as stream:
-            return marshal.load(stream)
+            return marshal.loads(stream.read())
     except EOFError, OSError, TypeError, ValueError:
         return None
 

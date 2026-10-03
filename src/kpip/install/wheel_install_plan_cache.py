@@ -250,7 +250,7 @@ def load_plan_pages(
     its ETag and Last-Modified; None on a miss."""
     try:
         with open(_pages_path(cache_dir, key), "rb") as file:
-            stored_key, pages = marshal.load(file)
+            stored_key, pages = marshal.loads(file.read())
 
     except EOFError, OSError, TypeError, ValueError:
         return None
@@ -485,7 +485,7 @@ def load_cached_install_plan(
             return None
 
         with open(path, "rb") as file:
-            value = marshal.load(file)
+            value = marshal.loads(file.read())
 
     except EOFError, OSError, TypeError, ValueError:
         return None
