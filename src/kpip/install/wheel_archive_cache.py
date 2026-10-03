@@ -24,7 +24,7 @@ import zlib
 from collections.abc import Generator, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeGuard, TypeVar
 
 from kpip.core.appdirs import archive_entry_root
 from kpip.core.digests import valid_sha256
@@ -39,6 +39,7 @@ from kpip.index.metadata_cache import (
     metadata_identity,
 )
 from kpip.install.bytecode import bytecode_key, compile_modules
+from kpip.install.wheel_scripts import entry_point_scripts
 from kpip.install.wheel_archive import (
     compiled_parts,
     copy_member_with_metadata,
@@ -156,15 +157,88 @@ def loaded_layout(candidate: WheelInstallCandidate) -> object | None:
 _UNKNOWN = object()
 
 
+ArchiveSummary = tuple[
+    tuple[str, ...], bool, bool, bool, tuple[tuple[str, str, bool], ...]
+]
+"""What planning an install reads of an archive, so it need not walk every
+member: its members' top-level destinations, whether one is a module at
+the top level, whether a member is listed twice, whether one is
+``__pycache__`` bytecode, and its entry-point scripts as name, target and
+whether a GUI script."""
+
+
+def summarize_archive(
+    tree: str, dist_info: str, entries: tuple[ArchiveEntry, ...]
+) -> ArchiveSummary:
+    tops: set[str] = set()
+
+    top_module = False
+
+    for entry in entries:
+        relative = entry[0]
+
+        top, separator, _ = relative.partition("/")
+
+        if top.endswith(".data"):
+            mapped = mapped_parts(relative)
+            top = mapped[0]
+            at_top_level = len(mapped) == 1
+        else:
+            at_top_level = not separator
+
+        if at_top_level and top.endswith(".py"):
+            top_module = True
+
+        tops.add(os.path.normcase(top))
+
+    scripts = entry_point_scripts(os.path.join(tree, dist_info, "entry_points.txt"))
+
+    return (
+        tuple(sorted(tops)),
+        top_module,
+        len({entry[0] for entry in entries}) != len(entries),
+        any("__pycache__/" in entry[0] for entry in entries),
+        tuple((name, target, gui) for name, (target, gui) in scripts.items()),
+    )
+
+
+def valid_archive_summary(summary: object) -> TypeGuard[ArchiveSummary]:
+    return (
+        isinstance(summary, tuple)
+        and len(summary) == 5
+        and isinstance(summary[0], tuple)
+        and all(isinstance(top, str) for top in summary[0])
+        and isinstance(summary[1], bool)
+        and isinstance(summary[2], bool)
+        and isinstance(summary[3], bool)
+        and isinstance(summary[4], tuple)
+        and all(
+            isinstance(script, tuple)
+            and len(script) == 3
+            and isinstance(script[0], str)
+            and isinstance(script[1], str)
+            and isinstance(script[2], bool)
+            for script in summary[4]
+        )
+    )
+
+
 class CachedWheelArchive:
-    __slots__ = ("digest", "dist_info", "entries", "tree")
+    """An unpacked wheel in the archive cache.
+
+    ``entries`` not given are read from its manifest when first asked for,
+    and ``summary`` not given is made from them.
+    """
+
+    __slots__ = ("_entries", "_summary", "digest", "dist_info", "tree")
 
     def __init__(
         self,
         digest: str,
         tree: str,
         dist_info: str,
-        entries: tuple[ArchiveEntry, ...],
+        entries: tuple[ArchiveEntry, ...] | None = None,
+        summary: ArchiveSummary | None = None,
     ) -> None:
         self.digest = digest
 
@@ -172,7 +246,36 @@ class CachedWheelArchive:
 
         self.dist_info = dist_info
 
-        self.entries = entries
+        self._entries = entries
+
+        self._summary = summary
+
+    @property
+    def entries(self) -> tuple[ArchiveEntry, ...]:
+        entries = self._entries
+
+        if entries is None:
+            loaded = load_archive(os.path.dirname(self.tree), self.digest)
+
+            if loaded is None:
+                raise OSError(
+                    errno.ENOENT, "archive cache entry has no manifest", self.tree
+                )
+
+            entries = self._entries = loaded.entries
+
+        return entries
+
+    @property
+    def summary(self) -> ArchiveSummary:
+        summary = self._summary
+
+        if summary is None:
+            summary = self._summary = summarize_archive(
+                self.tree, self.dist_info, self.entries
+            )
+
+        return summary
 
 
 def supplied_wheel_digest(candidate: WheelInstallCandidate) -> str | None:

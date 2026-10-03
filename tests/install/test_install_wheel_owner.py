@@ -615,6 +615,97 @@ def test_exact_install_plan_receipt_reuses_cached_archives(tmp_path: Path) -> No
     assert load_cached_install_plan(str(cache), key) is None
 
 
+def _cached_plan(tmp_path: Path, wheels: list[Path]) -> object:
+    """Fill the archive cache with ``wheels`` and load a plan of them."""
+    from kpip.install.wheel_install_plan_cache import (
+        exact_install_plan_key_from_strings,
+        load_cached_install_plan,
+        save_cached_install_plan,
+    )
+
+    candidates = []
+    for wheel in wheels:
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        candidates.append(
+            wheel_candidate(wheel).copy_with(
+                source_hashes={"sha256": digest}, source_kind="wheel"
+            )
+        )
+    cache = tmp_path / "cache"
+    install_wheels_transactionally(
+        [(wheel, True, None) for wheel in wheels],
+        target=InstallTarget.from_options("owner-demo", target=str(tmp_path / "t")),
+        pycompile=False,
+        lookup_existing=False,
+        candidates=candidates,
+        cache_dir=str(cache),
+    )
+    found = exact_install_plan_key_from_strings(
+        tuple(f"{c.name}=={c.version}" for c in candidates), ("test-context",)
+    )
+    assert found is not None
+    key = found[0]
+    assert save_cached_install_plan(str(cache), key, tuple(candidates), {})
+    loaded = load_cached_install_plan(str(cache), key)
+    assert loaded is not None
+    return loaded
+
+
+def test_a_cached_plan_is_made_without_reading_unshared_members(
+    tmp_path: Path,
+) -> None:
+    """A cached plan carries each archive's summary; planning reads the
+    members of none of them while no top-level name is shared."""
+    from kpip.install.wheel_archive_cache import summarize_archive
+    from kpip.install.wheel_archive_installer import _build_plans
+
+    wheels = [
+        make_wheel_internal(
+            tmp_path,
+            entry_points="[console_scripts]\nowner-demo = owner_demo:main\n",
+        ),
+        make_wheel_internal(tmp_path, name="other-demo"),
+    ]
+    loaded = _cached_plan(tmp_path, wheels)
+    archives = tuple(candidate.wheel_layout for candidate in loaded.candidates)
+
+    plans = _build_plans(
+        tuple((c.path, True, None) for c in loaded.candidates),
+        tuple(loaded.candidates),
+        archives,
+    )
+
+    assert all(archive._entries is None for archive in archives)
+    assert {name for plan in plans for name in plan.scripts} == {"owner-demo"}
+    for archive in archives:
+        summary = archive.summary
+        assert summarize_archive(archive.tree, archive.dist_info, archive.entries) == (
+            summary
+        )
+
+
+def test_a_cached_plan_reads_the_members_under_a_shared_name(tmp_path: Path) -> None:
+    from kpip.install.wheel_archive_installer import _build_plans
+
+    wheels = [
+        make_wheel_internal(tmp_path, extra_files={"shared/one.py": "ONE = 1\n"}),
+        make_wheel_internal(
+            tmp_path, name="other-demo", extra_files={"shared/two.py": "TWO = 2\n"}
+        ),
+    ]
+    loaded = _cached_plan(tmp_path, wheels)
+    archives = tuple(candidate.wheel_layout for candidate in loaded.candidates)
+
+    plans = _build_plans(
+        tuple((c.path, True, None) for c in loaded.candidates),
+        tuple(loaded.candidates),
+        archives,
+    )
+
+    assert all(archive._entries is not None for archive in archives)
+    assert not any(plan.loses or plan.wins for plan in plans)
+
+
 def test_cached_batch_rejects_duplicates_before_publishing_target(
     tmp_path: Path,
 ) -> None:

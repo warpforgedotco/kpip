@@ -36,7 +36,6 @@ from kpip.install.wheel_archive_cache import (
     remember_tree_listings,
 )
 from kpip.install.wheel_scripts import (
-    entry_point_scripts,
     generate_entry_point_files,
     rewrite_shebang,
 )
@@ -286,11 +285,11 @@ def _build_plans(
     # after its members are claimed.
     shared: list[tuple[_WheelInstallPlan, int, str]] = []
 
+    summaries = [archive.summary for archive in archives]
+
     scripts_by_owner = [
-        entry_point_scripts(
-            os.path.join(archive.tree, archive.dist_info, "entry_points.txt"),
-        )
-        for archive in archives
+        {name: (target, gui) for name, target, gui in summary[4]}
+        for summary in summaries
     ]
 
     # Two wheels can only install the same path under a top-level name they
@@ -300,15 +299,18 @@ def _build_plans(
     # name shared. A wheel can still collide with itself, listing a member
     # twice or, compiled, shipping the bytecode compiling would write: such a
     # one is claimed whole.
-    tops_by_owner = [
-        _top_destinations(archive, pycompile=pycompile) for archive in archives
+    pycache = os.path.normcase("__pycache__")
+
+    names_by_owner = [
+        {*summary[0], pycache} if pycompile and summary[1] else set(summary[0])
+        for summary in summaries
     ]
 
     owners_by_top: dict[str, int] = {}
 
     scripts_top = os.path.normcase("Scripts" if os.name == "nt" else "bin")
 
-    for owner, (_, names) in enumerate(tops_by_owner):
+    for owner, names in enumerate(names_by_owner):
         if scripts_by_owner[owner]:
             names = names | {scripts_top}
 
@@ -320,15 +322,17 @@ def _build_plans(
     for owner, (request, candidate, archive) in enumerate(
         zip(requests, candidates, archives, strict=True),
     ):
-        entry_tops = tops_by_owner[owner][0]
+        summary = summaries[owner]
 
-        whole = len({entry[0] for entry in archive.entries}) != len(
-            archive.entries
-        ) or (
-            pycompile and any("__pycache__/" in entry[0] for entry in archive.entries)
-        )
+        whole = summary[2] or (pycompile and summary[3])
 
-        for entry, (top, compiled_top) in zip(archive.entries, entry_tops, strict=True):
+        if whole or not names_by_owner[owner].isdisjoint(shared_tops):
+            entry_tops = _top_destinations(archive, pycompile=pycompile)[0]
+            members = zip(archive.entries, entry_tops, strict=True)
+        else:
+            members = iter(())
+
+        for entry, (top, compiled_top) in members:
             if not whole and top not in shared_tops and compiled_top not in shared_tops:
                 continue
 

@@ -3,9 +3,10 @@
 An exact-pin command (every root requirement is a plain ``==`` specifier with
 no URL, hash, or config-settings override) can skip resolution entirely on a
 warm cache: the receipt records which archive-cache entries satisfied the
-previous resolve, and loading it revalidates the receipt's shape and confirms
-each referenced archive tree still exists before reuse -- it trusts, rather
-than re-hashes, an existing tree's contents against the recorded entries.
+previous resolve, each with its summary, and loading it revalidates the
+receipt's shape and confirms each referenced archive tree and manifest still
+exist before reuse -- it trusts, rather than re-hashes, an existing tree's
+contents against its manifest's entries, which are read only when needed.
 """
 
 from __future__ import annotations
@@ -26,13 +27,13 @@ from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
     archive_entry_root,
     load_archive,
-    valid_archive_entries,
+    valid_archive_summary,
     valid_sha256,
     wheel_digest,
 )
 from kpip.resolution.models import ResolutionResult
 
-RESOLUTION_CACHE_BUCKET = versioned_bucket("resolution", 1, interpreter=True)
+RESOLUTION_CACHE_BUCKET = versioned_bucket("resolution", 2, interpreter=True)
 
 REMOTE_EXACT_CONTEXT = versioned_bucket("remote-exact", 1)
 
@@ -315,7 +316,7 @@ def save_cached_install_plan(
                     candidate.source_vcs,
                     candidate.yanked_reason,
                     archive.dist_info,
-                    archive.entries,
+                    archive.summary,
                 ),
             )
 
@@ -380,7 +381,7 @@ def _candidate_from_record(cache_dir: str, record: object) -> WheelCandidate | N
         source_vcs,
         yanked_reason,
         dist_info,
-        archive_entries,
+        summary,
     ) = record
 
     if not (
@@ -406,26 +407,19 @@ def _candidate_from_record(cache_dir: str, record: object) -> WheelCandidate | N
         and (source_vcs is None or isinstance(source_vcs, str))
         and (yanked_reason is None or isinstance(yanked_reason, str))
         and isinstance(dist_info, str)
-        and isinstance(archive_entries, tuple)
-        and valid_archive_entries(archive_entries)
+        and valid_archive_summary(summary)
     ):
         return None
 
-    tree = os.path.join(archive_entry_root(cache_dir, digest), "tree")
+    entry_root = archive_entry_root(cache_dir, digest)
 
-    if not os.path.isdir(tree):
+    tree = os.path.join(entry_root, "tree")
+
+    if not os.path.isdir(tree) or not os.path.isfile(
+        os.path.join(entry_root, "manifest.bin")
+    ):
         return None
 
-    typed_archive_entries = tuple(
-        (entry[0], entry[1], entry[2], entry[3])
-        for entry in archive_entries
-        if isinstance(entry, tuple)
-        and len(entry) == 4
-        and isinstance(entry[0], str)
-        and isinstance(entry[1], str)
-        and isinstance(entry[2], str)
-        and isinstance(entry[3], int)
-    )
     source_hashes = {
         item[0]: item[1]
         for item in source_hash_items
@@ -435,7 +429,7 @@ def _candidate_from_record(cache_dir: str, record: object) -> WheelCandidate | N
         and isinstance(item[1], str)
     }
 
-    archive = CachedWheelArchive(digest, tree, dist_info, typed_archive_entries)
+    archive = CachedWheelArchive(digest, tree, dist_info, summary=summary)
 
     return WheelCandidate(
         name=name,
