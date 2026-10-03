@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Fri, 2 Oct 2026 20:53:58 -0500
+Subject: [PATCH] Onefile: take the payload's compression level from the
+ environment
+
+The payload is compressed at level 22, whose window is so large that
+zstd compresses a payload of any likely size as one job: with sixteen
+workers, a 156 MB payload took 102 seconds against 105 on one. At level
+19 the workers share it, 19 seconds, for a payload 1.3% larger.
+
+NUITKA_ONEFILE_COMPRESSION_LEVEL, when set, is the level, clamped to
+1..22. The compression cache already keys each file on the level.
+---
+ nuitka/tools/onefile_compressor/OnefileCompressor.py | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/nuitka/tools/onefile_compressor/OnefileCompressor.py b/nuitka/tools/onefile_compressor/OnefileCompressor.py
+index ba60678..3cbf1be 100644
+--- a/nuitka/tools/onefile_compressor/OnefileCompressor.py
++++ b/nuitka/tools/onefile_compressor/OnefileCompressor.py
+@@ -31,7 +31,15 @@ from nuitka.Version import version_string
+ 
+ 
+ def getCompressorLevel(low_memory):
+-    return 3 if low_memory else 22
++    if low_memory:
++        return 3
++
++    level = os.environ.get("NUITKA_ONEFILE_COMPRESSION_LEVEL")
++
++    if level:
++        return max(1, min(22, int(level)))
++
++    return 22
+ 
+ 
+ def getCompressorFunction(expect_compression, low_memory, job_limit):

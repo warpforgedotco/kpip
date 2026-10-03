@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from kpip_compile.build import (
@@ -172,3 +173,26 @@ def test_kpips_c_modules_are_compiled_in_by_the_plugin() -> None:
         # Every C source is handed to Nuitka, and defines what builds it in.
         assert f'"{source.name}"' in text
         assert "#ifdef KPIP_LINK_TREE_BUILTIN" in source.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("fast_compress", [False, True])
+def test_fast_compress_sets_nuitkas_compression_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fast_compress: bool
+) -> None:
+    from kpip_compile import build as build_module
+    from kpip_compile import workers
+
+    environments: list[dict[str, str]] = []
+
+    def run(command: list[str], env: dict[str, str], check: bool) -> object:
+        environments.append(env)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(workers, "subinterpreter_modules", lambda python: ())
+    monkeypatch.setattr(build_module.subprocess, "run", run)
+    options = BuildOptions(output_dir=tmp_path, fast_compress=fast_compress)
+
+    assert build_module._run_nuitka(options, tmp_path, {}, "cpython-315") == 0
+
+    expected = str(build_module.FAST_COMPRESSION_LEVEL) if fast_compress else None
+    assert environments[0].get("NUITKA_ONEFILE_COMPRESSION_LEVEL") == expected

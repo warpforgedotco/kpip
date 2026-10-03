@@ -15,6 +15,9 @@ from kpip_compile.vendor import PACKAGE_ROOT, REPO_ROOT
 KPIP_PACKAGE = REPO_ROOT / "src" / "kpip"
 DEFAULT_OUTPUT_DIR = PACKAGE_ROOT / "build"
 NATIVE_PLUGIN = Path(__file__).with_name("native_plugin.py")
+FAST_COMPRESSION_LEVEL = 19
+"""The onefile payload's zstd level for --fast-compress (Nuitka patch 0022):
+the workers share it, where at Nuitka's 22 one compresses it all."""
 
 
 def onefile_tempdir_spec(interpreter: str) -> str:
@@ -49,6 +52,7 @@ class BuildOptions:
     platform: str = sys.platform
     extra_args: tuple[str, ...] = field(default=())
     pgo: bool = False
+    fast_compress: bool = False
 
 
 def kpip_version(package_dir: Path = KPIP_PACKAGE) -> str:
@@ -155,6 +159,8 @@ def _run_nuitka(
         options, kpip_version(), interpreter, modules, build_id_file
     )
     env = dict(environ)
+    if options.fast_compress:
+        env["NUITKA_ONEFILE_COMPRESSION_LEVEL"] = str(FAST_COMPRESSION_LEVEL)
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(nuitka_dir), env.get("PYTHONPATH")))
     )

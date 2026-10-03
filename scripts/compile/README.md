@@ -18,6 +18,19 @@ with `--python`, and pass extra Nuitka options after `--`:
 uv run kpip-compile build --python /opt/homebrew/bin/python3.15 -- --report=report.xml
 ```
 
+## Faster onefile builds
+
+```console
+uv run kpip-compile build --fast-compress
+```
+
+Nuitka compresses the onefile payload at zstd level 22, whose window is so
+large that zstd compresses the whole payload as one job: about 100 seconds
+for an unstripped build, on one core. `--fast-compress` compresses at level
+19 instead, which zstd splits across the build's jobs: about 20 seconds, for
+a payload about 1.3% larger. Both need an interpreter whose zstd is built
+multithreaded, as MonolithPy's is. Release builds leave it off.
+
 ## Onefile cache mode
 
 By default, the binary unpacks once into
@@ -109,6 +122,7 @@ The patches live in a subdirectory so that `vendoring sync`, which applies
 | `0003-lazy-inspect-typing.patch` | Standalone programs no longer import `inspect` and `typing` at startup just to patch them. `inspect` and `types` are patched once something first imports them, and the typing types are taken from the built-in `_typing`. |
 | `0004-getattr-default.patch` | `getattr(obj, name, default)` gives the default only for `AttributeError`, as CPython does. Nuitka returned it for any error and left that error set, so a compiled kpip took an sdist that failed to build as having no dependencies and then crashed with `SystemError`. Upstream issue [Nuitka#4061](https://github.com/Nuitka/Nuitka/issues/4061). |
 | `0021-onefile-exec-cached-child.patch` | In cached mode the Linux and macOS bootstrap execs the program in its place instead of forking, running it and waiting: nothing is left to clean up after it, so the fork, the second process and the wait (about 4 ms a run) bought nothing. The shell gets the program's own exit status, including death by a signal, which `WEXITSTATUS` misreported. Temporary-directory mode and Windows are unchanged. |
+| `0022-onefile-compression-level-from-environment.patch` | `NUITKA_ONEFILE_COMPRESSION_LEVEL`, when set, is the onefile payload's zstd level, clamped to 1..22; the compression cache already keys each file on the level. `--fast-compress` sets it to 19. |
 
 `_vendor/nuitka` is a git checkout whose `upstream` branch is the fetched
 `develop` commit, so `git diff` inside it shows exactly what the patches

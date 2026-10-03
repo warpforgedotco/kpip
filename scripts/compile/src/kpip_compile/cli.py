@@ -84,6 +84,12 @@ def _parser() -> argparse.ArgumentParser:
         "build, a training run of real kpip commands (needs network), then the "
         "final build.",
     )
+    build_parser.add_argument(
+        "--fast-compress",
+        action="store_true",
+        help="Compress the onefile payload at zstd level 19, on every core, "
+        "rather than 22 on one: for builds that are not released.",
+    )
     build_parser.add_argument("nuitka_args", nargs=argparse.REMAINDER)
     return parser
 
@@ -115,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         cache_mode=args.cache_mode,
         extra_args=extra_args,
         pgo=args.pgo,
+        fast_compress=args.fast_compress,
     )
     try:
         return build(options, nuitka_dir)
