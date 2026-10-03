@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
-import platform
 import re
 import sys
-import zipfile
 from collections.abc import Callable, Collection, Mapping
 from typing import TYPE_CHECKING, Protocol
 
@@ -29,6 +27,7 @@ from .wheel_metadata import (
 
 if TYPE_CHECKING:
     import email.parser
+    import zipfile
     from email.message import Message
     from typing import IO, Any, NoReturn
 
@@ -934,6 +933,8 @@ def current_platform_tag() -> str:
         release = macos_product_version()
 
         if release is None:
+            import platform
+
             release = platform.mac_ver()[0]
 
         mac_version = release.split(".")
@@ -1459,6 +1460,8 @@ def read_metadata_message(path: str):
     except WheelhouseUnavailable:
         pass
 
+    import zipfile
+
     with zipfile.ZipFile(path) as archive:
         return read_metadata_message_internal(archive, path)
 
@@ -1578,8 +1581,15 @@ def read_wheel_archive_member(source: ZipArchiveSource, path: str) -> bytes:
     try:
         return source.read(path)
 
-    except (zipfile.BadZipFile, KeyError, RuntimeError) as exc:
+    except (_bad_zip_file(), KeyError, RuntimeError) as exc:
         raise UnsupportedWheel(f"could not read {path!r} file: {exc!r}") from exc
+
+
+def _bad_zip_file() -> type[Exception]:
+    """zipfile's ``BadZipFile``, which only a loaded zipfile raises."""
+    zipfile = sys.modules.get("zipfile")
+
+    return KeyError if zipfile is None else zipfile.BadZipFile
 
 
 def read_wheel_format_metadata(source: ZipArchiveSource, dist_info_dir: str) -> Message:
@@ -1765,6 +1775,8 @@ def wheel_candidate_from_path(
                     provided_extras=provided_extras,
                     requires_python=requires_python,
                 )
+
+    import zipfile
 
     with (
         open(path, "rb", buffering=32768) as stream,

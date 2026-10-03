@@ -28,9 +28,7 @@ from typing import TYPE_CHECKING
 import atexit
 import importlib.util
 import os
-import py_compile
 import queue
-import subprocess
 import sys
 import threading
 
@@ -40,6 +38,7 @@ from kpip.host.interpreter_facts import target_interpreter
 from kpip.install._compile_worker import SOURCE
 
 if TYPE_CHECKING:
+    import subprocess
     from collections.abc import Iterable
 
 CompileJob = tuple[str, str, str]
@@ -214,6 +213,8 @@ def pyc_path(module_path: str) -> str | None:
 def compile_in_process(job: CompileJob) -> None:
     """Compile one module here. Only for bytecode this process compiles as
     the target does: see :func:`compiles_as_this_process`."""
+    import py_compile
+
     source, output, display = job
 
     try:
@@ -331,6 +332,7 @@ def _worker_command() -> list[str]:
 
 def _spawn(command: list[str]) -> _Worker | None:
     """Start one worker, or ``None`` if it will not answer."""
+    import subprocess
 
     try:
         process = subprocess.Popen(  # noqa: S603

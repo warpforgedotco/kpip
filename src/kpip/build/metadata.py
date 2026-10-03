@@ -18,7 +18,6 @@ from kpip.core.packaging import (
 )
 from kpip.core.urls import url_to_path
 from kpip.core.versions import Version
-from kpip.core.wheel import read_wheel_archive_member, validate_wheel
 from kpip.host.interpreter_facts import search_path, target_interpreter
 
 if TYPE_CHECKING:
@@ -75,6 +74,8 @@ class MetadataDistribution:
         name: str,
         location: str,
     ) -> MetadataDistribution:
+        from kpip.core.wheel import read_wheel_archive_member, validate_wheel
+
         info_dir = validate_wheel(archive, name)
 
         contents = read_wheel_archive_member(archive, f"{info_dir}/METADATA")

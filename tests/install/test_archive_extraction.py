@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from kpip.core.utils import default_worker_count
 from kpip.core.wheel import wheel_candidate
+from kpip.install import bytecode
 from kpip.install import wheel_archive_cache as cache_module
 from kpip.install.wheel_archive_cache import prepare_cached_wheels
 
@@ -310,7 +311,7 @@ def test_an_incomplete_bytecode_tree_is_not_kept(
     (archive,) = prepare_cached_wheels(
         (_candidate(wheel),), str(tmp_path / "cache"), pycompile=False
     )
-    monkeypatch.setattr(cache_module, "compile_modules", lambda jobs: jobs)
+    monkeypatch.setattr(bytecode, "compile_modules", lambda jobs: jobs)
 
     assert cache_module.bytecode_tree(archive) is None
     entry_root = Path(os.path.dirname(archive.tree))

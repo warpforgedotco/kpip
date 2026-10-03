@@ -6,7 +6,6 @@ import tempfile
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
-from kpip.build.pep517_hooks import BuildBackendHookCaller, HookMissing
 from kpip.core.errors import (
     InstallationError,
 )
@@ -25,6 +24,8 @@ from kpip.index.links import Link
 
 if TYPE_CHECKING:
     import email.message
+
+    from kpip.build.pep517_hooks import BuildBackendHookCaller
 
 logger = logging.getLogger(__name__)
 
@@ -363,6 +364,8 @@ class InstallRequirement:
 
         if self.source_dir is None or self.pep517_backend is None:
             raise InstallationError(f"Cannot prepare metadata for {self}")
+
+        from kpip.build.pep517_hooks import HookMissing
 
         metadata_root = tempfile.mkdtemp(prefix="kpip-modern-metadata-")
 

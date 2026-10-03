@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING
 import _imp
 import os
 import threading
-from concurrent.futures import InterpreterPoolExecutor
 
 from kpip.core.compiled import is_compiled
 from kpip.install.wheel_archive_cache import (
@@ -128,6 +127,8 @@ class ArchiveWorkers:
         with self._lock:
             if self._executor is None and not self._closed:
                 try:
+                    from concurrent.futures import InterpreterPoolExecutor
+
                     executor = InterpreterPoolExecutor(max_workers=WORKERS)
 
                     # Each worker imports kpip before its first wheel.

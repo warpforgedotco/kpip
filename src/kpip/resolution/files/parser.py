@@ -14,7 +14,6 @@ import urllib.parse
 from kpip.core.errors import InstallationError
 from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.core.packaging import parse_requirement
-from kpip.index.prefetch import Prefetcher
 from kpip.network.origins import trusted_host_key
 from kpip.resolution.files.models import (
     ParsedRequirement,
@@ -35,6 +34,7 @@ from kpip.resolution.input_requirements import (
 
 if TYPE_CHECKING:
     from typing import Any
+    from kpip.index.prefetch import Prefetcher
     from kpip.resolution.files.contracts import RequirementSession, RequirementSource
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,8 @@ class RequirementFilePrefetcher:
 
     def submit(self, url: str) -> None:
         if self.worker is None:
+            from kpip.index.prefetch import Prefetcher
+
             self.worker = Prefetcher(self.session.get, max_workers=8)
         self.worker.submit(url, url)
 

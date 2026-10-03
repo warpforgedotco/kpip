@@ -8,7 +8,6 @@ an installation target with copy-on-write semantics.
 from __future__ import annotations
 
 import base64
-import csv
 import errno
 import hashlib
 import io
@@ -31,14 +30,7 @@ from kpip.core.digests import valid_sha256
 from kpip.core.direct_url import DirectUrl
 from kpip.core.errors import InstallationError
 from kpip.core.utils import default_worker_count
-from kpip.core.wheel import validate_wheel
 from kpip.host.clone import Listing, remember_listings, tree_listing
-from kpip.index.metadata_cache import (
-    MetadataIdentity,
-    get_wheel_metadata_cache,
-    metadata_identity,
-)
-from kpip.install.bytecode import bytecode_key, compile_modules
 from kpip.install.wheel_scripts import entry_point_scripts
 from kpip.install.wheel_archive import (
     compiled_parts,
@@ -50,6 +42,7 @@ from kpip.install.wheel_archive import (
 )
 
 if TYPE_CHECKING:
+    from kpip.index.metadata_cache import MetadataIdentity
 
     class WheelInstallCandidate(Protocol):
         """Read-only candidate boundary required by the archive installer."""
@@ -298,6 +291,7 @@ def prefetch_wheel_digests(
     cache_dir: str,
 ) -> tuple[str | None, ...]:
     """Load and return known digests with one database read for the batch."""
+    from kpip.index.metadata_cache import get_wheel_metadata_cache, metadata_identity
 
     candidates = tuple(candidates)
     cache = get_wheel_metadata_cache(cache_dir)
@@ -335,6 +329,8 @@ def wheel_digest(candidate: WheelInstallCandidate, cache_dir: str | None = None)
 
     if supplied is not None:
         return supplied
+
+    from kpip.index.metadata_cache import get_wheel_metadata_cache, metadata_identity
 
     cache = None
 
@@ -493,6 +489,8 @@ def _record_metadata(
 
     except KeyError, UnicodeDecodeError:
         return {}
+
+    import csv
 
     result: dict[str, tuple[str, str]] = {}
 
@@ -905,6 +903,8 @@ def bytecode_tree(archive: CachedWheelArchive) -> str | None:
     A module that will not compile -- vendored Python 2 in a wheel, say -- is
     left out, not fatal: the install compiles that one in the stage.
     """
+    from kpip.install.bytecode import bytecode_key
+
     key = bytecode_key()
 
     if key is None:
@@ -970,6 +970,8 @@ def _compile_archive_pyc(
             ),
         )
 
+    from kpip.install.bytecode import compile_modules
+
     return compile_modules(jobs)
 
 
@@ -994,6 +996,8 @@ def _extract_archive(
                 dist_info = layout[0]
 
             else:
+                from kpip.core.wheel import validate_wheel
+
                 dist_info = validate_wheel(
                     archive,
                     os.path.basename(candidate.path)[:-4].split("-", 1)[0],
