@@ -12,6 +12,7 @@ from html.parser import HTMLParser
 from kpip.core.errors import InstallationError
 from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.core.urls import split_auth_from_netloc
+from kpip.core.versions import InvalidVersion, Version
 from kpip.core.wheel import wheel_release_from_filename
 from kpip.index import typed_pages
 from kpip.index.artifacts import ArtifactLocator
@@ -28,10 +29,11 @@ from kpip.index.catalog_cache import (
     save_catalog,
     save_links,
     url_path_tail,
+    summary_from_catalog,
 )
 from kpip.index.dates import parse_iso_datetime
 from kpip.index.hashes import SUPPORTED_RECORD_HASHES
-from kpip.index.links import PLAIN_URL, Link
+from kpip.index.links import PLAIN_URL, SOURCE_ARCHIVE_SUFFIXES, Link
 from kpip.index.paths import PathComponent
 from kpip.index.source_models import ArtifactKind, MetadataFile
 
@@ -157,6 +159,22 @@ class IndexPageParser:
         parser.feed(body)
         return parser.links
 
+    def pinned_catalog_from_content(
+        self, content: IndexContent, url: str, release: Version
+    ) -> tuple[Any, Any] | None:
+        """The catalog of a JSON page's files of ``release`` alone, and its
+        summary under a generation of its own; never stored, as a later
+        caller asking for another release would take it for the page.
+        ``None`` for a page that is not the JSON shape."""
+        content_type = content.content_type
+        if not (content_type.endswith("+json") or "json" in content_type):
+            return None
+        catalog = self.catalog_from_json(
+            content.body, url, content.base_url, release=release
+        )
+        generation = f"{PINNED_GENERATION}{release}:{url}"
+        return catalog, summary_from_catalog(catalog, generation)
+
     def summary_from_content(self, content: IndexContent, url: str) -> Any:
         """Compile a freshly fetched JSON page into its persisted summary.
 
@@ -181,6 +199,8 @@ class IndexPageParser:
         body: str,
         url: str,
         base_url: str | None = None,
+        *,
+        release: Version | None = None,
     ) -> tuple[list[Any], list[Any]]:
         """Compile a Simple API JSON page straight into catalog records.
 
@@ -206,9 +226,12 @@ class IndexPageParser:
             )
             base_url = base_url or ensure_trailing_slash(url)
             record_from_fields = self.record_from_fields
+            keeps = None if release is None else release_filter(release)
             for entry in page.files:
                 file_url = entry.url
                 if not isinstance(file_url, str):
+                    continue
+                if keeps is not None and not keeps(file_url):
                     continue
                 metadata = entry.core_metadata
                 if metadata is unset:
@@ -523,6 +546,62 @@ def metadata_file_from_value(value: str | None) -> MetadataFile | None:
 
 
 _ABSOLUTE_HTTP_PREFIXES = ("https://", "http://")
+
+
+PINNED_GENERATION = "pinned:"
+"""How a generation of a catalog of one release's files begins."""
+
+
+def release_filter(release: Version) -> Callable[[str], bool]:
+    """Whether a file's URL can name a file of ``release``, or a local
+    version of it: false only when its name's version is not that.
+
+    The version is read from the URL's last segment, as the release a file
+    belongs to is, without parsing the rest of the name; a name it cannot
+    read a version from is kept, for the full parse to place.
+    """
+    target = release.public_key
+    known: dict[str, bool] = {}
+
+    def keeps(url: str) -> bool:
+        tail = url.partition("#")[0].partition("?")[0].rstrip("/")
+        tail = tail[tail.rfind("/") + 1 :]
+        if "%" in tail:
+            tail = urllib.parse.unquote(tail)
+        text = _version_text(tail)
+        if text is None:
+            return True
+        kept = known.get(text)
+        if kept is None:
+            try:
+                kept = Version(text).public_key == target
+            except InvalidVersion:
+                kept = True
+            known[text] = kept
+        return kept
+
+    return keeps
+
+
+def _version_text(name: str) -> str | None:
+    """The version a wheel's or an sdist's name gives, or None."""
+    if name.endswith(".whl"):
+        parts = name[:-4].split("-")
+        return parts[1] if len(parts) in (5, 6) else None
+    for suffix in SOURCE_ARCHIVE_SUFFIXES:
+        if name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            end = len(stem)
+            while (separator := stem.rfind("-", 0, end)) > 0:
+                text = stem[separator + 1 :]
+                try:
+                    Version(text)
+                except InvalidVersion:
+                    end = separator
+                    continue
+                return text
+            return None
+    return None
 
 
 def join_index_url(base_url: str, href: str) -> str:

@@ -31,7 +31,9 @@ from kpip.network.origins import secure_source
 
 if TYPE_CHECKING:
     from concurrent.futures import Future
+    from typing import Any
     from kpip.core.http_contracts import HttpSession
+    from kpip.core.versions import Version
     from kpip.index.catalog_cache import CatalogSummary
 
 logger = logging.getLogger(__name__)
@@ -222,6 +224,7 @@ class SimpleIndexSource:
         "index_url",
         "page_fetch_outcomes",
         "pages_read",
+        "pinned_catalogs",
         "revalidating",
         "revalidation_lock",
         "revalidation_pool",
@@ -254,6 +257,10 @@ class SimpleIndexSource:
         # catalog load that follows so each is read from disk once; a missing
         # summary is kept too, as ``(None,)``.
         self.summaries_read: dict[str, tuple[bytes | None]] = {}
+
+        # Catalogs of one release's files, by page and generation, for the
+        # provider to take with their summaries; never stored.
+        self.pinned_catalogs: dict[tuple[str, str], Any] = {}
 
         # With ``serve_stale``, a stale page is answered from the cache at
         # once and revalidated in the background, in ``revalidating``; the
@@ -289,9 +296,16 @@ class SimpleIndexSource:
         requirement: Requirement,
         *,
         allow_fetch: bool = False,
+        release: Version | None = None,
     ) -> CatalogSummary | None:
         """Return the compact release view when the page is fresh, or -- with
-        ``allow_fetch`` -- after one revalidation proves it unchanged."""
+        ``allow_fetch`` -- after one revalidation proves it unchanged.
+
+        With ``release``, a page compiled here compiles that release's files
+        alone, into a summary of their own, whose catalog is left in
+        ``pinned_catalogs``; a stored summary of the whole page serves as
+        well, as it holds that release too.
+        """
 
         if self.session is None:
             return None
@@ -318,7 +332,10 @@ class SimpleIndexSource:
             summary = load_summary_from(cache, project_url, raw, freshness)
             if freshness is not None and raw is not None:
                 record_summary_freshness(cache, project_url, freshness)
-            return summary
+            # A page cached without its summary or catalog -- compiled for
+            # one release before -- compiles from the cached page below.
+            if summary is not None or not allow_fetch:
+                return summary
 
         if not allow_fetch or not project_url.startswith(("http://", "https://")):
             return None
@@ -358,6 +375,13 @@ class SimpleIndexSource:
             if summary is not None:
                 self.record_revalidation(project_url)
 
+                return summary
+
+        if release is not None:
+            compiled = parser.pinned_catalog_from_content(content, project_url, release)
+            if compiled is not None:
+                catalog, summary = compiled
+                self.pinned_catalogs[(project_url, summary[0])] = catalog
                 return summary
 
         # A JSON page compiles straight into the catalog and its summary, so

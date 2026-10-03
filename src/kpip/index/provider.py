@@ -45,6 +45,7 @@ from kpip.index.catalog_cache import (
 )
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.index.links import Link
+from kpip.index.page_parsing import PINNED_GENERATION
 from kpip.index.prefetch import Prefetcher, PrefetchPolicy
 from kpip.network.origins import secure_source
 from kpip.index.source_locations import (
@@ -222,8 +223,9 @@ class CandidateProvider:
 
         self.catalog_choice_flush_registered = False
 
+        # By name, or by name and release for a pin's catalog of that release.
         self.catalog_groups_cache: dict[
-            str,
+            str | tuple[str, Version],
             tuple[CatalogSourceSummary, ...],
         ] = {}
 
@@ -232,7 +234,7 @@ class CandidateProvider:
         self.catalog_target_key: str | None = None
 
         self.catalog_candidate_cache: dict[
-            tuple[tuple[str, bool, bool], Version, bool],
+            tuple[tuple[Any, ...], Version, bool],
             tuple[CandidateRecord, ...],
         ] = {}
 
@@ -244,13 +246,15 @@ class CandidateProvider:
 
         self.package_catalog_cache = {}
 
-        self.releases_after_cutoff_cache: dict[
-            tuple[str, bool, bool], frozenset[Version]
-        ] = {}
+        self.releases_after_cutoff_cache: dict[tuple[Any, ...], frozenset[Version]] = {}
 
-        self.warm_catalog_cache: dict[tuple[str, bool, bool], bool] = {}
+        self.warm_catalog_cache: dict[tuple[Any, ...], bool] = {}
 
-        self.prefetch_settled: set[tuple[str, bool, bool]] = set()
+        self.prefetch_settled: set[tuple[Any, ...]] = set()
+
+        # The pinned requirements the resolve began with, by name: a page a
+        # dependency's lookahead starts is the pin's, if there is one.
+        self.pinned_requirements: dict[str, Requirement] = {}
 
         # The release a resolve is expected to choose, by canonical name,
         # when that is not the newest: a relock's previous pins.
@@ -551,7 +555,18 @@ class CandidateProvider:
         if self.find_links or requirement.is_unnamed_direct or not self.index_sources:
             return None
 
-        cached_result = self.catalog_groups_cache.get(requirement.canonical_name)
+        release = self.pinned_release(requirement)
+
+        groups_key = (
+            requirement.canonical_name
+            if release is None
+            else (requirement.canonical_name, release)
+        )
+
+        cached_result = self.catalog_groups_cache.get(groups_key)
+
+        if cached_result is None and release is not None:
+            cached_result = self.catalog_groups_cache.get(requirement.canonical_name)
 
         if cached_result is not None:
             return cached_result
@@ -562,6 +577,7 @@ class CandidateProvider:
             cached = source.collect_cached_catalog_summary(
                 requirement,
                 allow_fetch=allow_fetch,
+                release=release,
             )
 
             if cached is None:
@@ -573,6 +589,19 @@ class CandidateProvider:
             )
 
             generation, groups, _has_unparsed, choice_profiles = cached
+
+            # One release's files, compiled and never stored: the artifact
+            # and choice lookups find them here, and never on disk.
+            pinned = getattr(source, "pinned_catalogs", {}).pop(
+                (source_url, generation), None
+            )
+            if pinned is not None:
+                artifacts = group_artifacts_by_version(
+                    pinned, requirement.canonical_name
+                )
+                key = (source_url, generation)
+                self.catalog_checked_group_cache[key] = artifacts
+                self.catalog_artifact_group_cache[key] = artifacts
 
             for profile_key, choices in choice_profiles.items():
                 if (
@@ -599,7 +628,7 @@ class CandidateProvider:
 
         cached_result = tuple(result)
 
-        self.catalog_groups_cache[requirement.canonical_name] = cached_result
+        self.catalog_groups_cache[groups_key] = cached_result
 
         return cached_result
 
@@ -662,6 +691,12 @@ class CandidateProvider:
         catalog, spent 36 of its 53 s doing that. Choices are a cache, so a
         run that dies first only loses them.
         """
+        identities = {
+            identity
+            for identity in identities
+            if not identity[1].startswith(PINNED_GENERATION)
+        }
+
         if not identities:
             return
 
@@ -707,7 +742,7 @@ class CandidateProvider:
 
     def _catalog_choices_for(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         target_key: str,
         persistent_cache: Any,
         source_url: str,
@@ -739,7 +774,7 @@ class CandidateProvider:
 
     def _catalog_artifacts_for(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         persistent_cache: Any,
         source_url: str,
         generation: str,
@@ -810,7 +845,7 @@ class CandidateProvider:
 
     def _fill_catalog_choice(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         supported_tags: tuple[Any, ...],
         choices: dict[str, tuple[tuple[object, ...], int, int | None] | None],
         persistent_cache: Any,
@@ -843,7 +878,7 @@ class CandidateProvider:
 
     def _eligible_catalog_records(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         artifacts: list[tuple[int, tuple[object, ...]]],
     ) -> Iterator[tuple[tuple[object, ...], int]]:
         ignore_requires_python = self.ignore_requires_python
@@ -875,7 +910,7 @@ class CandidateProvider:
 
     @staticmethod
     def _parse_catalog_descriptor(
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         choice: tuple[tuple[object, ...], int, int | None],
         source_url: str,
         version: Version,
@@ -904,7 +939,7 @@ class CandidateProvider:
 
     def _select_catalog_choice(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         supported_tags: tuple[Any, ...],
         artifacts: list[tuple[int, tuple[object, ...]]],
         version: Version,
@@ -957,7 +992,7 @@ class CandidateProvider:
 
     def _materialize_catalog_descriptor(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         descriptor: tuple[
             tuple[object, ...],
             WheelFile | None,
@@ -989,7 +1024,7 @@ class CandidateProvider:
 
     def candidate_records_from_catalog(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         catalog: PackageCatalog,
         versions: tuple[Version, ...],
         *,
@@ -1769,7 +1804,7 @@ class CandidateProvider:
 
         allow_binary, allow_source = self.allowed_formats_internal(requirement)
 
-        catalog_key = (requirement.canonical_name, allow_binary, allow_source)
+        catalog_key = self.catalog_key(requirement)
 
         catalog = self.package_catalog_cache.get(catalog_key)
 
@@ -2059,7 +2094,7 @@ class CandidateProvider:
 
         allow_binary, allow_source = self.allowed_formats_internal(requirement)
 
-        catalog_key = (requirement.canonical_name, allow_binary, allow_source)
+        catalog_key = self.catalog_key(requirement)
 
         persistent_cache = getattr(self.session, "cache", None)
 
@@ -2282,7 +2317,7 @@ class CandidateProvider:
 
     def _generate_catalog_candidates(
         self,
-        catalog_key: tuple[str, bool, bool],
+        catalog_key: tuple[Any, ...],
         ordered: list[tuple[Version, tuple[object, ...], int, int | None, str]],
     ) -> Iterator[CandidateRecord]:
         for version, record, record_kind, tag_rank, source_url in ordered:
@@ -2336,11 +2371,7 @@ class CandidateProvider:
 
         allow_binary, allow_source = self.allowed_formats_internal(requirement)
 
-        catalog_key = (
-            requirement.canonical_name,
-            allow_binary,
-            allow_source,
-        )
+        catalog_key = self.catalog_key(requirement)
 
         cached_groups = self.catalog_groups(requirement)
 
@@ -2669,24 +2700,22 @@ class CandidateProvider:
         if self.uploaded_prior_to is None:
             return frozenset()
         self._catalog(requirement)
-        allow_binary, allow_source = self.allowed_formats_internal(requirement)
         with self.cache_lock:
             return self.releases_after_cutoff_cache.get(
-                (requirement.canonical_name, allow_binary, allow_source),
+                self.catalog_key(requirement),
                 frozenset(),
             )
 
     def _catalog(self, requirement: Requirement) -> PackageCatalog:
-        allow_binary, allow_source = self.allowed_formats_internal(requirement)
-
-        cache_key = (
-            requirement.canonical_name,
-            allow_binary,
-            allow_source,
-        )
+        cache_key = self.catalog_key(requirement)
 
         with self.cache_lock:
             catalog = self.package_catalog_cache.get(cache_key)
+            # The whole page's catalog, loaded already, holds a pin's release.
+            if catalog is None and len(cache_key) == 4:
+                catalog = self.package_catalog_cache.get(cache_key[:3])
+                if catalog is not None:
+                    self.package_catalog_cache[cache_key] = catalog
 
         if catalog is not None:
             for link in catalog.links:
@@ -2737,16 +2766,12 @@ class CandidateProvider:
     def load_catalog(
         self,
         requirement: Requirement,
-        cache_key: tuple[str, bool, bool] | None = None,
+        cache_key: tuple[Any, ...] | None = None,
     ) -> PackageCatalog:
         allow_binary, allow_source = self.allowed_formats_internal(requirement)
 
         if cache_key is None:
-            cache_key = (
-                requirement.canonical_name,
-                allow_binary,
-                allow_source,
-            )
+            cache_key = self.catalog_key(requirement)
 
         versions: dict[tuple[str, bool], CandidateSummary] = {}
 
@@ -3045,7 +3070,7 @@ class CandidateProvider:
 
     def load_prefetched_versions(
         self,
-        value: tuple[Requirement, tuple[str, bool, bool]],
+        value: tuple[Requirement, tuple[Any, ...]],
     ) -> PackageCatalog:
         requirement, cache_key = value
 
@@ -3113,13 +3138,10 @@ class CandidateProvider:
         release above a newer sdist, and too few unyanked candidates leaves
         yanked ones next, so those take the full query.
         """
-
         if self.prefer_binary:
             return self.evaluate_links(requirement).accepted[:count]
 
-        allow_binary, allow_source = self.allowed_formats_internal(requirement)
-
-        catalog_key = (requirement.canonical_name, allow_binary, allow_source)
+        catalog_key = self.catalog_key(requirement)
 
         if catalog_key not in self.package_catalog_cache:
             # Asking for its versions would wait on the prefetch loading the
@@ -3240,15 +3262,22 @@ class CandidateProvider:
         ):
             return
 
-        unique: dict[tuple[str, bool, bool], Requirement] = {}
+        unique: dict[tuple[Any, ...], Requirement] = {}
 
         for requirement in requirements:
             if requirement.url is not None:
                 continue
 
-            allow_binary, allow_source = self.allowed_formats_internal(requirement)
+            if not lookahead:
+                if self.pinned_release(requirement) is not None:
+                    self.pinned_requirements[requirement.canonical_name] = requirement
 
-            key = (requirement.canonical_name, allow_binary, allow_source)
+            else:
+                requirement = self.pinned_requirements.get(
+                    requirement.canonical_name, requirement
+                )
+
+            key = self.catalog_key(requirement)
 
             if key in self.prefetch_settled:
                 continue
@@ -3404,6 +3433,27 @@ class CandidateProvider:
         self.matching_versions_cache[key] = result
 
         return result
+
+    def pinned_release(self, requirement: Requirement) -> Version | None:
+        """The one release ``requirement`` pins, when its catalog need hold
+        that release's files alone: a sole ``==`` on a named project, read
+        from one index and no find-links."""
+        if (
+            self.find_links
+            or requirement.url is not None
+            or len(self.index_sources) != 1
+        ):
+            return None
+        return requirement.specifier.exact_version
+
+    def catalog_key(self, requirement: Requirement) -> tuple[Any, ...]:
+        """What a project's catalog is cached and fetched under: its name and
+        allowed formats, and the release a pin's catalog holds alone."""
+        allow_binary, allow_source = self.allowed_formats_internal(requirement)
+        release = self.pinned_release(requirement)
+        if release is None:
+            return (requirement.canonical_name, allow_binary, allow_source)
+        return (requirement.canonical_name, allow_binary, allow_source, release)
 
     def allowed_formats_internal(self, requirement: Requirement) -> tuple[bool, bool]:
         if self.format_control is None:
