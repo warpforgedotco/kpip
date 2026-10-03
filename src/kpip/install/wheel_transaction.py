@@ -279,6 +279,10 @@ def install_wheel_internal(
         # Staged modules read from the archive cache, by their name in the
         # wheel: the entry holds their bytecode.
         cached_modules: dict[str, str] = {}
+        # The destinations of each top-level directory's members, for a
+        # wheel installed from the archive cache: None once one of them is
+        # not a plain copy of the cached tree's file.
+        tree_members: dict[str, set[str] | None] = {}
 
         def write_direct(
             destination: str,
@@ -447,6 +451,17 @@ def install_wheel_internal(
                         direct_metadata[destination_text] = metadata
                     else:
                         record_metadata[source_text] = metadata
+                top, separator, _ = member.filename.partition("/")
+                if (
+                    separator
+                    and not direct
+                    and not top.endswith((".data", ".dist-info"))
+                    and tree_members.get(top, ()) is not None
+                ):
+                    if contents is None and isinstance(member, CachedWheelInfo):
+                        tree_members.setdefault(top, set()).add(destination_text)
+                    else:
+                        tree_members[top] = None
                 if (
                     pycompile
                     and isinstance(member, CachedWheelInfo)
@@ -625,6 +640,17 @@ def install_wheel_internal(
         if transaction is not None:
             transaction.owned.update(normalized_internal(path) for path in owned_paths)
         if not direct:
+            layout = getattr(candidate, "wheel_layout", None)
+            if isinstance(layout, CachedWheelArchive):
+                for top, members in tree_members.items():
+                    destination_root = os.path.join(library_root, top)
+                    if members and all(
+                        destination.startswith(destination_root + os.sep)
+                        for destination in members
+                    ):
+                        active_transaction.add_tree(
+                            os.path.join(layout.tree, top), destination_root, members
+                        )
             for source, destination, destination_text, mode in staged:
                 contents = direct_contents.get(destination_text)
                 if contents is not None:

@@ -87,6 +87,25 @@ class StagedFile:
         self.mode = mode
 
 
+class StagedTree:
+    """A directory of an immutable cache whose files are staged one by one,
+    which the commit may clone whole instead."""
+
+    __slots__ = ("destination_text", "members", "owner", "source_text")
+
+    def __init__(
+        self,
+        source_text: str,
+        destination_text: str,
+        members: set[str],
+        owner: str | None,
+    ) -> None:
+        self.source_text = source_text
+        self.destination_text = destination_text
+        self.members = members
+        self.owner = owner
+
+
 class InstallTransaction:
     """Validate, apply, and roll back a set of filesystem replacements."""
 
@@ -108,6 +127,7 @@ class InstallTransaction:
         # Backups beside their originals, for a volume the temporary
         # directory is not on.
         self.adjacent_backups: list[str] = []
+        self.trees: list[StagedTree] = []
         self.finished = False
 
     def add(
@@ -174,6 +194,58 @@ class InstallTransaction:
         self.staged_internal[position] = item
         self.staged_owners[destination_text] = (owner, position)
 
+    def add_tree(self, source: str, destination: str, members: set[str]) -> None:
+        """Note that the clones staged for ``members`` are ``source``'s tree,
+        to be cloned onto ``destination`` in one pass if it does not exist."""
+        self.trees.append(StagedTree(source, destination, members, self.owner))
+
+    def cloned_trees(self) -> dict[str, StagedTree]:
+        """The staged trees the commit clones whole, by destination file.
+
+        A tree is cloned whole when its destination does not exist, its files
+        are still staged by its own distribution, and nothing else staged
+        lands inside it but files its distribution adds that the tree lacks,
+        such as bytecode.
+        """
+        trees = {
+            tree.destination_text: tree
+            for tree in self.trees
+            if not os.path.lexists(tree.destination_text)
+        }
+        if not trees:
+            return {}
+        members: dict[str, StagedTree] = {}
+        for tree in trees.values():
+            for destination_text in tree.members:
+                members[destination_text] = tree
+        shortest = min(map(len, trees))
+        for item in self.staged_internal:
+            destination_text = item.destination_text
+            tree = members.get(destination_text)
+            owner = self.staged_owners[destination_text][0]
+            if tree is not None:
+                if owner != tree.owner:
+                    trees.pop(tree.destination_text, None)
+                continue
+            parent = os.path.dirname(destination_text)
+            while len(parent) >= shortest:
+                tree = trees.get(parent)
+                if tree is not None:
+                    if owner != tree.owner or os.path.lexists(
+                        tree.source_text + destination_text[len(parent) :]
+                    ):
+                        del trees[parent]
+                    break
+                grandparent = os.path.dirname(parent)
+                if grandparent == parent:
+                    break
+                parent = grandparent
+        return {
+            destination_text: tree
+            for destination_text, tree in members.items()
+            if tree.destination_text in trees
+        }
+
     def delete(self, path: str) -> None:
         self.deletions.add(os.fspath(path))
 
@@ -195,13 +267,16 @@ class InstallTransaction:
         finally:
             self.owner = owner
         self.deletions.update(other.deletions)
+        self.trees.extend(other.trees)
 
     def record_created(self, destination: str) -> None:
         """Record a path written directly for rollback by the caller."""
         self.created_internal.append(os.fspath(destination))
 
-    def validate(self) -> None:
+    def validate(self, cloned: dict[str, StagedTree] | None = None) -> None:
         for item in self.staged_internal:
+            if cloned and item.destination_text in cloned:
+                continue
             if item.source_text is not None and not os.path.isfile(item.source_text):
                 raise InstallationError(
                     f"staged file does not exist: {item.source_text}",
@@ -257,7 +332,8 @@ class InstallTransaction:
         if self.finished:
             raise RuntimeError("installation transaction has already finished")
         try:
-            self.validate()
+            cloned = self.cloned_trees()
+            self.validate(cloned)
             created_directories: set[str] = set()
             backup_if_needed = self.backup_if_needed
             makedirs = os.makedirs
@@ -267,7 +343,16 @@ class InstallTransaction:
             use_directory_fds = os.open in os.supports_dir_fd
             directory_fds: dict[str, int] = {}
             try:
+                for tree in {id(tree): tree for tree in cloned.values()}.values():
+                    parent_text = os.path.dirname(tree.destination_text) or os.curdir
+                    if parent_text not in created_directories:
+                        makedirs(parent_text, exist_ok=True)
+                        created_directories.add(parent_text)
+                    clone_path(tree.source_text, tree.destination_text)
+                    append_created(tree.destination_text)
                 for item in self.staged_internal:
+                    if cloned and item.destination_text in cloned:
+                        continue
                     backup_if_needed(item.destination_text)
                     destination_parent_text = (
                         os.path.dirname(item.destination_text) or os.curdir
