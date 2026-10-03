@@ -24,6 +24,10 @@ NATIVE_SOURCES = {
         REPO_ROOT / "src" / "kpip" / "host" / "_accel" / "_kpip_link_tree.c",
         "KPIP_LINK_TREE_BUILTIN",
     ),
+    "_kpip_tls.c": (
+        REPO_ROOT / "src" / "kpip" / "network" / "_accel" / "_kpip_tls.c",
+        "KPIP_TLS_BUILTIN",
+    ),
 }
 """File name in the build to its source and the define that builds it in."""
 

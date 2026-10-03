@@ -33,6 +33,7 @@ from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
 from kpip.network.headers import install as install_header_parser
+from kpip.network.tls_fill import install as install_tls_fill
 from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 install_header_parser()
+install_tls_fill()
 
 RETRY_STATUS_CODES = frozenset((500, 502, 503, 520, 527))
 DEFAULT_TIMEOUT = 15.0
