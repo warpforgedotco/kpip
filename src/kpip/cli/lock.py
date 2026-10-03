@@ -37,11 +37,6 @@ from kpip.cli.package_finder import (
 from kpip.cli.package_finder import format_control as selected_formats
 from kpip.cli.parsers.lock import create_parser
 from kpip.cli.requirement_command import check_only_deps, requested_source_urls
-from kpip.cli.requirements import (
-    build_options_from_requirements,
-    config_settings,
-    requirements_from_script,
-)
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.errors import CommandError, KpipError
 from kpip.core.hashes import file_hashes
@@ -56,21 +51,17 @@ from kpip.core.packaging import (
 from kpip.core.urls import path_to_url, url_to_path
 from kpip.core.versions import InvalidVersion, Version
 from kpip.core.wheel import TargetContext
-from kpip.index.artifacts import ArtifactLocator
-from kpip.index.catalog_cache import serve_summaries_from_snapshot
 from kpip.index.config import DEFAULT_INDEX_URL
-from kpip.index.provider import CandidateProvider
-from kpip.index.source_locations import SimpleIndexSource, refresh_pages
-from kpip.index.vcs import git_revision, materialize_vcs, release_checkout
 from kpip.index.vcs_urls import vcs_reference
 from kpip.network.deferred import DeferredNetworkSession
-from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.files.parser import parse_requirements
 from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
     from argparse import Namespace
     from typing import Any
+    from kpip.index.provider import CandidateProvider
+    from kpip.resolution.api import ResolutionEngine
     from kpip.resolution.req_install import InstallRequirement
 
 
@@ -431,6 +422,8 @@ def replay_after_revalidation(
         return False
 
     if page_state(http_cache, record.pages) != FRESH:
+        from kpip.index.source_locations import SimpleIndexSource, refresh_pages
+
         refresh_pages(
             SimpleIndexSource(
                 lock_sources(options).index_url or DEFAULT_INDEX_URL, (), session
@@ -580,6 +573,17 @@ def perform_lock(options: Namespace, resolvers: list[ResolutionEngine]) -> int:
 
     if replay_after_revalidation(options, cache_dir, resolution_session, previous):
         return 0
+
+    from kpip.cli.requirements import (
+        build_options_from_requirements,
+        config_settings,
+        requirements_from_script,
+    )
+    from kpip.index.artifacts import ArtifactLocator
+    from kpip.index.catalog_cache import serve_summaries_from_snapshot
+    from kpip.index.provider import CandidateProvider
+    from kpip.index.vcs import git_revision, materialize_vcs, release_checkout
+    from kpip.resolution.api import ResolutionEngine
 
     page_cache = resolution_session.page_cache()
 

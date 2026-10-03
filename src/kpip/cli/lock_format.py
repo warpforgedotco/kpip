@@ -5,9 +5,10 @@ Reading, preferring from and writing a lock file, for ``cli.lock``.
 
 from __future__ import annotations
 
+import tomllib
+
 from kpip.core.names import canonicalize_name
 from kpip.network.freshness import sha224_hexdigest
-from kpip.resolution.files.pylock import tomllib
 
 LOCK_HEADER = ('created-by = "kpip"', 'lock-version = "1.0"', "")
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from kpip.cli import download, requirement_command
+from kpip.cli import download, requirements
 from kpip.core.appdirs import resolve_cache_dir
 
 
@@ -31,7 +31,7 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         seen["collect_cache_dir"] = kwargs.get("cache_dir")
         raise Stop
 
-    monkeypatch.setattr(requirement_command, "collect_requirements", fake_collect)
+    monkeypatch.setattr(requirements, "collect_requirements", fake_collect)
     return seen
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import email.utils
 import marshal
 import os
 import time
@@ -122,6 +121,8 @@ def _cache_control_directives(headers: Any) -> dict[str, str | None]:
 def _http_date(value: Any) -> float | None:
     if not value:
         return None
+
+    import email.utils
 
     try:
         return email.utils.parsedate_to_datetime(value).timestamp()

@@ -13,6 +13,7 @@ from kpip.core.appdirs import http_cache_path, resolve_cache_dir
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.network.cache import SafeFileCache
 from kpip.network.freshness import CacheMetadataReader, encode_metadata
+from kpip.resolution.api import ResolutionEngine
 
 PAGE = "https://pypi.org/simple/demo/"
 RENDERED = 'lock-version = "1.0"\n# replayed\n'
@@ -549,7 +550,7 @@ class TestRevalidationWave:
         def unexpected(*args: object, **kwargs: object) -> None:
             pytest.fail("resolved a lock whose pages were all unchanged")
 
-        monkeypatch.setattr(lock_command.ResolutionEngine, "resolve", unexpected)
+        monkeypatch.setattr(ResolutionEngine, "resolve", unexpected)
 
         assert (
             lock_command.run_lock(

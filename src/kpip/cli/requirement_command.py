@@ -25,13 +25,6 @@ from kpip.cli.package_finder import (
     format_control,
     release_control,
 )
-from kpip.cli.requirements import (
-    build_options_from_requirements,
-    bundle_install_requirements,
-    collect_requirements,
-    config_settings,
-    requirements_from_script,
-)
 from kpip.core.appdirs import command_cache_dir
 from kpip.core.errors import (
     CommandError,
@@ -52,7 +45,6 @@ from kpip.core.packaging import (
 from kpip.core.urls import url_to_path
 from kpip.core.wheel import TargetContext
 from kpip.index.links import Link
-from kpip.index.metadata_cache import get_wheel_metadata_cache
 from kpip.resolution.hash_checking import (
     enforce_dependency_hashes,
     enforce_hash_checking,
@@ -203,6 +195,13 @@ def prepare(
     ``validate`` checks what only that command takes, before anything is
     read from a file or an index.
     """
+    from kpip.cli.requirements import (
+        collect_requirements,
+        config_settings,
+        requirements_from_script,
+    )
+    from kpip.index.metadata_cache import get_wheel_metadata_cache
+
     check_only_deps(options)
 
     if len(options.requirements_from_scripts) > 1:
@@ -455,6 +454,8 @@ def requested_requirements(
 ) -> list[InstallRequirement]:
     """The requirements the user wrote, held to hash-checking mode when that
     is on."""
+    from kpip.cli.requirements import bundle_install_requirements
+
     bundle = prepared.bundle
 
     requirements = (
@@ -479,6 +480,7 @@ def requested_requirements(
 
 
 def editable_requirements(bundle: Any) -> list[InstallRequirement]:
+
     requirements = []
     for editable in bundle.editables:
         item = install_req_from_line(editable)
@@ -707,6 +709,8 @@ def resolve_requirements(
     install it. ``with_editables`` resolves ``-e`` requirements along with
     the rest, for a command that treats them as any other source tree.
     """
+    from kpip.cli.requirements import build_options_from_requirements
+
     options = prepared.options
     bundle = prepared.bundle
     target = target_context(options)
