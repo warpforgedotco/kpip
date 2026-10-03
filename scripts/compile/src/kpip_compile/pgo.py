@@ -185,7 +185,7 @@ def training_steps(
                 "--no-deps",
                 "-w",
                 str(work / "built"),
-                "DTLSSocket==0.1.16",
+                "atlasclient==1.0.0",
             ],
             may_fail=True,
         ),
