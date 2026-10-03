@@ -739,7 +739,6 @@ def test_link_into_clones_each_named_file_without_the_tree_loops(
         assert (destination / relative).read_bytes() == relative.encode()
 
 
-@pytest.mark.skipif(os.name == "nt", reason="the C loop removes trees on POSIX")
 def test_remove_tree_removes_everything_and_follows_no_link(
     tmp_path: Path, link_loops: object
 ) -> None:
@@ -750,7 +749,12 @@ def test_remove_tree_removes_everything_and_follows_no_link(
     for index in range(50):
         (tree / "pkg" / "sub" / f"many{index}.py").write_text(str(index))
     (tree / "pkg" / "deep" / "er" / "est").mkdir(parents=True)
-    (tree / "pkg" / "link-out").symlink_to(outside, target_is_directory=True)
+    (tree / "pkg" / "sub" / "many0.py").chmod(0o444)
+    try:
+        (tree / "pkg" / "link-out").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        # Windows without the privilege to make links.
+        pass
 
     remove_tree = getattr(link_loops, "remove_tree")
     assert remove_tree(os.fsencode(tree)) == 0

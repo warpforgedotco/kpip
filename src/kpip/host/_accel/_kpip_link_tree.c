@@ -5,7 +5,7 @@
  * _kpip_link_tree (KPIP_LINK_TREE_BUILTIN); elsewhere clone runs the same
  * loops in Python, from _kpip_link_tree.py beside this file. Each function returns (0, len(names)) or the errno and
  * index of the first failure, which clone handles and resumes after;
- * remove_tree, not built on Windows, returns an errno or 0.
+ * remove_tree returns an errno or 0.
  * Names are os.fsencode bytes: UTF-8 on Windows, widened for the W calls.
  */
 
@@ -381,7 +381,124 @@ done:
     return result;
 }
 
-#ifndef _WIN32
+#ifdef _WIN32
+
+/* Remove everything in the directory whose wide path, length characters
+ * long, is in path, which has room for PATH_CAPACITY: a directory's
+ * contents, then the directory; a link or junction is removed, never
+ * entered; a read-only file is made writable first, as Windows will not
+ * delete one. found is scratch for the listing. An errno, or 0. */
+static int
+remove_entries(wchar_t *path, size_t length, WIN32_FIND_DATAW *found)
+{
+    if (length + 3 >= PATH_CAPACITY) {
+        return ENAMETOOLONG;
+    }
+    path[length] = L'\\';
+    path[length + 1] = L'*';
+    path[length + 2] = L'\0';
+    HANDLE listing = FindFirstFileExW(path, FindExInfoBasic, found, FindExSearchNameMatch,
+                                      NULL, FIND_FIRST_EX_LARGE_FETCH);
+    path[length] = L'\0';
+    if (listing == INVALID_HANDLE_VALUE) {
+        return errno_of(GetLastError());
+    }
+    int error = 0;
+    do {
+        const wchar_t *name = found->cFileName;
+        if (name[0] == L'.' && (name[1] == L'\0' || (name[1] == L'.' && name[2] == L'\0'))) {
+            continue;
+        }
+        size_t name_length = wcslen(name);
+        if (length + 1 + name_length >= PATH_CAPACITY) {
+            error = ENAMETOOLONG;
+            break;
+        }
+        path[length] = L'\\';
+        memcpy(path + length + 1, name, (name_length + 1) * sizeof(wchar_t));
+        DWORD attributes = found->dwFileAttributes;
+        if (attributes & FILE_ATTRIBUTE_READONLY) {
+            SetFileAttributesW(path, attributes & ~FILE_ATTRIBUTE_READONLY);
+        }
+        if ((attributes & FILE_ATTRIBUTE_DIRECTORY)
+            && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            error = remove_entries(path, length + 1 + name_length, found);
+            if (!error && !RemoveDirectoryW(path)) {
+                error = errno_of(GetLastError());
+            }
+        }
+        else if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!RemoveDirectoryW(path)) {
+                error = errno_of(GetLastError());
+            }
+        }
+        else if (!DeleteFileW(path)) {
+            error = errno_of(GetLastError());
+        }
+        path[length] = L'\0';
+    } while (!error && FindNextFileW(listing, found));
+    if (!error && GetLastError() != ERROR_NO_MORE_FILES) {
+        error = errno_of(GetLastError());
+    }
+    FindClose(listing);
+    return error;
+}
+
+PyDoc_STRVAR(remove_tree_doc,
+"remove_tree(path) -> errno\n\n"
+"Remove the directory at path and everything in it, following no link.");
+
+static PyObject *
+remove_tree(PyObject *module, PyObject *args)
+{
+    PyObject *path;
+    if (!PyArg_ParseTuple(args, "S", &path)) {
+        return NULL;
+    }
+    const char *text = PyBytes_AS_STRING(path);
+    if (memchr(text, '\0', PyBytes_GET_SIZE(path)) != NULL) {
+        PyErr_SetString(PyExc_ValueError, "embedded null byte");
+        return NULL;
+    }
+    Buffers *buffers = PyMem_RawMalloc(sizeof(Buffers));
+    WIN32_FIND_DATAW *found = PyMem_RawMalloc(sizeof(WIN32_FIND_DATAW));
+    if (buffers == NULL || found == NULL) {
+        PyMem_RawFree(buffers);
+        PyMem_RawFree(found);
+        return PyErr_NoMemory();
+    }
+    int error = 0;
+    Py_BEGIN_ALLOW_THREADS
+    error = widen(text, buffers->wide);
+    if (!error) {
+        DWORD attributes = GetFileAttributesW(buffers->wide);
+        if (attributes == INVALID_FILE_ATTRIBUTES) {
+            error = errno_of(GetLastError());
+        }
+        else if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)
+                 || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            /* Not a directory of its own: shutil.rmtree refuses it too. */
+            error = ENOTDIR;
+        }
+        else {
+            error = remove_entries(buffers->wide, wcslen(buffers->wide), found);
+            if (!error) {
+                if (attributes & FILE_ATTRIBUTE_READONLY) {
+                    SetFileAttributesW(buffers->wide, attributes & ~FILE_ATTRIBUTE_READONLY);
+                }
+                if (!RemoveDirectoryW(buffers->wide)) {
+                    error = errno_of(GetLastError());
+                }
+            }
+        }
+    }
+    Py_END_ALLOW_THREADS
+    PyMem_RawFree(found);
+    PyMem_RawFree(buffers);
+    return PyLong_FromLong(error);
+}
+
+#else
 
 /* Remove everything in the directory open at descriptor, which it closes:
  * a directory's contents, then the directory; a link is removed, never
@@ -487,9 +604,7 @@ static PyMethodDef methods[] = {
     {"make_directories", make_directories, METH_VARARGS, make_directories_doc},
     {"change_modes", change_modes, METH_VARARGS, change_modes_doc},
     {"link_files", link_files, METH_VARARGS, link_files_doc},
-#ifndef _WIN32
     {"remove_tree", remove_tree, METH_VARARGS, remove_tree_doc},
-#endif
     {NULL, NULL, 0, NULL},
 };
 
