@@ -434,12 +434,10 @@ def validate_user_install(options: argparse.Namespace) -> None:
 
 def _plan_cacheable(options: Any, bundle: Any) -> bool:
     """Whether an install's plan depends only on its requirements, its target
-    context and the index: nothing installed, local or overridden."""
+    context, what is installed and the index: nothing local or overridden."""
     return not (
         options.no_cache_dir
         or options.refresh
-        or options.target is None
-        or not options.ignore_installed
         or options.dry_run
         or options.report
         or options.user
@@ -500,6 +498,17 @@ def _plan_context(options: Any, bundle: Any, target: Any) -> tuple[object, ...]:
         tuple(str(tag) for tag in supported_wheel_tags(target)),
         options.upgrade_strategy,
         bool(options.force_reinstall),
+        options.target is not None,
+        # What the resolve may keep, unless it ignores what is installed:
+        # every new environment with the same distributions shares a plan.
+        ()
+        if options.ignore_installed
+        else tuple(
+            sorted(
+                (name, distribution.raw_version)
+                for name, distribution in installed_index().items()
+            )
+        ),
     )
 
 
