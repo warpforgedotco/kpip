@@ -107,6 +107,32 @@ def test_get_credentials_uses_cached_credentials_only_username() -> None:
     assert got == expected
 
 
+def test_host_without_credentials_gets_them_once_one_is_learned() -> None:
+    auth = MultiDomainBasicAuth(prompting=False)
+    url = "http://example.com/a"
+
+    assert auth.get_url_and_credentials(url) == (url, None, None)
+    assert auth.get_url_and_credentials("http://example.com/b")[1:] == (None, None)
+    auth.get_url_and_credentials("http://user:pass@example.com/c")
+    assert auth.get_url_and_credentials(url) == (url, "user", "pass")
+
+
+def test_host_of_an_authenticated_index_is_matched_per_path() -> None:
+    auth = MultiDomainBasicAuth(
+        prompting=False,
+        index_urls=["http://example.com/", "http://foo:bar@example.com/private"],
+    )
+
+    assert auth.get_url_and_credentials("http://example.com/public/x")[1:] == (
+        None,
+        None,
+    )
+    assert auth.get_url_and_credentials("http://example.com/private/x")[1:] == (
+        "foo",
+        "bar",
+    )
+
+
 def test_get_index_url_credentials() -> None:
     auth = MultiDomainBasicAuth(
         index_urls=[

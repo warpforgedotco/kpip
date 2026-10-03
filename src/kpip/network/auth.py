@@ -308,6 +308,8 @@ class MultiDomainBasicAuth:
             list[tuple[str, urllib.parse.SplitResult, urllib.parse.SplitResult]] | None
         ) = None
         self.index_urls_snapshot_internal: tuple[str, ...] = ()
+        self.authenticated_index_netlocs: frozenset[str] = frozenset()
+        self.anonymous_netlocs: set[str] = set()
 
     @property
     def keyring_provider(self) -> KeyRingBaseProvider:
@@ -353,6 +355,7 @@ class MultiDomainBasicAuth:
         prepared = self.prepared_index_urls_internal
         if prepared is None or snapshot != self.index_urls_snapshot_internal:
             self.credential_cache.clear()
+            self.anonymous_netlocs.clear()
             prepared = []
             for index in snapshot:
                 index = index.rstrip("/") + "/"
@@ -365,6 +368,11 @@ class MultiDomainBasicAuth:
                 )
             self.prepared_index_urls_internal = prepared
             self.index_urls_snapshot_internal = snapshot
+            self.authenticated_index_netlocs = frozenset(
+                parsed.netloc
+                for _, parsed, with_auth in prepared
+                if with_auth.netloc != parsed.netloc
+            )
         return prepared
 
     def get_index_url(self, url: str) -> str | None:
@@ -482,6 +490,8 @@ class MultiDomainBasicAuth:
         cached = self.credential_cache.get(original_url)
         if cached is not None:
             return cached
+        if urllib.parse.urlsplit(original_url).netloc in self.anonymous_netlocs:
+            return original_url, None, None
 
         url, netloc, _ = split_auth_netloc_from_url(original_url)
 
@@ -499,13 +509,23 @@ class MultiDomainBasicAuth:
             if self.passwords.get(netloc) != (username, password):
                 self.passwords[netloc] = (username, password)
                 self.credential_cache.clear()
+                self.anonymous_netlocs.clear()
 
         assert (username is not None and password is not None) or (
             username is None and password is None
         ), f"Could not load credentials from url: {original_url}"
 
         result = url, username, password
-        self.credential_cache[original_url] = result
+        if (
+            username is None
+            and url == original_url
+            and netloc not in self.authenticated_index_netlocs
+        ):
+            # Nothing in the URL, an index URL, netrc or a saved password
+            # names this host, and none of them depends on the path.
+            self.anonymous_netlocs.add(netloc)
+        else:
+            self.credential_cache[original_url] = result
         return result
 
     def prompt_for_password(self, netloc: str) -> tuple[str | None, str | None, bool]:
@@ -548,6 +568,7 @@ class MultiDomainBasicAuth:
         netloc = urllib.parse.urlsplit(url).netloc
         self.passwords[netloc] = (username, password)
         self.credential_cache.clear()
+        self.anonymous_netlocs.clear()
         credentials = None
         if save and self.should_save_password_to_keyring_internal():
             credentials = Credentials(url=netloc, username=username, password=password)
