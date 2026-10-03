@@ -602,6 +602,45 @@ def parse_wheel_file_once(path: str) -> WheelFile | None:
     return _parse_wheel_filename.__wrapped__(name)
 
 
+def wheel_release_from_filename(path: str) -> tuple[str, Version] | None:
+    """The canonical name and version ``parse_wheel_file_once(path)`` gives.
+
+    Without its tags, which a name that parses this far always has and
+    which cannot fail: a page's catalog keeps only each wheel's release.
+    """
+    name = os.fspath(path)
+    if "/" in name or "\\" in name or ":" in name:
+        name = os.path.basename(name)
+
+    if not name.endswith(".whl"):
+        return None
+
+    parts = name[:-4].split("-")
+
+    if len(parts) == 5:
+        build_tag = None
+
+    elif len(parts) == 6:
+        build_tag = parts[2]
+
+    else:
+        return None
+
+    if not _is_escaped_name(parts[0]):
+        return None
+
+    if build_tag is not None and not ("0" <= build_tag[:1] <= "9"):
+        return None
+
+    try:
+        version = Version(parts[1])
+
+    except InvalidVersion:
+        return None
+
+    return canonicalize_name(parts[0]), version
+
+
 _BUILD_TAG_RE = re.compile(r"^(\d+)(.*)$", re.ASCII)
 
 

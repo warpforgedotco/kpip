@@ -916,8 +916,13 @@ def json_record(
     else:
         stored_hashes = {}
     if isinstance(metadata, dict):
+        digest = metadata.get("sha256") if len(metadata) == 1 else None
         stored_metadata = (
-            _stored_hashes({str(name): str(value) for name, value in metadata.items()})
+            digest
+            if type(digest) is str
+            else _stored_hashes(
+                {str(name): str(value) for name, value in metadata.items()}
+            )
             if metadata
             else True
         )

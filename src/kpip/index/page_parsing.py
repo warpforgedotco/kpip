@@ -12,7 +12,7 @@ from html.parser import HTMLParser
 from kpip.core.errors import InstallationError
 from kpip.core.http_contracts import raise_for_status, response_text
 from kpip.core.urls import split_auth_from_netloc
-from kpip.core.wheel import parse_wheel_file_once
+from kpip.core.wheel import wheel_release_from_filename
 from kpip.index import typed_pages
 from kpip.index.artifacts import ArtifactLocator
 from kpip.index.catalog_cache import (
@@ -354,11 +354,11 @@ class IndexPageParser:
             size=size,
         )
         if kind is ArtifactKind.WHEEL:
-            parsed_wheel = parse_wheel_file_once(name)
+            release = wheel_release_from_filename(name)
             return record, (
                 None
-                if parsed_wheel is None
-                else (WHEEL_RECORD, parsed_wheel.name, parsed_wheel.version.public)
+                if release is None
+                else (WHEEL_RECORD, release[0], release[1].public)
             )
         return record, identity_for(kind, name)
 
