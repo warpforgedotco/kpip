@@ -793,7 +793,10 @@ def install_wheel_internal(
                             compiled,
                             member_paths,
                         ),
-                        os.path.join(pyc_tree, top)
+                        (
+                            os.path.join(pyc_tree, top),
+                            [filename[len(top) + 1 :] for filename, _, _ in compiled],
+                        )
                         if pyc_tree is not None and compiled
                         else None,
                     )

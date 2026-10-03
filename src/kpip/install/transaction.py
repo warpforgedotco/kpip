@@ -12,7 +12,7 @@ from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 
 from kpip.core.errors import InstallationError
-from kpip.host.clone import clone_path
+from kpip.host.clone import clone_path, link_into
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class StagedTree:
     """A directory of an immutable cache whose files are staged one by one,
     which the commit may clone whole instead; or, lazy, whose files are
     staged only if the commit cannot, by ``expand``. An ``overlay`` is a
-    second tree cloned into the first: its bytecode."""
+    second tree's files cloned into the first: its bytecode."""
 
     __slots__ = (
         "destination_text",
@@ -110,7 +110,7 @@ class StagedTree:
         members: set[str],
         owner: str | None,
         expand: Callable[[], Iterable[tuple[str, str, int | None]]] | None = None,
-        overlay: str | None = None,
+        overlay: tuple[str, list[str]] | None = None,
     ) -> None:
         self.source_text = source_text
         self.destination_text = destination_text
@@ -218,12 +218,12 @@ class InstallTransaction:
         source: str,
         destination: str,
         expand: Callable[[], Iterable[tuple[str, str, int | None]]],
-        overlay: str | None = None,
+        overlay: tuple[str, list[str]] | None = None,
     ) -> None:
         """Stage ``source``'s tree onto ``destination`` without staging its
-        files: the commit clones it whole, and ``overlay``'s into it, or
-        stages the clones ``expand`` gives, of each file's source,
-        destination and mode, when it cannot."""
+        files: the commit clones it whole, and the files ``overlay`` names
+        under its directory into it, or stages the clones ``expand`` gives,
+        of each file's source, destination and mode, when it cannot."""
         self.trees.append(
             StagedTree(source, destination, set(), self.owner, expand, overlay)
         )
@@ -554,7 +554,7 @@ def _clone_trees(trees: Collection[StagedTree]) -> None:
 def _clone_tree(tree: StagedTree) -> None:
     clone_path(tree.source_text, tree.destination_text)
     if tree.overlay is not None:
-        clone_path(tree.overlay, tree.destination_text)
+        link_into(tree.overlay[0], tree.destination_text, tree.overlay[1])
 
 
 def _chmod_clone(path: str, mode: int) -> None:

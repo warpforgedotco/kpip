@@ -696,3 +696,44 @@ def test_the_loops_link_across_directories_in_any_order(
         if name != "missing/4":
             assert same_inode(source, destination, name)
     assert not (destination / "missing").exists()
+
+
+BYTECODE = ("__pycache__/mod.cpython-311.pyc", "sub/__pycache__/deep.cpython-311.pyc")
+
+
+def bytecode_and_modules(root: Path) -> tuple[Path, Path]:
+    """Bytecode for two modules, and the directory their modules were
+    cloned into, without its ``__pycache__`` directories."""
+    source = root / "bytecode"
+    destination = root / "pkg"
+    for relative in BYTECODE:
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        (source / relative).write_bytes(relative.encode())
+    (destination / "sub").mkdir(parents=True)
+    return source, destination
+
+
+def test_link_into_links_named_files_with_the_tree_loops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    whole_trees: None,
+    link_loops: object,
+) -> None:
+    link_tree_through(monkeypatch, link_loops)
+    source, destination = bytecode_and_modules(tmp_path)
+
+    clone.link_into(str(source), str(destination), list(BYTECODE))
+
+    for relative in BYTECODE:
+        assert same_inode(source, destination, relative)
+
+
+def test_link_into_clones_each_named_file_without_the_tree_loops(
+    tmp_path: Path, no_reflink: None
+) -> None:
+    source, destination = bytecode_and_modules(tmp_path)
+
+    clone.link_into(str(source), str(destination), list(BYTECODE))
+
+    for relative in BYTECODE:
+        assert (destination / relative).read_bytes() == relative.encode()

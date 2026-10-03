@@ -506,6 +506,58 @@ def _link_new_directory(
         raise
 
 
+def link_into(source: str, destination: str, files: list[str]) -> None:
+    """Clone ``files``, relative paths under ``source``, into ``destination``,
+    which exists, making the directories they are in that it lacks.
+
+    For a tree whose layout is known, such as bytecode beside modules just
+    cloned: nothing is walked. Where whole trees are hard linked, the
+    directories are made and the files linked in the link loops; elsewhere
+    each file is cloned on its own.
+    """
+    directories = sorted({os.path.dirname(name) for name in files} - {""})
+
+    devices = _devices(source, destination, True)
+
+    link_tree = _link_tree or None
+
+    if link_tree is not None and _links_whole_trees(devices):
+        source_root = os.fsencode(source)
+        destination_root = os.fsencode(destination)
+        missing = [
+            os.fsencode(name)
+            for name in directories
+            if not os.path.isdir(os.path.join(destination, name))
+        ]
+
+        error, index = link_tree.make_directories(
+            destination_root, missing, [0o777] * len(missing)
+        )
+
+        if error:
+            raise OSError(
+                error,
+                os.strerror(error),
+                os.fsdecode(os.path.join(destination_root, missing[index])),
+            )
+
+        _link_files(
+            link_tree,
+            source_root,
+            destination_root,
+            [os.fsencode(name) for name in files],
+            devices,
+        )
+
+        return
+
+    for name in directories:
+        os.makedirs(os.path.join(destination, name), exist_ok=True)
+
+    for name in files:
+        clone_path(os.path.join(source, name), os.path.join(destination, name))
+
+
 def _link_files(
     link_tree: Any,
     source_root: bytes,
