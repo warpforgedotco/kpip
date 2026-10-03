@@ -32,6 +32,7 @@ from kpip.core import latency
 from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
+from kpip.network.headers import install as install_header_parser
 from kpip.network.exceptions import (
     ConnectionFailedError,
     ConnectionTimeoutError,
@@ -61,6 +62,8 @@ if TYPE_CHECKING:
     from kpip.core.http_contracts import HttpResponse as HttpResponseProtocol
 
 logger = logging.getLogger(__name__)
+
+install_header_parser()
 
 RETRY_STATUS_CODES = frozenset((500, 502, 503, 520, 527))
 DEFAULT_TIMEOUT = 15.0
