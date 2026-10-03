@@ -674,3 +674,25 @@ def test_the_loops_refuse_names_the_os_module_refuses(
         link_loops.make_directories(root, ["text"], [0o755])
     with pytest.raises(ValueError):
         link_loops.link_files(root, root, [b"nul\0name"], 0)
+
+
+def test_the_loops_link_across_directories_in_any_order(
+    tmp_path: Path, link_loops: Any
+) -> None:
+    source, destination = tmp_path / "source", tmp_path / "destination"
+    relative = ["a/1", "b/1", "a/2", "top", "a/deep/3", "b/2", "missing/4", "b/3"]
+    for name in relative:
+        (source / name).parent.mkdir(parents=True, exist_ok=True)
+        (source / name).write_text(name)
+    for directory in ("a", "a/deep", "b"):
+        (destination / directory).mkdir(parents=True, exist_ok=True)
+    names = [os.fsencode(os.path.join(*name.split("/"))) for name in relative]
+    roots = (os.fsencode(source), os.fsencode(destination))
+
+    assert link_loops.link_files(*roots, names, 0) == (errno.ENOENT, 6)
+    assert link_loops.link_files(*roots, names, 7) == (0, 8)
+
+    for name in relative:
+        if name != "missing/4":
+            assert same_inode(source, destination, name)
+    assert not (destination / "missing").exists()
