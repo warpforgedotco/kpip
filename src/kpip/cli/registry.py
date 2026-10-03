@@ -4,10 +4,10 @@ from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from kpip.cli.parser import ArgumentParser
-
 if TYPE_CHECKING:
     from types import ModuleType
+
+    from kpip.cli.parser import ArgumentParser
 
     CommandRunner = Callable[[list[str]], int]
 
@@ -78,6 +78,8 @@ class CommandSpec:
             factory: ParserFactory = getattr(self.parser_module, self.parser_factory)
 
             return factory()
+
+        from kpip.cli.parser import ArgumentParser
 
         return ArgumentParser(prog=f"kpip {self.name}")
 

@@ -43,6 +43,14 @@ def test_version_prints_package_location() -> None:
     assert result.stdout.startswith("kpip ")
 
 
+def test_version_builds_no_parser() -> None:
+    modules = imported_modules(["--version"])
+
+    assert "argparse" not in modules
+    assert "kpip.cli.parser" not in modules
+    assert "winreg" not in modules
+
+
 def test_list_empty_json_output(tmp_path: Path) -> None:
     result = run_kpip(["list", "--format=json", "--path", str(tmp_path)], cwd=tmp_path)
 

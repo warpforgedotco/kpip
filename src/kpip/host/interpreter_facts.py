@@ -15,7 +15,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import sys
 import time
 from collections.abc import Iterator
@@ -26,11 +25,6 @@ from kpip.core.caches import register_table
 from kpip.core.errors import CommandError
 from kpip.core.utils import versioned_bucket
 from kpip.core.compiled import is_compiled, is_own_interpreter
-
-try:
-    import winreg
-except ImportError:
-    winreg = None  # ty: ignore[invalid-assignment]
 
 SAFE_PATH = 'import sys\nif sys.path and sys.path[0] == "":\n    del sys.path[0]\n'
 """Run first by code given to another interpreter with ``-c`` or on its
@@ -640,8 +634,12 @@ def registered_pythons() -> list[str]:
     and registers the interpreter instead, as the ``py`` launcher and uv
     find it. Nothing elsewhere.
     """
-    if sys.platform != "win32" or winreg is None:
+    if sys.platform != "win32":
         return []
+
+    import re
+    import winreg
+
     found: list[tuple[tuple[int, ...], str]] = []
     for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
         try:
