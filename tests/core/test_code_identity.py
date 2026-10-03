@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 
+import pytest
+
+import kpip
+from kpip.core import code_identity
 from kpip.core.code_identity import _source_identity
 
 
@@ -36,3 +41,25 @@ def test_the_identity_is_stable(tmp_path: Path) -> None:
     root = make_install(tmp_path)
 
     assert _source_identity(str(root)) == _source_identity(str(root))
+
+
+class BuildIdReader:
+    def open_resource(self, resource: str) -> io.BytesIO:
+        assert resource == "BUILD_ID"
+        return io.BytesIO(b"0123abcd")
+
+
+class BuildIdLoader:
+    def get_resource_reader(self, name: str) -> BuildIdReader:
+        assert name == "kpip"
+        return BuildIdReader()
+
+
+def test_a_binary_is_identified_by_its_build_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(kpip.__spec__, "loader", BuildIdLoader())
+    monkeypatch.setattr(code_identity, "own_binary", lambda: "/opt/kpip/kpip")
+    monkeypatch.setattr(code_identity, "_identity", None)
+
+    assert code_identity.code_identity() == ("build", "0123abcd")

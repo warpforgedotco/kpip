@@ -32,14 +32,9 @@ def code_identity() -> tuple[object, ...]:
 def _compute() -> tuple[object, ...]:
     binary = own_binary()
     if binary is not None:
-        from importlib.resources import files as package_files
-
         # The same for every copy of one build, wherever it is moved.
         try:
-            return (
-                "build",
-                package_files("kpip").joinpath("BUILD_ID").read_text("ascii"),
-            )
+            return ("build", _build_id())
         except OSError:
             pass
 
@@ -53,6 +48,29 @@ def _compute() -> tuple[object, ...]:
         return ("compiled", binary, stat.st_mtime_ns, stat.st_size)
 
     return _source_identity(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _build_id() -> str:
+    """The ``BUILD_ID`` kpip-compile ships as data of the ``kpip`` package.
+
+    Read through the package loader's resource reader, which
+    ``importlib.resources`` itself would use, so the binary need not import
+    that package and everything it brings in.
+    """
+
+    import kpip
+
+    loader = getattr(kpip.__spec__, "loader", None)
+    get_reader = getattr(loader, "get_resource_reader", None)
+    reader = get_reader("kpip") if get_reader is not None else None
+
+    if reader is None:
+        from importlib.resources import files
+
+        return files("kpip").joinpath("BUILD_ID").read_text("ascii")
+
+    with reader.open_resource("BUILD_ID") as stream:
+        return stream.read().decode("ascii")
 
 
 def _source_identity(root: str) -> tuple[object, ...]:
