@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 import functools
 import logging
 import os
@@ -32,7 +32,6 @@ from kpip.core import latency
 from kpip.core.urls import redact_auth_from_url, url_to_path
 from kpip.network.auth import MultiDomainBasicAuth
 from kpip.network.cache import SafeFileCache
-from kpip.network import http_exchange
 from kpip.network.headers import install as install_header_parser
 from kpip.network.tls_fill import install as install_tls_fill
 from kpip.network.exceptions import (
@@ -147,34 +146,6 @@ class CachedResponse:
 
     def close(self) -> None:
         pass
-
-
-class ExchangedResponse(CachedResponse):
-    """A response read by :mod:`kpip.network.http_exchange`: what urllib3's
-    would hold, preloaded, with what the redirect loop and the cache ask of
-    it."""
-
-    __slots__ = ("_has_decoded_content", "retries")
-
-    def __init__(self, exchanged: http_exchange.Exchanged, url: str) -> None:
-        super().__init__(
-            exchanged.body,
-            exchanged.headers,
-            exchanged.status,
-            exchanged.reason,
-            url,
-            from_cache=False,
-        )
-
-        self._has_decoded_content = exchanged.decoded
-
-        self.retries = exchanged.retries
-
-    def get_redirect_location(self) -> str | None | bool:
-        if self.status in http_exchange.REDIRECT_STATUSES:
-            return self.headers.get("location")
-
-        return False
 
 
 class FileResponse:
@@ -1464,36 +1435,17 @@ class NetworkSession:
 
             manager = self.transport_manager(current_url, verify=verify, parsed=parsed)
 
-            # A plain GET, read whole, is exchanged in C when it can be.
-            exchanged = (
-                http_exchange.exchange(
-                    manager, current_url, current_headers, timeout, retries
-                )
-                if current_method == "GET"
-                and not stream
-                and current_body is None
-                and http_exchange.available()
-                and type(manager) is urllib3.PoolManager
-                and "range" not in current_headers
-                else None
+            raw = manager.request(
+                current_method,
+                current_url,
+                body=current_body,
+                headers=current_headers,
+                redirect=False,
+                retries=retries,
+                timeout=timeout,
+                preload_content=not stream,
+                decode_content=True,
             )
-
-            if exchanged is not None:
-                # Read by the loop below as urllib3's response is.
-                raw = cast("Any", ExchangedResponse(exchanged, current_url))
-
-            else:
-                raw = manager.request(
-                    current_method,
-                    current_url,
-                    body=current_body,
-                    headers=current_headers,
-                    redirect=False,
-                    retries=retries,
-                    timeout=timeout,
-                    preload_content=not stream,
-                    decode_content=True,
-                )
 
             # Connection pools store only the request target (``/path``).
             # kpip accepts absolute URLs, so retain that public URL here.
