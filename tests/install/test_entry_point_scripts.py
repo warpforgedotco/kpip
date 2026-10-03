@@ -225,6 +225,68 @@ def test_a_wheel_whose_scripts_land_off_path_is_warned_about(
     ]
 
 
+def unpacked_wheel(tree: Path) -> str:
+    info = tree / "tool-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "entry_points.txt").write_text(
+        "[console_scripts]\ntool = tool:main\n[gui_scripts]\nwindowed = tool:gui\n",
+        encoding="utf-8",
+    )
+    return str(tree)
+
+
+def off_path_warnings(scripts: Path, *names: str) -> list[str]:
+    suffix = ".exe" if os.name == "nt" else ""
+    return [
+        f"The script {name}{suffix} is installed in '{scripts.resolve()}' which is "
+        "not on PATH.\nConsider adding this directory to PATH or, if you prefer "
+        "to suppress this warning, use --no-warn-script-location."
+        for name in names
+    ]
+
+
+def test_a_wheel_the_archive_cache_unpacked_is_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A candidate from the install plan cache names the unpacked directory."""
+    monkeypatch.setenv("PATH", "/usr/bin")
+    tree = unpacked_wheel(tmp_path / "archive")
+    scripts = tmp_path / "bin"
+
+    with caplog.at_level("WARNING"):
+        warn_about_scripts_not_on_path([tree], str(scripts), "/env/bin/python")
+
+    assert caplog.messages == off_path_warnings(scripts, "tool")
+
+
+def test_a_cached_archive_candidate_is_warned_about_from_its_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from kpip.install.wheel_archive_cache import CachedWheelArchive
+
+    monkeypatch.setenv("PATH", "/usr/bin")
+    tree = tmp_path / "archive"
+    tree.mkdir()
+    archive = CachedWheelArchive(
+        "0" * 64,
+        str(tree),
+        "tool-1.0.dist-info",
+        summary=((), False, False, False, (("tool", "tool:main", False),)),
+    )
+    candidate = types.SimpleNamespace(path=str(tree), wheel_layout=archive)
+    scripts = tmp_path / "bin"
+
+    with caplog.at_level("WARNING"):
+        warn_about_scripts_not_on_path(
+            [str(tree)],
+            str(scripts),
+            "/env/bin/python",
+            [candidate],  # ty: ignore[invalid-argument-type]
+        )
+
+    assert caplog.messages == off_path_warnings(scripts, "tool")
+
+
 def test_scripts_beside_the_interpreter_draw_no_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

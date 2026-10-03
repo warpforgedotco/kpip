@@ -13,11 +13,16 @@ import re
 import sys
 import time
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from kpip.core.errors import InstallationError
 from kpip.host.clone import replace_contents
 from kpip.host.interpreter_facts import target_interpreter
+
+if TYPE_CHECKING:
+    from kpip.install.wheel_archive_cache import WheelInstallCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -408,7 +413,13 @@ def script_matches(
 
 
 def console_scripts_in_wheel(path: str) -> list[str]:
-    """The names of the console scripts the wheel at ``path`` installs."""
+    """The names of the console scripts the wheel at ``path`` installs.
+
+    ``path`` may also be the directory the archive cache unpacked the wheel
+    into, as it is for a candidate from the install plan cache.
+    """
+    if os.path.isdir(path):
+        return _unpacked_console_scripts(path)
     try:
         with zipfile.ZipFile(path) as archive:
             member = next(
@@ -430,20 +441,61 @@ def console_scripts_in_wheel(path: str) -> list[str]:
     ]
 
 
+def _unpacked_console_scripts(tree: str) -> list[str]:
+    try:
+        children = os.listdir(tree)
+    except OSError:
+        return []
+    return [
+        name
+        for child in children
+        if child.endswith(".dist-info")
+        for name, (_, gui) in entry_point_scripts(
+            os.path.join(tree, child, "entry_points.txt")
+        ).items()
+        if not gui
+    ]
+
+
+def _console_scripts(wheel: str, candidate: WheelInstallCandidate | None) -> list[str]:
+    """:func:`console_scripts_in_wheel`, from the summary of a candidate the
+    archive cache has unpacked when there is one."""
+    if candidate is not None:
+        from kpip.install.wheel_archive_cache import CachedWheelArchive, loaded_layout
+
+        layout = loaded_layout(candidate)
+        if isinstance(layout, CachedWheelArchive):
+            try:
+                scripts = layout.summary[4]
+            except OSError:
+                pass
+            else:
+                return [name for name, _, gui in scripts if not gui]
+    return console_scripts_in_wheel(wheel)
+
+
 def warn_about_scripts_not_on_path(
-    wheels: list[str], scripts_directory: str, executable: str | None
+    wheels: list[str],
+    scripts_directory: str,
+    executable: str | None,
+    candidates: Sequence[WheelInstallCandidate] | None = None,
 ) -> None:
-    """pip's warning, per wheel, for console scripts installed off ``PATH``."""
+    """pip's warning, per wheel, for console scripts installed off ``PATH``.
+
+    ``candidates``, one for each of ``wheels``, spare reading the scripts of
+    those the archive cache has unpacked.
+    """
     interpreter = executable or script_python()
     if Path(scripts_directory).resolve() in quiet_directories(interpreter):
         # Every script lands there, so no wheel needs opening.
         return
     suffix = ".exe" if os.name == "nt" else ""
-    for wheel in wheels:
+    for index, wheel in enumerate(wheels):
+        candidate = candidates[index] if candidates is not None else None
         message = scripts_not_on_path_message(
             [
                 os.path.join(scripts_directory, name + suffix)
-                for name in console_scripts_in_wheel(wheel)
+                for name in _console_scripts(wheel, candidate)
             ],
             interpreter,
         )
