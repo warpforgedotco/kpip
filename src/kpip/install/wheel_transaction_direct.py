@@ -151,7 +151,8 @@ def install_wheels_directly(
         try:
             if parallel:
                 with ThreadPoolExecutor(
-                    max_workers=min(INSTALL_WORKERS, len(requests))
+                    max_workers=min(INSTALL_WORKERS, len(requests)),
+                    thread_name_prefix="kpip-direct",
                 ) as pool:
                     futures = [
                         pool.submit(install_one, index, request, candidate)

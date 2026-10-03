@@ -588,6 +588,7 @@ def refresh_pages(source: SimpleIndexSource, project_urls: list[str]) -> None:
             pass
 
     with ThreadPoolExecutor(
-        max_workers=min(REFRESH_WORKERS, len(project_urls))
+        max_workers=min(REFRESH_WORKERS, len(project_urls)),
+        thread_name_prefix="kpip-refresh",
     ) as pool:
         list(pool.map(refresh, project_urls))

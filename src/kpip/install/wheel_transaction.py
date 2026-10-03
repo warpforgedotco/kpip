@@ -1229,6 +1229,7 @@ def _install_wheels_locked(
                     try:
                         with ThreadPoolExecutor(
                             max_workers=min(INSTALL_WORKERS, len(requests)),
+                            thread_name_prefix="kpip-stage",
                         ) as pool:
                             futures = [
                                 pool.submit(install_one, index, request, candidate)

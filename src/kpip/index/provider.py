@@ -1295,6 +1295,7 @@ class CandidateProvider:
         if self.index_executor is None:
             self.index_executor = ThreadPoolExecutor(
                 max_workers=min(8, len(self.index_sources)),
+                thread_name_prefix="kpip-index",
             )
 
         return tuple(
@@ -3281,6 +3282,7 @@ class CandidateProvider:
                 self.prefetcher = Prefetcher(
                     self.load_prefetched_versions,
                     max_workers=_CATALOG_WORKERS,
+                    name="kpip-pages",
                 )
 
         pending = (

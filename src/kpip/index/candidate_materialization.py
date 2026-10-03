@@ -1266,6 +1266,7 @@ class CandidateMaterializer:
                 self.metadata_prefetcher = Prefetcher(
                     self.session.get,
                     max_workers=_METADATA_WORKERS,
+                    name="kpip-ahead",
                 )
 
             for key, url in pending:

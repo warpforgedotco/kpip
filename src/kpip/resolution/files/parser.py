@@ -70,7 +70,9 @@ class RequirementFilePrefetcher:
         if self.worker is None:
             from kpip.index.prefetch import Prefetcher
 
-            self.worker = Prefetcher(self.session.get, max_workers=8)
+            self.worker = Prefetcher(
+                self.session.get, max_workers=8, name="kpip-reqfiles"
+            )
         self.worker.submit(url, url)
 
     def take(self, url: str) -> Any:

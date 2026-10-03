@@ -103,7 +103,9 @@ class _Gate:
 class Prefetcher(Generic[T, V]):
     """Submit each keyed task once and consume it deterministically."""
 
-    def __init__(self, loader: Callable[[V], T], max_workers: int) -> None:
+    def __init__(
+        self, loader: Callable[[V], T], max_workers: int, name: str = "kpip-prefetcher"
+    ) -> None:
         gate = _Gate(max_workers)
 
         def gated(value: V) -> T:
@@ -111,7 +113,9 @@ class Prefetcher(Generic[T, V]):
                 return loader(value)
 
         self.loader = gated
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.executor = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix=name
+        )
         self.futures: dict[Hashable, Future[T]] = {}
         # Every key ever submitted. A key whose future was taken is not new:
         # its result is on its way to wherever its consumer keeps it, and

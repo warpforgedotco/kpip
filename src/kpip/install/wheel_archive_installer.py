@@ -1057,6 +1057,7 @@ def install_wheels_from_archive_cache(
                     _CLONE_WORKERS,
                     max(len(active_archives), len(active_plans)),
                 ),
+                thread_name_prefix="kpip-clone",
             )
 
         try:

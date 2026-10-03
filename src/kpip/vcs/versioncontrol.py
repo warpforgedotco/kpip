@@ -272,7 +272,7 @@ class VersionControl:
 
         """
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="kpip-vcs") as pool:
             url_future = pool.submit(cls.get_remote_url, repo_dir)
             revision_future = pool.submit(cls.get_requirement_revision, repo_dir)
             subdir_future = pool.submit(cls.get_subdirectory, repo_dir)
