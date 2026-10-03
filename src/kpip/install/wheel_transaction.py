@@ -43,6 +43,7 @@ from kpip.install.wheel_archive import (
     copy_member_with_metadata,
     destination_internal_parts_text,
     installed_mode,
+    mode_from_external_attr,
     zip_mode,
     record_metadata_internal,
     validate_member_parts,
@@ -353,39 +354,57 @@ def install_wheel_internal(
                 resolved_roots=resolved_roots,
                 root_is_purelib=root_is_purelib,
             )
-            for member in archive.infolist():
-                if member.is_dir():
+            tree_archive = (
+                archive if isinstance(archive, CachedWheelTreeArchive) else None
+            )
+            members = (
+                tree_archive.entries if tree_archive is not None else archive.infolist()
+            )
+            for member in members:
+                if isinstance(member, tuple):
+                    filename = member[0]
+                elif member.is_dir():
                     continue
+                else:
+                    filename = member.filename
                 (
                     relative_parts,
                     source_text,
                     destination_text,
                     record_key,
-                ) = member_paths.resolve(member.filename)
-                # A package file of a cached wheel is a clone of the cache's
-                # copy, and a member of its top-level directory's tree.
-                if (
-                    not direct
-                    and isinstance(member, CachedWheelInfo)
-                    and len(relative_parts) > 1
-                    and not relative_parts[0].endswith((".data", ".dist-info"))
-                    and not (pycompile and relative_parts[-1].endswith(".py"))
-                ):
-                    source_text = member.source_path
-                    clone_sources.add(source_text)
-                    record_metadata[source_text] = member.record_metadata
-                    staged.append(
-                        (
-                            source_text,
-                            destination_text,
-                            destination_text,
-                            installed_mode(zip_mode(member)),  # ty:ignore[invalid-argument-type]
+                ) = member_paths.resolve(filename)
+                if isinstance(member, tuple):
+                    assert tree_archive is not None
+                    # A package file of a cached wheel is a clone of the
+                    # cache's copy, and a member of its top-level directory's
+                    # tree: taken from its manifest row, as no more is needed.
+                    if (
+                        not direct
+                        and len(relative_parts) > 1
+                        and not relative_parts[0].endswith((".data", ".dist-info"))
+                        and not (pycompile and relative_parts[-1].endswith(".py"))
+                    ):
+                        _, digest, size, entry_mode = member
+                        source_text = os.path.join(
+                            tree_archive.tree, *filename.split("/")
                         )
-                    )
-                    top = relative_parts[0]
-                    if top not in mixed_tops:
-                        tree_members.setdefault(top, set()).add(destination_text)
-                    continue
+                        clone_sources.add(source_text)
+                        record_metadata[source_text] = (digest, size)
+                        staged.append(
+                            (
+                                source_text,
+                                destination_text,
+                                destination_text,
+                                installed_mode(
+                                    mode_from_external_attr(entry_mode << 16)
+                                ),
+                            )
+                        )
+                        top = relative_parts[0]
+                        if top not in mixed_tops:
+                            tree_members.setdefault(top, set()).add(destination_text)
+                        continue
+                    member = tree_archive.info(member)
                 relative_name = relative_parts[-1] if relative_parts else ""
                 mode = installed_mode(zip_mode(member))  # ty:ignore[invalid-argument-type]
                 if relative_parts and relative_parts[0].endswith(".dist-info"):

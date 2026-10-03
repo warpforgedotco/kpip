@@ -113,28 +113,65 @@ class CachedWheelInfo:
 
 
 class CachedWheelTreeArchive:
-    """ZipFile-shaped adapter over a :class:`CachedWheelArchive`."""
+    """ZipFile-shaped adapter over a :class:`CachedWheelArchive`.
 
-    __slots__ = ("NameToInfo", "_infos")
+    Its members are made when first asked for: an install takes most of a
+    cached wheel's straight from ``entries``, the manifest's rows.
+    """
+
+    __slots__ = ("_entry_by_name", "_infos", "_name_to_info", "entries", "tree")
 
     def __init__(self, layout: Any) -> None:
-        self._infos = [
-            CachedWheelInfo(layout.tree, relative, digest, size, mode)
-            for relative, digest, size, mode in layout.entries
-        ]
+        self.tree = layout.tree
 
-        self.NameToInfo = {info.filename: info for info in self._infos}
+        self.entries = layout.entries
+
+        self._infos: list[CachedWheelInfo] | None = None
+
+        self._name_to_info: dict[str, CachedWheelInfo] | None = None
+
+        self._entry_by_name: dict[str, tuple[str, str, str, int]] | None = None
+
+    def info(self, entry: tuple[str, str, str, int]) -> CachedWheelInfo:
+        """The member for one row of ``entries``."""
+        relative, digest, size, mode = entry
+
+        return CachedWheelInfo(self.tree, relative, digest, size, mode)
 
     def infolist(self) -> list[CachedWheelInfo]:
-        return self._infos
+        infos = self._infos
+
+        if infos is None:
+            infos = self._infos = [self.info(entry) for entry in self.entries]
+
+        return infos
+
+    @property
+    def NameToInfo(self) -> dict[str, CachedWheelInfo]:
+        name_to_info = self._name_to_info
+
+        if name_to_info is None:
+            name_to_info = self._name_to_info = {
+                info.filename: info for info in self.infolist()
+            }
+
+        return name_to_info
 
     def namelist(self) -> list[str]:
-        return [info.filename for info in self._infos]
+        return [entry[0] for entry in self.entries]
 
     def read(self, member: str | CachedWheelInfo) -> bytes:
-        info = self.NameToInfo[member] if isinstance(member, str) else member
+        if isinstance(member, str):
+            entry_by_name = self._entry_by_name
 
-        with open(info.source_path, "rb") as file:
+            if entry_by_name is None:
+                entry_by_name = self._entry_by_name = {
+                    entry[0]: entry for entry in self.entries
+                }
+
+            member = self.info(entry_by_name[member])
+
+        with open(member.source_path, "rb") as file:
             return file.read()
 
     def open(self, member: CachedWheelInfo):
