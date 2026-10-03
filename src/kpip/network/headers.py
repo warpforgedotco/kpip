@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import http.client
 
-_original = http.client._parse_header_lines
+_original = http.client._parse_header_lines  # ty:ignore[unresolved-attribute]
 _NAME_BYTES = bytes(range(0x21, 0x7F)).replace(b":", b"")
 _ENDS = (b"\r\n", b"\n", b"")
 
@@ -32,7 +32,7 @@ def _header(line: bytes) -> tuple[str, str] | None:
 
 def parse_header_lines(lines: list[bytes], _class=http.client.HTTPMessage):
     message = _class()
-    headers = message._headers
+    headers = message._headers  # ty:ignore[unresolved-attribute]
     for line in lines[:-1] if lines and lines[-1] in _ENDS else lines:
         header = _header(line)
         if header is None:
@@ -49,4 +49,4 @@ def parse_header_lines(lines: list[bytes], _class=http.client.HTTPMessage):
 
 def install() -> None:
     """Have http.client parse every response's headers with parse_header_lines."""
-    http.client._parse_header_lines = parse_header_lines
+    http.client._parse_header_lines = parse_header_lines  # ty:ignore[unresolved-attribute]

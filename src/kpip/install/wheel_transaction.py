@@ -284,9 +284,10 @@ def install_wheel_internal(
         # wheel: the entry holds their bytecode.
         cached_modules: dict[str, str] = {}
         # The destinations of each top-level directory's members, for a
-        # wheel installed from the archive cache: None once one of them is
-        # not a plain copy of the cached tree's file.
-        tree_members: dict[str, set[str] | None] = {}
+        # wheel installed from the archive cache, and the directories one of
+        # whose members is not a plain copy of the cached tree's file.
+        tree_members: dict[str, set[str]] = {}
+        mixed_tops: set[str] = set()
 
         def write_direct(
             destination: str,
@@ -469,12 +470,13 @@ def install_wheel_internal(
                     separator
                     and not direct
                     and not top.endswith((".data", ".dist-info"))
-                    and tree_members.get(top, ()) is not None
+                    and top not in mixed_tops
                 ):
                     if contents is None and isinstance(member, CachedWheelInfo):
                         tree_members.setdefault(top, set()).add(destination_text)
                     else:
-                        tree_members[top] = None
+                        mixed_tops.add(top)
+                        tree_members.pop(top, None)
                 if (
                     pycompile
                     and isinstance(member, CachedWheelInfo)
