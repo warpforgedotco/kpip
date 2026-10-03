@@ -92,7 +92,9 @@ class StagedTree:
     """A directory of an immutable cache whose files are staged one by one,
     which the commit may clone whole instead; or, lazy, whose files are
     staged only if the commit cannot, by ``expand``. An ``overlay`` is a
-    second tree's files cloned into the first: its bytecode."""
+    second tree's files cloned into the first: its bytecode. A lazy tree
+    with ``stale`` paths replaces the directory at its destination, every
+    file of which is one of them: the commit moves it aside whole."""
 
     __slots__ = (
         "destination_text",
@@ -101,6 +103,7 @@ class StagedTree:
         "overlay",
         "owner",
         "source_text",
+        "stale",
     )
 
     def __init__(
@@ -111,6 +114,7 @@ class StagedTree:
         owner: str | None,
         expand: Callable[[], Iterable[tuple[str, str, int | None]]] | None = None,
         overlay: tuple[str, list[str]] | None = None,
+        stale: set[str] | None = None,
     ) -> None:
         self.source_text = source_text
         self.destination_text = destination_text
@@ -118,6 +122,7 @@ class StagedTree:
         self.owner = owner
         self.expand = expand
         self.overlay = overlay
+        self.stale = stale
 
 
 class InstallTransaction:
@@ -219,23 +224,35 @@ class InstallTransaction:
         destination: str,
         expand: Callable[[], Iterable[tuple[str, str, int | None]]],
         overlay: tuple[str, list[str]] | None = None,
+        stale: set[str] | None = None,
     ) -> None:
         """Stage ``source``'s tree onto ``destination`` without staging its
         files: the commit clones it whole, and the files ``overlay`` names
         under its directory into it, or stages the clones ``expand`` gives,
-        of each file's source, destination and mode, when it cannot."""
+        of each file's source, destination and mode, when it cannot.
+
+        With ``stale``, the destination exists and holds only those files,
+        of the distribution being replaced: the commit moves it aside first,
+        and if it stages the files one by one, it replaces and deletes those
+        as it would have.
+        """
         self.trees.append(
-            StagedTree(source, destination, set(), self.owner, expand, overlay)
+            StagedTree(source, destination, set(), self.owner, expand, overlay, stale)
         )
 
     def _expand(self, tree: StagedTree) -> None:
         assert tree.expand is not None
         owner, self.owner = self.owner, tree.owner
         try:
+            staged = set()
             for source, destination, mode in tree.expand():
                 self.add_clone(source, destination, mode=mode)
+                staged.add(destination)
         finally:
             self.owner = owner
+        if tree.stale:
+            self.owned.update(normalized_internal(path) for path in tree.stale)
+            self.deletions.update(tree.stale - staged)
 
     def cloned_trees(self) -> tuple[dict[str, StagedTree], list[StagedTree]]:
         """The staged trees the commit clones whole, and their staged files.
@@ -252,7 +269,10 @@ class InstallTransaction:
             tree.destination_text: tree
             for tree in self.trees
             if claimed[tree.destination_text] == 1
-            and not os.path.lexists(tree.destination_text)
+            and (
+                not os.path.lexists(tree.destination_text)
+                or (tree.stale is not None and _is_directory(tree.destination_text))
+            )
         }
         members: dict[str, StagedTree] = {}
         for tree in trees.values():
@@ -387,6 +407,8 @@ class InstallTransaction:
             directory_fds: dict[str, int] = {}
             try:
                 for tree in trees:
+                    if tree.stale is not None:
+                        self._move_aside(tree.destination_text)
                     parent_text = os.path.dirname(tree.destination_text) or os.curdir
                     if parent_text not in created_directories:
                         makedirs(parent_text, exist_ok=True)
@@ -500,6 +522,14 @@ class InstallTransaction:
             self.adjacent_backups.append(backup)
         self.backups.append((path_text, backup))
 
+    def _move_aside(self, path: str) -> None:
+        """Rename the directory at ``path`` beside it, to be removed once the
+        commit succeeds and renamed back if it does not."""
+        backup = f"{path}.kpip-backup-{os.getpid()}-{len(self.backups)}"
+        os.rename(path, backup)
+        self.adjacent_backups.append(backup)
+        self.backups.append((path, backup))
+
     def remove_empty_parents(self, directory: str) -> None:
         current = directory
         while current and current != os.path.dirname(current):
@@ -549,6 +579,13 @@ def _clone_trees(trees: Collection[StagedTree]) -> None:
         futures = [pool.submit(_clone_tree, tree) for tree in trees]
     for future in futures:
         future.result()
+
+
+def _is_directory(path: str) -> bool:
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
 
 
 def _clone_tree(tree: StagedTree) -> None:

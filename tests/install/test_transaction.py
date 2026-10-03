@@ -683,3 +683,69 @@ def test_a_lazy_tree_another_distribution_stages_into_is_staged_file_by_file(
         "plugin.py": "plugin",
         "sub/mod.py": "mod",
     }
+
+
+def _old_package(site: Path) -> tuple[Path, set[str]]:
+    """An installed pkg/: two files of its own and their bytecode."""
+    old = site / "pkg"
+    (old / "gone").mkdir(parents=True)
+    (old / "__init__.py").write_text("old init")
+    (old / "gone" / "old.py").write_text("old module")
+    (old / "__pycache__").mkdir()
+    (old / "__pycache__" / "__init__.cpython-311.pyc").write_bytes(b"pyc")
+    return old, {str(old / "__init__.py"), str(old / "gone" / "old.py")}
+
+
+def test_a_replacing_lazy_tree_moves_the_old_directory_aside(tmp_path: Path) -> None:
+    tree = _cache_tree(tmp_path)
+    old, stale = _old_package(tmp_path / "site")
+
+    transaction = InstallTransaction()
+    transaction.add_lazy_tree(
+        str(tree), str(old), lambda: _files(tree, old), stale=stale
+    )
+    transaction.commit()
+
+    assert _installed(old) == {"__init__.py": "init", "sub/mod.py": "mod"}
+    assert sorted(os.listdir(old.parent)) == ["pkg"]
+
+
+def test_a_failed_commit_puts_the_replaced_directory_back(tmp_path: Path) -> None:
+    tree = _cache_tree(tmp_path)
+    old, stale = _old_package(tmp_path / "site")
+    before = _installed(old)
+    (tmp_path / "site" / "blocker").write_text("a file, not a directory")
+
+    transaction = InstallTransaction()
+    transaction.add_lazy_tree(
+        str(tree), str(old), lambda: _files(tree, old), stale=stale
+    )
+    # Fails after the tree is replaced: its parent is a file.
+    transaction.add_contents(str(tmp_path / "site" / "blocker" / "x"), b"x")
+    with pytest.raises(OSError):
+        transaction.commit()
+
+    assert _installed(old) == before
+    assert sorted(os.listdir(old.parent)) == ["blocker", "pkg"]
+
+
+def test_a_replacing_lazy_tree_staged_file_by_file_deletes_what_it_drops(
+    tmp_path: Path,
+) -> None:
+    tree = _cache_tree(tmp_path)
+    old, stale = _old_package(tmp_path / "site")
+
+    transaction = InstallTransaction()
+    transaction.owner = "first"
+    transaction.add_lazy_tree(
+        str(tree), str(old), lambda: _files(tree, old), stale=stale
+    )
+    transaction.owner = "second"
+    transaction.add_contents(str(old / "plugin.py"), b"plugin")
+    transaction.commit()
+
+    installed = _installed(old)
+    assert installed["__init__.py"] == "init"
+    assert installed["sub/mod.py"] == "mod"
+    assert installed["plugin.py"] == "plugin"
+    assert "gone/old.py" not in installed

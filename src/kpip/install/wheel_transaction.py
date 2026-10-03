@@ -376,16 +376,21 @@ def install_wheel_internal(
             # target, is cloned whole, its members never staged one by one.
             # Compiled, its bytecode comes whole from the cache's too, for a
             # directory every module of which has some there.
+            # Replacing an installed distribution, a directory all of whose
+            # files are its own is moved aside whole and the new one cloned.
             lazy_rows: dict[str, list[tuple[str, str, str, int]]] = {}
+            replaced: dict[str, set[str]] = {}
             pyc_rows: BytecodeRows | None = None
             pyc_tree: str | None = None
             layout = getattr(candidate, "wheel_layout", None)
+            owned_paths, old_paths = existing_paths(existing, target)
+            if preserve_existing and existing is not None:
+                old_paths = set()
             if (
                 tree_archive is not None
                 and isinstance(layout, CachedWheelArchive)
                 and exclusive_tops
                 and not direct
-                and existing is None
                 and os.name == "posix"
             ):
                 if pycompile:
@@ -394,12 +399,19 @@ def install_wheel_internal(
                 if not pycompile or (pyc_rows is not None and pyc_tree is not None):
                     for top in exclusive_tops:
                         if (
-                            not top.endswith((".data", ".dist-info"))
-                            and (pyc_rows is None or top in pyc_rows)
-                            and os.path.isdir(os.path.join(tree_archive.tree, top))
-                            and not os.path.lexists(os.path.join(library_root, top))
+                            top.endswith((".data", ".dist-info"))
+                            or (pyc_rows is not None and top not in pyc_rows)
+                            or not os.path.isdir(os.path.join(tree_archive.tree, top))
                         ):
+                            continue
+                        destination_root = os.path.join(library_root, top)
+                        if not os.path.lexists(destination_root):
                             lazy_rows[top] = []
+                        elif old_paths:
+                            inside = owned_tree(destination_root, old_paths)
+                            if inside is not None:
+                                lazy_rows[top] = []
+                                replaced[top] = inside
             members = (
                 tree_archive.entries if tree_archive is not None else archive.infolist()
             )
@@ -757,10 +769,9 @@ def install_wheel_internal(
             record_contents,
         )
 
-        owned_paths, old_paths = existing_paths(existing, target)
-        if preserve_existing and existing is not None:
-            old_paths = set()
-        old_path_texts = set(old_paths)
+        moved_aside = set().union(*replaced.values())
+        owned_paths = owned_paths - moved_aside
+        old_path_texts = set(old_paths) - moved_aside
         scripts_text = os.fspath(target.scripts)
         for _, destination, destination_text, _ in staged:
             if (
@@ -799,6 +810,7 @@ def install_wheel_internal(
                         )
                         if pyc_tree is not None and compiled
                         else None,
+                        replaced.get(top),
                     )
                 for top, members in tree_members.items():
                     destination_root = os.path.join(library_root, top)
@@ -835,6 +847,46 @@ def install_wheel_internal(
                 f"Successfully uninstalled {existing.raw_name}-{existing.raw_version}",
             )
     return candidate
+
+
+def owned_tree(directory: str, owned: set[str]) -> set[str] | None:
+    """The files in ``directory`` if every one of them is in ``owned``, or
+    is the bytecode Python wrote beside one; ``None`` if any other is there,
+    or ``directory`` is a link.
+
+    What an installed distribution's RECORD lists of a directory is all it
+    holds unless another distribution, or someone, put something there.
+    """
+    found: set[str] = set()
+    pending = [directory]
+    try:
+        if os.path.islink(directory):
+            return None
+        while pending:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                        continue
+                    path = entry.path
+                    if path in owned:
+                        found.add(path)
+                        continue
+                    parent = os.path.dirname(path)
+                    if not (
+                        os.path.basename(parent) == "__pycache__"
+                        and entry.name.endswith(".pyc")
+                        and os.path.join(
+                            os.path.dirname(parent),
+                            entry.name.split(".", 1)[0] + ".py",
+                        )
+                        in owned
+                    ):
+                        return None
+                    found.add(path)
+    except OSError:
+        return None
+    return found
 
 
 def _lazy_tree_files(
