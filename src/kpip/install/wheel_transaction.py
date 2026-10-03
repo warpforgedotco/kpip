@@ -53,7 +53,11 @@ from kpip.install.wheel_archive_cache import (
     remember_tree_listings,
 )
 from kpip.install.wheel_archive_installer import install_wheels_from_archive_cache
-from kpip.install.wheel_archive_runtime import CachedWheelInfo, open_wheel_archive
+from kpip.install.wheel_archive_runtime import (
+    CachedWheelInfo,
+    CachedWheelTreeArchive,
+    open_wheel_archive,
+)
 from kpip.install.wheel_scripts import (
     entry_point_scripts,
     generate_entry_point_files,
@@ -251,7 +255,9 @@ def install_wheel_internal(
         nullcontext(target.purelib)
         if direct
         else (
-            tempfile.TemporaryDirectory(prefix="kpip-wheel-stage-")
+            tempfile.TemporaryDirectory(
+                prefix=".kpip-wheel-stage-", dir=stage_parent(target)
+            )
             if stage_root is None
             else nullcontext(stage_root)
         )
@@ -324,6 +330,9 @@ def install_wheel_internal(
             library_prefix = library_root.rstrip(os.sep) + os.sep
             wheel_record_metadata: dict[str, tuple[str, str]] = {}
             try:
+                # A cached wheel's members carry their RECORD metadata.
+                if isinstance(archive, CachedWheelTreeArchive):
+                    raise KeyError
                 record_text = archive.read(f"{validated_dist_info}/RECORD").decode(
                     "utf-8",
                 )
@@ -652,9 +661,7 @@ def install_wheel_internal(
                 ),
             )
         record_rows.sort()
-        record_file = io.StringIO(newline="")
-        csv.writer(record_file).writerows(record_rows)
-        record_contents = record_file.getvalue().encode("utf-8")
+        record_contents = record_text_of(record_rows).encode("utf-8")
         if direct:
             write_direct(record_destination, record_contents)
         else:
@@ -719,6 +726,35 @@ def install_wheel_internal(
                 f"Successfully uninstalled {existing.raw_name}-{existing.raw_version}",
             )
     return candidate
+
+
+def stage_parent(target: InstallTarget) -> str | None:
+    """Where an install stages its files: beside them, in the target's
+    library directory, when it can be written, so they are renamed into
+    place. The temporary directory is often another filesystem -- a tmpfs
+    /tmp -- across which every move of a staged file is a copy."""
+    library = target.purelib
+    return library if os.access(library, os.W_OK) else None
+
+
+def record_text_of(rows: list[tuple[str, str, str]]) -> str:
+    """RECORD's text for ``rows``, as csv.writer writes it.
+
+    Its fields need quoting only for a comma, a quote or a line break, which
+    a hash and a size never hold and a path almost never does; rows with
+    none are joined directly, and the rare RECORD with one is left to csv.
+    """
+    text = "".join(f"{path},{digest},{size}\r\n" for path, digest, size in rows)
+    if (
+        text.count(",") == 2 * len(rows)
+        and text.count("\r") == len(rows)
+        and text.count("\n") == len(rows)
+        and '"' not in text
+    ):
+        return text
+    record_file = io.StringIO(newline="")
+    csv.writer(record_file).writerows(rows)
+    return record_file.getvalue()
 
 
 def root_is_purelib_or_default(text: str) -> bool:
@@ -943,7 +979,9 @@ def _install_wheels_locked(
             destination_cache=direct_destination_cache,
         )
     with InstallTransaction() as transaction:
-        with tempfile.TemporaryDirectory(prefix="kpip-wheel-batch-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix=".kpip-wheel-batch-", dir=stage_parent(target)
+        ) as temporary:
             batch_stage = temporary
             parallel = (
                 len(requests) >= 4
