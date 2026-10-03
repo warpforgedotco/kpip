@@ -805,17 +805,18 @@ def bytecode_rows(archive: CachedWheelArchive) -> BytecodeRows | None:
     bytecode in :func:`bytecode_tree`, its ``.pyc`` files' RECORD rows: path
     in the wheel, hash and size. ``None`` without a bytecode tree.
 
-    Left out is a directory a module of which has none, one a ``.data``
-    member installs into, and one that ships ``__pycache__`` itself: their
-    bytecode is placed file by file. Read and hashed once, the first time an
-    install asks, and stored beside the tree.
+    A module the tree lacks would not compile, as the tree is published only
+    once every module was compiled, and has no row. Left out is a directory
+    a ``.data`` member installs into, and one that ships ``__pycache__``
+    itself: their bytecode is placed file by file. Read and hashed once, the
+    first time an install asks, and stored beside the tree.
     """
     tree = bytecode_tree(archive)
 
     if tree is None:
         return None
 
-    path = f"{tree}.rows"
+    path = f"{tree}.record"
 
     try:
         with open(path, "rb") as file:
@@ -871,6 +872,9 @@ def _bytecode_rows(archive: CachedWheelArchive, tree: str) -> BytecodeRows:
         try:
             with open(os.path.join(tree, *compiled), "rb") as file:
                 body = file.read()
+
+        except FileNotFoundError:
+            continue
 
         except OSError:
             incomplete.add(top)

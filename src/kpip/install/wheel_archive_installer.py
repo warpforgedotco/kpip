@@ -542,8 +542,8 @@ def _materialize_pyc(
 
     The archive cache holds the target interpreter's bytecode, so each is a
     copy with its header renamed to the staged source (:func:`place_pyc`).
-    Members it has none for -- a module that would not compile, an entry the
-    cache could not compile -- are compiled in the stage.
+    Members it has none for are compiled in the stage, unless the cache has
+    a tree and they are missing from it: they would not compile.
     """
 
     tree = bytecode_tree(archive)
@@ -567,16 +567,17 @@ def _materialize_pyc(
 
         source = os.path.join(stage, *mapped)
 
+        cached = None if tree is None else os.path.join(tree, *target)
+
         body = (
             None
-            if tree is None
-            else place_pyc(
-                os.path.join(tree, *target), source, os.path.join(stage, *target), magic
-            )
+            if cached is None
+            else place_pyc(cached, source, os.path.join(stage, *target), magic)
         )
 
         if body is None:
-            uncached.append((source, mapped, target))
+            if cached is None or os.path.exists(cached):
+                uncached.append((source, mapped, target))
 
             continue
 

@@ -206,7 +206,8 @@ def compiled_files(
 
     A module read from the archive cache entry ``archive`` -- ``members``
     maps its staged path to its name in the wheel -- takes the entry's
-    cached bytecode (:func:`place_pyc`); the rest are compiled.
+    cached bytecode (:func:`place_pyc`), and gets none if the entry's tree
+    lacks it: it would not compile. The rest are compiled.
     """
     python_files = [
         (source, destination)
@@ -240,16 +241,18 @@ def compiled_files(
         if member is not None and tree is not None:
             cached = compiled_parts(mapped_parts(member))
 
-            if (
-                cached is not None
-                and place_pyc(os.path.join(tree, *cached), source_text, output, magic)
-                is not None
-            ):
-                placed.append(
-                    (output, compiled_destination, compiled_destination, None)
-                )
+            if cached is not None:
+                cached_path = os.path.join(tree, *cached)
 
-                continue
+                if place_pyc(cached_path, source_text, output, magic) is not None:
+                    placed.append(
+                        (output, compiled_destination, compiled_destination, None)
+                    )
+
+                    continue
+
+                if not os.path.exists(cached_path):
+                    continue
 
         planned.append((output, compiled_destination))
 
