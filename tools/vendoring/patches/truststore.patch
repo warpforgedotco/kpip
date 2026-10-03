@@ -1,0 +1,18 @@
+diff --git a/src/kpip/_vendor/truststore/_openssl.py b/src/kpip/_vendor/truststore/_openssl.py
+index 3e25a56..cc15d4b 100644
+--- a/src/kpip/_vendor/truststore/_openssl.py
++++ b/src/kpip/_vendor/truststore/_openssl.py
+@@ -1,4 +1,5 @@
+ import contextlib
++import functools
+ import os
+ import re
+ import ssl
+@@ -48,6 +49,7 @@ def _configure_context(ctx: ssl.SSLContext) -> typing.Iterator[None]:
+     yield
+ 
+ 
++@functools.cache
+ def _capath_contains_certs(capath: str) -> bool:
+     """Check whether capath exists and contains certs in the expected format."""
+     if not os.path.isdir(capath):

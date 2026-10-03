@@ -1,4 +1,5 @@
 import contextlib
+import functools
 import os
 import re
 import ssl
@@ -48,6 +49,7 @@ def _configure_context(ctx: ssl.SSLContext) -> typing.Iterator[None]:
     yield
 
 
+@functools.cache
 def _capath_contains_certs(capath: str) -> bool:
     """Check whether capath exists and contains certs in the expected format."""
     if not os.path.isdir(capath):
