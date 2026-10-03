@@ -30,6 +30,7 @@ from kpip.install.wheel_archive_cache import (
     CachedWheelArchive,
     archive_entry_root,
     bytecode_tree,
+    extract_on_one_thread,
     load_archive,
     loaded_layout,
     prepare_cached_wheel,
@@ -73,8 +74,10 @@ class _Wheel:
 
 def unpack_in_worker(path: str, sha256: str, cache_dir: str) -> str:
     """Fill the wheel's archive cache entry; its directory. Runs in a worker,
-    which leaves the bytecode to the main interpreter."""
+    which leaves the bytecode to the main interpreter, and unpacks the wheel
+    on one thread, as the pool's other workers unpack the others."""
 
+    extract_on_one_thread()
     archive = prepare_cached_wheel(_Wheel(path, sha256), cache_dir, pycompile=False)
     return os.path.dirname(archive.tree)
 

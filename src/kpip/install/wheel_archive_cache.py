@@ -501,8 +501,26 @@ def _record_metadata(
     return result
 
 
+_one_thread_per_wheel = False
+
+
+def extract_on_one_thread() -> None:
+    """Unpack each wheel on the thread unpacking it.
+
+    For an interpreter that is one of several unpacking wheels side by side:
+    its threads would share its one interpreter lock, and trade it rather
+    than unpack, while the other interpreters already keep the cores busy.
+    """
+    global _one_thread_per_wheel
+
+    _one_thread_per_wheel = True
+
+
 def _borrow_extract_workers(wanted: int) -> int:
     """Take up to ``wanted`` extraction threads, or as many as are spare."""
+    if _one_thread_per_wheel:
+        return 0
+
     taken = 0
 
     while taken < wanted and _EXTRACT_PERMITS.acquire(blocking=False):
