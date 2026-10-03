@@ -95,7 +95,6 @@ def nuitka_command(
     options: BuildOptions,
     version: str,
     interpreter: str = "cpython-314",
-    subinterpreter_modules: tuple[str, ...] = (),
     build_id_file: Path | None = None,
 ) -> list[str]:
     is_windows = options.platform == "win32"
@@ -124,10 +123,6 @@ def nuitka_command(
         f"--user-plugin={NATIVE_PLUGIN}",
         "--noinclude-data-files=kpip/**/*.c",
     ]
-    if subinterpreter_modules:
-        # Bytecode for the subinterpreters kpip unpacks wheels on, which
-        # cannot import compiled modules (kpip_compile.workers).
-        command.append("--subinterpreter-bytecode=" + ",".join(subinterpreter_modules))
     if build_id_file is not None:
         command.append(f"--include-data-files={build_id_file}=kpip/BUILD_ID")
     if is_windows:
@@ -148,16 +143,10 @@ def nuitka_command(
 def _run_nuitka(
     options: BuildOptions, nuitka_dir: Path, environ: dict[str, str], interpreter: str
 ) -> int:
-    from kpip_compile.workers import subinterpreter_modules
-
-    modules = tuple(subinterpreter_modules(options.python))
-    print(f"{len(modules)} modules for subinterpreters", flush=True)
     options.output_dir.mkdir(parents=True, exist_ok=True)
     build_id_file = options.output_dir / "BUILD_ID"
     build_id_file.write_text(build_id(interpreter), encoding="ascii")
-    command = nuitka_command(
-        options, kpip_version(), interpreter, modules, build_id_file
-    )
+    command = nuitka_command(options, kpip_version(), interpreter, build_id_file)
     env = dict(environ)
     if options.fast_compress:
         env["NUITKA_ONEFILE_COMPRESSION_LEVEL"] = str(FAST_COMPRESSION_LEVEL)

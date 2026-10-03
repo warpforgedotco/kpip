@@ -45,14 +45,16 @@ from kpip.host.environment_checks import (
     warn_if_run_as_root,
 )
 from kpip.host.interpreter_facts import target_interpreter
-from kpip.install.archive_workers import ArchiveWorkers
 from kpip.install.output import (
     WheelPrefetch,
     installation_order,
     prepare_install_candidates,
 )
 from kpip.install.target import InstallTarget
-from kpip.install.wheel_archive_cache import prepare_cached_wheel
+from kpip.install.wheel_archive_cache import (
+    prepare_cached_wheel,
+    unpacks_without_the_lock,
+)
 from kpip.install.wheel_install_plan_cache import (
     REMOTE_EXACT_CONTEXT,
     exact_install_plan_key,
@@ -1214,29 +1216,19 @@ def run_install(args: list[str]) -> int:
 
         pycompile = not execution.options.no_compile
 
-        # Made before resolving, so the workers start with the first wheel.
-        archive_workers = (
-            ArchiveWorkers.if_available()
-            if execution.cache_dir is not None and not execution.options.dry_run
-            else None
-        )
-
         def prepare_archive(candidate: Any, cache_dir: str) -> object:
-            if archive_workers is not None:
-                return archive_workers.prepare(
-                    candidate, cache_dir, pycompile=pycompile
-                )
             return prepare_cached_wheel(candidate, cache_dir, pycompile=pycompile)
 
         # Wheels are fetched and unpacked while the solve goes on -- but only
-        # onto subinterpreters: on threads the unpacking takes turns with the
-        # solve under one interpreter lock, and a cold jupyter install took
-        # longer than not prefetching at all.
+        # where the unpacking leaves the solve the interpreter lock, its
+        # members extracted in C. In Python it takes turns with the solve,
+        # and a cold jupyter install took longer than not prefetching at all.
         prefetch = (
             WheelPrefetch(execution.cache_dir, prepare_archive)
             if plan is None
-            and archive_workers is not None
+            and unpacks_without_the_lock()
             and execution.cache_dir is not None
+            and not execution.options.dry_run
             else None
         )
 
@@ -1354,8 +1346,6 @@ def run_install(args: list[str]) -> int:
             finally:
                 if prefetch is not None:
                     prefetch.close()
-                if archive_workers is not None:
-                    archive_workers.close()
             plan = plan.replace(candidates=tuple(materialized_candidates))
 
         parsed_constraints = map(parse_requirement, execution.bundle.constraints)

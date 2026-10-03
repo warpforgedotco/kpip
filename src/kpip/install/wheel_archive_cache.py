@@ -502,26 +502,8 @@ def _record_metadata(
     return result
 
 
-_one_thread_per_wheel = False
-
-
-def extract_on_one_thread() -> None:
-    """Unpack each wheel on the thread unpacking it.
-
-    For an interpreter that is one of several unpacking wheels side by side:
-    its threads would share its one interpreter lock, and trade it rather
-    than unpack, while the other interpreters already keep the cores busy.
-    """
-    global _one_thread_per_wheel
-
-    _one_thread_per_wheel = True
-
-
 def _borrow_extract_workers(wanted: int) -> int:
     """Take up to ``wanted`` extraction threads, or as many as are spare."""
-    if _one_thread_per_wheel:
-        return 0
-
     taken = 0
 
     while taken < wanted and _EXTRACT_PERMITS.acquire(blocking=False):
@@ -550,6 +532,13 @@ try:
     _extract_loop = getattr(_kpip_unzip, "extract_members", None)
 except ImportError:
     _extract_loop = None
+
+
+def unpacks_without_the_lock() -> bool:
+    """Whether a wheel's members are extracted in C, the interpreter lock
+    released: then threads unpack wheels side by side, and beside the solve."""
+    return _extract_loop is not None
+
 
 _LEFT_TO_PYTHON = (0, -1, 0, 0, 0, b"", b"", 0)
 """A member the C loop hands back at once."""
@@ -995,8 +984,7 @@ def bytecode_tree(archive: CachedWheelArchive) -> str | None:
     worker processes (:mod:`kpip.install.bytecode`), and installs copy the
     result rather than compiling. Compiled beside the entry and renamed into
     place, so a concurrent fill of the same entry costs a duplicate compile
-    rather than a lock. Only ever in the main interpreter: a subinterpreter
-    takes no workers, and could compile only this process's bytecode.
+    rather than a lock.
 
     A module that will not compile -- vendored Python 2 in a wheel, say -- is
     left out, not fatal: the install compiles that one in the stage.

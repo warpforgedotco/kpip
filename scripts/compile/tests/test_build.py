@@ -120,21 +120,6 @@ def test_the_tag_comes_from_the_build_interpreter() -> None:
     assert interpreter_tag(sys.executable) == sys.implementation.cache_tag
 
 
-def test_subinterpreter_modules_are_named_in_one_argument() -> None:
-    command = nuitka_command(
-        BuildOptions(platform="linux"),
-        "1",
-        subinterpreter_modules=("encodings", "kpip.install.archive_workers"),
-    )
-
-    assert "--subinterpreter-bytecode=encodings,kpip.install.archive_workers" in command
-    assert command[-1] == str(KPIP_PACKAGE)
-    assert not any(
-        argument.startswith("--subinterpreter-bytecode")
-        for argument in nuitka_command(BuildOptions(platform="linux"), "1")
-    )
-
-
 def test_the_build_id_is_shipped_as_package_data(tmp_path: Path) -> None:
     build_id_file = tmp_path / "BUILD_ID"
 
@@ -180,7 +165,6 @@ def test_fast_compress_sets_nuitkas_compression_level(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fast_compress: bool
 ) -> None:
     from kpip_compile import build as build_module
-    from kpip_compile import workers
 
     environments: list[dict[str, str]] = []
 
@@ -188,7 +172,6 @@ def test_fast_compress_sets_nuitkas_compression_level(
         environments.append(env)
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(workers, "subinterpreter_modules", lambda python: ())
     monkeypatch.setattr(build_module.subprocess, "run", run)
     options = BuildOptions(output_dir=tmp_path, fast_compress=fast_compress)
 
