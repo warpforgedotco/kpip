@@ -52,11 +52,13 @@ def run_uninstall(args: list[str]) -> int:
     removed: list[str] = []
 
     for package in packages:
-        distribution = InstalledDistributionStore(
-            user_site=user_lib_path(),
-        ).find(package)
+        distribution = (
+            InstalledDistributionStore(user_site=user_lib_path()).find(package)
+            if options.verbose
+            else None
+        )
 
-        if options.verbose and distribution is not None:
+        if distribution is not None:
             location = distribution.location
 
             parent = os.path.dirname(

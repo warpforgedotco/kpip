@@ -464,7 +464,7 @@ class InstalledDistributionStore:
 
         distributions = [
             distribution
-            for distribution in self.iter()
+            for distribution in self.iter(names=(canonical,))
             if distribution.canonical_name == canonical
         ]
 

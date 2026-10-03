@@ -152,3 +152,34 @@ def test_uninstall_removes_data_and_headers_files(
     assert not data_file.exists()
     assert not header.exists()
     assert not (Path(scheme.purelib) / "demo").exists()
+
+
+def test_finding_a_distribution_reads_only_its_own_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip.build.metadata import InstalledDistributionStore
+    from kpip.core import metadata
+
+    first, second = tmp_path / "first", tmp_path / "second"
+    for root, name in ((first, "demo"), (first, "other"), (second, "demo")):
+        info = root / f"{name}-1.0.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text(f"Name: {name}\nVersion: 1.0\n")
+
+    read: list[str] = []
+    read_text_file = metadata._read_text_file
+
+    def recording_read(target: str) -> str | None:
+        read.append(target)
+        return read_text_file(target)
+
+    monkeypatch.setattr(metadata, "_read_text_file", recording_read)
+
+    distribution = InstalledDistributionStore(
+        paths=[str(first), str(second)], user_site=str(tmp_path / "user")
+    ).find("Demo")
+
+    assert distribution is not None
+    assert distribution.location == str(first)
+    assert read
+    assert all("other" not in os.path.basename(os.path.dirname(t)) for t in read)
