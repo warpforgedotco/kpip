@@ -145,7 +145,7 @@ def materialize_candidates(
     return _run_candidate_operation(candidates, materialize_candidate)
 
 
-_PREFETCH_WORKERS = 8
+_PREFETCH_WORKERS = 4
 """Wheels fetched and unpacked at once while the solve goes on."""
 
 

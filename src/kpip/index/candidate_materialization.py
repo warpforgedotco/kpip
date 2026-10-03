@@ -116,7 +116,9 @@ logger = logging.getLogger(__name__)
 
 _EXTRA_MARKER_RE = re.compile(r"extra\s*(?:==|in)\s*['\"]([^'\"]+)['\"]")
 
-_METADATA_WORKERS = 32
+_METADATA_WORKERS = 16
+"""Threads fetching metadata ahead of the resolve; see the provider's
+``_CATALOG_WORKERS``."""
 
 # The extras slot of the key a VCS candidate's name and version persist under.
 _VCS_CANDIDATE_EXTRAS = ("*vcs-candidate*",)

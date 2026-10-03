@@ -78,7 +78,9 @@ logger = logging.getLogger(__name__)
 
 PYPI_HOSTS = frozenset(("pypi.org", "pypi.python.org"))
 
-_CATALOG_WORKERS = 32
+_CATALOG_WORKERS = 16
+"""Threads fetching index pages. The prefetcher runs as many fetches at once
+as the link's latency calls for, and its other threads wait asleep."""
 
 _CATALOG_METADATA_PREFETCH = 2
 
