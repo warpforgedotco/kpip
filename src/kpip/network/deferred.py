@@ -1,5 +1,3 @@
-"""A session that costs nothing until something asks it to speak."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -135,9 +133,6 @@ class DeferredNetworkSession:
     def __getattr__(self, name: str) -> Any:
         return getattr(self.materialize(), name)
 
-    # Spelled out rather than left to ``__getattr__`` so this reads as the
-    # session contract it stands in for: these four are what ``HttpSession``
-    # and the requirement-file parser ask any session for.
     @property
     def auth(self) -> Any:
         return self.materialize().auth
@@ -148,9 +143,6 @@ class DeferredNetworkSession:
 
     @property
     def cache(self) -> Any:
-        # Answered without materializing: this is the same object the
-        # session is handed when it is finally built, and reading a page
-        # out of it is how a resolve avoids needing the session at all.
         return self.page_cache()
 
     @cache.setter
