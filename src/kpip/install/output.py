@@ -4,18 +4,33 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from typing import Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from kpip.core.appdirs import archive_entry_root
 from kpip.core.digests import valid_sha256
 from kpip.core.utils import default_worker_count
 from kpip.core.wheel import WheelCandidate
-from kpip.index.candidate_materialization import LazyWheelCandidate
 from kpip.index.vcs import vcs_scheme
 from kpip.install.wheel_archive_cache import EXTRACT_WORKERS
+
+if TYPE_CHECKING:
+    from typing import TypeGuard
+
+    from kpip.index.candidate_materialization import LazyWheelCandidate
+
+_CANDIDATE_MATERIALIZATION = "kpip.index.candidate_materialization"
+
+
+def _is_lazy(candidate: object) -> TypeGuard[LazyWheelCandidate]:
+    """Whether ``candidate`` is a :class:`LazyWheelCandidate`."""
+    module = sys.modules.get(_CANDIDATE_MATERIALIZATION)
+
+    return module is not None and isinstance(candidate, module.LazyWheelCandidate)
+
 
 _MATERIALIZATION_WORKERS = 32
 
@@ -98,7 +113,7 @@ def _run_candidate_operation(
 
     for candidate in candidates:
         if (
-            isinstance(candidate, LazyWheelCandidate)
+            _is_lazy(candidate)
             and candidate.source_kind == "wheel"
             and not candidate.record_internal.link.is_file
         ):
@@ -116,7 +131,7 @@ def _run_candidate_operation(
 
 
 def materialize_candidate(candidate: WheelCandidate) -> WheelCandidate:
-    if isinstance(candidate, LazyWheelCandidate):
+    if _is_lazy(candidate):
         return candidate.materialize()
 
     return candidate
@@ -137,7 +152,7 @@ _PREFETCH_WORKERS = 8
 def _remote_wheel_url(candidate: object) -> str | None:
     """The URL of a wheel still to be downloaded from an index, or None."""
     if (
-        isinstance(candidate, LazyWheelCandidate)
+        _is_lazy(candidate)
         and candidate.source_kind == "wheel"
         and not candidate.record_internal.link.is_file
     ):

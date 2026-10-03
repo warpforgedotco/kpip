@@ -23,7 +23,6 @@ from kpip.core.versions import Version
 from kpip.core.wheel import parse_wheel_file, supported_wheel_tags, wheel_tag_rank
 from kpip.index.config import DEFAULT_INDEX_URL
 from kpip.index.links import Link
-from kpip.index.source_locations import resolve_source_location
 from kpip.network.deferred import DeferredNetworkSession
 from kpip.resolution.files.parser import parse_requirements
 from kpip.resolution.input_requirements import install_req_from_line
@@ -381,15 +380,19 @@ def collect_requirements(
         require_hashes=require_hashes, prefer_binary=False
     )
 
-    local_only = (
+    local_only = False
+
+    if (
         bundle_no_index
         and not requirement_files
         and not constraint_files
-        and bool(bundle_find_links)
-        and all(
+        and bundle_find_links
+    ):
+        from kpip.index.source_locations import resolve_source_location
+
+        local_only = all(
             resolve_source_location(value)[1] is not None for value in bundle_find_links
         )
-    )
 
     if local_only:
         session = None

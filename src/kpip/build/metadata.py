@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import configparser
-import email.message
-import email.parser
 import os
 from collections.abc import Collection
 from types import SimpleNamespace
@@ -25,6 +22,7 @@ from kpip.core.wheel import read_wheel_archive_member, validate_wheel
 from kpip.host.interpreter_facts import search_path, target_interpreter
 
 if TYPE_CHECKING:
+    import email.message
     import zipfile
     from kpip.core.metadata import InstalledDistribution
     from kpip.core.packaging import Requirement
@@ -33,6 +31,8 @@ if TYPE_CHECKING:
 def parse_entry_points(text: str | None) -> list[SimpleNamespace]:
     if not text:
         return []
+
+    import configparser
 
     parser = configparser.ConfigParser(delimiters=("=",), strict=False)
 
@@ -78,6 +78,8 @@ class MetadataDistribution:
         info_dir = validate_wheel(archive, name)
 
         contents = read_wheel_archive_member(archive, f"{info_dir}/METADATA")
+
+        import email.parser
 
         metadata = email.parser.BytesParser().parsebytes(contents)
 

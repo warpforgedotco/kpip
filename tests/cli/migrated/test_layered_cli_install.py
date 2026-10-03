@@ -7,8 +7,7 @@ from kpip.cli import install, main
 
 def test_layered_cli_uses_public_kpip_install_services() -> None:
     source = Path(install.__file__).read_text()
-    assert "from kpip.install.metadata import (" in source
-    assert "prepare_editable_source," in source
+    assert "from kpip.install.metadata import prepare_editable_source" in source
     assert "def _prepare_editable_source" not in source
 
 

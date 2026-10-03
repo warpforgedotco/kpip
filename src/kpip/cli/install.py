@@ -5,18 +5,6 @@ import logging
 import os
 
 from kpip.build.metadata import InstalledDistributionStore
-from kpip.build.query import (
-    check_package_set,
-    installed_dependencies_by_name,
-    package_set_from_dependencies,
-)
-from kpip.cli.lock_replay import (
-    FRESH,
-    open_http_cache,
-    page_state,
-    page_validators,
-    resolution_environment,
-)
 from kpip.cli.parsers.install import create_parser
 from kpip.cli.requirement_command import (
     PreparedRequirements,
@@ -57,14 +45,7 @@ from kpip.host.environment_checks import (
     warn_if_run_as_root,
 )
 from kpip.host.interpreter_facts import target_interpreter
-from kpip.index.candidate_materialization import LazyWheelCandidate
 from kpip.install.archive_workers import ArchiveWorkers
-from kpip.install.metadata import (
-    ReportItem,
-    direct_url_from_link,
-    prepare_editable_source,
-    write_install_report,
-)
 from kpip.install.output import (
     WheelPrefetch,
     installation_order,
@@ -85,7 +66,6 @@ from kpip.install.wheel_transaction import (
     WheelInstaller,
     install_wheels_transactionally,
 )
-from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.input_requirements import install_req_from_line
 
 if TYPE_CHECKING:
@@ -191,6 +171,8 @@ class InstallOutcome:
     def add_report_item(self, **fields: Any) -> None:
         if not self.report_enabled:
             return
+        from kpip.install.metadata import ReportItem
+
         self.report_items.append(ReportItem(**fields))
 
 
@@ -557,6 +539,8 @@ def replayable_install_plan_key(
     if not _plan_cacheable(options, bundle):
         return None
 
+    from kpip.cli.lock_replay import resolution_environment
+
     return plain_install_plan_key(
         tuple(requirements),
         (
@@ -576,6 +560,8 @@ def load_replayable_install_plan(cache_dir: str, key: str) -> ResolutionResult |
 
     if pages is None:
         return None
+
+    from kpip.cli.lock_replay import FRESH, open_http_cache, page_state
 
     if page_state(open_http_cache(cache_dir), pages) != FRESH:
         return None
@@ -601,6 +587,8 @@ def record_replayable_install_plan(
 
     if not urls:
         return
+
+    from kpip.cli.lock_replay import open_http_cache, page_validators
 
     validators = page_validators(open_http_cache(cache_dir), urls)
 
@@ -652,6 +640,12 @@ def install_candidate(
 
 
 def warn_about_install_conflicts(changed_names: set[str]) -> None:
+    from kpip.build.query import (
+        check_package_set,
+        installed_dependencies_by_name,
+        package_set_from_dependencies,
+    )
+
     distributions = InstalledDistributionStore().iter()
     distributions_by_name = {dist.canonical_name: dist for dist in distributions}
     dependencies_by_name = installed_dependencies_by_name(distributions)
@@ -749,6 +743,8 @@ def report_install_summary(
             logger.info(f"Requirement already satisfied: {requirement}")
 
     if execution.options.report:
+        from kpip.install.metadata import write_install_report
+
         session = execution.bundle.session
         write_install_report(
             execution.options.report,
@@ -802,6 +798,11 @@ def install_editables(
     preinstalled_editables: set[str],
     preinstalled_editable_reports: dict[str, tuple[Any, Any]],
 ) -> None:
+    if not execution.bundle.editables:
+        return
+
+    from kpip.install.metadata import prepare_editable_source
+
     for editable in execution.bundle.editables:
         if editable in preinstalled_editables:
             candidate, direct_url = preinstalled_editable_reports[editable]
@@ -876,6 +877,8 @@ def install_editables(
                 )
 
         if not execution.options.no_deps and editable_dependencies:
+            from kpip.resolution.api import ResolutionEngine
+
             dependency_plan = ResolutionEngine(
                 provider=create_candidate_provider(
                     execution.options,
@@ -1095,6 +1098,8 @@ def run_install(args: list[str]) -> int:
     # An editable that depends on nothing is installed before the resolve;
     # with --only-deps it is not installed at all.
     if bundle.editables and not options.only_deps:
+        from kpip.install.metadata import prepare_editable_source
+
         for editable in bundle.editables:
             source_path, direct_url, metadata = prepare_editable_source(
                 editable,
@@ -1232,6 +1237,7 @@ def run_install(args: list[str]) -> int:
             providers.append(provider)
 
             if prefetch is not None:
+                from kpip.index.candidate_materialization import LazyWheelCandidate
 
                 def on_likely(requirement: Any, record: Any) -> None:
                     prefetch(
@@ -1421,6 +1427,8 @@ def run_install(args: list[str]) -> int:
                     and source_requirement.req is not None
                     and source_requirement.req.url is not None
                 ):
+                    from kpip.install.metadata import direct_url_from_link
+
                     direct_url = direct_url_from_link(source_requirement.link)
                 candidate_direct_urls[candidate.canonical_name] = direct_url
 

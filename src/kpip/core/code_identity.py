@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from hashlib import sha256
-from importlib.resources import files as package_files
 
 from kpip.core.compiled import own_binary
 
@@ -33,6 +32,8 @@ def code_identity() -> tuple[object, ...]:
 def _compute() -> tuple[object, ...]:
     binary = own_binary()
     if binary is not None:
+        from importlib.resources import files as package_files
+
         # The same for every copy of one build, wherever it is moved.
         try:
             return (

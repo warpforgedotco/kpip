@@ -13,7 +13,6 @@ import re
 import sys
 import time
 import zipfile
-from importlib.resources import files
 from pathlib import Path
 
 from kpip.core.errors import InstallationError
@@ -304,6 +303,8 @@ def windows_launcher(body: bytes, head: bytes, *, gui: bool) -> bytes:
     bits = "64" if interpreter.pointer_bits == 64 else "32"
     arm = "-arm" if interpreter.platform == "win-arm64" else ""
     name = f"{'w' if gui else 't'}{bits}{arm}.exe"
+    from importlib.resources import files
+
     launcher = (files("kpip._launchers") / name).read_bytes()
 
     archive = io.BytesIO()

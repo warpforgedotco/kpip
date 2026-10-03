@@ -31,7 +31,7 @@ def linux_host(monkeypatch: pytest.MonkeyPatch):
 
     def configure(platform_tag: str, detected: tuple[str, int, int] | None):
         monkeypatch.setattr(wheel, "current_platform_tag", lambda: platform_tag)
-        monkeypatch.setattr(wheel, "detect", lambda: detected)
+        monkeypatch.setattr(libc, "detect", lambda: detected)
         wheel.current_platform_tags.cache_clear()
         wheel._supported_wheel_tags.cache_clear()
         return wheel.supported_wheel_tags()
@@ -262,7 +262,7 @@ def test_a_32_bit_python_on_a_64_bit_kernel_takes_32_bit_wheels(
 def test_armv8l_also_takes_armv7l_wheels(
     linux_host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(wheel, "manylinux_arch_supported", lambda arch: True)
+    monkeypatch.setattr(libc, "manylinux_arch_supported", lambda arch: True)
     supported = linux_host("linux_armv8l", ("glibc", 2, 31))
     platforms = list(dict.fromkeys(tag.platform for tag in supported))
     assert platforms == [

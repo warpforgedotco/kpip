@@ -53,8 +53,6 @@ from kpip.core.urls import url_to_path
 from kpip.core.wheel import TargetContext
 from kpip.index.links import Link
 from kpip.index.metadata_cache import get_wheel_metadata_cache
-from kpip.index.provider import CandidateProvider
-from kpip.resolution.api import ResolutionEngine
 from kpip.resolution.hash_checking import (
     enforce_dependency_hashes,
     enforce_hash_checking,
@@ -398,6 +396,8 @@ def create_candidate_provider(
     *,
     cache_dir: str | None,
 ) -> Any:
+    from kpip.index.provider import CandidateProvider
+
     provider = CandidateProvider.from_options(
         find_links=bundle.find_links,
         index_url=bundle.index_url,
@@ -512,6 +512,8 @@ def resolve(
     try:
         if os.environ.get("KPIP_RESOLVER_DEBUG") == "1":
             logger.info("Reporter.starting()")
+        from kpip.resolution.api import ResolutionEngine
+
         return ResolutionEngine.resolve_serving_stale_pages(
             lambda: ResolutionEngine(
                 provider=providing(),

@@ -7,11 +7,9 @@ import re
 import sys
 import zipfile
 from collections.abc import Callable, Collection, Mapping
-from email import parser
 from typing import TYPE_CHECKING, Protocol
 
 from kpip.core.archive import WheelArchive, WheelhouseUnavailable
-from kpip.core.libc import GLIBC, MUSL, detect, manylinux_arch_supported
 
 from .caches import bounded_put, memoized, register_table
 from .errors import InstallationError, InvalidWheelFilename, UnsupportedWheel
@@ -30,6 +28,7 @@ from .wheel_metadata import (
 )
 
 if TYPE_CHECKING:
+    import email.parser
     from email.message import Message
     from typing import IO, Any, NoReturn
 
@@ -153,14 +152,15 @@ def linux_platform_parts(platform_tag: str) -> tuple[str, int, int, str] | None:
     return ("manylinux", glibc[0], glibc[1], arch)
 
 
-def Parser() -> parser.Parser:
+def Parser() -> email.parser.Parser:
     """Lazily construct the legacy email parser.
 
     The import is deferred as well: few installs parse a METADATA file this
     way.
     """
+    import email.parser
 
-    return parser.Parser()
+    return email.parser.Parser()
 
 
 _UNRESOLVED = object()
@@ -990,6 +990,8 @@ def current_platform_tags() -> tuple[str, ...]:
     # armv8l runs armv7l code too, and packaging lists both, its own first.
     archs = ("armv8l", "armv7l") if arch == "armv8l" else (arch,)
     plain = tuple(f"linux_{arch}" for arch in archs)
+    from kpip.core.libc import GLIBC, MUSL, detect, manylinux_arch_supported
+
     libc = detect()
 
     if libc is None:

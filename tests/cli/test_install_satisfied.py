@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from kpip.cli import install
 from kpip.cli.install import run_install
+from kpip.resolution.api import ResolutionEngine
 
 
 def _dist(root: Path, dirname: str, name: str, version: str) -> None:
@@ -31,9 +32,7 @@ def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     def unexpected(*args: object, **kwargs: object) -> None:
         pytest.fail("resolved requirements the environment already satisfies")
 
-    monkeypatch.setattr(
-        install.ResolutionEngine, "resolve_serving_stale_pages", unexpected
-    )
+    monkeypatch.setattr(ResolutionEngine, "resolve_serving_stale_pages", unexpected)
     monkeypatch.setattr(install, "create_candidate_provider", unexpected)
 
     # The command leaves its source options in the environment, for the

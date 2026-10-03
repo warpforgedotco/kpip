@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.metadata
 import os
 import pathlib
 import sys
@@ -21,6 +20,7 @@ from .versions import Version, version_of
 from .wheel_metadata import parse_metadata_headers
 
 if TYPE_CHECKING:
+    import importlib.metadata
     from email.message import Message
     from typing import TypeGuard
 
@@ -137,6 +137,8 @@ class PathDistribution:
     @property
     def stdlib(self) -> importlib.metadata.PathDistribution:
         if self._stdlib is None:
+            import importlib.metadata
+
             self._stdlib = importlib.metadata.PathDistribution(pathlib.Path(self._path))
 
         return self._stdlib
@@ -267,6 +269,15 @@ def user_lib_path() -> str:
 _INFO_SUFFIXES = (".dist-info", ".egg-info")
 
 
+def _stdlib_distributions(path: list[str] | None = None) -> Iterable[RawDistribution]:
+    import importlib.metadata
+
+    if path is None:
+        return importlib.metadata.distributions()
+
+    return importlib.metadata.distributions(path=path)
+
+
 def _iter_raw_distributions(
     paths: Iterable[str] | None,
     canonical_names: set[str] | None = None,
@@ -301,7 +312,7 @@ def _iter_raw_distributions(
             finder is not PathFinder and hasattr(finder, "find_distributions")
             for finder in sys.meta_path
         ):
-            yield from importlib.metadata.distributions()
+            yield from _stdlib_distributions()
 
             return
 
@@ -316,12 +327,12 @@ def _iter_raw_distributions(
 
         except OSError:
             if os.path.isfile(root):
-                yield from importlib.metadata.distributions(path=[root])
+                yield from _stdlib_distributions(path=[root])
 
             continue
 
         if os.path.basename(root).lower().endswith(".egg"):
-            yield from importlib.metadata.distributions(path=[root])
+            yield from _stdlib_distributions(path=[root])
 
             continue
 

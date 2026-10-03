@@ -13,12 +13,12 @@ from kpip.core.errors import CommandError
 from kpip.core.expiry import refresh_since
 from kpip.core.format_control import FormatControl
 from kpip.core.release_control import ReleaseControl
-from kpip.index.provider import CandidateProvider
 
 if TYPE_CHECKING:
     import argparse
     from kpip.cli.config import SourceConfig
     from kpip.core.wheel import TargetContext
+    from kpip.index.provider import CandidateProvider
 
 RELEASE_OPTIONS = frozenset(("pre", "all-releases"))
 
@@ -81,6 +81,8 @@ def package_finder(
     """A provider that looks where the options say and selects as they say."""
     check_release_control(options)
     apply_refresh(options)
+
+    from kpip.index.provider import CandidateProvider
 
     provider = CandidateProvider.from_options(
         find_links=sources.find_links,
