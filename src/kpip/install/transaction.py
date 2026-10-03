@@ -8,7 +8,8 @@ import os
 import shutil
 import stat
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
+from concurrent.futures import ThreadPoolExecutor
 
 from kpip.core.errors import InstallationError
 from kpip.host.clone import clone_path
@@ -343,13 +344,14 @@ class InstallTransaction:
             use_directory_fds = os.open in os.supports_dir_fd
             directory_fds: dict[str, int] = {}
             try:
-                for tree in {id(tree): tree for tree in cloned.values()}.values():
+                trees = {id(tree): tree for tree in cloned.values()}.values()
+                for tree in trees:
                     parent_text = os.path.dirname(tree.destination_text) or os.curdir
                     if parent_text not in created_directories:
                         makedirs(parent_text, exist_ok=True)
                         created_directories.add(parent_text)
-                    clone_path(tree.source_text, tree.destination_text)
                     append_created(tree.destination_text)
+                _clone_trees(trees)
                 for item in self.staged_internal:
                     if cloned and item.destination_text in cloned:
                         continue
@@ -487,6 +489,28 @@ class InstallTransaction:
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         if not self.finished:
             self.rollback()
+
+
+_TREE_WORKERS = 8
+
+
+def _clone_trees(trees: Collection[StagedTree]) -> None:
+    """Clone each tree onto its destination, on threads when there are
+    several: the links are made with the GIL released, and one thread
+    linking an install's trees in turn left the other cores idle."""
+    if len(trees) < 2:
+        for tree in trees:
+            clone_path(tree.source_text, tree.destination_text)
+        return
+    with ThreadPoolExecutor(
+        max_workers=min(_TREE_WORKERS, len(trees)), thread_name_prefix="kpip-tree"
+    ) as pool:
+        futures = [
+            pool.submit(clone_path, tree.source_text, tree.destination_text)
+            for tree in trees
+        ]
+    for future in futures:
+        future.result()
 
 
 def _chmod_clone(path: str, mode: int) -> None:
