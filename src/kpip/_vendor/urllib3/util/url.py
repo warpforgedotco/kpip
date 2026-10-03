@@ -235,6 +235,13 @@ def _encode_invalid_chars(
 
     component = to_str(component)
 
+    # Nothing to encode, nor any '%' to normalize: the loop below would
+    # return the component unchanged, one byte at a time.
+    if isinstance(allowed_chars, (set, frozenset)) and allowed_chars.issuperset(
+        component
+    ):
+        return component
+
     # Normalize existing percent-encoded bytes.
     # Try to see if the component we're encoding is already percent-encoded
     # so we can skip all '%' characters but still encode all others.

@@ -78,3 +78,21 @@ index 56fe909..83ad224 100644
  def is_ipaddress(hostname: str | bytes) -> bool:
      """Detects whether the hostname given is an IPv4 or IPv6 address.
      Also detects IPv6 addresses with Zone IDs.
+diff --git a/src/kpip/_vendor/urllib3/util/url.py b/src/kpip/_vendor/urllib3/util/url.py
+index 859ff8a..6f20e9c 100644
+--- a/src/kpip/_vendor/urllib3/util/url.py
++++ b/src/kpip/_vendor/urllib3/util/url.py
+@@ -235,6 +235,13 @@ def _encode_invalid_chars(
+ 
+     component = to_str(component)
+ 
++    # Nothing to encode, nor any '%' to normalize: the loop below would
++    # return the component unchanged, one byte at a time.
++    if isinstance(allowed_chars, (set, frozenset)) and allowed_chars.issuperset(
++        component
++    ):
++        return component
++
+     # Normalize existing percent-encoded bytes.
+     # Try to see if the component we're encoding is already percent-encoded
+     # so we can skip all '%' characters but still encode all others.
