@@ -491,6 +491,11 @@ def _record_metadata(
     except KeyError, UnicodeDecodeError:
         return {}
 
+    return _record_rows(text)
+
+
+def _record_rows(text: str) -> dict[str, tuple[str, str]]:
+    """A RECORD's sha256 hash and size, by path, for the rows that give both."""
     import csv
 
     result: dict[str, tuple[str, str]] = {}
@@ -539,8 +544,10 @@ try:
     import _kpip_unzip  # ty: ignore[unresolved-import]
 
     _extract_loop = getattr(_kpip_unzip, "extract_members", None)
+    _unpack = getattr(_kpip_unzip, "unpack", None)
 except ImportError:
     _extract_loop = None
+    _unpack = None
 
 
 def unpacks_without_the_lock() -> bool:
@@ -1123,92 +1130,15 @@ def _extract_archive(
     os.mkdir(tree)
 
     try:
-        with zipfile.ZipFile(candidate.path) as archive:
-            layout = loaded_layout(candidate)
+        unpacked = _unpack_in_c(candidate, tree)
 
-            if isinstance(layout, tuple) and layout and isinstance(layout[0], str):
-                dist_info = layout[0]
+        if unpacked is not None:
+            dist_info, entries, relatives = unpacked
 
-            else:
-                from kpip.core.wheel import validate_wheel
+            seen = set(relatives)
 
-                dist_info = validate_wheel(
-                    archive,
-                    os.path.basename(candidate.path)[:-4].split("-", 1)[0],
-                )
-
-            wheel_metadata = _record_metadata(archive, dist_info)
-
-            # Validate and lay out the tree first, then write. Splitting the
-            # passes keeps every directory creation on one thread -- so the
-            # write pass can be threaded without racing on mkdir -- and lets
-            # a directory be created once instead of once per member it holds.
-            work: list[_MemberWork] = []
-
-            seen: set[str] = set()
-
-            created: set[str] = {tree}
-
-            for member in archive.infolist():
-                if member.is_dir():
-                    continue
-
-                parts = validate_member_parts(member.filename)
-
-                if not parts:
-                    raise InstallationError(
-                        f"wheel member has an empty path: {member.filename!r}",
-                    )
-
-                relative = "/".join(parts)
-
-                if relative in seen:
-                    raise InstallationError(
-                        f"Wheel {candidate.path} contains duplicate member {relative!r}",
-                    )
-
-                seen.add(relative)
-
-                destination = os.path.join(tree, *parts)
-
-                parent = os.path.dirname(destination)
-
-                if parent not in created:
-                    os.makedirs(parent, exist_ok=True)
-
-                    created.add(parent)
-
-                metadata = wheel_metadata.get(relative)
-
-                if metadata is not None and metadata[1] != str(member.file_size):
-                    metadata = None
-
-                work.append((member, relative, destination, metadata))
-
-            workers = (
-                _borrow_extract_workers(EXTRACT_WORKERS - 1)
-                if len(work) >= PARALLEL_EXTRACT_MEMBERS
-                else 0
-            )
-
-            try:
-                if workers:
-                    entries: list[ArchiveEntry] = _extract_members_threaded(
-                        candidate.path, work, workers + 1
-                    )
-
-                else:
-                    fd = os.open(candidate.path, os.O_RDONLY) if _HAS_PREAD else -1
-
-                    try:
-                        entries = _extract_members(archive, work, fd)
-
-                    finally:
-                        if fd >= 0:
-                            os.close(fd)
-
-            finally:
-                _return_extract_workers(workers)
+        else:
+            dist_info, entries, relatives, seen = _extract_in_python(candidate, tree)
 
         if f"{dist_info}/RECORD" not in seen:
             raise InstallationError(
@@ -1226,7 +1156,7 @@ def _extract_archive(
 
         _write_listings(
             os.path.join(temporary, LISTING_NAME),
-            _extracted_listings(tree, [item[1] for item in work]),
+            _extracted_listings(tree, relatives),
         )
 
         # Another kpip may have published it meanwhile -- one that took this
@@ -1255,6 +1185,184 @@ def _extract_archive(
     finally:
         if temporary:
             shutil.rmtree(temporary, ignore_errors=True)
+
+
+class _ExtractedSource:
+    """A wheel just extracted under a tree, as ``validate_wheel`` reads a
+    ``zipfile.ZipFile``: its members' names, and their bytes from the tree."""
+
+    def __init__(self, tree: str, rows: list[tuple[str, str, int, int]]) -> None:
+        self.tree = tree
+        self.NameToInfo = {name: relative for name, relative, _, _ in rows}
+
+    def namelist(self) -> list[str]:
+        return list(self.NameToInfo)
+
+    def getinfo(self, name: str) -> object:
+        return self.NameToInfo[name]
+
+    def read(self, name: str) -> bytes:
+        relative = self.NameToInfo[name]
+        with open(os.path.join(self.tree, *relative.split("/")), "rb") as file:
+            return file.read()
+
+    def open(self, name: str) -> io.BytesIO:
+        return io.BytesIO(self.read(name))
+
+
+def _unpack_in_c(
+    candidate: WheelInstallCandidate, tree: str
+) -> tuple[str, list[ArchiveEntry], list[str]] | None:
+    """Extract the wheel under ``tree`` in one call to the C built-in, the
+    interpreter lock released for all of it: its dist-info directory, its
+    manifest entries and its members' paths. None where there is no such
+    built-in, or for a wheel it leaves to ``zipfile``, having checked every
+    path before writing any."""
+    if _unpack is None:
+        return None
+
+    descriptor = os.open(candidate.path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+
+    try:
+        rows = _unpack(descriptor, tree, _LEAN_MEMBER_LIMIT)
+
+    finally:
+        os.close(descriptor)
+
+    if rows is None:
+        return None
+
+    layout = loaded_layout(candidate)
+
+    if isinstance(layout, tuple) and layout and isinstance(layout[0], str):
+        dist_info = layout[0]
+
+    else:
+        from kpip.core.wheel import validate_wheel
+
+        dist_info = validate_wheel(
+            _ExtractedSource(tree, rows),  # ty: ignore[invalid-argument-type]
+            os.path.basename(candidate.path)[:-4].split("-", 1)[0],
+        )
+
+    try:
+        with open(os.path.join(tree, dist_info, "RECORD"), encoding="utf-8") as file:
+            recorded = _record_rows(file.read())
+
+    except OSError, UnicodeDecodeError:
+        recorded = {}
+
+    entries: list[ArchiveEntry] = []
+
+    for _, relative, size, mode in rows:
+        hint = recorded.get(relative)
+
+        if hint is None or hint[1] != str(size):
+            with open(os.path.join(tree, *relative.split("/")), "rb") as file:
+                data = file.read()
+
+            encoded = base64.urlsafe_b64encode(hashlib.sha256(data).digest())
+
+            hint = (f"sha256={encoded.rstrip(b'=').decode('ascii')}", str(len(data)))
+
+        entries.append((relative, hint[0], hint[1], mode))
+
+    return dist_info, entries, [relative for _, relative, _, _ in rows]
+
+
+def _extract_in_python(
+    candidate: WheelInstallCandidate, tree: str
+) -> tuple[str, list[ArchiveEntry], list[str], set[str]]:
+    """Extract the wheel under ``tree`` through ``zipfile``: its dist-info
+    directory, its manifest entries, its members' paths and their set."""
+    with zipfile.ZipFile(candidate.path) as archive:
+        layout = loaded_layout(candidate)
+
+        if isinstance(layout, tuple) and layout and isinstance(layout[0], str):
+            dist_info = layout[0]
+
+        else:
+            from kpip.core.wheel import validate_wheel
+
+            dist_info = validate_wheel(
+                archive,
+                os.path.basename(candidate.path)[:-4].split("-", 1)[0],
+            )
+
+        wheel_metadata = _record_metadata(archive, dist_info)
+
+        # Validate and lay out the tree first, then write. Splitting the
+        # passes keeps every directory creation on one thread -- so the
+        # write pass can be threaded without racing on mkdir -- and lets
+        # a directory be created once instead of once per member it holds.
+        work: list[_MemberWork] = []
+
+        seen: set[str] = set()
+
+        created: set[str] = {tree}
+
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+
+            parts = validate_member_parts(member.filename)
+
+            if not parts:
+                raise InstallationError(
+                    f"wheel member has an empty path: {member.filename!r}",
+                )
+
+            relative = "/".join(parts)
+
+            if relative in seen:
+                raise InstallationError(
+                    f"Wheel {candidate.path} contains duplicate member {relative!r}",
+                )
+
+            seen.add(relative)
+
+            destination = os.path.join(tree, *parts)
+
+            parent = os.path.dirname(destination)
+
+            if parent not in created:
+                os.makedirs(parent, exist_ok=True)
+
+                created.add(parent)
+
+            metadata = wheel_metadata.get(relative)
+
+            if metadata is not None and metadata[1] != str(member.file_size):
+                metadata = None
+
+            work.append((member, relative, destination, metadata))
+
+        workers = (
+            _borrow_extract_workers(EXTRACT_WORKERS - 1)
+            if len(work) >= PARALLEL_EXTRACT_MEMBERS
+            else 0
+        )
+
+        try:
+            if workers:
+                entries: list[ArchiveEntry] = _extract_members_threaded(
+                    candidate.path, work, workers + 1
+                )
+
+            else:
+                fd = os.open(candidate.path, os.O_RDONLY) if _HAS_PREAD else -1
+
+                try:
+                    entries = _extract_members(archive, work, fd)
+
+                finally:
+                    if fd >= 0:
+                        os.close(fd)
+
+        finally:
+            _return_extract_workers(workers)
+
+    return dist_info, entries, [item[1] for item in work], seen
 
 
 def prepare_cached_wheel(
