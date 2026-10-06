@@ -81,7 +81,7 @@ def test_correct_pip_version(script: PipTestEnvironment) -> None:
     )
     assert match is not None
     pip_folder_outputted = match.group(4)
-    pip_folder = join(SRC_DIR, "src", "pip")
+    pip_folder = join(SRC_DIR, "src", "kpip")
 
     diffs = filecmp.dircmp(pip_folder, pip_folder_outputted)
 

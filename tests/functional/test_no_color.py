@@ -24,7 +24,7 @@ def test_no_color(script: PipTestEnvironment) -> None:
     # 'script' and well as the mere use of the same.
     #
     # This test will stay until someone has the time to rewrite it.
-    pip_command = "pip download {} setuptools==62.0.0 --no-cache-dir -d /tmp/"
+    pip_command = "kpip download {} setuptools==62.0.0 --no-cache-dir -d /tmp/"
     if sys.platform == "darwin":
         command = f"script -q /tmp/pip-test-no-color.txt {pip_command}"
     else:

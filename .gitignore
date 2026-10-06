@@ -16,3 +16,6 @@ dist/
 
 # Recorded kpip-bench baselines (kpip-bench-record).
 benchmark-runs/
+
+# Built for the functional tests (pyproject.toml's test-common-wheels).
+tests/data/common_wheels/

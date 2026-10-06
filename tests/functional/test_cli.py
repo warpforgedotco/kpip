@@ -18,7 +18,7 @@ from tests.lib import PipTestEnvironment, TestPipResult
     [
         ("fake_pip = kpip._internal.main:main",),
         ("fake_pip = kpip._internal:main",),
-        ("fake_pip = pip:main",),
+        ("fake_pip = kpip:main",),
     ],
 )
 def test_entrypoints_work(entrypoint: str, script: PipTestEnvironment) -> None:
@@ -129,7 +129,7 @@ import sys
 sys.argv[1:] = [{command!r}, "--help"]
 
 try:
-    runpy.run_module("pip", alter_sys=True, run_name="__main__")
+    runpy.run_module("kpip", alter_sys=True, run_name="__main__")
 finally:
     with open({str(file)!r}, "w") as f:
         print(*sys.modules.keys(), sep="\\n", file=f)

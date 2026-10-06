@@ -58,6 +58,21 @@ test = [
     "proxy.py",
 ]
 
+# The wheels the functional tests install into their environments, built
+# into tests/data/common_wheels: `kpip wheel -w tests/data/common_wheels
+# --group test-common-wheels` (pip's, from the same pyproject.toml).
+test-common-wheels = [
+    "flit-core >= 3.11, < 5",
+    # pip's test suite depends on `setup.py develop` making egg-link files.
+    "setuptools >= 70.1.0, <80",
+    "coverage >= 4.4",
+    "pytest-subket >= 0.8.1",
+    "keyring",
+    "cmake",
+    # kpip's build backend: tests install kpip from source, offline.
+    "uv_build>=0.11,<0.13",
+]
+
 [tool.uv]
 default-groups = ["typing"]
 

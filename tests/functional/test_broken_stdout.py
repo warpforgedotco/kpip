@@ -34,7 +34,7 @@ def test_broken_stdout_pipe(deprecated_python: bool) -> None:
     Test a broken pipe to stdout.
     """
     stderr, returncode = setup_broken_stdout_test(
-        ["pip", "list"],
+        ["kpip", "list"],
         deprecated_python=deprecated_python,
     )
 
@@ -51,7 +51,7 @@ def test_broken_stdout_pipe__log_option(deprecated_python: bool, tmpdir: Path) -
     """
     log_path = os.path.join(str(tmpdir), "log.txt")
     stderr, returncode = setup_broken_stdout_test(
-        ["pip", "--log", log_path, "list"],
+        ["kpip", "--log", log_path, "list"],
         deprecated_python=deprecated_python,
     )
 
@@ -67,7 +67,7 @@ def test_broken_stdout_pipe__verbose(deprecated_python: bool) -> None:
     Test a broken pipe to stdout with verbose logging enabled.
     """
     stderr, returncode = setup_broken_stdout_test(
-        ["pip", "-vv", "list"],
+        ["kpip", "-vv", "list"],
         deprecated_python=deprecated_python,
     )
 
