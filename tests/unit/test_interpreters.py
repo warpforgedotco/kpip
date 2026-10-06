@@ -217,6 +217,36 @@ def test_with_no_python_at_all_only_resolving_works(
         interpreters.installing_interpreter()
 
 
+def test_with_no_python_nothing_is_installed_into_the_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip._internal.locations import get_scheme
+
+    compiled(monkeypatch)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(interpreters.NoTargetInterpreter):
+        get_scheme("demo")
+    with pytest.raises(interpreters.NoTargetInterpreter):
+        get_scheme("demo", home=str(tmp_path / "target"))
+
+
+def test_with_no_python_install_fails_before_any_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip._internal.commands import create_command
+
+    compiled(monkeypatch)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    command = create_command("install")
+
+    worked = []
+    monkeypatch.setattr(
+        command, "get_requirements", lambda *args, **kwargs: worked.append(1)
+    )
+    assert command.main(["--target", str(tmp_path / "t"), "demo"]) != 0
+    assert not worked
+
+
 def test_conda_base_comes_after_a_dot_venv(
     environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -447,3 +477,14 @@ def test_building_needs_a_python_but_requirements_do_not(
     build_env = NoOpBuildEnvironment()
     with pytest.raises(interpreters.NoTargetInterpreter, match="to build with"):
         build_env.python_executable
+
+
+def test_version_names_the_python_option_target(
+    environment: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from kpip._internal.cli.main_parser import parse_command
+
+    with pytest.raises(SystemExit):
+        parse_command(["--python", str(environment), "--version"])
+    target = interpreters.target_interpreter()
+    assert f"(python {target.major_minor})" in capsys.readouterr().out
