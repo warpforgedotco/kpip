@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 01:14:21 -0500
+Subject: [PATCH] Say in --version when there is no Python to install for
+
+With no Python found, the compiled kpip resolves with the CPython it
+bundles, and --version named that one, as if kpip would install for it.
+It now says that no Python was found.
+---
+ src/kpip/_internal/utils/misc.py | 10 ++++++----
+ tests/unit/test_interpreters.py  | 10 ++++++++++
+ 2 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/src/kpip/_internal/utils/misc.py b/src/kpip/_internal/utils/misc.py
+index 2d71df5..599d720 100644
+--- a/src/kpip/_internal/utils/misc.py
++++ b/src/kpip/_internal/utils/misc.py
+@@ -95,10 +95,12 @@ def get_pip_version() -> str:
+     pip_pkg_dir = os.path.join(os.path.dirname(__file__), "..", "..")
+     pip_pkg_dir = os.path.abspath(pip_pkg_dir)
+ 
+-    return (
+-        f"kpip {__version__} (pip {__pip_version__}) from {pip_pkg_dir} "
+-        f"(python {get_major_minor_version()})"
+-    )
++    if target_interpreter().is_bundled:
++        # The CPython inside the compiled kpip, which nothing is installed for.
++        python = "no Python found to install for"
++    else:
++        python = f"python {get_major_minor_version()}"
++    return f"kpip {__version__} (pip {__pip_version__}) from {pip_pkg_dir} ({python})"
+ 
+ 
+ @cache
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index 55c60ef..7ea1477 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -488,3 +488,13 @@ def test_version_names_the_python_option_target(
+         parse_command(["--python", str(environment), "--version"])
+     target = interpreters.target_interpreter()
+     assert f"(python {target.major_minor})" in capsys.readouterr().out
++
++
++def test_version_says_when_there_is_no_python(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.utils.misc import get_pip_version
++
++    compiled(monkeypatch)
++    monkeypatch.setenv("PATH", str(tmp_path))
++    assert get_pip_version().endswith("(no Python found to install for)")

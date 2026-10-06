@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 01:16:05 -0500
+Subject: [PATCH] Read --python before the configuration it chooses
+
+The site configuration file is the target interpreter's, and pip reads
+configuration while it parses the command line -- the same parse that
+reads --python. So the site file came from the Python found without it.
+--python (and PIP_PYTHON), with the cache, are now taken from the command
+line before it is parsed; which also lets the compiled kpip keep the probe
+of the Python it finds for the configuration between runs.
+---
+ src/kpip/_internal/cli/main_parser.py       |  1 +
+ src/kpip/_internal/interpreters/__init__.py | 37 +++++++++++++++++++++
+ tests/unit/test_interpreters.py             | 33 ++++++++++++++++++
+ 3 files changed, 71 insertions(+)
+
+diff --git a/src/kpip/_internal/cli/main_parser.py b/src/kpip/_internal/cli/main_parser.py
+index ce949a4..3f703c1 100644
+--- a/src/kpip/_internal/cli/main_parser.py
++++ b/src/kpip/_internal/cli/main_parser.py
+@@ -68,6 +68,7 @@ def identify_python_interpreter(python: str) -> str | None:
+ 
+ 
+ def parse_command(args: list[str]) -> tuple[str, list[str]]:
++    interpreters.configure_from_arguments(args)
+     parser = create_main_parser()
+ 
+     # Note: parser calls disable_interspersed_args(), so the result of this
+diff --git a/src/kpip/_internal/interpreters/__init__.py b/src/kpip/_internal/interpreters/__init__.py
+index c0b36cf..8d04d58 100644
+--- a/src/kpip/_internal/interpreters/__init__.py
++++ b/src/kpip/_internal/interpreters/__init__.py
+@@ -44,6 +44,7 @@ __all__ = [
+     "build_interpreter",
+     "ProbedInterpreter",
+     "configure",
++    "configure_from_arguments",
+     "identify",
+     "installing_interpreter",
+     "interpreter_at",
+@@ -73,6 +74,42 @@ def configure(python: str | None, cache_dir: str | None) -> None:
+     set_cache_dir(cache_dir)
+ 
+ 
++def configure_from_arguments(args: list[str]) -> None:
++    """Set ``--python`` and the cache from the command line, before it is
++    parsed: reading the configuration that parsing it takes asks the target
++    interpreter for its site configuration file, so it must be the named one.
++    The command sets both again from its parsed options."""
++    python = os.environ.get("PIP_PYTHON") or None
++    cache_dir: str | None = os.environ.get("PIP_CACHE_DIR") or None
++    no_cache = os.environ.get("PIP_NO_CACHE_DIR", "").lower() in (
++        "1",
++        "true",
++        "yes",
++        "on",
++    )
++    arguments = iter(args)
++    for argument in arguments:
++        if argument == "--":
++            break
++        name, equals, value = argument.partition("=")
++        if name in ("--python", "--cache-dir"):
++            if not equals:
++                value = next(arguments, "")
++            if name == "--python":
++                python = value or None
++            else:
++                cache_dir = value or None
++        elif argument == "--no-cache-dir":
++            no_cache = True
++    if no_cache:
++        cache_dir = None
++    elif cache_dir is None:
++        from kpip._internal.utils.appdirs import user_cache_dir
++
++        cache_dir = user_cache_dir("pip")
++    configure(python, cache_dir)
++
++
+ def environment_pythons() -> tuple[str, ...]:
+     """Where an environment keeps its interpreter, most likely first."""
+     if os.name == "nt":
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index 7ea1477..4e604ba 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -498,3 +498,36 @@ def test_version_says_when_there_is_no_python(
+     compiled(monkeypatch)
+     monkeypatch.setenv("PATH", str(tmp_path))
+     assert get_pip_version().endswith("(no Python found to install for)")
++
++
++def test_python_option_target_supplies_the_site_configuration(
++    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.cli.main_parser import parse_command
++    from kpip._internal.commands import create_command
++
++    path = tmp_path_factory.mktemp("configured") / "env"
++    venv.create(path, with_pip=False, symlinks=os.name != "nt")
++    (path / "pip.conf").write_text("[global]\ntimeout = 42\n")
++    for name in ("PIP_CONFIG_FILE", "PIP_TIMEOUT", "PIP_PYTHON"):
++        monkeypatch.delenv(name, raising=False)
++
++    name, args = parse_command(["--python", str(path), "list"])
++    options, _ = create_command(name).parse_args(args)
++    assert options.timeout == 42
++
++
++def test_arguments_name_the_python_and_cache_before_parsing(
++    environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.delenv("PIP_PYTHON", raising=False)
++    monkeypatch.delenv("PIP_NO_CACHE_DIR", raising=False)
++    interpreters.configure_from_arguments(
++        ["--cache-dir", str(tmp_path / "c"), "install", f"--python={environment}"]
++    )
++    assert os.path.samefile(interpreters.target_interpreter().prefix, environment)
++    assert facts._cache_dir == os.path.join(str(tmp_path / "c"), "interpreters-v1")
++
++    interpreters.configure_from_arguments(["--no-cache-dir", "list", "--", "--python"])
++    assert interpreters.target_interpreter().is_own
++    assert facts._cache_dir is None

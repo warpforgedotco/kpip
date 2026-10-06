@@ -488,3 +488,46 @@ def test_version_names_the_python_option_target(
         parse_command(["--python", str(environment), "--version"])
     target = interpreters.target_interpreter()
     assert f"(python {target.major_minor})" in capsys.readouterr().out
+
+
+def test_version_says_when_there_is_no_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip._internal.utils.misc import get_pip_version
+
+    compiled(monkeypatch)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert get_pip_version().endswith("(no Python found to install for)")
+
+
+def test_python_option_target_supplies_the_site_configuration(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip._internal.cli.main_parser import parse_command
+    from kpip._internal.commands import create_command
+
+    path = tmp_path_factory.mktemp("configured") / "env"
+    venv.create(path, with_pip=False, symlinks=os.name != "nt")
+    (path / "pip.conf").write_text("[global]\ntimeout = 42\n")
+    for name in ("PIP_CONFIG_FILE", "PIP_TIMEOUT", "PIP_PYTHON"):
+        monkeypatch.delenv(name, raising=False)
+
+    name, args = parse_command(["--python", str(path), "list"])
+    options, _ = create_command(name).parse_args(args)
+    assert options.timeout == 42
+
+
+def test_arguments_name_the_python_and_cache_before_parsing(
+    environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PIP_PYTHON", raising=False)
+    monkeypatch.delenv("PIP_NO_CACHE_DIR", raising=False)
+    interpreters.configure_from_arguments(
+        ["--cache-dir", str(tmp_path / "c"), "install", f"--python={environment}"]
+    )
+    assert os.path.samefile(interpreters.target_interpreter().prefix, environment)
+    assert facts._cache_dir == os.path.join(str(tmp_path / "c"), "interpreters-v1")
+
+    interpreters.configure_from_arguments(["--no-cache-dir", "list", "--", "--python"])
+    assert interpreters.target_interpreter().is_own
+    assert facts._cache_dir is None
