@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 01:11:01 -0500
+Subject: [PATCH] Find distlib's Windows launchers in the compiled kpip
+
+distlib.scripts reads its launchers on Windows when it is imported,
+through a resource finder chosen by the type of its package's loader, and
+knows only the standard library's loaders. The compiled kpip's modules
+have Nuitka's, so importing it failed with "Unable to locate finder", and
+every install with it. Register distlib's file system finder for whatever
+loads its package: the launchers are files in the package's directory in
+the compiled kpip as they are from source.
+---
+ .../_internal/operations/install/wheel.py     |  2 ++
+ src/kpip/_internal/utils/distlib_resources.py | 23 +++++++++++++
+ tests/unit/test_utils_distlib_resources.py    | 32 +++++++++++++++++++
+ 3 files changed, 57 insertions(+)
+ create mode 100644 src/kpip/_internal/utils/distlib_resources.py
+ create mode 100644 tests/unit/test_utils_distlib_resources.py
+
+diff --git a/src/kpip/_internal/operations/install/wheel.py b/src/kpip/_internal/operations/install/wheel.py
+index 633e294..41674ca 100644
+--- a/src/kpip/_internal/operations/install/wheel.py
++++ b/src/kpip/_internal/operations/install/wheel.py
+@@ -29,6 +29,8 @@ from typing import (
+ )
+ from zipfile import ZipFile, ZipInfo
+ 
++# Before distlib.scripts, which needs it when imported (Windows launchers).
++from kpip._internal.utils import distlib_resources  # noqa: F401, I001
+ from kpip._vendor.distlib.scripts import ScriptMaker, enquote_executable
+ from kpip._vendor.distlib.util import get_export_entry
+ from kpip._vendor.packaging.utils import canonicalize_name
+diff --git a/src/kpip/_internal/utils/distlib_resources.py b/src/kpip/_internal/utils/distlib_resources.py
+new file mode 100644
+index 0000000..e175423
+--- /dev/null
++++ b/src/kpip/_internal/utils/distlib_resources.py
+@@ -0,0 +1,23 @@
++"""Let distlib find its Windows launchers in the compiled kpip.
++
++``distlib.scripts`` reads its launchers when it is imported, through a
++resource finder it picks by the type of its package's loader, and it knows
++only the standard library's loaders. The compiled kpip's modules have
++Nuitka's, so the import failed with "Unable to locate finder", and every
++install with it. There, as from source, the launchers are files in the
++package's directory, which distlib's file system finder reads. Import this
++module before ``distlib.scripts``.
++"""
++
++from __future__ import annotations
++
++from kpip._vendor import distlib
++from kpip._vendor.distlib.resources import ResourceFinder, register_finder
++
++
++def register() -> None:
++    """Read distlib's package resources from its directory, whatever loads it."""
++    register_finder(distlib.__loader__, ResourceFinder)
++
++
++register()
+diff --git a/tests/unit/test_utils_distlib_resources.py b/tests/unit/test_utils_distlib_resources.py
+new file mode 100644
+index 0000000..8f955c2
+--- /dev/null
++++ b/tests/unit/test_utils_distlib_resources.py
+@@ -0,0 +1,32 @@
++"""distlib finds its launchers whatever loads it, as Nuitka does in the
++compiled kpip."""
++
++from __future__ import annotations
++
++import pytest
++
++from kpip._internal.utils import distlib_resources
++from kpip._vendor import distlib
++from kpip._vendor.distlib import resources
++
++
++class CompiledLoader:
++    """Stands in for Nuitka's loader, of a type distlib does not know."""
++
++
++def test_launchers_are_found_with_a_loader_distlib_does_not_know(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    monkeypatch.setattr(distlib, "__loader__", CompiledLoader())
++    monkeypatch.setattr(resources, "_finder_cache", {})
++    monkeypatch.setattr(resources, "_finder_registry", dict(resources._finder_registry))
++    with pytest.raises(resources.DistlibException, match="Unable to locate finder"):
++        resources.finder(distlib.__name__)
++
++    distlib_resources.register()
++    names = {
++        resource.name
++        for resource in resources.finder(distlib.__name__).iterator("")
++        if resource.name.endswith(".exe")
++    }
++    assert {"t64.exe", "w64.exe", "t64-arm.exe"} <= names

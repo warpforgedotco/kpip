@@ -29,6 +29,8 @@ from typing import (
 )
 from zipfile import ZipFile, ZipInfo
 
+# Before distlib.scripts, which needs it when imported (Windows launchers).
+from kpip._internal.utils import distlib_resources  # noqa: F401, I001
 from kpip._vendor.distlib.scripts import ScriptMaker, enquote_executable
 from kpip._vendor.distlib.util import get_export_entry
 from kpip._vendor.packaging.utils import canonicalize_name
