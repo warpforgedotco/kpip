@@ -1,1 +1,0 @@
-"""Migrated command-line tests."""

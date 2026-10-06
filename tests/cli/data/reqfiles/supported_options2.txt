@@ -1,5 +1,0 @@
-# default is no constraints
-# We're not testing the format control logic here, just that the options are
-# accepted
---no-binary fred
---only-binary wilma

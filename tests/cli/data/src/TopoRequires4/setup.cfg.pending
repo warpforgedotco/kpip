@@ -1,6 +1,0 @@
-[metadata]
-name = TopoRequires4
-install-requires =
-  TopoRequires2
-  TopoRequires
-  TopoRequires3
