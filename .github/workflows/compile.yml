@@ -89,16 +89,20 @@ jobs:
 
           # A source-only package is built with a real Python, not the binary:
           # the python3 on PATH, which the binary installs for.
-          "$kpip" lock --no-cache-dir --output "$RUNNER_TEMP/sdist.toml" atlasclient==1.0.0
-          grep -q 'name = "atlasclient"' "$RUNNER_TEMP/sdist.toml"
+          "$kpip" lock --no-cache-dir --output "$RUNNER_TEMP/pylock.sdist.toml" atlasclient==1.0.0
+          grep -q 'name = "atlasclient"' "$RUNNER_TEMP/pylock.sdist.toml"
 
           # With no Python at all, the binary still resolves with the one it
           # bundles, and refuses to build, saying why, rather than crashing.
+          # Run outside the checkout: the .venv uv made there is a Python.
+          kpip=$PWD/$kpip
+          mkdir -p "$RUNNER_TEMP/nowhere"
+          cd "$RUNNER_TEMP/nowhere"
           env -u VIRTUAL_ENV -u CONDA_PREFIX PATH=/nonexistent "$kpip" download \
             certifi --no-cache-dir -d "$RUNNER_TEMP/no-python"
           ls "$RUNNER_TEMP"/no-python/certifi-*.whl
           if env -u VIRTUAL_ENV -u CONDA_PREFIX PATH=/nonexistent "$kpip" lock \
-              --no-cache-dir --output "$RUNNER_TEMP/failed.toml" atlasclient==1.0.0 \
+              --no-cache-dir --output "$RUNNER_TEMP/pylock.failed.toml" atlasclient==1.0.0 \
               2> "$RUNNER_TEMP/failed.err"; then
             echo "a lock whose only sdist cannot be built succeeded"
             exit 1
