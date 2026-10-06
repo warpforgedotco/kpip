@@ -84,7 +84,7 @@ def test_direct_launcher_uses_generated_wrapper(tmp_path: Path) -> None:
         (tmp_path / "kpip-direct.py")
         .read_text(encoding="utf-8")
         .startswith(
-            "from __future__ import annotations\nfrom kpip.cli.entrypoint import main\n",
+            "from __future__ import annotations\nfrom kpip._internal.cli.main import main\n",
         )
     )
 
@@ -293,8 +293,19 @@ def test_trio_install_uses_the_prepared_kpip_cache(tmp_path: Path) -> None:
     assert kpip[cache_option + 1] == str(tmp_path / "cache" / "kpip")
 
 
-def test_every_official_workload_builds_lock_commands(tmp_path: Path) -> None:
+def test_every_official_workload_builds_lock_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip_benchmark.cli import supports_benchmark
+
+    monkeypatch.setattr(
+        "kpip_benchmark.cli.find_python",
+        lambda uv_path, version: f"/pythons/{version}/bin/python",
+    )
     for workload in OFFICIAL_WORKLOADS:
+        if not supports_benchmark(workload.name, "lock-cold"):
+            assert workload.name == "airflow2"
+            continue
         commands = build_commands(
             "lock-cold",
             workload=workload.name,
@@ -349,10 +360,30 @@ def test_source_only_workload_rejects_install_benchmark(tmp_path: Path) -> None:
         raise AssertionError("source-only workload accepted install benchmark")
 
 
-def test_airflow2_applies_constraints_to_both_resolvers(tmp_path: Path) -> None:
+def test_airflow2_is_refused_for_its_python_38(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="targets Python 3.8"):
+        build_commands(
+            "lock-cold",
+            workload="airflow2",
+            workspace=tmp_path,
+            kpip_python=sys.executable,
+            kpip_console=None,
+            kpip_launcher="module",
+            uv_path="uv",
+            python=sys.executable,
+        )
+
+
+def test_recommended_python_runs_both_tools_on_that_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "kpip_benchmark.cli.find_python",
+        lambda uv_path, version: f"/pythons/{version}/bin/python",
+    )
     commands = build_commands(
         "lock-cold",
-        workload="airflow2",
+        workload="backtracking-numpy-numba",
         workspace=tmp_path,
         kpip_python=sys.executable,
         kpip_console=None,
@@ -361,9 +392,11 @@ def test_airflow2_applies_constraints_to_both_resolvers(tmp_path: Path) -> None:
         python=sys.executable,
     )
 
-    for command in commands:
-        constraint = command.command.index("--constraint")
-        assert command.command[constraint + 1].endswith("airflow2-constraints.txt")
+    kpip, uv = commands
+    python = kpip.command.index("--python")
+    assert kpip.command[python + 1] == "/pythons/3.12/bin/python"
+    assert kpip.command.index("lock") > python
+    assert uv.command[uv.command.index("--python") + 1] == "3.12"
 
 
 def test_transformers_project_uses_native_project_inputs(tmp_path: Path) -> None:
@@ -603,21 +636,8 @@ def test_the_compiled_binary_is_fingerprinted(tmp_path: Path) -> None:
     )
 
 
-def test_lock_refresh_revalidates_a_warm_cache_with_both_tools(tmp_path: Path) -> None:
+def test_warm_benchmarks_start_from_a_filled_cache() -> None:
     from kpip_benchmark.cli import needs_warm_setup
 
-    commands = build_commands(
-        "lock-refresh",
-        workload="offline",
-        workspace=tmp_path,
-        kpip_python=sys.executable,
-        kpip_console=None,
-        kpip_launcher="module",
-        uv_path="uv",
-        python=sys.executable,
-    )
-
-    assert all("--refresh" in command.command for command in commands)
-    assert needs_warm_setup("lock-refresh")
     assert needs_warm_setup("lock-warm")
     assert not needs_warm_setup("lock-cold")

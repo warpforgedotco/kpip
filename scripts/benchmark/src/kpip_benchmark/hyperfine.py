@@ -172,7 +172,7 @@ class Hyperfine(_Frozen):
         wrapping each command in a helper interpreter would put a whole Python
         startup inside the timed region, so the variables ride on hyperfine
         itself and are inherited. Only kpip asks for any (PYTHONPATH,
-        KPIP_CACHE_DIR): uv is a static binary that ignores both, and the
+        PIP_CACHE_DIR): uv is a static binary that ignores both, and the
         PYTHONPATH entry holds the single ``kpip`` package, so it cannot shadow
         an import in a build subprocess uv spawns. Commands that disagree on a
         value would need a real per-command mechanism, so that is an error

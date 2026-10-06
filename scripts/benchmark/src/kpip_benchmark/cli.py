@@ -30,7 +30,6 @@ BENCHMARKS = (
     "startup-fast-install",
     "lock-cold",
     "lock-warm",
-    "lock-refresh",
     "install-cold",
     "install-warm",
     "install-incremental-warm",
@@ -57,10 +56,22 @@ def default_benchmarks(workload: str) -> tuple[str, ...]:
     return (*OFFICIAL_LOCK_BENCHMARKS, *OFFICIAL_INSTALL_BENCHMARKS)
 
 
+# kpip's ``--python``, like pip's, runs it for interpreters this new or newer.
+KPIP_OLDEST_TARGET = (3, 10)
+
+
 def supports_benchmark(workload: str, benchmark: str) -> bool:
     if workload == "offline":
         return True
     if benchmark.startswith("startup-fast-"):
+        return False
+    definition = official_workload(workload)
+    if (
+        definition is not None
+        and definition.python is not None
+        and tuple(int(part) for part in definition.python.split("."))
+        < KPIP_OLDEST_TARGET
+    ):
         return False
     if not benchmark.startswith("install-"):
         return True
@@ -160,7 +171,7 @@ def kpip_direct_launcher(workspace: Path) -> Path:
     if not launcher.exists():
         launcher.write_text(
             "from __future__ import annotations\n"
-            "from kpip.cli.entrypoint import main\n"
+            "from kpip._internal.cli.main import main\n"
             "raise SystemExit(main())\n",
             encoding="utf-8",
         )
@@ -191,6 +202,17 @@ def kpip_command(
     env = {"PYTHONPATH": str(repo_root() / "src")}
     env.update(extra_env or {})
     return command, env
+
+
+def find_python(uv_path: str, version: str) -> str:
+    """The interpreter uv finds for ``version``, installing it if need be."""
+    subprocess.run(
+        [uv_path, "python", "install", "--quiet", version],
+        check=True,
+    )
+    return subprocess.check_output(
+        [uv_path, "python", "find", version], text=True
+    ).strip()
 
 
 def uv_command(uv_path: str, args: list[str]) -> list[str]:
@@ -255,16 +277,8 @@ def setup_log(workspace: Path) -> Path:
 
 
 def needs_warm_setup(benchmark: str) -> bool:
-    """Whether each timed run starts from a cache one untimed run filled.
-
-    ``lock-refresh`` does too: every page is then in the cache, and each run
-    revalidates all of them, which is the lock an expired cache gets.
-    """
-    return (
-        benchmark.endswith("warm")
-        or benchmark == "lock-refresh"
-        or benchmark.startswith("startup-fast-")
-    )
+    """Whether each timed run starts from a cache one untimed run filled."""
+    return benchmark.endswith("warm") or benchmark.startswith("startup-fast-")
 
 
 def warm_setup(commands: list[Command], stale: list[Path], *, log: Path) -> str:
@@ -427,7 +441,7 @@ def build_commands(
             *kpip_step(
                 cleanup_command([kpip_output]),
                 kpip_args,
-                extra_env={"KPIP_CACHE_DIR": str(kpip_cache)},
+                extra_env={"PIP_CACHE_DIR": str(kpip_cache)},
             ),
             uv_step(cleanup_command([uv_output]), uv_args),
         ]
@@ -509,9 +523,6 @@ def build_commands(
         if constraint_requirements is not None:
             kpip_args.extend(["--constraint", constraint_requirements])
             uv_args.extend(["--constraint", constraint_requirements])
-        if benchmark == "lock-refresh":
-            kpip_args.append("--refresh")
-            uv_args.append("--refresh")
         if recommended_python is not None:
             # A workload curated for one interpreter is only a benchmark on
             # that interpreter: resolved against the one running the suite it
@@ -519,22 +530,26 @@ def build_commands(
             # that nothing past 3.10 can install -- or measures a different
             # graph than the numbers are meant to compare.
             #
-            # The two tools reach that target differently. kpip resolves for
-            # another version from the interpreter it is already on, which is
-            # the only option open to it below its own 3.10 floor. uv is
-            # pointed at a real interpreter instead of being told a version,
-            # because a source distribution it has to build is built by the
-            # interpreter it runs on, and `--python-version` alone leaves
-            # that at the suite's own: on 3.14 the airflow2 graph then dies
-            # building `future` 0.18.2, whose `src/reprlib` shadows the
-            # standard library.
-            kpip_args.extend(["--python-version", recommended_python])
+            # Both tools are pointed at a real interpreter rather than told a
+            # version: a source distribution is built by the interpreter
+            # resolved for, and on 3.14 the airflow2 graph dies building
+            # `future` 0.18.2, whose `src/reprlib` shadows the standard
+            # library. kpip's `lock` has no `--python-version` anyway; its
+            # global `--python` runs it for another interpreter, which, as
+            # with pip, has to be 3.10 or newer.
+            target = tuple(int(part) for part in recommended_python.split("."))
+            if target < KPIP_OLDEST_TARGET:
+                raise ValueError(
+                    f"{workload_name} targets Python {recommended_python}; "
+                    "kpip's --python needs 3.10 or newer"
+                )
+            kpip_args[:0] = ["--python", find_python(uv_path, recommended_python)]
             uv_args[uv_args.index("--python") + 1] = recommended_python
         return [
             *kpip_step(
                 kpip_prepare,
                 kpip_args,
-                extra_env={"KPIP_CACHE_DIR": str(kpip_cache)},
+                extra_env={"PIP_CACHE_DIR": str(kpip_cache)},
             ),
             uv_step(uv_prepare, uv_args),
         ]

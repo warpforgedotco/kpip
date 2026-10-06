@@ -43,14 +43,6 @@ uv run kpip-bench \
   --benchmark lock-warm
 ```
 
-`lock-refresh` locks from a warm cache with `--refresh` on both tools, so
-every cached page is revalidated: the lock a cache gets once the index's
-`max-age` has passed. It runs only when asked for:
-
-```console
-uv run kpip-bench --workload jupyter --benchmark lock-refresh
-```
-
 By default, kpip is measured as `python -m kpip`. To measure the direct
 console-script style launcher, pass `--kpip-launcher direct`:
 
@@ -117,10 +109,12 @@ A workload with a recommended Python is locked for that version rather than
 for whichever interpreter runs the suite, since that is the version its
 constraints were curated against: `airflow2` pins releases that no interpreter
 past 3.10 can install, and resolving it for the suite's own Python fails
-outright. kpip is given `--python-version`, because its own floor is 3.10 and
-it cannot run on the 3.8 that workload wants; uv is pointed at a real
-interpreter with `--python`, because it builds source distributions with the
-interpreter it runs on.
+outright. Both tools are pointed at a real interpreter with `--python`
+(kpip's is the global option, before the command; its `lock` has no
+`--python-version`), because source distributions are built by the
+interpreter resolved for. kpip's `--python`, like pip's, needs Python 3.10 or
+newer, so `airflow2`, which wants 3.8, is skipped in a `live` sweep and
+refused when named.
 
 Two benchmark modes from uv's own harness
 (`astral-sh/uv/scripts/benchmark/src/benchmark/resolver.py`'s `Benchmark`
@@ -197,7 +191,7 @@ exec'd directly instead of through `/bin/sh`. Two reasons:
 With no shell there is nothing to interpret a command string, so two things
 moved:
 
-- Per-command env vars (`PYTHONPATH`, `KPIP_CACHE_DIR`) are set on the
+- Per-command env vars (`PYTHONPATH`, `PIP_CACHE_DIR`) are set on the
   hyperfine process and inherited, rather than written as a `FOO=bar` prefix.
   Wrapping each command in a helper interpreter instead would put a whole
   Python startup inside the timed region. `Hyperfine.environment` raises if
