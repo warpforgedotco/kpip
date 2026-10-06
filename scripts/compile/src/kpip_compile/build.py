@@ -100,6 +100,9 @@ def nuitka_command(
         "--include-package=kpip",
         # certifi's cacert.pem and the vendored license texts.
         "--include-package-data=kpip",
+        # The test suites vendored libraries ship (certifi's), which kpip
+        # never imports; they would bring unittest into the binary.
+        "--nofollow-import-to=*.tests",
         # Nuitka's automatic choice turns LTO off past 250 compiled modules,
         # even for PGO builds, and kpip is well past that.
         "--lto=yes",
