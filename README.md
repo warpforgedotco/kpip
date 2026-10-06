@@ -17,20 +17,18 @@
 Meet **Kip**, the courier snake.
 
 [![Checks](https://github.com/warpforgedotco/kpip/actions/workflows/checks.yml/badge.svg)](https://github.com/warpforgedotco/kpip/actions/workflows/checks.yml)
-[![Python 3.15+](https://img.shields.io/badge/Python-3.15%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Python 3.14+](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
 
-**Pip reimagined for performance.**
+**pip, compiled, and made fast.**
 
 > [!WARNING]
-> kpip is an early-alpha experimental implementation, published on PyPI for
-> testing and evaluation. It is not a supported pip distribution or a drop-in
-> replacement and should not be used to manage critical or system Python
-> environments. Interfaces, behavior, and cache formats may change.
+> kpip is an early-alpha experiment. It is not a supported pip distribution
+> and should not be used to manage critical or system Python environments.
+> Interfaces and behavior may change.
 
-[Get started](#installation) · [Commands](#commands) ·
-[Benchmarks](#benchmarking) · [Architecture](docs/architecture.md) ·
-[Contribute](#development)
+[Get started](#installation) · [How kpip relates to pip](#how-kpip-relates-to-pip) ·
+[Benchmarks](#benchmarking) · [Contribute](#development)
 
 ## Why kpip exists
 
@@ -62,45 +60,38 @@ cd kpip/scripts/compile
 uv run kpip-compile build    # writes build/kpip
 ```
 
-Running kpip from a source checkout (`uv run kpip`) is for working on kpip
-itself; see [Development](#development).
-
 ### Which Python kpip installs for
 
-Like pip, kpip installs into one Python's environment. Without `--python`, it
-is the first of:
+Like pip, kpip installs into one Python's environment. `--python` names it --
+an interpreter, or an environment's directory -- and may come before or after
+the command. Without it, kpip uses the first of:
 
 1. the active virtual environment (`VIRTUAL_ENV`);
 2. the active conda environment (`CONDA_PREFIX`), unless it is conda's base;
 3. a `.venv` in the current directory or the nearest one above it, or the
-   environment the current directory is inside; as uv, a `.venv` without a
-   `pyvenv.cfg` is an error, not passed over;
+   environment the current directory is inside;
 4. conda's base environment, when it is the active one;
-5. the first `python3` or `python` on `PATH` that runs;
-6. on Windows, the newest Python the python.org installer registered.
+5. the first `python3` or `python` on `PATH` that runs.
 
-This is uv's order, and as uv does, `install` and `uninstall` refuse to
-change a Python found on `PATH` (5-6), often the system's own, unless it is a
-virtual environment's or `--system` (or `KPIP_SYSTEM_PYTHON=1`) says to.
-`--system` also passes over 1-3 and any virtual environment's Python on
-`PATH`, as uv's does: it asks for a system Python, not an environment. Unlike
-uv, an active conda base environment (4) needs no `--system`. `--target`,
-`--prefix`, `--root` and `--user` write elsewhere, and need no `--system`.
+Everything kpip decides for that Python is that Python's: where packages go,
+what is already installed, which wheels fit, how markers and
+`Requires-Python` evaluate, the shebangs of scripts and the bytecode it
+writes. Source distributions are built with it too. kpip learns all of this
+by asking the interpreter once, and remembers the answer until the
+interpreter or its search path changes.
 
-`--python` names a Python or an environment directly. Source distributions
-are built with the same Python, unless `KPIP_BUILD_PYTHON` names another.
+With no Python at all, kpip can still resolve (`lock`, `download`, `wheel`
+for wheels), using the Python it bundles; installing and building say that
+no Python was found, and do nothing.
 
-| Variable | Effect |
-| --- | --- |
-| `KPIP_BUILD_PYTHON` | The Python source distributions are built with. |
-| `KPIP_SYSTEM_PYTHON` | As `--system`: change a Python found on `PATH`. |
-| `KPIP_CACHE_DIR`, `KPIP_NO_CACHE_DIR` | The cache directory, or no cache. |
-| `KPIP_CONFIG_FILE` | A configuration file to read; `os.devnull` reads none. |
+kpip reads pip's configuration files, cache and `PIP_*` environment
+variables, as pip does: the site configuration file is the one in the
+environment it installs for.
 
 ## Quick start
 
-Create an environment, then point kpip at it with the global `--python`
-option -- or activate it, and leave `--python` out:
+Create an environment, then point kpip at it -- or activate it, and leave
+`--python` out:
 
 ```console
 python -m venv .venv
@@ -114,130 +105,92 @@ Install a requirements file:
 kpip --python .venv install -r requirements.txt
 ```
 
-Resolve an input file into `pylock.toml`, then install it:
+Resolve into a `pylock.toml` lock file, then install from it:
 
 ```console
 kpip lock -r requirements.in
 kpip --python .venv install -r pylock.toml
 ```
 
-A lock starts from the one already at its `--output`: each package keeps its
-version there while the requirements still allow it, so adding or changing
-one requirement moves no pin it does not have to. `--upgrade` (`-U`) resolves
-every package afresh, and `--upgrade-package NAME` (`-P NAME`) just that one.
+kpip's commands and options are pip's: `kpip <command> --help` lists them,
+and [pip's documentation](https://pip.pypa.io/en/stable/) describes them.
 
-`--refresh`, on `lock` and `install`, revalidates every cached index page
-before it is trusted, however long the index allowed it to be kept.
+## How kpip relates to pip
 
-To lock for a Python version other than the one kpip installs for:
+kpip is upstream pip, renamed to `kpip`, with a series of patches on top.
+[`scripts/vendor_pip.py`](scripts/vendor_pip.py) generates `src/kpip` and
+`tests` from pip's `main` at the commit in
+[`tools/vendoring/pip-upstream.txt`](tools/vendoring/pip-upstream.txt) and
+the patches in [`tools/vendoring/patches/pip`](tools/vendoring/patches/pip),
+so kpip follows pip as pip changes.
 
-```console
-kpip lock -r requirements.in --python-version 3.8
-```
+The patches do what a compiled pip needs -- above all, installing for a
+Python other than the one running it -- and make kpip faster. Each is meant
+to be small enough, and measured well enough, to be offered to pip.
 
-Markers, `Requires-Python` and wheel tags are all read for that version. The
-platform is not: this resolves for another Python, not another machine.
-
-A release whose dependencies the index does not publish is read from one of
-its own wheels, and built only when no wheel of it offers usable metadata --
-which a release that ships wheels can still come to. Building happens on the
-Python kpip finds to build with -- `KPIP_BUILD_PYTHON`, else one of the
-version being locked for, else the one it installs for -- so a release that
-cannot report its metadata there will fail the lock rather than be recorded
-without its dependencies.
-
-## Commands
-
-| Task | Commands |
-| --- | --- |
-| Install or prepare packages | `install`, `wheel`, `download` |
-| Remove packages | `uninstall` |
-| Inspect an environment | `list`, `freeze`, `show`, `inspect`, `check` |
-| Resolve reproducibly | `lock` |
-| Work with indexes and artifacts | `index`, `hash` |
-| Inspect or clear local state | `cache` |
-
-Run `kpip <command> --help` for command-specific options.
+kpip is compiled with [Nuitka](https://github.com/Nuitka/Nuitka), taken from
+its latest `develop` and patched too
+([`tools/vendoring/patches/nuitka`](tools/vendoring/patches/nuitka)).
 
 ## Benchmarking
 
 A fast microbenchmark is a lead, not a conclusion. Following the spirit of the
 [X-Ray Performance Laboratory](https://github.com/KRRT7/xray).
 
-The [Hyperfine](https://github.com/sharkdp/hyperfine) harness compares kpip and
-uv using the same inputs and isolated targets. uv is an external performance
-reference; before-and-after kpip runs measure individual changes. Results
-depend on the workload, machine, and cache state. An eventual pip patch still
-needs measurement in pip's own architecture and test environment.
+[`benchmarks/`](benchmarks/README.md) holds the
+[CodSpeed](https://codspeed.io) suite CI runs on every change: uv's own warm
+resolver benchmarks (jupyter and airflow), replayed offline, plus installing,
+unpacking and parsing.
 
-The default offline workload is generated locally to avoid network variance.
-
-With `hyperfine` and `uv` available on `PATH`:
+The [Hyperfine](https://github.com/sharkdp/hyperfine) harness in
+[`scripts/benchmark`](scripts/benchmark/README.md) compares kpip and uv from
+the command line, with the same inputs and isolated targets. With `hyperfine`
+and `uv` on `PATH`:
 
 ```console
 cd scripts/benchmark
-uv sync --locked --group tests
 uv run kpip-bench --workload offline
 ```
 
-The harness includes startup, cold and warm locking, cold and warm
-installation, and incremental installation cases. It can also run the
-workloads used by uv's public benchmarks, but those are opt-in because live
-indexes and platform-specific wheels make them less reproducible.
-
-See the [benchmark guide](scripts/benchmark/README.md) for workload selection,
-recording quiet-machine baselines, exporting raw Hyperfine results, and
-comparing two commits.
-
-## Upstream
-
-kpip is meant to be upstreamed into pip. The intention is
-for the useful implementation work, tests, and evidence to flow upstream.
-
+It covers startup, cold and warm locking, cold and warm installation, and
+incremental installation. The workloads uv's public benchmarks use are
+opt-in, as live indexes make them less reproducible. Results depend on the
+workload, the machine and the cache state.
 
 ## Development
-
-Set up the test and typing environments:
 
 ```console
 git clone https://github.com/warpforgedotco/kpip.git
 cd kpip
-uv sync --locked --group test --group typing
+uv sync --locked --group test
 ```
 
-Run the main local checks:
+`src/kpip` and `tests` are generated: never edit them. To change kpip, make
+the change in the `build/pip` checkout `vendor_pip.py sync` leaves, as a
+commit, and turn the commits into patches:
 
 ```console
-uv run ruff check src tests conftest.py
-uv run ruff format --check src tests conftest.py
-uv run ty check src
-uv run pytest tests \
-  --ignore=tests/cli/functional \
-  --ignore=tests/benchmarks \
-  -m "not network"
+uv run scripts/vendor_pip.py sync --commit "$(cat tools/vendoring/pip-upstream.txt)"
+# commit in build/pip, on its kpip branch
+uv run scripts/vendor_pip.py export
+uv run scripts/vendor_pip.py sync --commit "$(cat tools/vendoring/pip-upstream.txt)"
 ```
 
-Functional tests exercise the real CLI in subprocesses:
+A bare `sync` moves to pip's latest `main`. [AGENTS.md](AGENTS.md) describes
+the workflow, and the rules for code the compiled binary runs.
+
+Run pip's unit and functional tests against kpip:
 
 ```console
-uv run pytest tests/cli/functional -n auto
+uv run pytest tests/unit -n auto -m "not network"
+uv run python -m kpip wheel -w tests/data/common_wheels --group test-common-wheels
+uv run pytest tests/functional -n auto -m "not network"
 ```
 
-The property tests in `tests/properties` run with the unit tests. The
-[CrossHair workflow](.github/workflows/crosshair.yml) also runs them nightly
-with [CrossHair](https://github.com/pschanely/CrossHair)'s symbolic search.
-To run that search locally:
-
-```console
-uv sync --locked --group test --group crosshair
-uv run pytest tests/properties --hypothesis-profile=crosshair
-```
-
-The [checks workflow](.github/workflows/checks.yml) is the source of truth for
-the supported CI matrix. Before proposing a performance change, record a
-comparable before-and-after benchmark; a locally faster microbenchmark is not
-enough on its own. A change is not finished merely because it lands in kpip:
-identify how its implementation, tests, and evidence can move upstream.
+The [checks workflow](.github/workflows/checks.yml) is the source of truth
+for what CI runs. A performance change comes with a comparable
+before-and-after benchmark; a locally faster microbenchmark is not enough on
+its own.
 
 ## Why a courier snake?
 
@@ -267,19 +220,17 @@ Short and personal: **kpip** stuck.
 
 ## Acknowledgements
 
-kpip builds on the interfaces, behavior, and testing knowledge developed by
-[pip and PyPA](https://github.com/pypa/pip), and learns from the techniques and
-public workloads in [uv](https://github.com/astral-sh/uv). The
+kpip is [pip](https://github.com/pypa/pip): its code, its tests and the
+knowledge of the PyPA maintainers who wrote them. It learns from the
+techniques and public workloads of [uv](https://github.com/astral-sh/uv), and
+is compiled with [Nuitka](https://github.com/Nuitka/Nuitka). The
 [X-Ray Performance Laboratory](https://github.com/KRRT7/xray) shares the spirit
 behind the experiments here: curiosity, reproducible measurements, and a
 willingness to be wrong.
 
 Thank you to [Damian Shaw](https://github.com/notatallshaw) for his work on
-[nab](https://github.com/notatallshaw/nab). kpip uses its `nab-resolver`
-component, a PubGrub dependency resolver written in Python, with local
-adaptations documented in the [vendoring manifest](src/kpip/_vendor/VENDORED.md).
-That foundation supports kpip's experiments across the whole installation
-workflow, from startup and resolution to caching and installation.
+[nab](https://github.com/notatallshaw/nab), whose PubGrub resolver the first
+kpip was built on.
 
 Thank you to the [Astral team](https://github.com/astral-sh) for their work on uv and their contributions to
 the Python ecosystem. Their work helped inspire the questions this project
@@ -289,9 +240,10 @@ explores. Thank you also for getting me into the
 On a personal note, thank you to [Samuel Colvin](https://github.com/samuelcolvin)
 for the motivation to work on kpip.
 
-Third-party code shipped with kpip is documented in the [vendoring
-manifest](src/kpip/_vendor/VENDORED.md).
+The libraries pip vendors, and so kpip ships, are listed in
+[`src/kpip/_vendor/vendor.txt`](src/kpip/_vendor/vendor.txt).
 
 ## License
 
-kpip is available under the [MIT License](LICENSE.txt).
+kpip is available under the [MIT License](LICENSE.txt). pip, which kpip is
+built from, is also MIT-licensed.
