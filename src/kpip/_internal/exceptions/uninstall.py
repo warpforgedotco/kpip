@@ -17,7 +17,7 @@ class UninstallMissingRecord(DiagnosticPipError):
 
     def __init__(self, *, distribution: BaseDistribution) -> None:
         installer = distribution.installer
-        if not installer or installer == "pip":
+        if not installer or installer in ("pip", "kpip"):
             dep = f"{distribution.raw_name}=={distribution.version}"
             hint = Text.assemble(
                 "You might be able to recover from this via: ",

@@ -86,7 +86,7 @@ def user_agent() -> str:
     Return a string representing the user agent.
     """
     data: dict[str, Any] = {
-        "installer": {"name": "pip", "version": __version__},
+        "installer": {"name": "kpip", "version": __version__},
         "python": platform.python_version(),
         "implementation": {
             "name": platform.python_implementation(),

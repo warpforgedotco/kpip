@@ -1,0 +1,264 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Mon, 5 Oct 2026 23:51:27 -0500
+Subject: [PATCH] Identify as kpip
+
+kpip shares pip's configuration, caches and PIP_* environment variables,
+but says who it is: --version names kpip and the pip release it is built
+from, the program name falls back to kpip, the user agent's installer is
+kpip, and installed distributions record INSTALLER as kpip.
+
+Deprecation deadlines and the "pip_version" field of install reports and
+inspect output stay in pip versions, which is what they are scheduled and
+specified in. The self version check is off: pip's latest release on the
+index says nothing about whether kpip is current.
+---
+ src/kpip/_internal/cli/index_command.py       |  5 +++++
+ src/kpip/_internal/commands/inspect.py        |  4 ++--
+ src/kpip/_internal/exceptions/uninstall.py    |  2 +-
+ .../_internal/models/installation_report.py   |  4 ++--
+ src/kpip/_internal/network/session.py         |  2 +-
+ .../_internal/operations/install/wheel.py     |  4 ++--
+ src/kpip/_internal/utils/deprecation.py       |  3 ++-
+ src/kpip/_internal/utils/misc.py              | 11 +++++++----
+ tests/unit/test_commands.py                   | 19 +++++++++++++++++++
+ tests/unit/test_network_session.py            |  2 +-
+ tests/unit/test_utils.py                      |  4 ++--
+ 11 files changed, 44 insertions(+), 16 deletions(-)
+
+diff --git a/src/kpip/_internal/cli/index_command.py b/src/kpip/_internal/cli/index_command.py
+index b4df8c2..8f51c4b 100644
+--- a/src/kpip/_internal/cli/index_command.py
++++ b/src/kpip/_internal/cli/index_command.py
+@@ -190,6 +190,11 @@ class IndexGroupCommand(Command, SessionCommandMixin):
+         # Make sure the index_group options are present.
+         assert hasattr(options, "no_index")
+ 
++        # kpip is not upgraded with pip, so pip's latest release on the index
++        # says nothing about whether kpip is current.
++        yield
++        return
++
+         if options.disable_pip_version_check or options.no_index:
+             yield
+             return
+diff --git a/src/kpip/_internal/commands/inspect.py b/src/kpip/_internal/commands/inspect.py
+index 0ed9265..8af9848 100644
+--- a/src/kpip/_internal/commands/inspect.py
++++ b/src/kpip/_internal/commands/inspect.py
+@@ -5,7 +5,7 @@ from typing import Any
+ from kpip._vendor.packaging.markers import default_environment
+ from kpip._vendor.rich import print_json
+ 
+-from kpip import __version__
++from kpip import __pip_version__
+ from kpip._internal.cli import cmdoptions
+ from kpip._internal.cli.base_command import Command
+ from kpip._internal.cli.status_codes import SUCCESS
+@@ -54,7 +54,7 @@ class InspectCommand(Command):
+         )
+         output = {
+             "version": "1",
+-            "pip_version": __version__,
++            "pip_version": __pip_version__,
+             "installed": [self._dist_to_dict(dist) for dist in dists],
+             "environment": default_environment(),
+             # TODO tags? scheme?
+diff --git a/src/kpip/_internal/exceptions/uninstall.py b/src/kpip/_internal/exceptions/uninstall.py
+index 5d0c2b4..68541da 100644
+--- a/src/kpip/_internal/exceptions/uninstall.py
++++ b/src/kpip/_internal/exceptions/uninstall.py
+@@ -17,7 +17,7 @@ class UninstallMissingRecord(DiagnosticPipError):
+ 
+     def __init__(self, *, distribution: BaseDistribution) -> None:
+         installer = distribution.installer
+-        if not installer or installer == "pip":
++        if not installer or installer in ("pip", "kpip"):
+             dep = f"{distribution.raw_name}=={distribution.version}"
+             hint = Text.assemble(
+                 "You might be able to recover from this via: ",
+diff --git a/src/kpip/_internal/models/installation_report.py b/src/kpip/_internal/models/installation_report.py
+index 7b9f14c..d3caae0 100644
+--- a/src/kpip/_internal/models/installation_report.py
++++ b/src/kpip/_internal/models/installation_report.py
+@@ -3,7 +3,7 @@ from typing import Any
+ 
+ from kpip._vendor.packaging.markers import default_environment
+ 
+-from kpip import __version__
++from kpip import __pip_version__
+ from kpip._internal.req.req_install import InstallRequirement
+ 
+ 
+@@ -43,7 +43,7 @@ class InstallationReport:
+     def to_dict(self) -> dict[str, Any]:
+         return {
+             "version": "1",
+-            "pip_version": __version__,
++            "pip_version": __pip_version__,
+             "install": [
+                 self._install_req_to_dict(ireq) for ireq in self._install_requirements
+             ],
+diff --git a/src/kpip/_internal/network/session.py b/src/kpip/_internal/network/session.py
+index 2cd476c..6a508b9 100644
+--- a/src/kpip/_internal/network/session.py
++++ b/src/kpip/_internal/network/session.py
+@@ -86,7 +86,7 @@ def user_agent() -> str:
+     Return a string representing the user agent.
+     """
+     data: dict[str, Any] = {
+-        "installer": {"name": "pip", "version": __version__},
++        "installer": {"name": "kpip", "version": __version__},
+         "python": platform.python_version(),
+         "implementation": {
+             "name": platform.python_implementation(),
+diff --git a/src/kpip/_internal/operations/install/wheel.py b/src/kpip/_internal/operations/install/wheel.py
+index d4b85c7..94baa05 100644
+--- a/src/kpip/_internal/operations/install/wheel.py
++++ b/src/kpip/_internal/operations/install/wheel.py
+@@ -694,10 +694,10 @@ def _install_wheel(  # noqa: C901, PLR0915 function is too long
+ 
+     dest_info_dir = os.path.join(lib_dir, info_dir)
+ 
+-    # Record pip as the installer
++    # Record kpip as the installer
+     installer_path = os.path.join(dest_info_dir, "INSTALLER")
+     with _generate_file(installer_path) as installer_file:
+-        installer_file.write(b"pip\n")
++        installer_file.write(b"kpip\n")
+     generated.append(installer_path)
+ 
+     # Record the PEP 610 direct URL reference
+diff --git a/src/kpip/_internal/utils/deprecation.py b/src/kpip/_internal/utils/deprecation.py
+index d69460b..dd121bb 100644
+--- a/src/kpip/_internal/utils/deprecation.py
++++ b/src/kpip/_internal/utils/deprecation.py
+@@ -11,7 +11,8 @@ from typing import Any, TextIO
+ 
+ from kpip._vendor.packaging.version import parse
+ 
+-from kpip import __version__ as current_version  # NOTE: tests patch this name.
++# pip's deprecations are scheduled in pip versions.
++from kpip import __pip_version__ as current_version  # NOTE: tests patch this name.
+ 
+ DEPRECATION_MSG_PREFIX = "DEPRECATION: "
+ 
+diff --git a/src/kpip/_internal/utils/misc.py b/src/kpip/_internal/utils/misc.py
+index 868578d..5e715cc 100644
+--- a/src/kpip/_internal/utils/misc.py
++++ b/src/kpip/_internal/utils/misc.py
+@@ -32,7 +32,7 @@ from kpip._vendor.packaging.requirements import Requirement
+ from kpip._vendor.pyproject_hooks import BackendUnavailable, BuildBackendHookCaller
+ 
+ from kpip import __file__ as pip_location
+-from kpip import __version__
++from kpip import __pip_version__, __version__
+ from kpip._internal.exceptions import (
+     BackendUnavailableError,
+     CommandError,
+@@ -95,7 +95,10 @@ def get_pip_version() -> str:
+     pip_pkg_dir = os.path.join(os.path.dirname(__file__), "..", "..")
+     pip_pkg_dir = os.path.abspath(pip_pkg_dir)
+ 
+-    return f"pip {__version__} from {pip_pkg_dir} (python {get_major_minor_version()})"
++    return (
++        f"kpip {__version__} (pip {__pip_version__}) from {pip_pkg_dir} "
++        f"(python {get_major_minor_version()})"
++    )
+ 
+ 
+ @cache
+@@ -152,12 +155,12 @@ def get_prog() -> str:
+     try:
+         prog = os.path.basename(sys.argv[0])
+         if prog in ("__main__.py", "-c"):
+-            return f"{sys.executable} -m pip"
++            return f"{sys.executable} -m kpip"
+         else:
+             return prog
+     except (AttributeError, TypeError, IndexError):
+         pass
+-    return "pip"
++    return "kpip"
+ 
+ 
+ # Retry every half second for up to 3 seconds
+diff --git a/tests/unit/test_commands.py b/tests/unit/test_commands.py
+index 117de52..62d1e8c 100644
+--- a/tests/unit/test_commands.py
++++ b/tests/unit/test_commands.py
+@@ -91,6 +91,7 @@ def test_index_group_commands() -> None:
+     check_commands(has_option_no_index, EXPECTED_INDEX_GROUP_COMMANDS)
+ 
+ 
++@pytest.mark.skip(reason="kpip has no self version check")
+ @pytest.mark.parametrize("command_name", EXPECTED_INDEX_GROUP_COMMANDS)
+ @pytest.mark.parametrize(
+     "disable_pip_version_check, no_index, expected_called",
+@@ -134,6 +135,7 @@ def test_index_group_pip_version_check(
+         mock_version_check.assert_not_called()
+ 
+ 
++@pytest.mark.skip(reason="kpip has no self version check")
+ @mock.patch("kpip._internal.cli.index_command._pip_self_version_check_fetch")
+ def test_install_pip_version_check_skipped_when_pip_is_a_requirement(
+     mock_version_check: mock.Mock,
+@@ -158,6 +160,22 @@ def test_install_pip_version_check_skipped_when_pip_is_a_requirement(
+     mock_version_check.assert_called_once()
+ 
+ 
++@pytest.mark.parametrize("command_name", EXPECTED_INDEX_GROUP_COMMANDS)
++@mock.patch("kpip._internal.cli.index_command._pip_self_version_check_fetch")
++def test_index_group_never_checks_pip_version(
++    mock_version_check: mock.Mock, command_name: str
++) -> None:
++    """kpip never compares itself with pip's latest release."""
++    command = create_command(command_name)
++    options = command.parser.get_default_values()
++    options.disable_pip_version_check = False
++    options.no_index = False
++
++    with command.pip_version_check(options, ["some-other-pkg"]):
++        pass
++    mock_version_check.assert_not_called()
++
++
+ def test_requirement_commands() -> None:
+     """
+     Test which commands inherit from RequirementCommand.
+@@ -169,6 +187,7 @@ def test_requirement_commands() -> None:
+     check_commands(is_requirement_command, ["download", "install", "lock", "wheel"])
+ 
+ 
++@pytest.mark.skip(reason="kpip has no self version check")
+ @pytest.mark.parametrize("flag", ["", "--outdated", "--uptodate"])
+ @mock.patch("kpip._internal.cli.index_command._pip_self_version_check_fetch")
+ @mock.patch.dict(os.environ, {"PIP_DISABLE_PIP_VERSION_CHECK": "no"})
+diff --git a/tests/unit/test_network_session.py b/tests/unit/test_network_session.py
+index 03e5a47..47db72c 100644
+--- a/tests/unit/test_network_session.py
++++ b/tests/unit/test_network_session.py
+@@ -110,7 +110,7 @@ def get_user_agent() -> str:
+ def test_user_agent() -> None:
+     user_agent = get_user_agent()
+ 
+-    assert user_agent.startswith(f"pip/{__version__}")
++    assert user_agent.startswith(f"kpip/{__version__}")
+ 
+ 
+ def test_accept_encoding_is_fixed() -> None:
+diff --git a/tests/unit/test_utils.py b/tests/unit/test_utils.py
+index 7c59f57..7a2c719 100644
+--- a/tests/unit/test_utils.py
++++ b/tests/unit/test_utils.py
+@@ -555,8 +555,8 @@ class TestGetProg:
+         "argv, executable, expected",
+         [
+             ("/usr/bin/pip", "", "pip"),
+-            ("-c", "/usr/bin/python", "/usr/bin/python -m pip"),
+-            ("__main__.py", "/usr/bin/python", "/usr/bin/python -m pip"),
++            ("-c", "/usr/bin/python", "/usr/bin/python -m kpip"),
++            ("__main__.py", "/usr/bin/python", "/usr/bin/python -m kpip"),
+             ("/usr/bin/pip3", "", "pip3"),
+         ],
+     )

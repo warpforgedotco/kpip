@@ -190,6 +190,11 @@ class IndexGroupCommand(Command, SessionCommandMixin):
         # Make sure the index_group options are present.
         assert hasattr(options, "no_index")
 
+        # kpip is not upgraded with pip, so pip's latest release on the index
+        # says nothing about whether kpip is current.
+        yield
+        return
+
         if options.disable_pip_version_check or options.no_index:
             yield
             return

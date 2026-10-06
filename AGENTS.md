@@ -9,6 +9,12 @@ package renamed from `pip` to `kpip`, and then the patches in
 by hand; CI's `vendor_pip.py check` fails if they differ from what the script
 generates.
 
+The script also sets `__version__` to kpip's version from `pyproject.toml`
+and keeps pip's as `__pip_version__`; `scripts/bump_version.py` updates both
+places. kpip shares pip's configuration files, caches and `PIP_*` variables;
+only what it says about itself (version, program name, user agent,
+`INSTALLER`) is kpip's.
+
 To change kpip, run `uv run scripts/vendor_pip.py sync`, commit the change
 on the `kpip` branch of the checkout in `build/pip` (one commit per patch;
 `git rebase -i base` to amend an existing one), then run `export` and

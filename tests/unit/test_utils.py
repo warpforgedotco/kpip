@@ -555,8 +555,8 @@ class TestGetProg:
         "argv, executable, expected",
         [
             ("/usr/bin/pip", "", "pip"),
-            ("-c", "/usr/bin/python", "/usr/bin/python -m pip"),
-            ("__main__.py", "/usr/bin/python", "/usr/bin/python -m pip"),
+            ("-c", "/usr/bin/python", "/usr/bin/python -m kpip"),
+            ("__main__.py", "/usr/bin/python", "/usr/bin/python -m kpip"),
             ("/usr/bin/pip3", "", "pip3"),
         ],
     )

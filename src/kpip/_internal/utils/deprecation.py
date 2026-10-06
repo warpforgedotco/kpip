@@ -11,7 +11,8 @@ from typing import Any, TextIO
 
 from kpip._vendor.packaging.version import parse
 
-from kpip import __version__ as current_version  # NOTE: tests patch this name.
+# pip's deprecations are scheduled in pip versions.
+from kpip import __pip_version__ as current_version  # NOTE: tests patch this name.
 
 DEPRECATION_MSG_PREFIX = "DEPRECATION: "
 
