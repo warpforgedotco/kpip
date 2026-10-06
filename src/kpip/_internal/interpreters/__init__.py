@@ -44,6 +44,7 @@ __all__ = [
     "build_interpreter",
     "ProbedInterpreter",
     "configure",
+    "configure_from_arguments",
     "identify",
     "installing_interpreter",
     "interpreter_at",
@@ -71,6 +72,42 @@ def configure(python: str | None, cache_dir: str | None) -> None:
     _requested = python or None
     _target = None
     set_cache_dir(cache_dir)
+
+
+def configure_from_arguments(args: list[str]) -> None:
+    """Set ``--python`` and the cache from the command line, before it is
+    parsed: reading the configuration that parsing it takes asks the target
+    interpreter for its site configuration file, so it must be the named one.
+    The command sets both again from its parsed options."""
+    python = os.environ.get("PIP_PYTHON") or None
+    cache_dir: str | None = os.environ.get("PIP_CACHE_DIR") or None
+    no_cache = os.environ.get("PIP_NO_CACHE_DIR", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    arguments = iter(args)
+    for argument in arguments:
+        if argument == "--":
+            break
+        name, equals, value = argument.partition("=")
+        if name in ("--python", "--cache-dir"):
+            if not equals:
+                value = next(arguments, "")
+            if name == "--python":
+                python = value or None
+            else:
+                cache_dir = value or None
+        elif argument == "--no-cache-dir":
+            no_cache = True
+    if no_cache:
+        cache_dir = None
+    elif cache_dir is None:
+        from kpip._internal.utils.appdirs import user_cache_dir
+
+        cache_dir = user_cache_dir("pip")
+    configure(python, cache_dir)
 
 
 def environment_pythons() -> tuple[str, ...]:

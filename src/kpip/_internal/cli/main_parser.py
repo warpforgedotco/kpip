@@ -68,6 +68,7 @@ def identify_python_interpreter(python: str) -> str | None:
 
 
 def parse_command(args: list[str]) -> tuple[str, list[str]]:
+    interpreters.configure_from_arguments(args)
     parser = create_main_parser()
 
     # Note: parser calls disable_interspersed_args(), so the result of this

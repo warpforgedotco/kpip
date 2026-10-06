@@ -95,10 +95,12 @@ def get_pip_version() -> str:
     pip_pkg_dir = os.path.join(os.path.dirname(__file__), "..", "..")
     pip_pkg_dir = os.path.abspath(pip_pkg_dir)
 
-    return (
-        f"kpip {__version__} (pip {__pip_version__}) from {pip_pkg_dir} "
-        f"(python {get_major_minor_version()})"
-    )
+    if target_interpreter().is_bundled:
+        # The CPython inside the compiled kpip, which nothing is installed for.
+        python = "no Python found to install for"
+    else:
+        python = f"python {get_major_minor_version()}"
+    return f"kpip {__version__} (pip {__pip_version__}) from {pip_pkg_dir} ({python})"
 
 
 @cache
