@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import textwrap
 from collections.abc import Iterable, Sequence
 from contextlib import AbstractContextManager as ContextManager
@@ -9,6 +8,8 @@ from contextlib import nullcontext
 from io import StringIO
 from typing import TYPE_CHECKING
 
+from kpip._internal.interpreters import build_interpreter
+from kpip._internal.utils.compiled import own_command
 from kpip._internal.build_env.base import Prefix
 from kpip._internal.cli.spinners import open_rich_spinner, open_spinner
 from kpip._internal.exceptions import (
@@ -19,7 +20,6 @@ from kpip._internal.exceptions import (
 )
 from kpip._internal.metadata import get_environment
 from kpip._internal.utils.logging import VERBOSE, capture_logging
-from kpip._internal.utils.misc import get_runnable_pip
 from kpip._internal.utils.subprocess import call_subprocess
 from kpip._internal.utils.temp_dir import TempDirectory
 
@@ -56,8 +56,12 @@ class SubprocessBuildEnvironmentInstaller:
         for_req: InstallRequirement | None,
     ) -> None:
         finder = self.finder
+        # kpip itself, for the Python the environment is for.
+        python = prefix.venv_executable or build_interpreter().executable
         args: list[str] = [
-            get_runnable_pip(),
+            *own_command(),
+            "--python",
+            python,
             "install",
             # HACK: --prefix shouldn't be necessary for venv environments, but
             # we set it anyway so if it's set via an envvar or configuration
@@ -76,10 +80,7 @@ class SubprocessBuildEnvironmentInstaller:
             "--target",
             "",
         ]
-        if prefix.venv_executable:
-            args.insert(0, prefix.venv_executable)
-        else:
-            args.insert(0, sys.executable)
+        if not prefix.venv_executable:
             args.append("--ignore-installed")
 
         if logger.getEffectiveLevel() <= logging.DEBUG:

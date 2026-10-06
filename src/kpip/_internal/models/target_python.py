@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import sys
 
 from kpip._vendor.packaging.tags import Tag
 
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.utils.compatibility_tags import get_supported, version_info_to_nodot
 from kpip._internal.utils.misc import normalize_version_info
 
@@ -50,7 +50,7 @@ class TargetPython:
         self._given_py_version_info = py_version_info
 
         if py_version_info is None:
-            py_version_info = sys.version_info[:3]
+            py_version_info = target_interpreter().version
         else:
             py_version_info = normalize_version_info(py_version_info)
 

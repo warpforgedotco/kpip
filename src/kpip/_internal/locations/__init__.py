@@ -7,6 +7,7 @@ import pathlib
 import sys
 import sysconfig
 
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.models.scheme import SCHEME_KEYS, Scheme
 from kpip._internal.utils.compat import WINDOWS
 from kpip._internal.utils.deprecation import deprecated
@@ -16,7 +17,9 @@ from . import _sysconfig
 from .base import (
     USER_CACHE_DIR,
     get_major_minor_version,
+    get_site_packages,
     get_src_prefix,
+    get_user_site,
     is_osx_framework,
     site_packages,
     user_site,
@@ -30,7 +33,9 @@ __all__ = [
     "get_platlib",
     "get_purelib",
     "get_scheme",
+    "get_site_packages",
     "get_src_prefix",
+    "get_user_site",
     "site_packages",
     "user_site",
 ]
@@ -226,7 +231,8 @@ def get_scheme(
         isolated=isolated,
         prefix=prefix,
     )
-    if _USE_SYSCONFIG:
+    # Another Python's distutils cannot be asked; its sysconfig answers.
+    if _USE_SYSCONFIG or not target_interpreter().is_own:
         return new
 
     old = _distutils.get_scheme(
@@ -378,7 +384,7 @@ def get_scheme(
 
 def get_bin_prefix() -> str:
     new = _sysconfig.get_bin_prefix()
-    if _USE_SYSCONFIG:
+    if _USE_SYSCONFIG or not target_interpreter().is_own:
         return new
 
     old = _distutils.get_bin_prefix()
@@ -411,7 +417,7 @@ def _looks_like_deb_system_dist_packages(value: str) -> bool:
 def get_purelib() -> str:
     """Return the default pure-Python lib location."""
     new = _sysconfig.get_purelib()
-    if _USE_SYSCONFIG:
+    if _USE_SYSCONFIG or not target_interpreter().is_own:
         return new
 
     old = _distutils.get_purelib()
@@ -425,7 +431,7 @@ def get_purelib() -> str:
 def get_platlib() -> str:
     """Return the default platform-shared lib location."""
     new = _sysconfig.get_platlib()
-    if _USE_SYSCONFIG:
+    if _USE_SYSCONFIG or not target_interpreter().is_own:
         return new
 
     from . import _distutils

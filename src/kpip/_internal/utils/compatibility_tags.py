@@ -17,6 +17,8 @@ from kpip._vendor.packaging.tags import (
     mac_platforms,
 )
 
+from kpip._internal.interpreters import target_interpreter
+
 _apple_arch_pat = re.compile(r"(.+)_(\d+)_(\d+)_(.+)")
 
 
@@ -163,6 +165,20 @@ def get_supported(
     :param abis: specify a list of abis you want valid
         tags for, or None. If None, use the local interpreter abi.
     """
+    interpreter = target_interpreter()
+    if not interpreter.is_own:
+        # What is not given is the target interpreter's, not this process's.
+        if version is None and platforms is None and impl is None and abis is None:
+            return interpreter.tags
+        if impl is None:
+            impl = interpreter.interpreter_name
+        if version is None:
+            version = interpreter.interpreter_version
+            if abis is None:
+                abis = interpreter.abis
+        if platforms is None:
+            platforms = interpreter.platforms
+
     supported: list[Tag] = []
 
     python_version: PythonVersion | None = None

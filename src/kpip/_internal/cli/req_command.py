@@ -14,6 +14,7 @@ from functools import partial
 from optparse import Values
 from typing import Any, TypeVar
 
+from kpip._internal.locations import get_src_prefix
 from kpip._internal.build_env import (
     BuildEnvironmentInstaller,
     BuildIsolationMode,
@@ -230,7 +231,7 @@ class RequirementCommand(IndexGroupCommand):
 
         return RequirementPreparer(
             build_dir=temp_build_dir_path,
-            src_dir=options.src_dir,
+            src_dir=options.src_dir or get_src_prefix(),
             download_dir=download_dir,
             build_isolation=build_isolation,
             build_isolation_installer=env_installer,

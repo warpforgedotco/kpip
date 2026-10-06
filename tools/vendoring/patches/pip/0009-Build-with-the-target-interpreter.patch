@@ -1,0 +1,339 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:46:16 -0500
+Subject: [PATCH] Build with the target interpreter
+
+Build backends ran under sys.executable, the isolated environment hid
+this process's system site directories, venv isolation cloned this
+process's Python, and build requirements were installed by running pip's
+source again with sys.executable. In the compiled kpip none of those
+exist. Builds now run with the target interpreter -- what is built is for
+it -- hiding its site directories; venv isolation has it create the
+environment; and build requirements are installed by kpip itself
+(own_command), told with --python which Python the environment is for.
+With no Python at all, building is refused up front.
+---
+ src/kpip/_internal/build_env/installer.py   | 15 ++++-----
+ src/kpip/_internal/build_env/noop.py        |  9 ++++--
+ src/kpip/_internal/build_env/venv.py        | 34 +++++++++++++++++++++
+ src/kpip/_internal/build_env/virtual.py     | 10 +++---
+ src/kpip/_internal/interpreters/__init__.py | 14 +++++++++
+ src/kpip/_internal/interpreters/facts.py    | 15 +++++++++
+ src/kpip/_internal/interpreters/probe.py    |  1 +
+ src/kpip/_internal/utils/compiled.py        |  7 +++--
+ tests/unit/test_interpreters.py             | 12 ++++++++
+ 9 files changed, 101 insertions(+), 16 deletions(-)
+
+diff --git a/src/kpip/_internal/build_env/installer.py b/src/kpip/_internal/build_env/installer.py
+index 903f7a7..2b5e46c 100644
+--- a/src/kpip/_internal/build_env/installer.py
++++ b/src/kpip/_internal/build_env/installer.py
+@@ -1,7 +1,6 @@
+ from __future__ import annotations
+ 
+ import logging
+-import sys
+ import textwrap
+ from collections.abc import Iterable, Sequence
+ from contextlib import AbstractContextManager as ContextManager
+@@ -9,6 +8,8 @@ from contextlib import nullcontext
+ from io import StringIO
+ from typing import TYPE_CHECKING
+ 
++from kpip._internal.interpreters import build_interpreter
++from kpip._internal.utils.compiled import own_command
+ from kpip._internal.build_env.base import Prefix
+ from kpip._internal.cli.spinners import open_rich_spinner, open_spinner
+ from kpip._internal.exceptions import (
+@@ -19,7 +20,6 @@ from kpip._internal.exceptions import (
+ )
+ from kpip._internal.metadata import get_environment
+ from kpip._internal.utils.logging import VERBOSE, capture_logging
+-from kpip._internal.utils.misc import get_runnable_pip
+ from kpip._internal.utils.subprocess import call_subprocess
+ from kpip._internal.utils.temp_dir import TempDirectory
+ 
+@@ -56,8 +56,12 @@ class SubprocessBuildEnvironmentInstaller:
+         for_req: InstallRequirement | None,
+     ) -> None:
+         finder = self.finder
++        # kpip itself, for the Python the environment is for.
++        python = prefix.venv_executable or build_interpreter().executable
+         args: list[str] = [
+-            get_runnable_pip(),
++            *own_command(),
++            "--python",
++            python,
+             "install",
+             # HACK: --prefix shouldn't be necessary for venv environments, but
+             # we set it anyway so if it's set via an envvar or configuration
+@@ -76,10 +80,7 @@ class SubprocessBuildEnvironmentInstaller:
+             "--target",
+             "",
+         ]
+-        if prefix.venv_executable:
+-            args.insert(0, prefix.venv_executable)
+-        else:
+-            args.insert(0, sys.executable)
++        if not prefix.venv_executable:
+             args.append("--ignore-installed")
+ 
+         if logger.getEffectiveLevel() <= logging.DEBUG:
+diff --git a/src/kpip/_internal/build_env/noop.py b/src/kpip/_internal/build_env/noop.py
+index 25a5813..57d469d 100644
+--- a/src/kpip/_internal/build_env/noop.py
++++ b/src/kpip/_internal/build_env/noop.py
+@@ -1,10 +1,10 @@
+ from __future__ import annotations
+ 
+-import sys
+ from collections.abc import Iterable
+ from types import TracebackType
+ from typing import TYPE_CHECKING
+ 
++from kpip._internal.interpreters import build_interpreter
+ from kpip._internal.build_env.base import BuildEnvironment
+ 
+ if TYPE_CHECKING:
+@@ -15,7 +15,12 @@ class NoOpBuildEnvironment(BuildEnvironment):
+     """A no-op drop-in replacement for BuildEnvironment"""
+ 
+     def __init__(self) -> None:
+-        self.python_executable = sys.executable
++        pass
++
++    @property  # type: ignore[override]
++    def python_executable(self) -> str:
++        # Asked only when something is built: every requirement has one.
++        return build_interpreter().executable
+ 
+     def __enter__(self) -> None:
+         pass
+diff --git a/src/kpip/_internal/build_env/venv.py b/src/kpip/_internal/build_env/venv.py
+index 0157cef..54e9b36 100644
+--- a/src/kpip/_internal/build_env/venv.py
++++ b/src/kpip/_internal/build_env/venv.py
+@@ -1,12 +1,14 @@
+ from __future__ import annotations
+ 
+ import os
++import subprocess
+ import sys
+ import sysconfig
+ from collections.abc import Iterable
+ from types import TracebackType
+ from typing import TYPE_CHECKING
+ 
++from kpip._internal.interpreters import Interpreter, build_interpreter, identify
+ from kpip._internal.build_env.base import (
+     BuildEnvironment,
+     BuildEnvironmentInstaller,
+@@ -31,6 +33,9 @@ class VenvBuildEnvironment(BuildEnvironment):
+     """A venv-based build environment."""
+ 
+     def __init__(self, installer: BuildEnvironmentInstaller) -> None:
++        if not build_interpreter().is_own:
++            self._create_with(build_interpreter(), installer)
++            return
+         # We defer this import because certain distributions of Python do not include
+         # a functional venv out of the box.
+         try:
+@@ -102,6 +107,35 @@ class VenvBuildEnvironment(BuildEnvironment):
+                 f"Python executable failed to copy to {self.python_executable}"
+             )
+ 
++    def _create_with(
++        self, interpreter: Interpreter, installer: BuildEnvironmentInstaller
++    ) -> None:
++        """Create the environment by running ``interpreter``: this process's
++        venv module would make one of its own Python."""
++        if not interpreter.has_venv:
++            raise VenvImportError
++        self._env_path = TempDirectory(
++            kind=tempdir_kinds.BUILD_ENV, globally_managed=True
++        ).path
++        command = [interpreter.executable, "-m", "venv", "--without-pip"]
++        if os.name != "nt":
++            command.append("--symlinks")
++        try:
++            subprocess.run(
++                [*command, self._env_path], check=True, capture_output=True
++            )
++        except (OSError, subprocess.CalledProcessError) as e:
++            raise VenvCreationError(str(e))
++        scheme = "venv" if "venv" in interpreter.scheme_names() else "posix_prefix"
++        paths = interpreter.get_paths(
++            scheme, {"base": self._env_path, "platbase": self._env_path}
++        )
++        self.lib_dirs = [paths["purelib"]]
++        self._bin_path = paths["scripts"]
++        self.python_executable = identify(self._env_path)
++        self._save_env: dict[str, str | None] = {}
++        self._installer = installer
++
+     def __enter__(self) -> None:
+         # We want backend calls to be able to use binaries installed as if this
+         # virtual environment was "activated".
+diff --git a/src/kpip/_internal/build_env/virtual.py b/src/kpip/_internal/build_env/virtual.py
+index bb0fcba..4fe0888 100644
+--- a/src/kpip/_internal/build_env/virtual.py
++++ b/src/kpip/_internal/build_env/virtual.py
+@@ -1,14 +1,13 @@
+ from __future__ import annotations
+ 
+ import os
+-import site
+-import sys
+ import textwrap
+ from collections import OrderedDict
+ from collections.abc import Iterable
+ from types import TracebackType
+ from typing import TYPE_CHECKING
+ 
++from kpip._internal.interpreters import build_interpreter
+ from kpip._internal.build_env.base import (
+     BuildEnvironment,
+     BuildEnvironmentInstaller,
+@@ -21,8 +20,9 @@ if TYPE_CHECKING:
+ 
+ 
+ def get_system_sitepackages() -> set[str]:
+-    """Get system site packages, as a normalized set of strings."""
+-    system_sites = site.getsitepackages()
++    """Get the build interpreter's system site packages, as a normalized set
++    of strings."""
++    system_sites = build_interpreter().system_sites
+     return {os.path.normcase(path) for path in system_sites}
+ 
+ 
+@@ -35,7 +35,7 @@ class VirtualBuildEnvironment(BuildEnvironment):
+     """
+ 
+     def __init__(self, installer: BuildEnvironmentInstaller) -> None:
+-        self.python_executable = sys.executable
++        self.python_executable = build_interpreter().executable
+         self.installer = installer
+         temp_dir = TempDirectory(kind=tempdir_kinds.BUILD_ENV, globally_managed=True)
+ 
+diff --git a/src/kpip/_internal/interpreters/__init__.py b/src/kpip/_internal/interpreters/__init__.py
+index 1821c13..c0b36cf 100644
+--- a/src/kpip/_internal/interpreters/__init__.py
++++ b/src/kpip/_internal/interpreters/__init__.py
+@@ -41,6 +41,7 @@ from kpip._vendor.packaging import markers
+ __all__ = [
+     "Interpreter",
+     "NoTargetInterpreter",
++    "build_interpreter",
+     "ProbedInterpreter",
+     "configure",
+     "identify",
+@@ -141,6 +142,19 @@ def installing_interpreter() -> Interpreter:
+     return interpreter
+ 
+ 
++def build_interpreter() -> Interpreter:
++    """The Python build backends run with: the target interpreter, which
++    what is built is for."""
++    interpreter = target_interpreter()
++    if interpreter.is_bundled:
++        raise NoTargetInterpreter(
++            "No Python interpreter to build with: building a source "
++            "distribution runs its build backend with the Python it is built "
++            "for. Activate an environment, or name a Python with --python."
++        )
++    return interpreter
++
++
+ def _find_target() -> Interpreter:
+     if _requested:
+         return interpreter_at(identify(_requested))
+diff --git a/src/kpip/_internal/interpreters/facts.py b/src/kpip/_internal/interpreters/facts.py
+index 7fd4e9c..fa1655d 100644
+--- a/src/kpip/_internal/interpreters/facts.py
++++ b/src/kpip/_internal/interpreters/facts.py
+@@ -109,6 +109,11 @@ class Interpreter:
+         """The ABI tags it supports, most preferred first."""
+         raise NotImplementedError
+ 
++    @property
++    def system_sites(self) -> list[str]:
++        """``site.getsitepackages()``: its system site directories."""
++        raise NotImplementedError
++
+     def scheme_names(self) -> tuple[str, ...]:
+         raise NotImplementedError
+ 
+@@ -224,6 +229,12 @@ class OwnInterpreter(Interpreter):
+             return tags._cpython_abis(sys.version_info[:2])
+         return tags._generic_abi()
+ 
++    @property
++    def system_sites(self) -> list[str]:
++        import site
++
++        return site.getsitepackages()
++
+     def scheme_names(self) -> tuple[str, ...]:
+         return sysconfig.get_scheme_names()
+ 
+@@ -297,6 +308,10 @@ class ProbedInterpreter(Interpreter):
+     def abis(self) -> list[str]:
+         return list(self.facts["abis"])
+ 
++    @property
++    def system_sites(self) -> list[str]:
++        return list(self.facts["site_packages"])
++
+     def scheme_names(self) -> tuple[str, ...]:
+         return tuple(sorted(self.facts["schemes"]))
+ 
+diff --git a/src/kpip/_internal/interpreters/probe.py b/src/kpip/_internal/interpreters/probe.py
+index 026ec88..116cca8 100644
+--- a/src/kpip/_internal/interpreters/probe.py
++++ b/src/kpip/_internal/interpreters/probe.py
+@@ -105,6 +105,7 @@ def facts():
+         "platform": sysconfig.get_platform(),
+         "platlibdir": getattr(sys, "platlibdir", "lib"),
+         "pointer_bits": struct.calcsize("P") * 8,
++        "site_packages": site.getsitepackages(),
+         "user_site": site.getusersitepackages(),
+         "user_base": site.getuserbase(),
+         "user_site_enabled": bool(site.ENABLE_USER_SITE),
+diff --git a/src/kpip/_internal/utils/compiled.py b/src/kpip/_internal/utils/compiled.py
+index dd2682f..8a72ac7 100644
+--- a/src/kpip/_internal/utils/compiled.py
++++ b/src/kpip/_internal/utils/compiled.py
+@@ -18,8 +18,11 @@ def is_compiled() -> bool:
+ 
+ 
+ def own_command() -> list[str]:
+-    """The command that runs this kpip again."""
++    """The command that runs this kpip again: from source, this copy of it,
++    whatever else is importable as kpip."""
+     compiled = globals().get("__compiled__")
+     if compiled is None:
+-        return [sys.executable, "-m", "kpip"]
++        from kpip._internal.utils.misc import get_runnable_pip
++
++        return [sys.executable, get_runnable_pip()]
+     return [compiled.process_exe]
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index d0c0fe6..b5e30b0 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -435,3 +435,15 @@ def test_bytecode_is_written_by_the_target(
+     pyc = Path(compiled[0][1])
+     assert pyc.is_file()
+     assert pyc.read_bytes()[:4] == other_python.magic
++
++
++def test_building_needs_a_python_but_requirements_do_not(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.build_env import NoOpBuildEnvironment
++
++    compiled(monkeypatch)
++    monkeypatch.setenv("PATH", str(tmp_path))
++    build_env = NoOpBuildEnvironment()
++    with pytest.raises(interpreters.NoTargetInterpreter, match="to build with"):
++        build_env.python_executable

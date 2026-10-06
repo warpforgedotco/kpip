@@ -1,0 +1,742 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:38:46 -0500
+Subject: [PATCH] Install where the target interpreter installs
+
+Install schemes, site-packages, the user site and whether it is enabled,
+virtual environment detection, EXTERNALLY-MANAGED, which distributions
+are local, the uninstall guards and the site configuration file now come
+from the target interpreter rather than from this process's sys, site and
+sysconfig. For kpip's own interpreter the code paths are pip's, unchanged;
+another Python is asked through its preferred schemes, which every Python
+kpip installs for has. The default --src directory is found when used,
+since which Python a command installs for is not known before it starts.
+---
+ src/kpip/_internal/cli/cmdoptions.py       |  6 ++-
+ src/kpip/_internal/cli/req_command.py      |  3 +-
+ src/kpip/_internal/commands/install.py     |  6 +--
+ src/kpip/_internal/configuration.py        |  4 +-
+ src/kpip/_internal/exceptions/__init__.py  | 13 +++--
+ src/kpip/_internal/interpreters/facts.py   |  2 +-
+ src/kpip/_internal/locations/__init__.py   | 14 +++--
+ src/kpip/_internal/locations/_sysconfig.py | 61 +++++++++++++++++-----
+ src/kpip/_internal/locations/base.py       | 23 ++++++--
+ src/kpip/_internal/metadata/base.py        | 24 +++++++--
+ src/kpip/_internal/req/req_uninstall.py    | 24 +++++++--
+ src/kpip/_internal/utils/egg_link.py       | 23 +++++---
+ src/kpip/_internal/utils/misc.py           |  9 ++--
+ src/kpip/_internal/utils/virtualenv.py     | 13 +++--
+ tests/unit/test_interpreters.py            | 48 +++++++++++++++++
+ 15 files changed, 213 insertions(+), 60 deletions(-)
+
+diff --git a/src/kpip/_internal/cli/cmdoptions.py b/src/kpip/_internal/cli/cmdoptions.py
+index b26b38d..13111c0 100644
+--- a/src/kpip/_internal/cli/cmdoptions.py
++++ b/src/kpip/_internal/cli/cmdoptions.py
+@@ -27,7 +27,7 @@ from kpip._vendor.packaging.utils import canonicalize_name
+ 
+ from kpip._internal.cli.parser import ConfigOptionParser
+ from kpip._internal.exceptions import CommandError
+-from kpip._internal.locations import USER_CACHE_DIR, get_src_prefix
++from kpip._internal.locations import USER_CACHE_DIR
+ from kpip._internal.models.format_control import FormatControl
+ from kpip._internal.models.index import PyPI
+ from kpip._internal.models.release_control import ReleaseControl
+@@ -646,7 +646,9 @@ src: Callable[..., Option] = partial(
+     dest="src_dir",
+     type="path",
+     metavar="dir",
+-    default=get_src_prefix(),
++    # Found when it is used: before the command starts, which Python it
++    # installs for is not known.
++    default=None,
+     action="callback",
+     callback=_handle_src,
+     help="Directory to check out editable projects into. "
+diff --git a/src/kpip/_internal/cli/req_command.py b/src/kpip/_internal/cli/req_command.py
+index 0ffae50..dacdcff 100644
+--- a/src/kpip/_internal/cli/req_command.py
++++ b/src/kpip/_internal/cli/req_command.py
+@@ -14,6 +14,7 @@ from functools import partial
+ from optparse import Values
+ from typing import Any, TypeVar
+ 
++from kpip._internal.locations import get_src_prefix
+ from kpip._internal.build_env import (
+     BuildEnvironmentInstaller,
+     BuildIsolationMode,
+@@ -230,7 +231,7 @@ class RequirementCommand(IndexGroupCommand):
+ 
+         return RequirementPreparer(
+             build_dir=temp_build_dir_path,
+-            src_dir=options.src_dir,
++            src_dir=options.src_dir or get_src_prefix(),
+             download_dir=download_dir,
+             build_isolation=build_isolation,
+             build_isolation_installer=env_installer,
+diff --git a/src/kpip/_internal/commands/install.py b/src/kpip/_internal/commands/install.py
+index 31da26f..516c9af 100644
+--- a/src/kpip/_internal/commands/install.py
++++ b/src/kpip/_internal/commands/install.py
+@@ -6,7 +6,6 @@ import json
+ import operator
+ import os
+ import shutil
+-import site
+ import sys
+ from collections.abc import Iterator
+ from optparse import SUPPRESS_HELP, Values
+@@ -38,6 +37,7 @@ from kpip._internal.exceptions import (
+     InstallationError,
+     InstallWheelBuildError,
+ )
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.locations import get_scheme
+ from kpip._internal.metadata import BaseEnvironment, get_environment
+ from kpip._internal.models.installation_report import InstallationReport
+@@ -802,7 +802,7 @@ def decide_user_install(
+             )
+         # Catch all remaining cases which honour the site.ENABLE_USER_SITE
+         # value, such as a plain Python installation (e.g. no virtualenv).
+-        if not site.ENABLE_USER_SITE:
++        if not target_interpreter().user_site_enabled:
+             raise InstallationError(
+                 "Can not perform a '--user' install. User site-packages "
+                 "are disabled for this Python."
+@@ -819,7 +819,7 @@ def decide_user_install(
+         return False
+ 
+     # If user installs are not enabled, choose a non-user install
+-    if not site.ENABLE_USER_SITE:
++    if not target_interpreter().user_site_enabled:
+         logger.debug("Non-user install because user site-packages disabled")
+         return False
+ 
+diff --git a/src/kpip/_internal/configuration.py b/src/kpip/_internal/configuration.py
+index 316d560..624d466 100644
+--- a/src/kpip/_internal/configuration.py
++++ b/src/kpip/_internal/configuration.py
+@@ -15,7 +15,6 @@ from __future__ import annotations
+ 
+ import configparser
+ import os
+-import sys
+ from collections.abc import Iterable
+ from typing import Any, NewType
+ 
+@@ -23,6 +22,7 @@ from kpip._internal.exceptions import (
+     ConfigurationError,
+     ConfigurationFileCouldNotBeLoaded,
+ )
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.utils import appdirs
+ from kpip._internal.utils.compat import WINDOWS, get_locale_encoding
+ from kpip._internal.utils.logging import getLogger
+@@ -71,7 +71,7 @@ def get_configuration_files() -> dict[Kind, list[str]]:
+         os.path.join(path, CONFIG_BASENAME) for path in appdirs.site_config_dirs("pip")
+     ]
+ 
+-    site_config_file = os.path.join(sys.prefix, CONFIG_BASENAME)
++    site_config_file = os.path.join(target_interpreter().prefix, CONFIG_BASENAME)
+     legacy_config_file = os.path.join(
+         os.path.expanduser("~"),
+         "pip" if WINDOWS else ".pip",
+diff --git a/src/kpip/_internal/exceptions/__init__.py b/src/kpip/_internal/exceptions/__init__.py
+index 35fc38e..ee799ea 100644
+--- a/src/kpip/_internal/exceptions/__init__.py
++++ b/src/kpip/_internal/exceptions/__init__.py
+@@ -20,7 +20,6 @@ import contextlib
+ import locale
+ import logging
+ import pathlib
+-import sys
+ from collections.abc import Iterator
+ from typing import TYPE_CHECKING
+ 
+@@ -306,8 +305,8 @@ class ConfigurationFileCouldNotBeLoaded(ConfigurationError):
+         return f"Configuration file {self.reason}{message_part}"
+ 
+ 
+-_DEFAULT_EXTERNALLY_MANAGED_ERROR = f"""\
+-The Python environment under {sys.prefix} is managed externally, and may not be
++_DEFAULT_EXTERNALLY_MANAGED_ERROR = """\
++The Python environment under {prefix} is managed externally, and may not be
+ manipulated by the user. Please use specific tooling from the distributor of
+ the Python installation to interact with this environment instead.
+ """
+@@ -327,7 +326,13 @@ class ExternallyManagedEnvironment(DiagnosticPipError):
+ 
+     def __init__(self, error: str | None) -> None:
+         if error is None:
+-            context = Text(_DEFAULT_EXTERNALLY_MANAGED_ERROR)
++            from kpip._internal.interpreters import target_interpreter
++
++            context = Text(
++                _DEFAULT_EXTERNALLY_MANAGED_ERROR.format(
++                    prefix=target_interpreter().prefix
++                )
++            )
+         else:
+             context = Text(error)
+         super().__init__(
+diff --git a/src/kpip/_internal/interpreters/facts.py b/src/kpip/_internal/interpreters/facts.py
+index 0d2b6c2..26c224a 100644
+--- a/src/kpip/_internal/interpreters/facts.py
++++ b/src/kpip/_internal/interpreters/facts.py
+@@ -135,7 +135,7 @@ class OwnInterpreter(Interpreter):
+ 
+     executable = property(lambda self: sys.executable)  # type: ignore[assignment]
+     prefix = property(lambda self: sys.prefix)  # type: ignore[assignment]
+-    base_prefix = property(lambda self: sys.base_prefix)  # type: ignore[assignment]
++    base_prefix = property(lambda self: getattr(sys, "base_prefix", sys.prefix))  # type: ignore[assignment]
+     exec_prefix = property(lambda self: sys.exec_prefix)  # type: ignore[assignment]
+     version = property(lambda self: tuple(sys.version_info[:3]))  # type: ignore[assignment]
+     implementation = property(lambda self: sys.implementation.name)  # type: ignore[assignment]
+diff --git a/src/kpip/_internal/locations/__init__.py b/src/kpip/_internal/locations/__init__.py
+index 4aad279..2ce880b 100644
+--- a/src/kpip/_internal/locations/__init__.py
++++ b/src/kpip/_internal/locations/__init__.py
+@@ -7,6 +7,7 @@ import pathlib
+ import sys
+ import sysconfig
+ 
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.models.scheme import SCHEME_KEYS, Scheme
+ from kpip._internal.utils.compat import WINDOWS
+ from kpip._internal.utils.deprecation import deprecated
+@@ -16,7 +17,9 @@ from . import _sysconfig
+ from .base import (
+     USER_CACHE_DIR,
+     get_major_minor_version,
++    get_site_packages,
+     get_src_prefix,
++    get_user_site,
+     is_osx_framework,
+     site_packages,
+     user_site,
+@@ -30,7 +33,9 @@ __all__ = [
+     "get_platlib",
+     "get_purelib",
+     "get_scheme",
++    "get_site_packages",
+     "get_src_prefix",
++    "get_user_site",
+     "site_packages",
+     "user_site",
+ ]
+@@ -226,7 +231,8 @@ def get_scheme(
+         isolated=isolated,
+         prefix=prefix,
+     )
+-    if _USE_SYSCONFIG:
++    # Another Python's distutils cannot be asked; its sysconfig answers.
++    if _USE_SYSCONFIG or not target_interpreter().is_own:
+         return new
+ 
+     old = _distutils.get_scheme(
+@@ -378,7 +384,7 @@ def get_scheme(
+ 
+ def get_bin_prefix() -> str:
+     new = _sysconfig.get_bin_prefix()
+-    if _USE_SYSCONFIG:
++    if _USE_SYSCONFIG or not target_interpreter().is_own:
+         return new
+ 
+     old = _distutils.get_bin_prefix()
+@@ -411,7 +417,7 @@ def _looks_like_deb_system_dist_packages(value: str) -> bool:
+ def get_purelib() -> str:
+     """Return the default pure-Python lib location."""
+     new = _sysconfig.get_purelib()
+-    if _USE_SYSCONFIG:
++    if _USE_SYSCONFIG or not target_interpreter().is_own:
+         return new
+ 
+     old = _distutils.get_purelib()
+@@ -425,7 +431,7 @@ def get_purelib() -> str:
+ def get_platlib() -> str:
+     """Return the default platform-shared lib location."""
+     new = _sysconfig.get_platlib()
+-    if _USE_SYSCONFIG:
++    if _USE_SYSCONFIG or not target_interpreter().is_own:
+         return new
+ 
+     from . import _distutils
+diff --git a/src/kpip/_internal/locations/_sysconfig.py b/src/kpip/_internal/locations/_sysconfig.py
+index 5d6792a..670ca7f 100644
+--- a/src/kpip/_internal/locations/_sysconfig.py
++++ b/src/kpip/_internal/locations/_sysconfig.py
+@@ -7,10 +7,11 @@ import sysconfig
+ from collections.abc import Callable
+ 
+ from kpip._internal.exceptions import InvalidSchemeCombination, UserInstallationInvalid
++from kpip._internal.interpreters import Interpreter, target_interpreter
+ from kpip._internal.models.scheme import SCHEME_KEYS, Scheme
+ from kpip._internal.utils.virtualenv import running_under_virtualenv
+ 
+-from .base import change_root, get_major_minor_version, is_osx_framework
++from .base import change_root, is_osx_framework
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -151,12 +152,13 @@ def get_scheme(
+     if home and prefix:
+         raise InvalidSchemeCombination("--home", "--prefix")
+ 
++    interpreter = target_interpreter()
+     if home is not None:
+-        scheme_name = _infer_home()
++        scheme_name = _target_scheme(interpreter, "home", _infer_home)
+     elif user:
+-        scheme_name = _infer_user()
++        scheme_name = _target_scheme(interpreter, "user", _infer_user)
+     else:
+-        scheme_name = _infer_prefix()
++        scheme_name = _target_scheme(interpreter, "prefix", _infer_prefix)
+ 
+     # Special case: When installing into a custom prefix, use posix_prefix
+     # instead of posix_local because it should *only* be used to redirecting
+@@ -172,14 +174,19 @@ def get_scheme(
+     if prefix is not None and scheme_name == "osx_framework_library":
+         scheme_name = "posix_prefix"
+ 
++    home_keys = _HOME_KEYS
++    if not interpreter.is_own:
++        home_keys = _HOME_KEYS[:6]
++        if interpreter.get_config_var("userbase") is not None:
++            home_keys = [*home_keys, "userbase"]
+     if home is not None:
+-        variables = {k: home for k in _HOME_KEYS}
++        variables = {k: home for k in home_keys}
+     elif prefix is not None:
+-        variables = {k: prefix for k in _HOME_KEYS}
++        variables = {k: prefix for k in home_keys}
+     else:
+         variables = {}
+ 
+-    paths = sysconfig.get_paths(scheme=scheme_name, vars=variables)
++    paths = interpreter.get_paths(scheme_name, variables)
+ 
+     # Logic here is very arbitrary, we're doing it for compatibility, don't ask.
+     # 1. Pip historically uses a special header path in virtual environments.
+@@ -188,10 +195,10 @@ def get_scheme(
+     #    pip's historical header path logic (see point 1) did not do this.
+     if running_under_virtualenv():
+         if user:
+-            base = variables.get("userbase", sys.prefix)
++            base = variables.get("userbase", interpreter.prefix)
+         else:
+-            base = variables.get("base", sys.prefix)
+-        python_xy = f"python{get_major_minor_version()}"
++            base = variables.get("base", interpreter.prefix)
++        python_xy = f"python{interpreter.major_minor}"
+         paths["include"] = os.path.join(base, "include", "site", python_xy)
+     elif not dist_name:
+         dist_name = "UNKNOWN"
+@@ -211,16 +218,42 @@ def get_scheme(
+     return scheme
+ 
+ 
++def _target_scheme(
++    interpreter: Interpreter, key: str, infer: Callable[[], str]
++) -> str:
++    """The scheme ``key`` installs use, as the target interpreter prefers.
++
++    Every Python kpip installs for into another process has
++    ``sysconfig.get_preferred_scheme``, new in 3.10.
++    """
++    if interpreter.is_own:
++        return infer()
++    try:
++        return interpreter.preferred_scheme(key)
++    except KeyError:
++        if key == "user":
++            raise UserInstallationInvalid() from None
++        raise
++
++
++def _default_paths() -> dict[str, str]:
++    interpreter = target_interpreter()
++    if interpreter.is_own:
++        return sysconfig.get_paths()
++    return interpreter.get_paths(interpreter.preferred_scheme("prefix"))
++
++
+ def get_bin_prefix() -> str:
+     # Forcing to use /usr/local/bin for standard macOS framework installs.
+-    if sys.platform[:6] == "darwin" and sys.prefix[:16] == "/System/Library/":
++    prefix = target_interpreter().prefix
++    if sys.platform[:6] == "darwin" and prefix[:16] == "/System/Library/":
+         return "/usr/local/bin"
+-    return sysconfig.get_paths()["scripts"]
++    return _default_paths()["scripts"]
+ 
+ 
+ def get_purelib() -> str:
+-    return sysconfig.get_paths()["purelib"]
++    return _default_paths()["purelib"]
+ 
+ 
+ def get_platlib() -> str:
+-    return sysconfig.get_paths()["platlib"]
++    return _default_paths()["platlib"]
+diff --git a/src/kpip/_internal/locations/base.py b/src/kpip/_internal/locations/base.py
+index e36b40b..3d89c29 100644
+--- a/src/kpip/_internal/locations/base.py
++++ b/src/kpip/_internal/locations/base.py
+@@ -7,6 +7,7 @@ import sys
+ import sysconfig
+ 
+ from kpip._internal.exceptions import InstallationError
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.utils import appdirs
+ from kpip._internal.utils.virtualenv import running_under_virtualenv
+ 
+@@ -19,10 +20,10 @@ site_packages: str = sysconfig.get_path("purelib")
+ 
+ def get_major_minor_version() -> str:
+     """
+-    Return the major-minor version of the current Python as a string, e.g.
++    Return the major-minor version of the target Python as a string, e.g.
+     "3.7" or "3.10".
+     """
+-    return "{}.{}".format(*sys.version_info)
++    return target_interpreter().major_minor
+ 
+ 
+ def change_root(new_root: str, pathname: str) -> str:
+@@ -55,7 +56,7 @@ def change_root(new_root: str, pathname: str) -> str:
+ 
+ def get_src_prefix() -> str:
+     if running_under_virtualenv():
+-        src_prefix = os.path.join(sys.prefix, "src")
++        src_prefix = os.path.join(target_interpreter().prefix, "src")
+     else:
+         # FIXME: keep src in cwd for now (it is not a temporary folder)
+         try:
+@@ -77,6 +78,22 @@ except AttributeError:
+     user_site = site.USER_SITE
+ 
+ 
++def get_site_packages() -> str:
++    """The target interpreter's site-packages (``site_packages``)."""
++    interpreter = target_interpreter()
++    if interpreter.is_own:
++        return site_packages
++    return interpreter.get_paths(interpreter.preferred_scheme("prefix"))["purelib"]
++
++
++def get_user_site() -> str | None:
++    """The target interpreter's user site (``user_site``)."""
++    interpreter = target_interpreter()
++    if interpreter.is_own:
++        return user_site
++    return interpreter.user_site
++
++
+ @functools.cache
+ def is_osx_framework() -> bool:
+     return bool(sysconfig.get_config_var("PYTHONFRAMEWORK"))
+diff --git a/src/kpip/_internal/metadata/base.py b/src/kpip/_internal/metadata/base.py
+index 30eef28..1e79c7f 100644
+--- a/src/kpip/_internal/metadata/base.py
++++ b/src/kpip/_internal/metadata/base.py
+@@ -22,7 +22,13 @@ from kpip._vendor.packaging.utils import NormalizedName, canonicalize_name
+ from kpip._vendor.packaging.version import Version
+ 
+ from kpip._internal.exceptions import NoneMetadataError
+-from kpip._internal.locations import site_packages, user_site
++from kpip._internal.interpreters import target_interpreter
++from kpip._internal.locations import (
++    get_site_packages,
++    get_user_site,
++    site_packages,
++    user_site,
++)
+ from kpip._internal.models.direct_url import (
+     DIRECT_URL_METADATA_NAME,
+     DirectUrl,
+@@ -347,15 +353,23 @@ class BaseDistribution(Protocol):
+ 
+     @property
+     def in_usersite(self) -> bool:
+-        if self.installed_location is None or user_site is None:
++        target_user_site = user_site
++        if not target_interpreter().is_own:
++            target_user_site = get_user_site()
++        if self.installed_location is None or target_user_site is None:
+             return False
+-        return self.installed_location.startswith(normalize_path(user_site))
++        return self.installed_location.startswith(normalize_path(target_user_site))
+ 
+     @property
+     def in_site_packages(self) -> bool:
+-        if self.installed_location is None or site_packages is None:
++        target_site_packages = site_packages
++        if not target_interpreter().is_own:
++            target_site_packages = get_site_packages()
++        if self.installed_location is None or target_site_packages is None:
+             return False
+-        return self.installed_location.startswith(normalize_path(site_packages))
++        return self.installed_location.startswith(
++            normalize_path(target_site_packages)
++        )
+ 
+     def is_file(self, path: InfoPath) -> bool:
+         """Check whether an entry in the info directory is a file."""
+diff --git a/src/kpip/_internal/req/req_uninstall.py b/src/kpip/_internal/req/req_uninstall.py
+index 087b243..67bad47 100644
+--- a/src/kpip/_internal/req/req_uninstall.py
++++ b/src/kpip/_internal/req/req_uninstall.py
+@@ -2,13 +2,13 @@ from __future__ import annotations
+ 
+ import functools
+ import os
+-import sys
+ import sysconfig
+ from collections.abc import Callable, Generator, Iterable
+ from importlib.util import cache_from_source
+ from typing import Any
+ 
+ from kpip._internal.exceptions import LegacyDistutilsInstall, UninstallMissingRecord
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.locations import get_bin_prefix, get_bin_user
+ from kpip._internal.metadata import BaseDistribution
+ from kpip._internal.utils.compat import WINDOWS
+@@ -21,6 +21,15 @@ from kpip._internal.utils.virtualenv import running_under_virtualenv
+ logger = getLogger(__name__)
+ 
+ 
++
++def _target_path(name: str) -> str:
++    """``sysconfig.get_path(name)``, as the target interpreter answers it."""
++    interpreter = target_interpreter()
++    if interpreter.is_own:
++        return sysconfig.get_path(name)
++    return interpreter.get_paths(interpreter.preferred_scheme("prefix"))[name]
++
++
+ def _script_names(
+     bin_dir: str, script_name: str, is_gui: bool
+ ) -> Generator[str, None, None]:
+@@ -321,10 +330,12 @@ class UninstallPathSet:
+         remove/modify, False otherwise.
+ 
+         """
+-        # aka is_local, but caching normalized sys.prefix
++        # aka is_local, but caching the normalized prefix
+         if not running_under_virtualenv():
+             return True
+-        return path.startswith(self._normalize_path_cached(sys.prefix))
++        return path.startswith(
++            self._normalize_path_cached(target_interpreter().prefix)
++        )
+ 
+     def add(self, path: str) -> None:
+         head, tail = os.path.split(path)
+@@ -445,13 +456,16 @@ class UninstallPathSet:
+                 "Not uninstalling %s at %s, outside environment %s",
+                 dist.canonical_name,
+                 normalized_dist_location,
+-                sys.prefix,
++                target_interpreter().prefix,
+             )
+             return cls(dist)
+ 
+         if normalized_dist_location in {
+             p
+-            for p in {sysconfig.get_path("stdlib"), sysconfig.get_path("platstdlib")}
++            for p in {
++                target_interpreter().stdlib,
++                _target_path("platstdlib"),
++            }
+             if p
+         }:
+             logger.info(
+diff --git a/src/kpip/_internal/utils/egg_link.py b/src/kpip/_internal/utils/egg_link.py
+index 474992d..97c8487 100644
+--- a/src/kpip/_internal/utils/egg_link.py
++++ b/src/kpip/_internal/utils/egg_link.py
+@@ -4,7 +4,13 @@ import os
+ import re
+ import sys
+ 
+-from kpip._internal.locations import site_packages, user_site
++from kpip._internal.interpreters import target_interpreter
++from kpip._internal.locations import (
++    get_site_packages,
++    get_user_site,
++    site_packages,
++    user_site,
++)
+ from kpip._internal.utils.virtualenv import (
+     running_under_virtualenv,
+     virtualenv_no_global,
+@@ -62,15 +68,18 @@ def egg_link_path_from_location(raw_name: str) -> str | None:
+ 
+     This method will just return the first one found.
+     """
++    target_site_packages, target_user_site = site_packages, user_site
++    if not target_interpreter().is_own:
++        target_site_packages, target_user_site = get_site_packages(), get_user_site()
+     sites: list[str] = []
+     if running_under_virtualenv():
+-        sites.append(site_packages)
+-        if not virtualenv_no_global() and user_site:
+-            sites.append(user_site)
++        sites.append(target_site_packages)
++        if not virtualenv_no_global() and target_user_site:
++            sites.append(target_user_site)
+     else:
+-        if user_site:
+-            sites.append(user_site)
+-        sites.append(site_packages)
++        if target_user_site:
++            sites.append(target_user_site)
++        sites.append(target_site_packages)
+ 
+     egg_link_names = _egg_link_names(raw_name)
+     for site in sites:
+diff --git a/src/kpip/_internal/utils/misc.py b/src/kpip/_internal/utils/misc.py
+index 5e715cc..2d71df5 100644
+--- a/src/kpip/_internal/utils/misc.py
++++ b/src/kpip/_internal/utils/misc.py
+@@ -10,7 +10,6 @@ import posixpath
+ import shutil
+ import stat
+ import sys
+-import sysconfig
+ import urllib.parse
+ from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
+ from dataclasses import dataclass
+@@ -38,6 +37,7 @@ from kpip._internal.exceptions import (
+     CommandError,
+     ExternallyManagedEnvironment,
+ )
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.locations import get_major_minor_version
+ from kpip._internal.utils.compat import WINDOWS
+ from kpip._internal.utils.retry import retry
+@@ -401,7 +401,8 @@ def renames(old: str, new: str) -> None:
+ 
+ def is_local(path: str) -> bool:
+     """
+-    Return True if path is within sys.prefix, if we're running in a virtualenv.
++    Return True if path is within the target interpreter's prefix, if it is a
++    virtualenv's.
+ 
+     If we're not in a virtualenv, all paths are considered "local."
+ 
+@@ -410,7 +411,7 @@ def is_local(path: str) -> bool:
+     """
+     if not running_under_virtualenv():
+         return True
+-    return path.startswith(normalize_path(sys.prefix))
++    return path.startswith(normalize_path(target_interpreter().prefix))
+ 
+ 
+ def write_output(msg: Any, *args: Any) -> None:
+@@ -649,7 +650,7 @@ def check_externally_managed() -> None:
+     """
+     if running_under_virtualenv():
+         return
+-    marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
++    marker = os.path.join(target_interpreter().stdlib, "EXTERNALLY-MANAGED")
+     if not os.path.isfile(marker):
+         return
+     raise ExternallyManagedEnvironment.from_config(marker)
+diff --git a/src/kpip/_internal/utils/virtualenv.py b/src/kpip/_internal/utils/virtualenv.py
+index fa94813..a6ac3d6 100644
+--- a/src/kpip/_internal/utils/virtualenv.py
++++ b/src/kpip/_internal/utils/virtualenv.py
+@@ -3,7 +3,8 @@ from __future__ import annotations
+ import logging
+ import os
+ import re
+-import sys
++
++from kpip._internal.interpreters import target_interpreter
+ 
+ logger = logging.getLogger(__name__)
+ _INCLUDE_SYSTEM_SITE_PACKAGES_REGEX = re.compile(
+@@ -12,19 +13,21 @@ _INCLUDE_SYSTEM_SITE_PACKAGES_REGEX = re.compile(
+ 
+ 
+ def running_under_virtualenv() -> bool:
+-    """Checks if sys.base_prefix and sys.prefix match.
++    """Checks if the target interpreter's base_prefix and prefix match.
+ 
+     This handles PEP 405 compliant virtual environments.
+     """
+-    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
++    interpreter = target_interpreter()
++    return interpreter.prefix != interpreter.base_prefix
+ 
+ 
+ def _get_pyvenv_cfg_lines() -> list[str] | None:
+-    """Reads {sys.prefix}/pyvenv.cfg and returns its contents as list of lines
++    """Reads {prefix}/pyvenv.cfg of the target interpreter and returns its
++    contents as list of lines
+ 
+     Returns None, if it could not read/access the file.
+     """
+-    pyvenv_cfg_file = os.path.join(sys.prefix, "pyvenv.cfg")
++    pyvenv_cfg_file = os.path.join(target_interpreter().prefix, "pyvenv.cfg")
+     try:
+         # Although PEP 405 does not specify, the built-in venv module always
+         # writes with UTF-8. (pypa/pip#8717)
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index a993d3b..cf4f49c 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -252,3 +252,51 @@ def test_the_probe_runs_under_safe_path(monkeypatch: pytest.MonkeyPatch) -> None
+         ).stdout.splitlines()
+         if entry
+     ]
++
++
++def test_installs_go_where_the_target_installs(environment: Path) -> None:
++    from kpip._internal.locations import get_scheme, get_site_packages
++    from kpip._internal.utils.virtualenv import running_under_virtualenv
++
++    interpreters.configure(str(environment), None)
++    target = interpreters.target_interpreter()
++    expected = target.get_paths(target.preferred_scheme("prefix"))
++
++    scheme = get_scheme("demo")
++    assert scheme.purelib == expected["purelib"]
++    assert scheme.scripts == expected["scripts"]
++    assert Path(scheme.headers).is_relative_to(environment)
++    assert get_site_packages() == expected["purelib"]
++    assert running_under_virtualenv()
++
++    elsewhere = get_scheme("demo", prefix="/opt/demo")
++    assert Path(elsewhere.purelib).is_relative_to("/opt/demo")
++    assert f"python{target.major_minor}" in elsewhere.purelib
++
++
++def test_externally_managed_is_the_targets(
++    environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.exceptions import ExternallyManagedEnvironment
++    from kpip._internal.utils.misc import check_externally_managed
++
++    interpreters.configure(str(environment), None)
++    target = interpreters.target_interpreter()
++    # A virtual environment never is; its base can be.
++    check_externally_managed()
++    monkeypatch.setattr(target, "base_prefix", target.prefix)
++    stdlib = tmp_path / "stdlib"
++    stdlib.mkdir()
++    (stdlib / "EXTERNALLY-MANAGED").write_text("[externally-managed]\n")
++    monkeypatch.setattr(target, "stdlib", str(stdlib))
++    with pytest.raises(ExternallyManagedEnvironment):
++        check_externally_managed()
++
++
++def test_local_means_inside_the_target_environment(environment: Path) -> None:
++    from kpip._internal.utils.misc import is_local
++
++    interpreters.configure(str(environment), None)
++    prefix = interpreters.target_interpreter().prefix
++    assert is_local(os.path.join(os.path.normcase(os.path.realpath(prefix)), "lib"))
++    assert not is_local(os.path.realpath(os.path.dirname(sys.base_prefix)))

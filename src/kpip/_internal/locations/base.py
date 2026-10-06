@@ -7,6 +7,7 @@ import sys
 import sysconfig
 
 from kpip._internal.exceptions import InstallationError
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.utils import appdirs
 from kpip._internal.utils.virtualenv import running_under_virtualenv
 
@@ -19,10 +20,10 @@ site_packages: str = sysconfig.get_path("purelib")
 
 def get_major_minor_version() -> str:
     """
-    Return the major-minor version of the current Python as a string, e.g.
+    Return the major-minor version of the target Python as a string, e.g.
     "3.7" or "3.10".
     """
-    return "{}.{}".format(*sys.version_info)
+    return target_interpreter().major_minor
 
 
 def change_root(new_root: str, pathname: str) -> str:
@@ -55,7 +56,7 @@ def change_root(new_root: str, pathname: str) -> str:
 
 def get_src_prefix() -> str:
     if running_under_virtualenv():
-        src_prefix = os.path.join(sys.prefix, "src")
+        src_prefix = os.path.join(target_interpreter().prefix, "src")
     else:
         # FIXME: keep src in cwd for now (it is not a temporary folder)
         try:
@@ -75,6 +76,22 @@ try:
     user_site: str | None = site.getusersitepackages()
 except AttributeError:
     user_site = site.USER_SITE
+
+
+def get_site_packages() -> str:
+    """The target interpreter's site-packages (``site_packages``)."""
+    interpreter = target_interpreter()
+    if interpreter.is_own:
+        return site_packages
+    return interpreter.get_paths(interpreter.preferred_scheme("prefix"))["purelib"]
+
+
+def get_user_site() -> str | None:
+    """The target interpreter's user site (``user_site``)."""
+    interpreter = target_interpreter()
+    if interpreter.is_own:
+        return user_site
+    return interpreter.user_site
 
 
 @functools.cache

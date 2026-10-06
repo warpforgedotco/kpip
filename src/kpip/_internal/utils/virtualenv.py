@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 import os
 import re
-import sys
+
+from kpip._internal.interpreters import target_interpreter
 
 logger = logging.getLogger(__name__)
 _INCLUDE_SYSTEM_SITE_PACKAGES_REGEX = re.compile(
@@ -12,19 +13,21 @@ _INCLUDE_SYSTEM_SITE_PACKAGES_REGEX = re.compile(
 
 
 def running_under_virtualenv() -> bool:
-    """Checks if sys.base_prefix and sys.prefix match.
+    """Checks if the target interpreter's base_prefix and prefix match.
 
     This handles PEP 405 compliant virtual environments.
     """
-    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    interpreter = target_interpreter()
+    return interpreter.prefix != interpreter.base_prefix
 
 
 def _get_pyvenv_cfg_lines() -> list[str] | None:
-    """Reads {sys.prefix}/pyvenv.cfg and returns its contents as list of lines
+    """Reads {prefix}/pyvenv.cfg of the target interpreter and returns its
+    contents as list of lines
 
     Returns None, if it could not read/access the file.
     """
-    pyvenv_cfg_file = os.path.join(sys.prefix, "pyvenv.cfg")
+    pyvenv_cfg_file = os.path.join(target_interpreter().prefix, "pyvenv.cfg")
     try:
         # Although PEP 405 does not specify, the built-in venv module always
         # writes with UTF-8. (pypa/pip#8717)

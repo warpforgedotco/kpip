@@ -13,7 +13,6 @@ for sub-dependencies
 from __future__ import annotations
 
 import logging
-import sys
 from collections import defaultdict
 from collections.abc import Iterable
 from itertools import chain
@@ -21,6 +20,7 @@ from itertools import chain
 from kpip._vendor.packaging import specifiers
 from kpip._vendor.packaging.requirements import Requirement
 
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.cache import WheelCache
 from kpip._internal.exceptions import (
     BestVersionAlreadyInstalled,
@@ -134,7 +134,7 @@ class Resolver(BaseResolver):
         assert upgrade_strategy in self._allowed_strategies
 
         if py_version_info is None:
-            py_version_info = sys.version_info[:3]
+            py_version_info = target_interpreter().version
         else:
             py_version_info = normalize_version_info(py_version_info)
 

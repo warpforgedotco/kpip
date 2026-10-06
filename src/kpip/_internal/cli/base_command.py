@@ -15,6 +15,7 @@ from optparse import Values
 from kpip._vendor.rich import reconfigure
 from kpip._vendor.rich import traceback as rich_traceback
 
+from kpip._internal import interpreters
 from kpip._internal.cli import cmdoptions
 from kpip._internal.cli.command_context import CommandContextMixIn
 from kpip._internal.cli.parser import ConfigOptionParser, UpdatingDefaultsHelpFormatter
@@ -212,17 +213,6 @@ class Command(CommandContextMixIn):
                 ", ".join(sorted(always_enabled_features)),
             )
 
-        # Make sure that the --python argument isn't specified after the
-        # subcommand. We can tell, because if --python was specified,
-        # we should only reach this point if we're running in the created
-        # subprocess, which has the _PIP_RUNNING_IN_SUBPROCESS environment
-        # variable set.
-        if options.python and "_PIP_RUNNING_IN_SUBPROCESS" not in os.environ:
-            logger.critical(
-                "The --python option must be placed before the pip subcommand name"
-            )
-            sys.exit(ERROR)
-
         # TODO: Try to get these passing down from the command?
         #       without resorting to os.environ to hold these.
         #       This also affects isolated builds and it should.
@@ -251,6 +241,8 @@ class Command(CommandContextMixIn):
                     options.cache_dir,
                 )
                 options.cache_dir = None
+
+        interpreters.configure(options.python, options.cache_dir or None)
 
         return self._run_wrapper(level_number, options, args)
 

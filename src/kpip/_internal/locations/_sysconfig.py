@@ -7,10 +7,11 @@ import sysconfig
 from collections.abc import Callable
 
 from kpip._internal.exceptions import InvalidSchemeCombination, UserInstallationInvalid
+from kpip._internal.interpreters import Interpreter, target_interpreter
 from kpip._internal.models.scheme import SCHEME_KEYS, Scheme
 from kpip._internal.utils.virtualenv import running_under_virtualenv
 
-from .base import change_root, get_major_minor_version, is_osx_framework
+from .base import change_root, is_osx_framework
 
 logger = logging.getLogger(__name__)
 
@@ -151,12 +152,13 @@ def get_scheme(
     if home and prefix:
         raise InvalidSchemeCombination("--home", "--prefix")
 
+    interpreter = target_interpreter()
     if home is not None:
-        scheme_name = _infer_home()
+        scheme_name = _target_scheme(interpreter, "home", _infer_home)
     elif user:
-        scheme_name = _infer_user()
+        scheme_name = _target_scheme(interpreter, "user", _infer_user)
     else:
-        scheme_name = _infer_prefix()
+        scheme_name = _target_scheme(interpreter, "prefix", _infer_prefix)
 
     # Special case: When installing into a custom prefix, use posix_prefix
     # instead of posix_local because it should *only* be used to redirecting
@@ -172,14 +174,19 @@ def get_scheme(
     if prefix is not None and scheme_name == "osx_framework_library":
         scheme_name = "posix_prefix"
 
+    home_keys = _HOME_KEYS
+    if not interpreter.is_own:
+        home_keys = _HOME_KEYS[:6]
+        if interpreter.get_config_var("userbase") is not None:
+            home_keys = [*home_keys, "userbase"]
     if home is not None:
-        variables = {k: home for k in _HOME_KEYS}
+        variables = {k: home for k in home_keys}
     elif prefix is not None:
-        variables = {k: prefix for k in _HOME_KEYS}
+        variables = {k: prefix for k in home_keys}
     else:
         variables = {}
 
-    paths = sysconfig.get_paths(scheme=scheme_name, vars=variables)
+    paths = interpreter.get_paths(scheme_name, variables)
 
     # Logic here is very arbitrary, we're doing it for compatibility, don't ask.
     # 1. Pip historically uses a special header path in virtual environments.
@@ -188,10 +195,10 @@ def get_scheme(
     #    pip's historical header path logic (see point 1) did not do this.
     if running_under_virtualenv():
         if user:
-            base = variables.get("userbase", sys.prefix)
+            base = variables.get("userbase", interpreter.prefix)
         else:
-            base = variables.get("base", sys.prefix)
-        python_xy = f"python{get_major_minor_version()}"
+            base = variables.get("base", interpreter.prefix)
+        python_xy = f"python{interpreter.major_minor}"
         paths["include"] = os.path.join(base, "include", "site", python_xy)
     elif not dist_name:
         dist_name = "UNKNOWN"
@@ -211,16 +218,42 @@ def get_scheme(
     return scheme
 
 
+def _target_scheme(
+    interpreter: Interpreter, key: str, infer: Callable[[], str]
+) -> str:
+    """The scheme ``key`` installs use, as the target interpreter prefers.
+
+    Every Python kpip installs for into another process has
+    ``sysconfig.get_preferred_scheme``, new in 3.10.
+    """
+    if interpreter.is_own:
+        return infer()
+    try:
+        return interpreter.preferred_scheme(key)
+    except KeyError:
+        if key == "user":
+            raise UserInstallationInvalid() from None
+        raise
+
+
+def _default_paths() -> dict[str, str]:
+    interpreter = target_interpreter()
+    if interpreter.is_own:
+        return sysconfig.get_paths()
+    return interpreter.get_paths(interpreter.preferred_scheme("prefix"))
+
+
 def get_bin_prefix() -> str:
     # Forcing to use /usr/local/bin for standard macOS framework installs.
-    if sys.platform[:6] == "darwin" and sys.prefix[:16] == "/System/Library/":
+    prefix = target_interpreter().prefix
+    if sys.platform[:6] == "darwin" and prefix[:16] == "/System/Library/":
         return "/usr/local/bin"
-    return sysconfig.get_paths()["scripts"]
+    return _default_paths()["scripts"]
 
 
 def get_purelib() -> str:
-    return sysconfig.get_paths()["purelib"]
+    return _default_paths()["purelib"]
 
 
 def get_platlib() -> str:
-    return sysconfig.get_paths()["platlib"]
+    return _default_paths()["platlib"]

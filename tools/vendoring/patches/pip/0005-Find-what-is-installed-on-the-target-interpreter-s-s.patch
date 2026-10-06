@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:39:48 -0500
+Subject: [PATCH] Find what is installed on the target interpreter's search
+ path
+
+The default environment -- what install, uninstall, list, freeze,
+inspect, check and the resolver take as installed -- and the egg-link
+lookup walked this process's sys.path, which in the compiled kpip is the
+bundle's. They now walk the target interpreter's: this process's own,
+live, when it is the Python running kpip.
+---
+ src/kpip/_internal/interpreters/__init__.py   | 11 ++++++++++
+ .../_internal/metadata/importlib/_envs.py     |  6 +++---
+ src/kpip/_internal/metadata/pkg_resources.py  |  5 +++++
+ src/kpip/_internal/utils/egg_link.py          |  8 +++----
+ tests/unit/test_interpreters.py               | 21 +++++++++++++++++++
+ 5 files changed, 44 insertions(+), 7 deletions(-)
+
+diff --git a/src/kpip/_internal/interpreters/__init__.py b/src/kpip/_internal/interpreters/__init__.py
+index 283fd26..32c9f3b 100644
+--- a/src/kpip/_internal/interpreters/__init__.py
++++ b/src/kpip/_internal/interpreters/__init__.py
+@@ -45,6 +45,7 @@ __all__ = [
+     "identify",
+     "installing_interpreter",
+     "interpreter_at",
++    "search_path",
+     "target_interpreter",
+ ]
+ 
+@@ -106,6 +107,16 @@ def target_interpreter() -> Interpreter:
+     return _target
+ 
+ 
++def search_path() -> list[str]:
++    """Where the target interpreter imports from, and so where what is
++    installed for it is found: this process's own ``sys.path``, live, when it
++    is the Python running kpip."""
++    interpreter = target_interpreter()
++    if interpreter.is_own:
++        return sys.path
++    return interpreter.path
++
++
+ def installing_interpreter() -> Interpreter:
+     """The target interpreter, which something is to be installed into."""
+     interpreter = target_interpreter()
+diff --git a/src/kpip/_internal/metadata/importlib/_envs.py b/src/kpip/_internal/metadata/importlib/_envs.py
+index 21af57c..4a3ff16 100644
+--- a/src/kpip/_internal/metadata/importlib/_envs.py
++++ b/src/kpip/_internal/metadata/importlib/_envs.py
+@@ -4,7 +4,6 @@ import importlib.metadata
+ import logging
+ import os
+ import pathlib
+-import sys
+ import zipfile
+ from collections.abc import Iterator, Sequence
+ 
+@@ -15,6 +14,7 @@ from kpip._vendor.packaging.utils import (
+     parse_wheel_filename,
+ )
+ 
++from kpip._internal.interpreters import search_path
+ from kpip._internal.metadata.base import BaseDistribution, BaseEnvironment
+ from kpip._internal.utils.filetypes import WHEEL_EXTENSION
+ 
+@@ -124,12 +124,12 @@ class Environment(BaseEnvironment):
+ 
+     @classmethod
+     def default(cls) -> BaseEnvironment:
+-        return cls(sys.path)
++        return cls(search_path())
+ 
+     @classmethod
+     def from_paths(cls, paths: list[str] | None) -> BaseEnvironment:
+         if paths is None:
+-            return cls(sys.path)
++            return cls(search_path())
+         return cls(paths)
+ 
+     def _iter_distributions(self) -> Iterator[BaseDistribution]:
+diff --git a/src/kpip/_internal/metadata/pkg_resources.py b/src/kpip/_internal/metadata/pkg_resources.py
+index c806232..ba2f48a 100644
+--- a/src/kpip/_internal/metadata/pkg_resources.py
++++ b/src/kpip/_internal/metadata/pkg_resources.py
+@@ -16,6 +16,7 @@ from kpip._vendor.packaging.utils import NormalizedName, canonicalize_name
+ from kpip._vendor.packaging.version import Version
+ from kpip._vendor.packaging.version import parse as parse_version
+ 
++from kpip._internal.interpreters import search_path, target_interpreter
+ from kpip._internal.exceptions import (
+     InstallationError,
+     InvalidWheel,
+@@ -264,10 +265,14 @@ class Environment(BaseEnvironment):
+ 
+     @classmethod
+     def default(cls) -> BaseEnvironment:
++        if not target_interpreter().is_own:
++            return cls(pkg_resources.WorkingSet(search_path()))
+         return cls(pkg_resources.working_set)
+ 
+     @classmethod
+     def from_paths(cls, paths: list[str] | None) -> BaseEnvironment:
++        if paths is None and not target_interpreter().is_own:
++            paths = search_path()
+         return cls(pkg_resources.WorkingSet(paths))
+ 
+     def _iter_distributions(self) -> Iterator[BaseDistribution]:
+diff --git a/src/kpip/_internal/utils/egg_link.py b/src/kpip/_internal/utils/egg_link.py
+index 97c8487..1f467c0 100644
+--- a/src/kpip/_internal/utils/egg_link.py
++++ b/src/kpip/_internal/utils/egg_link.py
+@@ -2,9 +2,8 @@ from __future__ import annotations
+ 
+ import os
+ import re
+-import sys
+ 
+-from kpip._internal.interpreters import target_interpreter
++from kpip._internal.interpreters import search_path, target_interpreter
+ from kpip._internal.locations import (
+     get_site_packages,
+     get_user_site,
+@@ -39,10 +38,11 @@ def _egg_link_names(raw_name: str) -> list[str]:
+ 
+ def egg_link_path_from_sys_path(raw_name: str) -> str | None:
+     """
+-    Look for a .egg-link file for project name, by walking sys.path.
++    Look for a .egg-link file for project name, by walking the target
++    interpreter's search path.
+     """
+     egg_link_names = _egg_link_names(raw_name)
+-    for path_item in sys.path:
++    for path_item in search_path():
+         for egg_link_name in egg_link_names:
+             egg_link = os.path.join(path_item, egg_link_name)
+             if os.path.isfile(egg_link):
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index cf4f49c..4cd3604 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -300,3 +300,24 @@ def test_local_means_inside_the_target_environment(environment: Path) -> None:
+     prefix = interpreters.target_interpreter().prefix
+     assert is_local(os.path.join(os.path.normcase(os.path.realpath(prefix)), "lib"))
+     assert not is_local(os.path.realpath(os.path.dirname(sys.base_prefix)))
++
++
++def test_what_is_installed_is_read_from_the_target(
++    tmp_path_factory: pytest.TempPathFactory,
++) -> None:
++    from kpip._internal.metadata import get_default_environment, get_environment
++
++    path = tmp_path_factory.mktemp("installed") / "env"
++    venv.create(path, with_pip=False, symlinks=os.name != "nt")
++    interpreters.configure(str(path), None)
++    target = interpreters.target_interpreter()
++    purelib = Path(target.get_paths(target.preferred_scheme("prefix"))["purelib"])
++    dist_info = purelib / "only_here-1.0.dist-info"
++    dist_info.mkdir()
++    (dist_info / "METADATA").write_text(
++        "Metadata-Version: 2.1\nName: only-here\nVersion: 1.0\n"
++    )
++
++    for environment in (get_default_environment(), get_environment(None)):
++        names = {dist.canonical_name for dist in environment.iter_all_distributions()}
++        assert names == {"only-here"}

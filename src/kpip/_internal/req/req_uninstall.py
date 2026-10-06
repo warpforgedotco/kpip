@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import functools
 import os
-import sys
 import sysconfig
 from collections.abc import Callable, Generator, Iterable
 from importlib.util import cache_from_source
 from typing import Any
 
 from kpip._internal.exceptions import LegacyDistutilsInstall, UninstallMissingRecord
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.locations import get_bin_prefix, get_bin_user
 from kpip._internal.metadata import BaseDistribution
 from kpip._internal.utils.compat import WINDOWS
@@ -19,6 +19,15 @@ from kpip._internal.utils.temp_dir import AdjacentTempDirectory, TempDirectory
 from kpip._internal.utils.virtualenv import running_under_virtualenv
 
 logger = getLogger(__name__)
+
+
+
+def _target_path(name: str) -> str:
+    """``sysconfig.get_path(name)``, as the target interpreter answers it."""
+    interpreter = target_interpreter()
+    if interpreter.is_own:
+        return sysconfig.get_path(name)
+    return interpreter.get_paths(interpreter.preferred_scheme("prefix"))[name]
 
 
 def _script_names(
@@ -321,10 +330,12 @@ class UninstallPathSet:
         remove/modify, False otherwise.
 
         """
-        # aka is_local, but caching normalized sys.prefix
+        # aka is_local, but caching the normalized prefix
         if not running_under_virtualenv():
             return True
-        return path.startswith(self._normalize_path_cached(sys.prefix))
+        return path.startswith(
+            self._normalize_path_cached(target_interpreter().prefix)
+        )
 
     def add(self, path: str) -> None:
         head, tail = os.path.split(path)
@@ -445,13 +456,16 @@ class UninstallPathSet:
                 "Not uninstalling %s at %s, outside environment %s",
                 dist.canonical_name,
                 normalized_dist_location,
-                sys.prefix,
+                target_interpreter().prefix,
             )
             return cls(dist)
 
         if normalized_dist_location in {
             p
-            for p in {sysconfig.get_path("stdlib"), sysconfig.get_path("platstdlib")}
+            for p in {
+                target_interpreter().stdlib,
+                _target_path("platstdlib"),
+            }
             if p
         }:
             logger.info(

@@ -12,6 +12,7 @@ from typing import Any
 from kpip._vendor.packaging.tags import Tag, interpreter_name, interpreter_version
 from kpip._vendor.packaging.utils import canonicalize_name
 
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.exceptions import InvalidWheelFilename
 from kpip._internal.models.direct_url import DirectUrl
 from kpip._internal.models.link import Link
@@ -58,8 +59,13 @@ class Cache:
         # depending on the python version their setup.py is being run on,
         # and don't encode the difference in compatibility tags.
         # https://github.com/pypa/pip/issues/7296
-        key_parts["interpreter_name"] = interpreter_name()
-        key_parts["interpreter_version"] = interpreter_version()
+        interpreter = target_interpreter()
+        if interpreter.is_own:
+            key_parts["interpreter_name"] = interpreter_name()
+            key_parts["interpreter_version"] = interpreter_version()
+        else:
+            key_parts["interpreter_name"] = interpreter.interpreter_name
+            key_parts["interpreter_version"] = interpreter.interpreter_version
 
         # Encode our key url with sha224, we'll use this because it has similar
         # security properties to sha256, but with a shorter total output (and

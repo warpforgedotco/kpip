@@ -10,7 +10,6 @@ import posixpath
 import shutil
 import stat
 import sys
-import sysconfig
 import urllib.parse
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -38,6 +37,7 @@ from kpip._internal.exceptions import (
     CommandError,
     ExternallyManagedEnvironment,
 )
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.locations import get_major_minor_version
 from kpip._internal.utils.compat import WINDOWS
 from kpip._internal.utils.retry import retry
@@ -401,7 +401,8 @@ def renames(old: str, new: str) -> None:
 
 def is_local(path: str) -> bool:
     """
-    Return True if path is within sys.prefix, if we're running in a virtualenv.
+    Return True if path is within the target interpreter's prefix, if it is a
+    virtualenv's.
 
     If we're not in a virtualenv, all paths are considered "local."
 
@@ -410,7 +411,7 @@ def is_local(path: str) -> bool:
     """
     if not running_under_virtualenv():
         return True
-    return path.startswith(normalize_path(sys.prefix))
+    return path.startswith(normalize_path(target_interpreter().prefix))
 
 
 def write_output(msg: Any, *args: Any) -> None:
@@ -649,7 +650,7 @@ def check_externally_managed() -> None:
     """
     if running_under_virtualenv():
         return
-    marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
+    marker = os.path.join(target_interpreter().stdlib, "EXTERNALLY-MANAGED")
     if not os.path.isfile(marker):
         return
     raise ExternallyManagedEnvironment.from_config(marker)

@@ -41,13 +41,15 @@ def test_python_interpreter(
     assert json.loads(result.stdout) == before
 
 
-def test_error_python_option_wrong_location(
+def test_python_option_after_the_command(
     script: PipTestEnvironment,
     tmpdir: Path,
     shared_data: TestData,
 ) -> None:
+    """kpip reads --python in the command, so it may follow the command name."""
     env_path = os.fspath(tmpdir / "venv")
     env = EnvBuilder(with_pip=False)
     env.create(env_path)
 
-    script.pip("list", "--python", env_path, "--format=json", expect_error=True)
+    result = script.pip("list", "--python", env_path, "--format=json")
+    assert json.loads(result.stdout) == []

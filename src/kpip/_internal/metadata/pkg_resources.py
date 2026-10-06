@@ -16,6 +16,7 @@ from kpip._vendor.packaging.utils import NormalizedName, canonicalize_name
 from kpip._vendor.packaging.version import Version
 from kpip._vendor.packaging.version import parse as parse_version
 
+from kpip._internal.interpreters import search_path, target_interpreter
 from kpip._internal.exceptions import (
     InstallationError,
     InvalidWheel,
@@ -264,10 +265,14 @@ class Environment(BaseEnvironment):
 
     @classmethod
     def default(cls) -> BaseEnvironment:
+        if not target_interpreter().is_own:
+            return cls(pkg_resources.WorkingSet(search_path()))
         return cls(pkg_resources.working_set)
 
     @classmethod
     def from_paths(cls, paths: list[str] | None) -> BaseEnvironment:
+        if paths is None and not target_interpreter().is_own:
+            paths = search_path()
         return cls(pkg_resources.WorkingSet(paths))
 
     def _iter_distributions(self) -> Iterator[BaseDistribution]:

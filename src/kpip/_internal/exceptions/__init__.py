@@ -20,7 +20,6 @@ import contextlib
 import locale
 import logging
 import pathlib
-import sys
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
@@ -306,8 +305,8 @@ class ConfigurationFileCouldNotBeLoaded(ConfigurationError):
         return f"Configuration file {self.reason}{message_part}"
 
 
-_DEFAULT_EXTERNALLY_MANAGED_ERROR = f"""\
-The Python environment under {sys.prefix} is managed externally, and may not be
+_DEFAULT_EXTERNALLY_MANAGED_ERROR = """\
+The Python environment under {prefix} is managed externally, and may not be
 manipulated by the user. Please use specific tooling from the distributor of
 the Python installation to interact with this environment instead.
 """
@@ -327,7 +326,13 @@ class ExternallyManagedEnvironment(DiagnosticPipError):
 
     def __init__(self, error: str | None) -> None:
         if error is None:
-            context = Text(_DEFAULT_EXTERNALLY_MANAGED_ERROR)
+            from kpip._internal.interpreters import target_interpreter
+
+            context = Text(
+                _DEFAULT_EXTERNALLY_MANAGED_ERROR.format(
+                    prefix=target_interpreter().prefix
+                )
+            )
         else:
             context = Text(error)
         super().__init__(
