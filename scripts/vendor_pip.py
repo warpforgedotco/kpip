@@ -36,6 +36,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 PIP_REPOSITORY = "https://github.com/pypa/pip.git"
@@ -64,6 +65,9 @@ RENAMED_SUFFIXES = {".py", ".pyi"}
 # Files that also name the package as a string, where every "pip" literal is
 # the module name.
 RENAMED_MODULE_STRINGS = (Path("src") / "kpip" / "__pip-runner__.py",)
+
+VERSION_FILE = Path("src") / "kpip" / "__init__.py"
+_VERSION_ASSIGNMENT = re.compile(r'^__version__ = "(?P<version>[^"]+)"$', re.MULTILINE)
 
 # Commits the script makes itself; patches keep their own authors.
 GIT_IDENTITY = ("-c", "user.name=kpip vendor_pip", "-c", "user.email=kpip@invalid")
@@ -130,6 +134,32 @@ def rename_package(checkout: Path) -> None:
                 path.write_text(renamed, encoding="utf-8", newline="")
 
 
+def kpip_version() -> str:
+    with (REPO_ROOT / "pyproject.toml").open("rb") as pyproject:
+        return tomllib.load(pyproject)["project"]["version"]
+
+
+def stamp_version(checkout: Path) -> None:
+    """Make ``__version__`` kpip's and keep pip's as ``__pip_version__``.
+
+    ``scripts/bump_version.py`` rewrites the ``__version__`` literal the same
+    way, so a bump needs no re-sync.
+    """
+    path = checkout / VERSION_FILE
+    text = path.read_text(encoding="utf-8")
+    stamped, count = _VERSION_ASSIGNMENT.subn(
+        lambda match: (
+            f'__version__ = "{kpip_version()}"\n'
+            "# The pip release kpip is built from.\n"
+            f'__pip_version__ = "{match["version"]}"'
+        ),
+        text,
+    )
+    if count != 1:
+        raise RuntimeError(f"expected one __version__ assignment in {VERSION_FILE}")
+    path.write_text(stamped, encoding="utf-8", newline="")
+
+
 def generate(commit: str, checkout: Path) -> None:
     """Build the patched pip checkout at ``checkout`` from ``commit``."""
     if checkout.exists():
@@ -142,6 +172,7 @@ def generate(commit: str, checkout: Path) -> None:
 
     _git("checkout", "--quiet", "-b", PATCHED_BRANCH, cwd=checkout)
     rename_package(checkout)
+    stamp_version(checkout)
     _git("add", "--all", cwd=checkout)
     _git("commit", "--quiet", "-m", "Rename pip to kpip", cwd=checkout)
     _git("branch", BASE_BRANCH, cwd=checkout)

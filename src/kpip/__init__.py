@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-__version__ = "26.3.dev0"
+__version__ = "0.0.1"
+# The pip release kpip is built from.
+__pip_version__ = "26.3.dev0"
 
 
 def main(args: list[str] | None = None) -> int:

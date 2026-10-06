@@ -694,10 +694,10 @@ def _install_wheel(  # noqa: C901, PLR0915 function is too long
 
     dest_info_dir = os.path.join(lib_dir, info_dir)
 
-    # Record pip as the installer
+    # Record kpip as the installer
     installer_path = os.path.join(dest_info_dir, "INSTALLER")
     with _generate_file(installer_path) as installer_file:
-        installer_file.write(b"pip\n")
+        installer_file.write(b"kpip\n")
     generated.append(installer_path)
 
     # Record the PEP 610 direct URL reference

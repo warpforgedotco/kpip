@@ -5,7 +5,7 @@ from typing import Any
 from kpip._vendor.packaging.markers import default_environment
 from kpip._vendor.rich import print_json
 
-from kpip import __version__
+from kpip import __pip_version__
 from kpip._internal.cli import cmdoptions
 from kpip._internal.cli.base_command import Command
 from kpip._internal.cli.status_codes import SUCCESS
@@ -54,7 +54,7 @@ class InspectCommand(Command):
         )
         output = {
             "version": "1",
-            "pip_version": __version__,
+            "pip_version": __pip_version__,
             "installed": [self._dist_to_dict(dist) for dist in dists],
             "environment": default_environment(),
             # TODO tags? scheme?

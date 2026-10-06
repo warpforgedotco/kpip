@@ -32,7 +32,7 @@ from kpip._vendor.packaging.requirements import Requirement
 from kpip._vendor.pyproject_hooks import BackendUnavailable, BuildBackendHookCaller
 
 from kpip import __file__ as pip_location
-from kpip import __version__
+from kpip import __pip_version__, __version__
 from kpip._internal.exceptions import (
     BackendUnavailableError,
     CommandError,
@@ -95,7 +95,10 @@ def get_pip_version() -> str:
     pip_pkg_dir = os.path.join(os.path.dirname(__file__), "..", "..")
     pip_pkg_dir = os.path.abspath(pip_pkg_dir)
 
-    return f"pip {__version__} from {pip_pkg_dir} (python {get_major_minor_version()})"
+    return (
+        f"kpip {__version__} (pip {__pip_version__}) from {pip_pkg_dir} "
+        f"(python {get_major_minor_version()})"
+    )
 
 
 @cache
@@ -152,12 +155,12 @@ def get_prog() -> str:
     try:
         prog = os.path.basename(sys.argv[0])
         if prog in ("__main__.py", "-c"):
-            return f"{sys.executable} -m pip"
+            return f"{sys.executable} -m kpip"
         else:
             return prog
     except (AttributeError, TypeError, IndexError):
         pass
-    return "pip"
+    return "kpip"
 
 
 # Retry every half second for up to 3 seconds

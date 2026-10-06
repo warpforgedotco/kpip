@@ -110,7 +110,7 @@ def get_user_agent() -> str:
 def test_user_agent() -> None:
     user_agent = get_user_agent()
 
-    assert user_agent.startswith(f"pip/{__version__}")
+    assert user_agent.startswith(f"kpip/{__version__}")
 
 
 def test_accept_encoding_is_fixed() -> None:

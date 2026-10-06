@@ -91,6 +91,7 @@ def test_index_group_commands() -> None:
     check_commands(has_option_no_index, EXPECTED_INDEX_GROUP_COMMANDS)
 
 
+@pytest.mark.skip(reason="kpip has no self version check")
 @pytest.mark.parametrize("command_name", EXPECTED_INDEX_GROUP_COMMANDS)
 @pytest.mark.parametrize(
     "disable_pip_version_check, no_index, expected_called",
@@ -134,6 +135,7 @@ def test_index_group_pip_version_check(
         mock_version_check.assert_not_called()
 
 
+@pytest.mark.skip(reason="kpip has no self version check")
 @mock.patch("kpip._internal.cli.index_command._pip_self_version_check_fetch")
 def test_install_pip_version_check_skipped_when_pip_is_a_requirement(
     mock_version_check: mock.Mock,
@@ -158,6 +160,22 @@ def test_install_pip_version_check_skipped_when_pip_is_a_requirement(
     mock_version_check.assert_called_once()
 
 
+@pytest.mark.parametrize("command_name", EXPECTED_INDEX_GROUP_COMMANDS)
+@mock.patch("kpip._internal.cli.index_command._pip_self_version_check_fetch")
+def test_index_group_never_checks_pip_version(
+    mock_version_check: mock.Mock, command_name: str
+) -> None:
+    """kpip never compares itself with pip's latest release."""
+    command = create_command(command_name)
+    options = command.parser.get_default_values()
+    options.disable_pip_version_check = False
+    options.no_index = False
+
+    with command.pip_version_check(options, ["some-other-pkg"]):
+        pass
+    mock_version_check.assert_not_called()
+
+
 def test_requirement_commands() -> None:
     """
     Test which commands inherit from RequirementCommand.
@@ -169,6 +187,7 @@ def test_requirement_commands() -> None:
     check_commands(is_requirement_command, ["download", "install", "lock", "wheel"])
 
 
+@pytest.mark.skip(reason="kpip has no self version check")
 @pytest.mark.parametrize("flag", ["", "--outdated", "--uptodate"])
 @mock.patch("kpip._internal.cli.index_command._pip_self_version_check_fetch")
 @mock.patch.dict(os.environ, {"PIP_DISABLE_PIP_VERSION_CHECK": "no"})

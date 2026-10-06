@@ -3,7 +3,7 @@ from typing import Any
 
 from kpip._vendor.packaging.markers import default_environment
 
-from kpip import __version__
+from kpip import __pip_version__
 from kpip._internal.req.req_install import InstallRequirement
 
 
@@ -43,7 +43,7 @@ class InstallationReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": "1",
-            "pip_version": __version__,
+            "pip_version": __pip_version__,
             "install": [
                 self._install_req_to_dict(ireq) for ireq in self._install_requirements
             ],
