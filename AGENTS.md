@@ -22,6 +22,10 @@ on the `kpip` branch of the checkout in `build/pip` (one commit per patch;
 `sync` moves to pip's latest `main`; `sync --commit "$(cat
 tools/vendoring/pip-upstream.txt)"` stays on the current one.
 
+Benchmarks live in `benchmarks/` (CodSpeed, see its README) and
+`scripts/benchmark` (hyperfine, against uv). A patch that is meant to make
+kpip faster says by how much, measured with them.
+
 ## kpip ships as a compiled binary
 
 kpip is distributed as a single Nuitka-compiled binary (`scripts/compile`,
