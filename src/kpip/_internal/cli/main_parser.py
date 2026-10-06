@@ -7,6 +7,7 @@ import sys
 
 from kpip._vendor.rich.markup import escape
 
+from kpip._internal import interpreters
 from kpip._internal.cli import cmdoptions
 from kpip._internal.cli.parser import ConfigOptionParser, UpdatingDefaultsHelpFormatter
 from kpip._internal.commands import commands_dict, get_similar_commands
@@ -28,7 +29,6 @@ def create_main_parser() -> ConfigOptionParser:
     )
     parser.disable_interspersed_args()
 
-    parser.version = get_pip_version()
     parser.add_option(cmdoptions.version())
 
     # add the general options
@@ -83,9 +83,10 @@ def parse_command(args: list[str]) -> tuple[str, list[str]]:
     # command starts (kpip._internal.interpreters), not by running kpip again
     # with it: the compiled kpip has no source to run.
 
-    # --version
+    # --version, which names the Python kpip installs for
     if general_options.version:
-        sys.stdout.write(parser.version)
+        interpreters.configure(general_options.python, general_options.cache_dir)
+        sys.stdout.write(get_pip_version())
         sys.stdout.write(os.linesep)
         sys.exit()
 

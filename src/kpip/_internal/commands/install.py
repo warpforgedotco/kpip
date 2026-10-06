@@ -37,7 +37,7 @@ from kpip._internal.exceptions import (
     InstallationError,
     InstallWheelBuildError,
 )
-from kpip._internal.interpreters import target_interpreter
+from kpip._internal.interpreters import installing_interpreter, target_interpreter
 from kpip._internal.locations import get_scheme
 from kpip._internal.metadata import BaseEnvironment, get_environment
 from kpip._internal.models.installation_report import InstallationReport
@@ -372,6 +372,11 @@ class InstallCommand(RequirementCommand):
     def run(self, options: Values, args: list[str]) -> int:
         if options.use_user_site and options.target_dir is not None:
             raise CommandError("Can not combine '--user' and '--target'")
+
+        # What is installed is for a Python -- its scripts, bytecode and
+        # builds -- even into --target: with none, fail before any work.
+        if not options.dry_run:
+            installing_interpreter()
 
         # Check whether the environment we're installing into is externally
         # managed, as specified in PEP 668. Specifying --root, --target, or

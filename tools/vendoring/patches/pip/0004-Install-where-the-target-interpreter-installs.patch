@@ -12,22 +12,22 @@ another Python is asked through its preferred schemes, which every Python
 kpip installs for has. The default --src directory is found when used,
 since which Python a command installs for is not known before it starts.
 ---
- src/kpip/_internal/cli/cmdoptions.py       |  6 ++-
+ src/kpip/_internal/cli/cmdoptions.py       |  6 +-
  src/kpip/_internal/cli/req_command.py      |  3 +-
- src/kpip/_internal/commands/install.py     |  6 +--
+ src/kpip/_internal/commands/install.py     | 11 +++-
  src/kpip/_internal/configuration.py        |  4 +-
  src/kpip/_internal/exceptions/__init__.py  | 13 +++--
  src/kpip/_internal/interpreters/facts.py   |  2 +-
  src/kpip/_internal/locations/__init__.py   | 14 +++--
- src/kpip/_internal/locations/_sysconfig.py | 61 +++++++++++++++++-----
- src/kpip/_internal/locations/base.py       | 23 ++++++--
- src/kpip/_internal/metadata/base.py        | 24 +++++++--
- src/kpip/_internal/req/req_uninstall.py    | 24 +++++++--
+ src/kpip/_internal/locations/_sysconfig.py | 65 +++++++++++++++++-----
+ src/kpip/_internal/locations/base.py       | 23 +++++++-
+ src/kpip/_internal/metadata/base.py        | 24 ++++++--
+ src/kpip/_internal/req/req_uninstall.py    | 24 ++++++--
  src/kpip/_internal/utils/egg_link.py       | 23 +++++---
- src/kpip/_internal/utils/misc.py           |  9 ++--
+ src/kpip/_internal/utils/misc.py           |  9 +--
  src/kpip/_internal/utils/virtualenv.py     | 13 +++--
- tests/unit/test_interpreters.py            | 48 +++++++++++++++++
- 15 files changed, 213 insertions(+), 60 deletions(-)
+ tests/unit/test_interpreters.py            | 48 ++++++++++++++++
+ 15 files changed, 222 insertions(+), 60 deletions(-)
 
 diff --git a/src/kpip/_internal/cli/cmdoptions.py b/src/kpip/_internal/cli/cmdoptions.py
 index b26b38d..13111c0 100644
@@ -75,7 +75,7 @@ index 0ffae50..dacdcff 100644
              build_isolation=build_isolation,
              build_isolation_installer=env_installer,
 diff --git a/src/kpip/_internal/commands/install.py b/src/kpip/_internal/commands/install.py
-index 31da26f..516c9af 100644
+index 31da26f..7e3d4de 100644
 --- a/src/kpip/_internal/commands/install.py
 +++ b/src/kpip/_internal/commands/install.py
 @@ -6,7 +6,6 @@ import json
@@ -90,11 +90,23 @@ index 31da26f..516c9af 100644
      InstallationError,
      InstallWheelBuildError,
  )
-+from kpip._internal.interpreters import target_interpreter
++from kpip._internal.interpreters import installing_interpreter, target_interpreter
  from kpip._internal.locations import get_scheme
  from kpip._internal.metadata import BaseEnvironment, get_environment
  from kpip._internal.models.installation_report import InstallationReport
-@@ -802,7 +802,7 @@ def decide_user_install(
+@@ -373,6 +373,11 @@ class InstallCommand(RequirementCommand):
+         if options.use_user_site and options.target_dir is not None:
+             raise CommandError("Can not combine '--user' and '--target'")
+ 
++        # What is installed is for a Python -- its scripts, bytecode and
++        # builds -- even into --target: with none, fail before any work.
++        if not options.dry_run:
++            installing_interpreter()
++
+         # Check whether the environment we're installing into is externally
+         # managed, as specified in PEP 668. Specifying --root, --target, or
+         # --prefix disables the check, since there's no reliable way to locate
+@@ -802,7 +807,7 @@ def decide_user_install(
              )
          # Catch all remaining cases which honour the site.ENABLE_USER_SITE
          # value, such as a plain Python installation (e.g. no virtualenv).
@@ -103,7 +115,7 @@ index 31da26f..516c9af 100644
              raise InstallationError(
                  "Can not perform a '--user' install. User site-packages "
                  "are disabled for this Python."
-@@ -819,7 +819,7 @@ def decide_user_install(
+@@ -819,7 +824,7 @@ def decide_user_install(
          return False
  
      # If user installs are not enabled, choose a non-user install
@@ -262,14 +274,18 @@ index 4aad279..2ce880b 100644
  
      from . import _distutils
 diff --git a/src/kpip/_internal/locations/_sysconfig.py b/src/kpip/_internal/locations/_sysconfig.py
-index 5d6792a..670ca7f 100644
+index 5d6792a..c5fe3fc 100644
 --- a/src/kpip/_internal/locations/_sysconfig.py
 +++ b/src/kpip/_internal/locations/_sysconfig.py
-@@ -7,10 +7,11 @@ import sysconfig
+@@ -7,10 +7,15 @@ import sysconfig
  from collections.abc import Callable
  
  from kpip._internal.exceptions import InvalidSchemeCombination, UserInstallationInvalid
-+from kpip._internal.interpreters import Interpreter, target_interpreter
++from kpip._internal.interpreters import (
++    Interpreter,
++    installing_interpreter,
++    target_interpreter,
++)
  from kpip._internal.models.scheme import SCHEME_KEYS, Scheme
  from kpip._internal.utils.virtualenv import running_under_virtualenv
  
@@ -278,11 +294,11 @@ index 5d6792a..670ca7f 100644
  
  logger = logging.getLogger(__name__)
  
-@@ -151,12 +152,13 @@ def get_scheme(
+@@ -151,12 +156,13 @@ def get_scheme(
      if home and prefix:
          raise InvalidSchemeCombination("--home", "--prefix")
  
-+    interpreter = target_interpreter()
++    interpreter = installing_interpreter()
      if home is not None:
 -        scheme_name = _infer_home()
 +        scheme_name = _target_scheme(interpreter, "home", _infer_home)
@@ -295,7 +311,7 @@ index 5d6792a..670ca7f 100644
  
      # Special case: When installing into a custom prefix, use posix_prefix
      # instead of posix_local because it should *only* be used to redirecting
-@@ -172,14 +174,19 @@ def get_scheme(
+@@ -172,14 +178,19 @@ def get_scheme(
      if prefix is not None and scheme_name == "osx_framework_library":
          scheme_name = "posix_prefix"
  
@@ -318,7 +334,7 @@ index 5d6792a..670ca7f 100644
  
      # Logic here is very arbitrary, we're doing it for compatibility, don't ask.
      # 1. Pip historically uses a special header path in virtual environments.
-@@ -188,10 +195,10 @@ def get_scheme(
+@@ -188,10 +199,10 @@ def get_scheme(
      #    pip's historical header path logic (see point 1) did not do this.
      if running_under_virtualenv():
          if user:
@@ -332,7 +348,7 @@ index 5d6792a..670ca7f 100644
          paths["include"] = os.path.join(base, "include", "site", python_xy)
      elif not dist_name:
          dist_name = "UNKNOWN"
-@@ -211,16 +218,42 @@ def get_scheme(
+@@ -211,16 +222,42 @@ def get_scheme(
      return scheme
  
  
@@ -355,7 +371,7 @@ index 5d6792a..670ca7f 100644
 +
 +
 +def _default_paths() -> dict[str, str]:
-+    interpreter = target_interpreter()
++    interpreter = installing_interpreter()
 +    if interpreter.is_own:
 +        return sysconfig.get_paths()
 +    return interpreter.get_paths(interpreter.preferred_scheme("prefix"))

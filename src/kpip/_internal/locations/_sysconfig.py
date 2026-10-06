@@ -7,7 +7,11 @@ import sysconfig
 from collections.abc import Callable
 
 from kpip._internal.exceptions import InvalidSchemeCombination, UserInstallationInvalid
-from kpip._internal.interpreters import Interpreter, target_interpreter
+from kpip._internal.interpreters import (
+    Interpreter,
+    installing_interpreter,
+    target_interpreter,
+)
 from kpip._internal.models.scheme import SCHEME_KEYS, Scheme
 from kpip._internal.utils.virtualenv import running_under_virtualenv
 
@@ -152,7 +156,7 @@ def get_scheme(
     if home and prefix:
         raise InvalidSchemeCombination("--home", "--prefix")
 
-    interpreter = target_interpreter()
+    interpreter = installing_interpreter()
     if home is not None:
         scheme_name = _target_scheme(interpreter, "home", _infer_home)
     elif user:
@@ -237,7 +241,7 @@ def _target_scheme(
 
 
 def _default_paths() -> dict[str, str]:
-    interpreter = target_interpreter()
+    interpreter = installing_interpreter()
     if interpreter.is_own:
         return sysconfig.get_paths()
     return interpreter.get_paths(interpreter.preferred_scheme("prefix"))

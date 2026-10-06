@@ -13,16 +13,16 @@ environment; and build requirements are installed by kpip itself
 (own_command), told with --python which Python the environment is for.
 With no Python at all, building is refused up front.
 ---
- src/kpip/_internal/build_env/installer.py   | 15 ++++-----
- src/kpip/_internal/build_env/noop.py        |  9 ++++--
- src/kpip/_internal/build_env/venv.py        | 34 +++++++++++++++++++++
- src/kpip/_internal/build_env/virtual.py     | 10 +++---
- src/kpip/_internal/interpreters/__init__.py | 14 +++++++++
- src/kpip/_internal/interpreters/facts.py    | 15 +++++++++
+ src/kpip/_internal/build_env/installer.py   | 15 +++---
+ src/kpip/_internal/build_env/noop.py        |  9 +++-
+ src/kpip/_internal/build_env/venv.py        | 34 +++++++++++++
+ src/kpip/_internal/build_env/virtual.py     | 10 ++--
+ src/kpip/_internal/interpreters/__init__.py | 14 ++++++
+ src/kpip/_internal/interpreters/facts.py    | 15 ++++++
  src/kpip/_internal/interpreters/probe.py    |  1 +
- src/kpip/_internal/utils/compiled.py        |  7 +++--
- tests/unit/test_interpreters.py             | 12 ++++++++
- 9 files changed, 101 insertions(+), 16 deletions(-)
+ src/kpip/_internal/utils/compiled.py        |  7 ++-
+ tests/unit/test_interpreters.py             | 53 +++++++++++++++++++++
+ 9 files changed, 142 insertions(+), 16 deletions(-)
 
 diff --git a/src/kpip/_internal/build_env/installer.py b/src/kpip/_internal/build_env/installer.py
 index 903f7a7..2b5e46c 100644
@@ -318,10 +318,47 @@ index dd2682f..8a72ac7 100644
 +        return [sys.executable, get_runnable_pip()]
      return [compiled.process_exe]
 diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
-index d0c0fe6..b5e30b0 100644
+index d0c0fe6..55c60ef 100644
 --- a/tests/unit/test_interpreters.py
 +++ b/tests/unit/test_interpreters.py
-@@ -435,3 +435,15 @@ def test_bytecode_is_written_by_the_target(
+@@ -217,6 +217,36 @@ def test_with_no_python_at_all_only_resolving_works(
+         interpreters.installing_interpreter()
+ 
+ 
++def test_with_no_python_nothing_is_installed_into_the_bundle(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.locations import get_scheme
++
++    compiled(monkeypatch)
++    monkeypatch.setenv("PATH", str(tmp_path))
++    with pytest.raises(interpreters.NoTargetInterpreter):
++        get_scheme("demo")
++    with pytest.raises(interpreters.NoTargetInterpreter):
++        get_scheme("demo", home=str(tmp_path / "target"))
++
++
++def test_with_no_python_install_fails_before_any_work(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.commands import create_command
++
++    compiled(monkeypatch)
++    monkeypatch.setenv("PATH", str(tmp_path))
++    command = create_command("install")
++
++    worked = []
++    monkeypatch.setattr(
++        command, "get_requirements", lambda *args, **kwargs: worked.append(1)
++    )
++    assert command.main(["--target", str(tmp_path / "t"), "demo"]) != 0
++    assert not worked
++
++
+ def test_conda_base_comes_after_a_dot_venv(
+     environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+ ) -> None:
+@@ -435,3 +465,26 @@ def test_bytecode_is_written_by_the_target(
      pyc = Path(compiled[0][1])
      assert pyc.is_file()
      assert pyc.read_bytes()[:4] == other_python.magic
@@ -337,3 +374,14 @@ index d0c0fe6..b5e30b0 100644
 +    build_env = NoOpBuildEnvironment()
 +    with pytest.raises(interpreters.NoTargetInterpreter, match="to build with"):
 +        build_env.python_executable
++
++
++def test_version_names_the_python_option_target(
++    environment: Path, capsys: pytest.CaptureFixture[str]
++) -> None:
++    from kpip._internal.cli.main_parser import parse_command
++
++    with pytest.raises(SystemExit):
++        parse_command(["--python", str(environment), "--version"])
++    target = interpreters.target_interpreter()
++    assert f"(python {target.major_minor})" in capsys.readouterr().out
