@@ -1,2 +1,3 @@
 tools/vendoring/patches/*.patch -whitespace
 tools/vendoring/patches/nuitka/*.patch -text -whitespace
+tools/vendoring/patches/pip/*.patch -text -whitespace

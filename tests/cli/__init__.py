@@ -1,1 +1,0 @@
-"""Command-line test package."""
