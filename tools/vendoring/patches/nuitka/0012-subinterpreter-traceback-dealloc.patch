@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Kevin Turcios <turcioskevinr@gmail.com>
 Date: Wed, 30 Sep 2026 12:00:00 -0400
-Subject: [PATCH] Fix, tracebacks freed by a subinterpreter corrupted the main interpreter heap
+Subject: [PATCH] Fix, tracebacks freed by a subinterpreter corrupted the main
+ interpreter heap
 
 The traceback type is shared by every interpreter in the process, and its
 deallocator is replaced at startup with one that keeps freed tracebacks on a
@@ -14,19 +15,19 @@ frees now goes to CPython's own deallocator.
 
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- nuitka/build/static_src/InspectPatcher.c | changed
- 1 file changed, 15 insertions(+), 1 deletions(-)
+ nuitka/build/static_src/InspectPatcher.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
 
 diff --git a/nuitka/build/static_src/InspectPatcher.c b/nuitka/build/static_src/InspectPatcher.c
+index b1fbb03..0c861e0 100644
 --- a/nuitka/build/static_src/InspectPatcher.c
 +++ b/nuitka/build/static_src/InspectPatcher.c
-@@ -644,8 +644,19 @@
- 
+@@ -645,7 +645,18 @@ PyTracebackObject *MAKE_TRACEBACK(struct Nuitka_FrameObject *frame, int lineno)
      return result;
  }
-+
-+static destructor original_PyTraceBack_tp_dealloc = NULL;
  
++static destructor original_PyTraceBack_tp_dealloc = NULL;
++
  static void Nuitka_tb_dealloc(PyTracebackObject *tb) {
 +    // The traceback type is shared by every interpreter in the process, but
 +    // the free list below is the main interpreter's, and has no lock. A
@@ -40,7 +41,7 @@ diff --git a/nuitka/build/static_src/InspectPatcher.c b/nuitka/build/static_src/
      // Need to use official method as it checks for recursion.
      Nuitka_GC_UnTrack(tb);
  
-@@ -671,7 +682,12 @@
+@@ -671,7 +682,12 @@ static void Nuitka_tb_dealloc(PyTracebackObject *tb) {
  #endif
  }
  
@@ -54,6 +55,3 @@ diff --git a/nuitka/build/static_src/InspectPatcher.c b/nuitka/build/static_src/
  
  //     Part of "Nuitka", an optimizing Python compiler that is compatible and
  //     integrates with CPython, but also works on its own.
--- 
-2.51.0
-

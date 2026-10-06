@@ -19,7 +19,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  1 file changed, 24 insertions(+)
 
 diff --git a/nuitka/build/include/nuitka/helper/subscripts.h b/nuitka/build/include/nuitka/helper/subscripts.h
-index 596bfee09..2d11f3898 100644
+index 596bfee..2d11f38 100644
 --- a/nuitka/build/include/nuitka/helper/subscripts.h
 +++ b/nuitka/build/include/nuitka/helper/subscripts.h
 @@ -106,6 +106,30 @@ NUITKA_MAY_BE_UNUSED static PyObject *LOOKUP_SUBSCRIPT_CONST(PyThreadState *tsta

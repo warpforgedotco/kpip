@@ -14,11 +14,11 @@ scanned once, as the file the import resolution picks, which honors
 
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- nuitka/importing/Recursion.py | 60 +++++++++++++++++++++++++++++++++++++------
+ nuitka/importing/Recursion.py | 60 ++++++++++++++++++++++++++++++-----
  1 file changed, 52 insertions(+), 8 deletions(-)
 
 diff --git a/nuitka/importing/Recursion.py b/nuitka/importing/Recursion.py
-index 8b8800c..eb371d8 100644
+index 7bf89dd..44c58f1 100644
 --- a/nuitka/importing/Recursion.py
 +++ b/nuitka/importing/Recursion.py
 @@ -455,6 +455,8 @@ def _addIncludedModule(module, package_only):
@@ -27,10 +27,10 @@ index 8b8800c..eb371d8 100644
          if not package_only:
 +            scanned_names = set()
 +
-             for sub_path, sub_filename in listDir(package_dir):
-                 if sub_filename == "__pycache__" or isPackageDirFilenameCandidate(
-                     sub_filename
-@@ -472,10 +474,12 @@ def _addIncludedModule(module, package_only):
+             for sub_path, sub_filename in listPackageDirEntries(
+                 package_dir, package_name=module.getFullName()
+             ):
+@@ -474,10 +476,12 @@ def _addIncludedModule(module, package_only):
                          if hasPackageDirFilename(sub_path[:-3]):
                              continue
  
@@ -47,7 +47,7 @@ index 8b8800c..eb371d8 100644
                      )
                  else:
                      for suffix in getExtensionModuleSuffixes():
-@@ -483,10 +487,12 @@ def _addIncludedModule(module, package_only):
+@@ -485,10 +489,12 @@ def _addIncludedModule(module, package_only):
                              sub_filename.endswith(suffix)
                              and "." not in sub_filename[: -len(suffix)]
                          ):
@@ -64,7 +64,7 @@ index 8b8800c..eb371d8 100644
                              )
  
      elif module.isCompiledPythonModule() or module.isUncompiledPythonModule():
-@@ -498,6 +504,44 @@ def _addIncludedModule(module, package_only):
+@@ -500,6 +506,44 @@ def _addIncludedModule(module, package_only):
          assert False, module
  
  

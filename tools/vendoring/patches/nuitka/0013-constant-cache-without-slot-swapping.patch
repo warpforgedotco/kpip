@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Kevin Turcios <turcioskevinr@gmail.com>
 Date: Wed, 30 Sep 2026 12:00:00 -0400
-Subject: [PATCH] Fix, loading constants swapped hash and compare slots of builtin types shared with subinterpreters
+Subject: [PATCH] Fix, loading constants swapped hash and compare slots of
+ builtin types shared with subinterpreters
 
 Constants are deduplicated through caches that tell floats apart by bit
 pattern and containers by the identity of their elements. The lookups got
@@ -16,18 +17,17 @@ than one type, floats and complex values, now also compares their types.
 
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- nuitka/build/static_src/HelpersConstantsBlob.c | changed
- 1 file changed, 74 insertions(+), 9 deletions(-)
+ .../build/static_src/HelpersConstantsBlob.c   | 97 +++++++++++++++++--
+ 1 file changed, 87 insertions(+), 10 deletions(-)
 
 diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/static_src/HelpersConstantsBlob.c
+index fab7426..aa5d17e 100644
 --- a/nuitka/build/static_src/HelpersConstantsBlob.c
 +++ b/nuitka/build/static_src/HelpersConstantsBlob.c
-@@ -300,8 +300,80 @@
+@@ -356,6 +356,78 @@ static PyObject *our_frozendict_tp_richcompare(PyObject *a, PyObject *b, int op)
+ }
+ #endif
  
-     Py_INCREF_IMMORTAL(result);
-     return result;
-+}
-+
 +// Constants of these types are told apart by rules of our own, e.g. bit
 +// patterns for floats and element identity for containers, that their own hash
 +// and comparison do not follow. The caches used to swap those rules into the
@@ -66,8 +66,8 @@ diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/stati
 +    }
 +
 +    return a->richcompare(a->value, other->value, op);
- }
- 
++}
++
 +static void Nuitka_ConstantKey_tp_dealloc(Nuitka_ConstantKey *key) {
 +    Py_DECREF(key->value);
 +    PyObject_Del(key);
@@ -103,16 +103,16 @@ diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/stati
  // For creation of small long singleton long values as required by Python3.
  #if PYTHON_VERSION < 0x3b0
  #if PYTHON_VERSION >= 0x390
-@@ -345,6 +417,8 @@
+@@ -399,6 +471,8 @@ static void initCaches(void) {
  
      frozenset_cache = PyDict_New();
  
 +    PyType_Ready(&Nuitka_ConstantKey_Type);
 +
- #if PYTHON_VERSION < 0x3b0
- #if PYTHON_VERSION >= 0x390
-     // On Python3.9+ these are exposed in the interpreter.
-@@ -394,20 +468,23 @@
+ #if PYTHON_VERSION >= 0x3f0
+     frozendict_cache = PyDict_New();
+ #endif
+@@ -452,20 +526,23 @@ static void _finalizeUnpackedConstantObject(void **output, PyObject *value) {
  
  static void insertToDictCacheForcedHash(PyObject *dict, PyObject **value, hashfunc tp_hash,
                                          richcmpfunc tp_richcompare) {
@@ -130,22 +130,19 @@ diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/stati
 +    Py_INCREF(*value);
 +    key->hash = tp_hash;
 +    key->richcompare = tp_richcompare;
- 
--    insertToDictCache(dict, value);
++
 +    PyObject *item = PyDict_GetItem(dict, (PyObject *)key);
  
--    Py_TYPE(*value)->tp_hash = old_hash;
--    Py_TYPE(*value)->tp_richcompare = old_richcmpfunc;
+-    insertToDictCache(dict, value);
 +    if (item != NULL) {
 +        *value = item;
 +    } else {
 +        PyDict_SetItem(dict, (PyObject *)key, *value);
 +    }
-+
+ 
+-    Py_TYPE(*value)->tp_hash = old_hash;
+-    Py_TYPE(*value)->tp_richcompare = old_richcmpfunc;
 +    Py_DECREF(key);
  }
  
  static uint16_t unpackValueUint16(unsigned char const **data) {
--- 
-2.51.0
-

@@ -23,57 +23,147 @@ shares Python functions, so compiled the pool could run nothing.
 
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- 8 files changed, 133 insertions(+), 8 deletions(-)
+ nuitka/MainControl.py                 |  9 ++-
+ nuitka/build/Backend.scons            |  4 ++
+ nuitka/build/SconsCompilerSettings.py |  4 ++
+ nuitka/build/static_src/MainProgram.c | 33 +++++++++-
+ nuitka/code_generation/LoaderCodes.py | 91 ++++++++++++++++++++++++---
+ nuitka/options/OptionParsing.py       | 15 +++++
+ nuitka/options/Options.py             | 10 +++
+ nuitka/tree/Building.py               |  6 ++
+ 8 files changed, 163 insertions(+), 9 deletions(-)
 
-diff --git a/nuitka/options/OptionParsing.py b/nuitka/options/OptionParsing.py
---- a/nuitka/options/OptionParsing.py
-+++ b/nuitka/options/OptionParsing.py
-@@ -380,6 +380,21 @@
- )
+diff --git a/nuitka/MainControl.py b/nuitka/MainControl.py
+index e1b96cd..19b14b6 100644
+--- a/nuitka/MainControl.py
++++ b/nuitka/MainControl.py
+@@ -72,6 +72,7 @@ from nuitka.optimizations.ValueTraces import setupValueTraceFromOptions
+ from nuitka.options.Options import (
+     assumeYesForDownloads,
+     getDebuggerName,
++    getSubinterpreterBytecodeModules,
+     getFileReferenceMode,
+     getForcedStderrPath,
+     getForcedStdoutPath,
+@@ -975,11 +976,17 @@ def runSconsBackend():
+     if shallTreatUninstalledPython():
+         scons_options["uninstalled_python"] = asBoolStr(True)
  
- include_group.add_option(
-+    "--subinterpreter-bytecode",
-+    action="append",
-+    dest="subinterpreter_bytecode",
-+    metavar="MODULE",
-+    default=[],
-+    help="""\
-+Make an included module importable by subinterpreters too, e.g. those of an
-+"InterpreterPoolExecutor". A new interpreter imports from the standard import
-+system only, which cannot see compiled modules, so these are also embedded as
-+bytecode, which such interpreters import instead. The program itself still
-+uses the compiled module. Give as a Python namespace; can be given multiple
-+times and takes comma separated values. Default empty.""",
-+)
+-    if ModuleRegistry.getUncompiledTechnicalModules():
++    if ModuleRegistry.getUncompiledTechnicalModules() or (
++        getSubinterpreterBytecodeModules()
++    ):
+         scons_options["frozen_modules"] = str(
+             len(ModuleRegistry.getUncompiledTechnicalModules())
++            + len(getSubinterpreterBytecodeModules())
+         )
+ 
++    if getSubinterpreterBytecodeModules():
++        scons_options["subinterpreter_bytecode"] = asBoolStr(True)
 +
-+include_group.add_option(
-     "--include-plugin-directory",
-     action="append",
-     dest="include_extra",
-diff --git a/nuitka/options/Options.py b/nuitka/options/Options.py
---- a/nuitka/options/Options.py
-+++ b/nuitka/options/Options.py
-@@ -1607,6 +1607,16 @@
- def getShallFollowInNoCase():
-     """*list*, items of ``--nofollow-import-to=``"""
-     return sum([_splitShellPattern(x) for x in options.follow_not_modules], [])
-+
-+
-+def getSubinterpreterBytecodeModules():
-+    """*list*, items of ``--subinterpreter-bytecode=``"""
-+    return tuple(
-+        module_name.strip()
-+        for value in options.subinterpreter_bytecode
-+        for module_name in value.split(",")
-+        if module_name.strip()
+     if hasPythonFlagNoWarnings():
+         scons_options["no_python_warnings"] = asBoolStr(True)
+ 
+diff --git a/nuitka/build/Backend.scons b/nuitka/build/Backend.scons
+index cac9ee2..16d5b33 100644
+--- a/nuitka/build/Backend.scons
++++ b/nuitka/build/Backend.scons
+@@ -489,6 +489,10 @@ def createBuildDefinitionsFile():
+         1 if env.frozen_modules else 0
+     )
+ 
++    env.build_definitions["_NUITKA_SUBINTERPRETER_BYTECODE"] = (
++        1 if env.subinterpreter_bytecode else 0
 +    )
++
+     if env.forced_stdout_path is not None:
+         if env.forced_stdout_path == "{NONE}":
+             env.build_definitions["NUITKA_FORCED_STDOUT_NONE_BOOL"] = 1
+diff --git a/nuitka/build/SconsCompilerSettings.py b/nuitka/build/SconsCompilerSettings.py
+index 24358fb..a7ecc67 100644
+--- a/nuitka/build/SconsCompilerSettings.py
++++ b/nuitka/build/SconsCompilerSettings.py
+@@ -1250,6 +1250,9 @@ def createNuitkaSconsEnvironment(needs_source_dir=True):
+     # Amount of frozen modules.
+     frozen_modules = getArgumentInt("frozen_modules", 0)
  
++    # Frozen modules stay installed for subinterpreters.
++    subinterpreter_bytecode = getArgumentBool("subinterpreter_bytecode", False)
++
+     # Windows runtime DLL inclusion.
+     onefile_windows_static_runtime = getArgumentBool(
+         "onefile_windows_static_runtime", False
+@@ -1323,6 +1326,7 @@ def createNuitkaSconsEnvironment(needs_source_dir=True):
+     env.pgo_mode = pgo_mode
+     env.job_count = job_count
+     env.frozen_modules = frozen_modules
++    env.subinterpreter_bytecode = subinterpreter_bytecode
+     env.uninstalled_python = uninstalled_python
+     env.onefile_windows_static_runtime = onefile_windows_static_runtime
+     env.cf_protection = cf_protection
+diff --git a/nuitka/build/static_src/MainProgram.c b/nuitka/build/static_src/MainProgram.c
+index eff6c80..f1a798c 100644
+--- a/nuitka/build/static_src/MainProgram.c
++++ b/nuitka/build/static_src/MainProgram.c
+@@ -148,6 +148,33 @@ static void prepareFrozenModules(void) {
+ }
+ #endif
  
- def getShallFollowModules():
++#if _NUITKA_SUBINTERPRETER_BYTECODE
++// The frozen table stays installed for subinterpreters, and holds bytecode of
++// modules that are compiled for this interpreter. Our loader is registered
++// behind the frozen importer, which would then answer for them, so it is moved
++// ahead of it, still behind the builtin importer.
++static void moveMetaPathBasedLoaderAheadOfFrozenImporter(void) {
++    PyObject *meta_path = PySys_GetObject("meta_path");
++
++    if (meta_path == NULL || !PyList_Check(meta_path)) {
++        return;
++    }
++
++    for (Py_ssize_t i = 2; i < PyList_GET_SIZE(meta_path); i++) {
++        PyObject *finder = PyList_GET_ITEM(meta_path, i);
++
++        if (strcmp(Py_TYPE(finder)->tp_name, "nuitka_module_loader") == 0) {
++            Py_INCREF(finder);
++            PySequence_DelItem(meta_path, i);
++            PyList_Insert(meta_path, 1, finder);
++            Py_DECREF(finder);
++
++            return;
++        }
++    }
++}
++#endif
++
+ #include "nuitka/environment_variables.h"
+ 
+ #if _NUITKA_STANDALONE_MODE
+@@ -2082,7 +2109,7 @@ static int Nuitka_Main(int argc, native_command_line_argument_t **argv) {
+     setEarlyFrozenModulesFileAttribute(tstate);
+ #endif
+ 
+-#if NUITKA_HAS_FROZEN_MODULES_BOOL
++#if NUITKA_HAS_FROZEN_MODULES_BOOL && !_NUITKA_SUBINTERPRETER_BYTECODE
+     NUITKA_PRINT_TRACE("main(): Removing early frozen module table again.");
+     PyImport_FrozenModules = old_frozen;
+ #endif
+@@ -2099,6 +2126,10 @@ static int Nuitka_Main(int argc, native_command_line_argument_t **argv) {
+     /* Enable meta path based loader. */
+     setupMetaPathBasedLoader(tstate);
+ 
++#if _NUITKA_SUBINTERPRETER_BYTECODE
++    moveMetaPathBasedLoaderAheadOfFrozenImporter();
++#endif
++
+ #if PYTHON_VERSION < 0x3d0
+     /* Initialize warnings module. */
+     _PyWarnings_Init();
 diff --git a/nuitka/code_generation/LoaderCodes.py b/nuitka/code_generation/LoaderCodes.py
+index 6b6108d..0a66b24 100644
 --- a/nuitka/code_generation/LoaderCodes.py
 +++ b/nuitka/code_generation/LoaderCodes.py
-@@ -24,6 +24,7 @@
+@@ -24,6 +24,7 @@ from nuitka.importing.Recursion import getExcludedModuleNames
  from nuitka.ModuleRegistry import getDoneModules, getUncompiledTechnicalModules
  from nuitka.options.Options import (
      getFileReferenceMode,
@@ -81,7 +171,7 @@ diff --git a/nuitka/code_generation/LoaderCodes.py b/nuitka/code_generation/Load
      hasNonDeploymentIndicator,
      isShowInclusion,
      isStandaloneMode,
-@@ -38,6 +39,7 @@
+@@ -38,6 +39,7 @@ from nuitka.utils.CStrings import (
      encodePythonUnicodeToC,
  )
  from nuitka.utils.ModuleNames import (
@@ -89,7 +179,7 @@ diff --git a/nuitka/code_generation/LoaderCodes.py b/nuitka/code_generation/Load
      makeTriggerModuleName,
      post_module_load_trigger_name,
      pre_module_load_trigger_name,
-@@ -250,12 +252,7 @@
+@@ -250,12 +252,7 @@ def getMetaPathLoaderBodyCode(bytecode_accessor):
  
      frozen_defs = []
  
@@ -103,7 +193,7 @@ diff --git a/nuitka/code_generation/LoaderCodes.py b/nuitka/code_generation/Load
          size = len(code_data)
  
          # Packages are indicated with negative size.
-@@ -264,7 +261,7 @@
+@@ -264,7 +261,7 @@ def getMetaPathLoaderBodyCode(bytecode_accessor):
  
          accessor_code = bytecode_accessor.getBlobDataCode(
              data=code_data,
@@ -112,7 +202,7 @@ diff --git a/nuitka/code_generation/LoaderCodes.py b/nuitka/code_generation/Load
          )
  
          frozen_defs.append(
-@@ -323,6 +320,86 @@
+@@ -323,6 +320,86 @@ def getMetaPathLoaderBodyCode(bytecode_accessor):
      }
  
  
@@ -199,142 +289,67 @@ diff --git a/nuitka/code_generation/LoaderCodes.py b/nuitka/code_generation/Load
  perfect_supported = set()
  
  
-diff --git a/nuitka/MainControl.py b/nuitka/MainControl.py
---- a/nuitka/MainControl.py
-+++ b/nuitka/MainControl.py
-@@ -72,6 +72,7 @@
- from nuitka.options.Options import (
-     assumeYesForDownloads,
-     getDebuggerName,
-+    getSubinterpreterBytecodeModules,
-     getFileReferenceMode,
-     getForcedStderrPath,
-     getForcedStdoutPath,
-@@ -975,10 +976,16 @@
-     if shallTreatUninstalledPython():
-         scons_options["uninstalled_python"] = asBoolStr(True)
+diff --git a/nuitka/options/OptionParsing.py b/nuitka/options/OptionParsing.py
+index 02de43d..07712fe 100644
+--- a/nuitka/options/OptionParsing.py
++++ b/nuitka/options/OptionParsing.py
+@@ -380,6 +380,21 @@ and Nuitka will then find it and include it in the binary or extension module
+ it creates, and make it available for import by the code. Default empty.""",
+ )
  
--    if ModuleRegistry.getUncompiledTechnicalModules():
-+    if ModuleRegistry.getUncompiledTechnicalModules() or (
-+        getSubinterpreterBytecodeModules()
-+    ):
-         scons_options["frozen_modules"] = str(
-             len(ModuleRegistry.getUncompiledTechnicalModules())
-+            + len(getSubinterpreterBytecodeModules())
-         )
++include_group.add_option(
++    "--subinterpreter-bytecode",
++    action="append",
++    dest="subinterpreter_bytecode",
++    metavar="MODULE",
++    default=[],
++    help="""\
++Make an included module importable by subinterpreters too, e.g. those of an
++"InterpreterPoolExecutor". A new interpreter imports from the standard import
++system only, which cannot see compiled modules, so these are also embedded as
++bytecode, which such interpreters import instead. The program itself still
++uses the compiled module. Give as a Python namespace; can be given multiple
++times and takes comma separated values. Default empty.""",
++)
 +
-+    if getSubinterpreterBytecodeModules():
-+        scons_options["subinterpreter_bytecode"] = asBoolStr(True)
+ include_group.add_option(
+     "--include-plugin-directory",
+     action="append",
+diff --git a/nuitka/options/Options.py b/nuitka/options/Options.py
+index 3c70545..05801a4 100644
+--- a/nuitka/options/Options.py
++++ b/nuitka/options/Options.py
+@@ -1627,6 +1627,16 @@ def getShallFollowInNoCase():
+     return sum([_splitShellPattern(x) for x in options.follow_not_modules], [])
  
-     if hasPythonFlagNoWarnings():
-         scons_options["no_python_warnings"] = asBoolStr(True)
-diff --git a/nuitka/build/SconsCompilerSettings.py b/nuitka/build/SconsCompilerSettings.py
---- a/nuitka/build/SconsCompilerSettings.py
-+++ b/nuitka/build/SconsCompilerSettings.py
-@@ -1249,6 +1249,9 @@
  
-     # Amount of frozen modules.
-     frozen_modules = getArgumentInt("frozen_modules", 0)
-+
-+    # Frozen modules stay installed for subinterpreters.
-+    subinterpreter_bytecode = getArgumentBool("subinterpreter_bytecode", False)
- 
-     # Windows runtime DLL inclusion.
-     onefile_windows_static_runtime = getArgumentBool(
-@@ -1323,6 +1326,7 @@
-     env.pgo_mode = pgo_mode
-     env.job_count = job_count
-     env.frozen_modules = frozen_modules
-+    env.subinterpreter_bytecode = subinterpreter_bytecode
-     env.uninstalled_python = uninstalled_python
-     env.onefile_windows_static_runtime = onefile_windows_static_runtime
-     env.cf_protection = cf_protection
-diff --git a/nuitka/build/Backend.scons b/nuitka/build/Backend.scons
---- a/nuitka/build/Backend.scons
-+++ b/nuitka/build/Backend.scons
-@@ -487,6 +487,10 @@
- 
-     env.build_definitions["NUITKA_HAS_FROZEN_MODULES_BOOL"] = (
-         1 if env.frozen_modules else 0
++def getSubinterpreterBytecodeModules():
++    """*list*, items of ``--subinterpreter-bytecode=``"""
++    return tuple(
++        module_name.strip()
++        for value in options.subinterpreter_bytecode
++        for module_name in value.split(",")
++        if module_name.strip()
 +    )
 +
-+    env.build_definitions["_NUITKA_SUBINTERPRETER_BYTECODE"] = (
-+        1 if env.subinterpreter_bytecode else 0
-     )
- 
-     if env.forced_stdout_path is not None:
-diff --git a/nuitka/build/static_src/MainProgram.c b/nuitka/build/static_src/MainProgram.c
---- a/nuitka/build/static_src/MainProgram.c
-+++ b/nuitka/build/static_src/MainProgram.c
-@@ -148,6 +148,33 @@
- }
- #endif
- 
-+#if _NUITKA_SUBINTERPRETER_BYTECODE
-+// The frozen table stays installed for subinterpreters, and holds bytecode of
-+// modules that are compiled for this interpreter. Our loader is registered
-+// behind the frozen importer, which would then answer for them, so it is moved
-+// ahead of it, still behind the builtin importer.
-+static void moveMetaPathBasedLoaderAheadOfFrozenImporter(void) {
-+    PyObject *meta_path = PySys_GetObject("meta_path");
 +
-+    if (meta_path == NULL || !PyList_Check(meta_path)) {
-+        return;
-+    }
-+
-+    for (Py_ssize_t i = 2; i < PyList_GET_SIZE(meta_path); i++) {
-+        PyObject *finder = PyList_GET_ITEM(meta_path, i);
-+
-+        if (strcmp(Py_TYPE(finder)->tp_name, "nuitka_module_loader") == 0) {
-+            Py_INCREF(finder);
-+            PySequence_DelItem(meta_path, i);
-+            PyList_Insert(meta_path, 1, finder);
-+            Py_DECREF(finder);
-+
-+            return;
-+        }
-+    }
-+}
-+#endif
-+
- #include "nuitka/environment_variables.h"
- 
- #if _NUITKA_STANDALONE_MODE
-@@ -2082,7 +2109,7 @@
-     setEarlyFrozenModulesFileAttribute(tstate);
- #endif
- 
--#if NUITKA_HAS_FROZEN_MODULES_BOOL
-+#if NUITKA_HAS_FROZEN_MODULES_BOOL && !_NUITKA_SUBINTERPRETER_BYTECODE
-     NUITKA_PRINT_TRACE("main(): Removing early frozen module table again.");
-     PyImport_FrozenModules = old_frozen;
- #endif
-@@ -2099,6 +2126,10 @@
-     /* Enable meta path based loader. */
-     setupMetaPathBasedLoader(tstate);
- 
-+#if _NUITKA_SUBINTERPRETER_BYTECODE
-+    moveMetaPathBasedLoaderAheadOfFrozenImporter();
-+#endif
-+
- #if PYTHON_VERSION < 0x3d0
-     /* Initialize warnings module. */
-     _PyWarnings_Init();
+ def getShallFollowModules():
+     """*list*, items of ``--follow-import-to=`` amended with what ``--include-module`` and ``--include-package`` got"""
+     return sum(
 diff --git a/nuitka/tree/Building.py b/nuitka/tree/Building.py
+index 9554822..b862a8d 100644
 --- a/nuitka/tree/Building.py
 +++ b/nuitka/tree/Building.py
-@@ -1062,6 +1062,12 @@
-     # Technically required modules must be bytecode, do not even ask plugins
-     # about it.
+@@ -1063,6 +1063,12 @@ def decideCompilationMode(is_top, module_name, module_filename, for_pgo):
      if is_stdlib and module_name in detectEarlyImports():
-+        return "bytecode"
-+
+         return "bytecode"
+ 
 +    # An "InterpreterPoolExecutor" runs each job by handing "do_call" of this
 +    # module to "Interpreter.call", which only shares Python functions with the
 +    # interpreter it calls into: compiled, the pool can run nothing.
 +    if is_stdlib and module_name == "concurrent.futures.interpreter":
-         return "bytecode"
- 
++        return "bytecode"
++
      result = decideCompilation(module_name)
--- 
-2.51.0
+ 
+     # Cannot change mode of "__main__" to bytecode, that is not going to work

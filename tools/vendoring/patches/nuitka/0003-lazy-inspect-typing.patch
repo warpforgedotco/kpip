@@ -28,7 +28,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  3 files changed, 185 insertions(+), 106 deletions(-)
 
 diff --git a/nuitka/build/include/nuitka/helpers.h b/nuitka/build/include/nuitka/helpers.h
-index aeebbd78c..eb25d9517 100644
+index 35dacee..9d464f8 100644
 --- a/nuitka/build/include/nuitka/helpers.h
 +++ b/nuitka/build/include/nuitka/helpers.h
 @@ -304,6 +304,9 @@ extern void setupMetaPathBasedLoader(PyThreadState *tstate);
@@ -42,10 +42,10 @@ index aeebbd78c..eb25d9517 100644
  
  // Replace type comparison with one that accepts compiled types too, will work
 diff --git a/nuitka/build/static_src/InspectPatcher.c b/nuitka/build/static_src/InspectPatcher.c
-index cd37ac355..6c7f15cde 100644
+index 44e0ca3..b1fbb03 100644
 --- a/nuitka/build/static_src/InspectPatcher.c
 +++ b/nuitka/build/static_src/InspectPatcher.c
-@@ -253,9 +253,7 @@ static PyObject *Nuitka_typing_type_new(PyTypeObject *type, PyObject *args, PyOb
+@@ -249,9 +249,7 @@ static PyObject *Nuitka_typing_type_new(PyTypeObject *type, PyObject *args, PyOb
      return result;
  }
  
@@ -56,7 +56,7 @@ index cd37ac355..6c7f15cde 100644
      PyObject *typing_type = PyObject_GetAttrString(typing_module, attribute_name);
  
      CHECK_OBJECT(typing_type);
-@@ -277,45 +275,55 @@ static void patchTypingType(char const *attribute_name) {
+@@ -273,45 +271,55 @@ static void patchTypingType(char const *attribute_name) {
  }
  
  static void patchTypingModule(void) {
@@ -141,12 +141,13 @@ index cd37ac355..6c7f15cde 100644
  
      // Patch "inspect.getgeneratorstate" unless it is already patched.
      old_getgeneratorstate = PyObject_GetAttrString(module_inspect, "getgeneratorstate");
-@@ -339,107 +347,171 @@ void patchInspectModule(PyThreadState *tstate) {
+@@ -335,107 +343,171 @@ void patchInspectModule(PyThreadState *tstate) {
  
          PyObject_SetAttrString(module_inspect, "getcoroutinestate", inspect_getcoroutinestate_replacement);
      }
 +#endif
-+
+ 
+-    module_types = IMPORT_MODULE5(tstate, const_str_plain_types, Py_None, Py_None, const_tuple_empty, const_int_0);
 +#if PYTHON_VERSION >= 0x3b0
 +    static char const *inspect_enhancement_code = "\n\
 +def patch(inspect):\n\
@@ -164,13 +165,12 @@ index cd37ac355..6c7f15cde 100644
 +#endif
 +}
  
--    module_types = IMPORT_MODULE5(tstate, const_str_plain_types, Py_None, Py_None, const_tuple_empty, const_int_0);
-+#if PYTHON_VERSION >= 0x350
-+static bool types_module_patched = false;
- 
 -    if (module_types == NULL) {
 -        PyErr_PrintEx(0);
 -        Py_Exit(1);
++#if PYTHON_VERSION >= 0x350
++static bool types_module_patched = false;
++
 +static void patchTypesModuleObject(PyThreadState *tstate, PyObject *module) {
 +    // The loader may have patched it already, before startup asked for it,
 +    // and patching twice would wrap "types.coroutine" around itself.
@@ -293,25 +293,25 @@ index cd37ac355..6c7f15cde 100644
 +\n\
 +    return _types_coroutine\n\
 +";
-+
-+    types_coroutine_wrapped = runModulePatchCode(tstate, types_enhancement_code, "nuitka_types_patch", module_types);
  
 -    PyObject *wrapper_enhancement_code_object = Py_CompileString(wrapper_enhancement_code, "<exec>", Py_file_input);
 -    CHECK_OBJECT(wrapper_enhancement_code_object);
-+    // Patch "types.coroutine" unless it is already patched.
-+    if (PyFunction_Check(old_types_coroutine)) {
-+        PyObject *types_coroutine_replacement = PyCFunction_New(&_method_def_types_coroutine_replacement, NULL);
-+        CHECK_OBJECT(types_coroutine_replacement);
++    types_coroutine_wrapped = runModulePatchCode(tstate, types_enhancement_code, "nuitka_types_patch", module_types);
  
 -    {
 -        NUITKA_MAY_BE_UNUSED PyObject *module =
 -            PyImport_ExecCodeModule("nuitka_types_patch", wrapper_enhancement_code_object);
 -        CHECK_OBJECT(module);
++    // Patch "types.coroutine" unless it is already patched.
++    if (PyFunction_Check(old_types_coroutine)) {
++        PyObject *types_coroutine_replacement = PyCFunction_New(&_method_def_types_coroutine_replacement, NULL);
++        CHECK_OBJECT(types_coroutine_replacement);
+ 
 +        PyObject_SetAttrString(module_types, "coroutine", types_coroutine_replacement);
 +    }
 +}
 +#endif
- 
++
 +void patchLoadedModule(PyThreadState *tstate, char const *name, PyObject *module) {
 +    if (inspect_module_patched == false && strcmp(name, "inspect") == 0) {
 +        patchInspectModuleObject(tstate, module);
@@ -324,16 +324,16 @@ index cd37ac355..6c7f15cde 100644
 +    }
 +#endif
 +}
-+
+ 
+-        NUITKA_MAY_BE_UNUSED int res = PyObject_SetAttrString(module, "_old_types_coroutine", old_types_coroutine);
+-        assert(res == 0);
 +// Patch a module now if already imported, or with standalone, when the loader
 +// imports it. Otherwise it has to be imported to patch it, because the loader
 +// may not see it being imported.
 +static void patchModuleWhenLoaded(PyThreadState *tstate, PyObject *module_name,
 +                                  void (*patch)(PyThreadState *tstate, PyObject *module)) {
 +    PyObject *module = Nuitka_GetModule(tstate, module_name);
- 
--        NUITKA_MAY_BE_UNUSED int res = PyObject_SetAttrString(module, "_old_types_coroutine", old_types_coroutine);
--        assert(res == 0);
++
 +#if !_NUITKA_STANDALONE_MODE
 +    if (module == NULL) {
 +        module = IMPORT_MODULE5(tstate, module_name, Py_None, Py_None, const_tuple_empty, const_int_0);
@@ -388,10 +388,10 @@ index cd37ac355..6c7f15cde 100644
  
  #if PYTHON_VERSION >= 0x3c0
 diff --git a/nuitka/build/static_src/MetaPathBasedLoader.c b/nuitka/build/static_src/MetaPathBasedLoader.c
-index 0630de3d0..56eb9678d 100644
+index 050367a..705056b 100644
 --- a/nuitka/build/static_src/MetaPathBasedLoader.c
 +++ b/nuitka/build/static_src/MetaPathBasedLoader.c
-@@ -1661,6 +1661,10 @@ static PyObject *_EXECUTE_EMBEDDED_MODULE(PyThreadState *tstate, PyObject *modul
+@@ -1671,6 +1671,10 @@ static PyObject *_EXECUTE_EMBEDDED_MODULE(PyThreadState *tstate, PyObject *modul
              // after loading, to e.g. set a plug-in path, or do some monkey patching
              // in order to make things compatible.
              loadPostLoadCode(tstate, module_name, name, result, entry);

@@ -14,10 +14,14 @@ where nothing can shadow it.
 
 For 2000 runs over 1000 objects reading two slots and a class constant,
 this takes 61 instead of 127 ms.
-
 ---
+ .../build/include/nuitka/helper/attributes.h  | 33 +++++++++++++++++
+ nuitka/build/static_src/HelpersAttributes.c   | 36 +++++++++++++++++++
+ nuitka/code_generation/AttributeCodes.py      | 27 ++++++++++++++
+ 3 files changed, 96 insertions(+)
+
 diff --git a/nuitka/build/include/nuitka/helper/attributes.h b/nuitka/build/include/nuitka/helper/attributes.h
-index 60f06ab7e..e6bca4106 100644
+index 60f06ab..e6bca41 100644
 --- a/nuitka/build/include/nuitka/helper/attributes.h
 +++ b/nuitka/build/include/nuitka/helper/attributes.h
 @@ -64,6 +64,39 @@ static inline bool hasTypeGenericGetAttr(PyTypeObject *type) {
@@ -61,7 +65,7 @@ index 60f06ab7e..e6bca4106 100644
  extern setattrofunc PyObject_GenericSetAttr_resolved;
  
 diff --git a/nuitka/build/static_src/HelpersAttributes.c b/nuitka/build/static_src/HelpersAttributes.c
-index 6d4d5d6be..a7afa0905 100644
+index 6d4d5d6..a7afa09 100644
 --- a/nuitka/build/static_src/HelpersAttributes.c
 +++ b/nuitka/build/static_src/HelpersAttributes.c
 @@ -250,6 +250,42 @@ PyObject *LOOKUP_ATTRIBUTE(PyThreadState *tstate, PyObject *source, PyObject *at
@@ -108,7 +112,7 @@ index 6d4d5d6be..a7afa0905 100644
      CHECK_OBJECT(source);
  
 diff --git a/nuitka/code_generation/AttributeCodes.py b/nuitka/code_generation/AttributeCodes.py
-index 5dfb132e4..e8892aa52 100644
+index 5dfb132..e8892aa 100644
 --- a/nuitka/code_generation/AttributeCodes.py
 +++ b/nuitka/code_generation/AttributeCodes.py
 @@ -6,6 +6,8 @@

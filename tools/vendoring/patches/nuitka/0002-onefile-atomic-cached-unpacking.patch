@@ -22,7 +22,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  1 file changed, 72 insertions(+), 26 deletions(-)
 
 diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
-index cef4be5ee..379b311a9 100644
+index cef4be5..379b311 100644
 --- a/nuitka/build/static_src/OnefileBootstrap.c
 +++ b/nuitka/build/static_src/OnefileBootstrap.c
 @@ -455,6 +455,37 @@ static bool payload_created = false;
