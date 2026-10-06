@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import sysconfig
 from collections.abc import Iterable
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from kpip._internal.interpreters import Interpreter, build_interpreter, identify
 from kpip._internal.build_env.base import (
     BuildEnvironment,
     BuildEnvironmentInstaller,
@@ -31,6 +33,9 @@ class VenvBuildEnvironment(BuildEnvironment):
     """A venv-based build environment."""
 
     def __init__(self, installer: BuildEnvironmentInstaller) -> None:
+        if not build_interpreter().is_own:
+            self._create_with(build_interpreter(), installer)
+            return
         # We defer this import because certain distributions of Python do not include
         # a functional venv out of the box.
         try:
@@ -101,6 +106,35 @@ class VenvBuildEnvironment(BuildEnvironment):
             raise VenvCreationError(
                 f"Python executable failed to copy to {self.python_executable}"
             )
+
+    def _create_with(
+        self, interpreter: Interpreter, installer: BuildEnvironmentInstaller
+    ) -> None:
+        """Create the environment by running ``interpreter``: this process's
+        venv module would make one of its own Python."""
+        if not interpreter.has_venv:
+            raise VenvImportError
+        self._env_path = TempDirectory(
+            kind=tempdir_kinds.BUILD_ENV, globally_managed=True
+        ).path
+        command = [interpreter.executable, "-m", "venv", "--without-pip"]
+        if os.name != "nt":
+            command.append("--symlinks")
+        try:
+            subprocess.run(
+                [*command, self._env_path], check=True, capture_output=True
+            )
+        except (OSError, subprocess.CalledProcessError) as e:
+            raise VenvCreationError(str(e))
+        scheme = "venv" if "venv" in interpreter.scheme_names() else "posix_prefix"
+        paths = interpreter.get_paths(
+            scheme, {"base": self._env_path, "platbase": self._env_path}
+        )
+        self.lib_dirs = [paths["purelib"]]
+        self._bin_path = paths["scripts"]
+        self.python_executable = identify(self._env_path)
+        self._save_env: dict[str, str | None] = {}
+        self._installer = installer
 
     def __enter__(self) -> None:
         # We want backend calls to be able to use binaries installed as if this

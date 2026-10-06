@@ -1,0 +1,390 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:41:43 -0500
+Subject: [PATCH] Resolve for the target interpreter
+
+Wheel tags, the Python version Requires-Python is checked against, the
+marker environment, the wheel cache's interpreter key, whether freeze
+hides build backends, the versioned pip scripts, and the environment that
+install reports and inspect show are now the target interpreter's. With
+nothing overridden, a probed interpreter's tags are the ones it computed
+itself; options like --platform and --python-version override only what
+they name. Markers are evaluated against the target by making packaging's
+default environment answer for it.
+---
+ src/kpip/_internal/cache.py                   | 10 ++-
+ src/kpip/_internal/commands/freeze.py         |  3 +-
+ src/kpip/_internal/commands/inspect.py        |  4 +-
+ src/kpip/_internal/interpreters/__init__.py   | 11 ++++
+ src/kpip/_internal/interpreters/facts.py      |  9 ++-
+ .../_internal/models/installation_report.py   |  4 +-
+ src/kpip/_internal/models/target_python.py    |  4 +-
+ .../_internal/operations/install/wheel.py     |  4 +-
+ .../_internal/resolution/legacy/resolver.py   |  4 +-
+ .../resolution/resolvelib/candidates.py       |  4 +-
+ .../_internal/utils/compatibility_tags.py     | 16 +++++
+ tests/unit/test_interpreters.py               | 62 +++++++++++++++++++
+ 12 files changed, 118 insertions(+), 17 deletions(-)
+
+diff --git a/src/kpip/_internal/cache.py b/src/kpip/_internal/cache.py
+index 90f384e..33408ee 100644
+--- a/src/kpip/_internal/cache.py
++++ b/src/kpip/_internal/cache.py
+@@ -12,6 +12,7 @@ from typing import Any
+ from kpip._vendor.packaging.tags import Tag, interpreter_name, interpreter_version
+ from kpip._vendor.packaging.utils import canonicalize_name
+ 
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.exceptions import InvalidWheelFilename
+ from kpip._internal.models.direct_url import DirectUrl
+ from kpip._internal.models.link import Link
+@@ -58,8 +59,13 @@ class Cache:
+         # depending on the python version their setup.py is being run on,
+         # and don't encode the difference in compatibility tags.
+         # https://github.com/pypa/pip/issues/7296
+-        key_parts["interpreter_name"] = interpreter_name()
+-        key_parts["interpreter_version"] = interpreter_version()
++        interpreter = target_interpreter()
++        if interpreter.is_own:
++            key_parts["interpreter_name"] = interpreter_name()
++            key_parts["interpreter_version"] = interpreter_version()
++        else:
++            key_parts["interpreter_name"] = interpreter.interpreter_name
++            key_parts["interpreter_version"] = interpreter.interpreter_version
+ 
+         # Encode our key url with sha224, we'll use this because it has similar
+         # security properties to sha256, but with a shorter total output (and
+diff --git a/src/kpip/_internal/commands/freeze.py b/src/kpip/_internal/commands/freeze.py
+index b88aac5..788e4f5 100644
+--- a/src/kpip/_internal/commands/freeze.py
++++ b/src/kpip/_internal/commands/freeze.py
+@@ -1,6 +1,7 @@
+ import sys
+ from optparse import Values
+ 
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.cli import cmdoptions
+ from kpip._internal.cli.base_command import Command
+ from kpip._internal.cli.status_codes import SUCCESS
+@@ -9,7 +10,7 @@ from kpip._internal.operations.freeze import freeze
+ 
+ 
+ def _should_suppress_build_backends() -> bool:
+-    return sys.version_info < (3, 12)
++    return target_interpreter().version < (3, 12)
+ 
+ 
+ def _dev_pkgs() -> set[str]:
+diff --git a/src/kpip/_internal/commands/inspect.py b/src/kpip/_internal/commands/inspect.py
+index 8af9848..fac5db9 100644
+--- a/src/kpip/_internal/commands/inspect.py
++++ b/src/kpip/_internal/commands/inspect.py
+@@ -2,10 +2,10 @@ import logging
+ from optparse import Values
+ from typing import Any
+ 
+-from kpip._vendor.packaging.markers import default_environment
+ from kpip._vendor.rich import print_json
+ 
+ from kpip import __pip_version__
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.cli import cmdoptions
+ from kpip._internal.cli.base_command import Command
+ from kpip._internal.cli.status_codes import SUCCESS
+@@ -56,7 +56,7 @@ class InspectCommand(Command):
+             "version": "1",
+             "pip_version": __pip_version__,
+             "installed": [self._dist_to_dict(dist) for dist in dists],
+-            "environment": default_environment(),
++            "environment": target_interpreter().markers,
+             # TODO tags? scheme?
+         }
+         print_json(data=output)
+diff --git a/src/kpip/_internal/interpreters/__init__.py b/src/kpip/_internal/interpreters/__init__.py
+index 32c9f3b..1821c13 100644
+--- a/src/kpip/_internal/interpreters/__init__.py
++++ b/src/kpip/_internal/interpreters/__init__.py
+@@ -36,6 +36,7 @@ from kpip._internal.interpreters.facts import (
+     set_cache_dir,
+ )
+ from kpip._internal.utils.compiled import is_compiled
++from kpip._vendor.packaging import markers
+ 
+ __all__ = [
+     "Interpreter",
+@@ -107,6 +108,16 @@ def target_interpreter() -> Interpreter:
+     return _target
+ 
+ 
++def _target_environment() -> dict[str, str]:
++    return target_interpreter().markers
++
++
++# Every marker pip evaluates -- requirements, dependencies, build
++# requirements -- without an environment of its own is evaluated against
++# packaging's default environment: make that the target interpreter's.
++markers.default_environment = _target_environment  # type: ignore[assignment]
++
++
+ def search_path() -> list[str]:
+     """Where the target interpreter imports from, and so where what is
+     installed for it is found: this process's own ``sys.path``, live, when it
+diff --git a/src/kpip/_internal/interpreters/facts.py b/src/kpip/_internal/interpreters/facts.py
+index 26c224a..88b7155 100644
+--- a/src/kpip/_internal/interpreters/facts.py
++++ b/src/kpip/_internal/interpreters/facts.py
+@@ -24,8 +24,13 @@ from typing import Any
+ from kpip._internal.exceptions import CommandError
+ from kpip._internal.interpreters.probe import OLDEST_TARGET, probe_digest, probe_source
+ from kpip._internal.utils.compiled import is_compiled
++from kpip._vendor.packaging import markers as _markers
+ from kpip._vendor.packaging.tags import Tag, parse_tag
+ 
++# packaging's own: this process's marker environment. The module's
++# default_environment answers for the target interpreter (see __init__).
++_process_environment = _markers.default_environment
++
+ logger = logging.getLogger(__name__)
+ 
+ 
+@@ -183,9 +188,7 @@ class OwnInterpreter(Interpreter):
+ 
+     @property
+     def markers(self) -> dict[str, str]:
+-        from kpip._vendor.packaging.markers import default_environment
+-
+-        return dict(default_environment())
++        return dict(_process_environment())
+ 
+     @property
+     def tags(self) -> list[Tag]:
+diff --git a/src/kpip/_internal/models/installation_report.py b/src/kpip/_internal/models/installation_report.py
+index d3caae0..0f7a523 100644
+--- a/src/kpip/_internal/models/installation_report.py
++++ b/src/kpip/_internal/models/installation_report.py
+@@ -1,9 +1,9 @@
+ from collections.abc import Sequence
+ from typing import Any
+ 
+-from kpip._vendor.packaging.markers import default_environment
+ 
+ from kpip import __pip_version__
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.req.req_install import InstallRequirement
+ 
+ 
+@@ -53,5 +53,5 @@ class InstallationReport:
+             # should also take into account options such as --python-version or
+             # --platform, perhaps under the form of an environment_override field?
+             # https://github.com/pypa/pip/issues/11198
+-            "environment": default_environment(),
++            "environment": target_interpreter().markers,
+         }
+diff --git a/src/kpip/_internal/models/target_python.py b/src/kpip/_internal/models/target_python.py
+index 65026a1..2a1d375 100644
+--- a/src/kpip/_internal/models/target_python.py
++++ b/src/kpip/_internal/models/target_python.py
+@@ -1,9 +1,9 @@
+ from __future__ import annotations
+ 
+-import sys
+ 
+ from kpip._vendor.packaging.tags import Tag
+ 
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.utils.compatibility_tags import get_supported, version_info_to_nodot
+ from kpip._internal.utils.misc import normalize_version_info
+ 
+@@ -50,7 +50,7 @@ class TargetPython:
+         self._given_py_version_info = py_version_info
+ 
+         if py_version_info is None:
+-            py_version_info = sys.version_info[:3]
++            py_version_info = target_interpreter().version
+         else:
+             py_version_info = normalize_version_info(py_version_info)
+ 
+diff --git a/src/kpip/_internal/operations/install/wheel.py b/src/kpip/_internal/operations/install/wheel.py
+index 94baa05..0d940a4 100644
+--- a/src/kpip/_internal/operations/install/wheel.py
++++ b/src/kpip/_internal/operations/install/wheel.py
+@@ -33,6 +33,7 @@ from kpip._vendor.distlib.scripts import ScriptMaker
+ from kpip._vendor.distlib.util import get_export_entry
+ from kpip._vendor.packaging.utils import canonicalize_name
+ 
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.exceptions import InstallationError
+ from kpip._internal.locations import get_major_minor_version
+ from kpip._internal.metadata import (
+@@ -312,7 +313,8 @@ def get_console_script_specs(console: dict[str, str]) -> list[str]:
+             scripts_to_generate.append("pip = " + pip_script)
+ 
+         if os.environ.get("ENSUREPIP_OPTIONS", "") != "altinstall":
+-            scripts_to_generate.append(f"pip{sys.version_info[0]} = {pip_script}")
++            major = target_interpreter().version[0]
++            scripts_to_generate.append(f"pip{major} = {pip_script}")
+ 
+         scripts_to_generate.append(f"pip{get_major_minor_version()} = {pip_script}")
+         # Delete any other versioned pip entry points
+diff --git a/src/kpip/_internal/resolution/legacy/resolver.py b/src/kpip/_internal/resolution/legacy/resolver.py
+index c8f7f20..b929864 100644
+--- a/src/kpip/_internal/resolution/legacy/resolver.py
++++ b/src/kpip/_internal/resolution/legacy/resolver.py
+@@ -13,7 +13,6 @@ for sub-dependencies
+ from __future__ import annotations
+ 
+ import logging
+-import sys
+ from collections import defaultdict
+ from collections.abc import Iterable
+ from itertools import chain
+@@ -21,6 +20,7 @@ from itertools import chain
+ from kpip._vendor.packaging import specifiers
+ from kpip._vendor.packaging.requirements import Requirement
+ 
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.cache import WheelCache
+ from kpip._internal.exceptions import (
+     BestVersionAlreadyInstalled,
+@@ -134,7 +134,7 @@ class Resolver(BaseResolver):
+         assert upgrade_strategy in self._allowed_strategies
+ 
+         if py_version_info is None:
+-            py_version_info = sys.version_info[:3]
++            py_version_info = target_interpreter().version
+         else:
+             py_version_info = normalize_version_info(py_version_info)
+ 
+diff --git a/src/kpip/_internal/resolution/resolvelib/candidates.py b/src/kpip/_internal/resolution/resolvelib/candidates.py
+index 2a4a558..8638bc5 100644
+--- a/src/kpip/_internal/resolution/resolvelib/candidates.py
++++ b/src/kpip/_internal/resolution/resolvelib/candidates.py
+@@ -1,7 +1,6 @@
+ from __future__ import annotations
+ 
+ import logging
+-import sys
+ from collections.abc import Iterable
+ from typing import TYPE_CHECKING, Any, Union, cast
+ 
+@@ -9,6 +8,7 @@ from kpip._vendor.packaging.requirements import InvalidRequirement
+ from kpip._vendor.packaging.utils import NormalizedName, canonicalize_name
+ from kpip._vendor.packaging.version import Version
+ 
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.exceptions import (
+     FailedToPrepareCandidate,
+     HashError,
+@@ -563,7 +563,7 @@ class RequiresPythonCandidate(Candidate):
+         if py_version_info is not None:
+             version_info = normalize_version_info(py_version_info)
+         else:
+-            version_info = sys.version_info[:3]
++            version_info = target_interpreter().version
+         self._version = Version(".".join(str(c) for c in version_info))
+ 
+     # We don't need to implement __eq__() and __ne__() since there is always
+diff --git a/src/kpip/_internal/utils/compatibility_tags.py b/src/kpip/_internal/utils/compatibility_tags.py
+index c728276..3c141c6 100644
+--- a/src/kpip/_internal/utils/compatibility_tags.py
++++ b/src/kpip/_internal/utils/compatibility_tags.py
+@@ -17,6 +17,8 @@ from kpip._vendor.packaging.tags import (
+     mac_platforms,
+ )
+ 
++from kpip._internal.interpreters import target_interpreter
++
+ _apple_arch_pat = re.compile(r"(.+)_(\d+)_(\d+)_(.+)")
+ 
+ 
+@@ -163,6 +165,20 @@ def get_supported(
+     :param abis: specify a list of abis you want valid
+         tags for, or None. If None, use the local interpreter abi.
+     """
++    interpreter = target_interpreter()
++    if not interpreter.is_own:
++        # What is not given is the target interpreter's, not this process's.
++        if version is None and platforms is None and impl is None and abis is None:
++            return interpreter.tags
++        if impl is None:
++            impl = interpreter.interpreter_name
++        if version is None:
++            version = interpreter.interpreter_version
++            if abis is None:
++                abis = interpreter.abis
++        if platforms is None:
++            platforms = interpreter.platforms
++
+     supported: list[Tag] = []
+ 
+     python_version: PythonVersion | None = None
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index 4cd3604..3076d7b 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -321,3 +321,65 @@ def test_what_is_installed_is_read_from_the_target(
+     for environment in (get_default_environment(), get_environment(None)):
+         names = {dist.canonical_name for dist in environment.iter_all_distributions()}
+         assert names == {"only-here"}
++
++
++@pytest.fixture
++def other_python(monkeypatch: pytest.MonkeyPatch) -> facts.ProbedInterpreter:
++    """A target that is not this Python: 3.11, on another platform."""
++    probed = probe(sys.executable).facts
++    other = facts.ProbedInterpreter(
++        {
++            **probed,
++            "version": [3, 11, 9],
++            "interpreter_version": "311",
++            "abis": ["cp311"],
++            "platforms": ["emscripten_3_1_58_wasm32"],
++            "tags": [
++                "cp311-cp311-emscripten_3_1_58_wasm32",
++                "cp311-abi3-emscripten_3_1_58_wasm32",
++                "py3-none-any",
++            ],
++            "markers": {
++                **probed["markers"],
++                "python_version": "3.11",
++                "python_full_version": "3.11.9",
++                "sys_platform": "emscripten",
++            },
++        }
++    )
++    monkeypatch.setattr(interpreters, "_target", other)
++    return other
++
++
++def test_wheel_tags_are_the_targets(other_python: facts.ProbedInterpreter) -> None:
++    from kpip._internal.models.target_python import TargetPython
++    from kpip._internal.utils.compatibility_tags import get_supported
++
++    assert [str(tag) for tag in get_supported()] == [
++        "cp311-cp311-emscripten_3_1_58_wasm32",
++        "cp311-abi3-emscripten_3_1_58_wasm32",
++        "py3-none-any",
++    ]
++    # What is given is used; the rest is the target's.
++    linux = {str(tag) for tag in get_supported(platforms=["linux_x86_64"])}
++    assert "cp311-cp311-linux_x86_64" in linux
++    assert not any("emscripten" in tag for tag in linux)
++
++    target_python = TargetPython()
++    assert target_python.py_version_info == (3, 11, 9)
++    assert str(target_python.get_sorted_tags()[0]) == (
++        "cp311-cp311-emscripten_3_1_58_wasm32"
++    )
++
++
++def test_markers_and_requires_python_are_the_targets(
++    other_python: facts.ProbedInterpreter,
++) -> None:
++    from kpip._internal.resolution.resolvelib.candidates import (
++        RequiresPythonCandidate,
++    )
++    from kpip._vendor.packaging.markers import Marker
++
++    assert Marker("python_version < '3.12'").evaluate()
++    assert Marker("sys_platform == 'emscripten'").evaluate()
++    assert str(RequiresPythonCandidate(None).version) == "3.11.9"

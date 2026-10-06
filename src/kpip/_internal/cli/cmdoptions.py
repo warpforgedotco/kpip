@@ -27,7 +27,7 @@ from kpip._vendor.packaging.utils import canonicalize_name
 
 from kpip._internal.cli.parser import ConfigOptionParser
 from kpip._internal.exceptions import CommandError
-from kpip._internal.locations import USER_CACHE_DIR, get_src_prefix
+from kpip._internal.locations import USER_CACHE_DIR
 from kpip._internal.models.format_control import FormatControl
 from kpip._internal.models.index import PyPI
 from kpip._internal.models.release_control import ReleaseControl
@@ -646,7 +646,9 @@ src: Callable[..., Option] = partial(
     dest="src_dir",
     type="path",
     metavar="dir",
-    default=get_src_prefix(),
+    # Found when it is used: before the command starts, which Python it
+    # installs for is not known.
+    default=None,
     action="callback",
     callback=_handle_src,
     help="Directory to check out editable projects into. "

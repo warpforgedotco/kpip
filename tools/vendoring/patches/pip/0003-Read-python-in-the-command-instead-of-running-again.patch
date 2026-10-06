@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:34:36 -0500
+Subject: [PATCH] Read --python in the command instead of running again
+
+pip handles --python by running its own source again under that
+interpreter (__pip-runner__.py). The compiled kpip has no source to run,
+so --python now only names the target interpreter, which the command
+reads its facts from. It may come after the command name too.
+---
+ src/kpip/_internal/cli/base_command.py | 11 ---------
+ src/kpip/_internal/cli/main_parser.py  | 31 ++++----------------------
+ tests/functional/test_python_option.py |  6 +++--
+ 3 files changed, 8 insertions(+), 40 deletions(-)
+
+diff --git a/src/kpip/_internal/cli/base_command.py b/src/kpip/_internal/cli/base_command.py
+index 9471369..b296e91 100644
+--- a/src/kpip/_internal/cli/base_command.py
++++ b/src/kpip/_internal/cli/base_command.py
+@@ -213,17 +213,6 @@ class Command(CommandContextMixIn):
+                 ", ".join(sorted(always_enabled_features)),
+             )
+ 
+-        # Make sure that the --python argument isn't specified after the
+-        # subcommand. We can tell, because if --python was specified,
+-        # we should only reach this point if we're running in the created
+-        # subprocess, which has the _PIP_RUNNING_IN_SUBPROCESS environment
+-        # variable set.
+-        if options.python and "_PIP_RUNNING_IN_SUBPROCESS" not in os.environ:
+-            logger.critical(
+-                "The --python option must be placed before the pip subcommand name"
+-            )
+-            sys.exit(ERROR)
+-
+         # TODO: Try to get these passing down from the command?
+         #       without resorting to os.environ to hold these.
+         #       This also affects isolated builds and it should.
+diff --git a/src/kpip/_internal/cli/main_parser.py b/src/kpip/_internal/cli/main_parser.py
+index 7818105..a67a757 100644
+--- a/src/kpip/_internal/cli/main_parser.py
++++ b/src/kpip/_internal/cli/main_parser.py
+@@ -3,7 +3,6 @@
+ from __future__ import annotations
+ 
+ import os
+-import subprocess
+ import sys
+ 
+ from kpip._vendor.rich.markup import escape
+@@ -12,7 +11,7 @@ from kpip._internal.cli import cmdoptions
+ from kpip._internal.cli.parser import ConfigOptionParser, UpdatingDefaultsHelpFormatter
+ from kpip._internal.commands import commands_dict, get_similar_commands
+ from kpip._internal.exceptions import CommandError
+-from kpip._internal.utils.misc import get_pip_version, get_prog, get_runnable_pip
++from kpip._internal.utils.misc import get_pip_version, get_prog
+ 
+ __all__ = ["create_main_parser", "parse_command"]
+ 
+@@ -80,31 +79,9 @@ def parse_command(args: list[str]) -> tuple[str, list[str]]:
+     #  args_else: ['install', '--user', 'INITools']
+     general_options, args_else = parser.parse_args(args)
+ 
+-    # --python
+-    if general_options.python and "_PIP_RUNNING_IN_SUBPROCESS" not in os.environ:
+-        # Re-invoke pip using the specified Python interpreter
+-        interpreter = identify_python_interpreter(general_options.python)
+-        if interpreter is None:
+-            raise CommandError(
+-                f"Could not locate Python interpreter {general_options.python}"
+-            )
+-
+-        pip_cmd = [
+-            interpreter,
+-            get_runnable_pip(),
+-        ]
+-        pip_cmd.extend(args)
+-
+-        # Set a flag so the child doesn't re-invoke itself, causing
+-        # an infinite loop.
+-        os.environ["_PIP_RUNNING_IN_SUBPROCESS"] = "1"
+-        returncode = 0
+-        try:
+-            proc = subprocess.run(pip_cmd)
+-            returncode = proc.returncode
+-        except (subprocess.SubprocessError, OSError) as exc:
+-            raise CommandError(f"Failed to run pip under {interpreter}: {exc}")
+-        sys.exit(returncode)
++    # --python names the interpreter to install for; it is read when the
++    # command starts (kpip._internal.interpreters), not by running kpip again
++    # with it: the compiled kpip has no source to run.
+ 
+     # --version
+     if general_options.version:
+diff --git a/tests/functional/test_python_option.py b/tests/functional/test_python_option.py
+index ecfd819..3281f19 100644
+--- a/tests/functional/test_python_option.py
++++ b/tests/functional/test_python_option.py
+@@ -41,13 +41,15 @@ def test_python_interpreter(
+     assert json.loads(result.stdout) == before
+ 
+ 
+-def test_error_python_option_wrong_location(
++def test_python_option_after_the_command(
+     script: PipTestEnvironment,
+     tmpdir: Path,
+     shared_data: TestData,
+ ) -> None:
++    """kpip reads --python in the command, so it may follow the command name."""
+     env_path = os.fspath(tmpdir / "venv")
+     env = EnvBuilder(with_pip=False)
+     env.create(env_path)
+ 
+-    script.pip("list", "--python", env_path, "--format=json", expect_error=True)
++    result = script.pip("list", "--python", env_path, "--format=json")
++    assert json.loads(result.stdout) == []

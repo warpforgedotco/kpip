@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Union, cast
 
@@ -9,6 +8,7 @@ from kpip._vendor.packaging.requirements import InvalidRequirement
 from kpip._vendor.packaging.utils import NormalizedName, canonicalize_name
 from kpip._vendor.packaging.version import Version
 
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.exceptions import (
     FailedToPrepareCandidate,
     HashError,
@@ -563,7 +563,7 @@ class RequiresPythonCandidate(Candidate):
         if py_version_info is not None:
             version_info = normalize_version_info(py_version_info)
         else:
-            version_info = sys.version_info[:3]
+            version_info = target_interpreter().version
         self._version = Version(".".join(str(c) for c in version_info))
 
     # We don't need to implement __eq__() and __ne__() since there is always

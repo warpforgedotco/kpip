@@ -1,0 +1,1217 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:34:08 -0500
+Subject: [PATCH] Learn the target interpreter
+
+pip works for the interpreter running it. The compiled kpip has none of
+its own: sys.executable, sys.prefix, sys.path and sysconfig describe the
+bundle it was built with. kpip._internal.interpreters says which Python
+kpip installs for and what it is: the Python running kpip, read live, when
+kpip runs from source; otherwise one found the way uv finds it --
+--python, VIRTUAL_ENV, a non-base CONDA_PREFIX, a .venv here or above,
+conda base, python3 or python on PATH -- and read by running a probe with
+it. The probe carries the vendored packaging's tag modules, so a probed
+interpreter's wheel tags are exactly its own. Answers are kept in the
+cache until the interpreter or its search path changes.
+
+Nothing reads it yet; later patches move pip's uses of the running
+interpreter onto it.
+---
+ src/kpip/_internal/cli/base_command.py      |   3 +
+ src/kpip/_internal/interpreters/__init__.py | 192 ++++++++
+ src/kpip/_internal/interpreters/facts.py    | 504 ++++++++++++++++++++
+ src/kpip/_internal/interpreters/probe.py    | 159 ++++++
+ src/kpip/_internal/utils/compiled.py        |  25 +
+ tests/unit/test_interpreters.py             | 254 ++++++++++
+ 6 files changed, 1137 insertions(+)
+ create mode 100644 src/kpip/_internal/interpreters/__init__.py
+ create mode 100644 src/kpip/_internal/interpreters/facts.py
+ create mode 100644 src/kpip/_internal/interpreters/probe.py
+ create mode 100644 src/kpip/_internal/utils/compiled.py
+ create mode 100644 tests/unit/test_interpreters.py
+
+diff --git a/src/kpip/_internal/cli/base_command.py b/src/kpip/_internal/cli/base_command.py
+index 0e57941..9471369 100644
+--- a/src/kpip/_internal/cli/base_command.py
++++ b/src/kpip/_internal/cli/base_command.py
+@@ -15,6 +15,7 @@ from optparse import Values
+ from kpip._vendor.rich import reconfigure
+ from kpip._vendor.rich import traceback as rich_traceback
+ 
++from kpip._internal import interpreters
+ from kpip._internal.cli import cmdoptions
+ from kpip._internal.cli.command_context import CommandContextMixIn
+ from kpip._internal.cli.parser import ConfigOptionParser, UpdatingDefaultsHelpFormatter
+@@ -252,6 +253,8 @@ class Command(CommandContextMixIn):
+                 )
+                 options.cache_dir = None
+ 
++        interpreters.configure(options.python, options.cache_dir or None)
++
+         return self._run_wrapper(level_number, options, args)
+ 
+     def handler_map(self) -> dict[str, Callable[[Values, list[str]], None]]:
+diff --git a/src/kpip/_internal/interpreters/__init__.py b/src/kpip/_internal/interpreters/__init__.py
+new file mode 100644
+index 0000000..283fd26
+--- /dev/null
++++ b/src/kpip/_internal/interpreters/__init__.py
+@@ -0,0 +1,192 @@
++"""The Python kpip installs for: the target interpreter.
++
++pip installs for the interpreter running it. The compiled kpip has none of
++its own, so it looks for one as uv does, and kpip run from source does the
++same when told to with ``--python``:
++
++1. ``--python``: an interpreter, or an environment directory.
++2. Run from source, with no ``--python``: the interpreter running kpip.
++3. Compiled:
++
++   a. the activated virtual environment (``VIRTUAL_ENV``);
++   b. the activated conda environment (``CONDA_PREFIX``), unless it is the
++      base one;
++   c. a ``.venv`` in the working directory or one above it, or the
++      environment the working directory is inside;
++   d. the activated conda base environment;
++   e. ``python3``, then ``python``, on ``PATH``.
++
++   With none of them, the CPython inside kpip stands in for resolving
++   (``lock``, ``download``, ``wheel``), and anything that installs fails.
++"""
++
++from __future__ import annotations
++
++import logging
++import os
++import shutil
++import sys
++
++from kpip._internal.exceptions import CommandError
++from kpip._internal.interpreters.facts import (
++    Interpreter,
++    OwnInterpreter,
++    ProbedInterpreter,
++    probe,
++    set_cache_dir,
++)
++from kpip._internal.utils.compiled import is_compiled
++
++__all__ = [
++    "Interpreter",
++    "NoTargetInterpreter",
++    "ProbedInterpreter",
++    "configure",
++    "identify",
++    "installing_interpreter",
++    "interpreter_at",
++    "target_interpreter",
++]
++
++logger = logging.getLogger(__name__)
++
++_own = OwnInterpreter()
++
++# ``--python``, as given; None when it was not.
++_requested: str | None = None
++
++_target: Interpreter | None = None
++
++
++class NoTargetInterpreter(CommandError):
++    """There is no Python to install for."""
++
++
++def configure(python: str | None, cache_dir: str | None) -> None:
++    """Set the command's ``--python`` and where answers are kept."""
++    global _requested, _target
++    _requested = python or None
++    _target = None
++    set_cache_dir(cache_dir)
++
++
++def environment_pythons() -> tuple[str, ...]:
++    """Where an environment keeps its interpreter, most likely first."""
++    if os.name == "nt":
++        return ("Scripts/python.exe", "python.exe", "bin/python")
++    return ("bin/python", "Scripts/python.exe")
++
++
++def identify(python: str) -> str:
++    """The interpreter ``python`` names: itself, or an environment's."""
++    if os.path.isdir(python):
++        for name in environment_pythons():
++            candidate = os.path.join(python, name)
++            if os.path.exists(candidate):
++                return os.path.abspath(candidate)
++    elif os.path.exists(python):
++        return os.path.abspath(python)
++    raise CommandError(f"Could not locate Python interpreter {python}")
++
++
++def interpreter_at(executable: str) -> Interpreter:
++    """The Python at ``executable``: this process's own when it is that one."""
++    if not is_compiled() and os.path.abspath(executable) == os.path.abspath(
++        sys.executable
++    ):
++        return _own
++    return probe(executable)
++
++
++def target_interpreter() -> Interpreter:
++    """The Python kpip installs for (see the module's documentation)."""
++    global _target
++    if _target is None:
++        _target = _find_target()
++    return _target
++
++
++def installing_interpreter() -> Interpreter:
++    """The target interpreter, which something is to be installed into."""
++    interpreter = target_interpreter()
++    if interpreter.is_bundled:
++        raise NoTargetInterpreter(
++            "No Python interpreter to install for: VIRTUAL_ENV and CONDA_PREFIX "
++            "are unset, there is no .venv here or above, and there is no python3 "
++            "or python on PATH. Activate an environment, or name a Python with "
++            "--python."
++        )
++    return interpreter
++
++
++def _find_target() -> Interpreter:
++    if _requested:
++        return interpreter_at(identify(_requested))
++    if not is_compiled():
++        return _own
++    for where, prefix in _active_environments():
++        try:
++            return probe(identify(prefix))
++        except CommandError as exc:
++            raise CommandError(f"{where}, which has no working Python: {exc}") from exc
++    for name in ("python3", "python"):
++        found = shutil.which(name)
++        if found is None:
++            continue
++        try:
++            return probe(found)
++        except CommandError:
++            # Windows' python3 is often the Microsoft Store's stub.
++            logger.debug("Skipping %s", found, exc_info=True)
++    return _own
++
++
++def _active_environments() -> list[tuple[str, str]]:
++    found = []
++    conda = os.environ.get("CONDA_PREFIX")
++    conda_base = bool(conda) and _is_conda_base(conda)  # type: ignore[arg-type]
++    virtual_env = os.environ.get("VIRTUAL_ENV")
++    if virtual_env:
++        found.append((f"VIRTUAL_ENV names {virtual_env}", virtual_env))
++    if conda and not conda_base:
++        found.append((f"CONDA_PREFIX names {conda}", conda))
++    discovered = _working_directory_environment()
++    if discovered is not None:
++        found.append((f"The environment at {discovered}", discovered))
++    if conda and conda_base:
++        found.append((f"CONDA_PREFIX names {conda}", conda))
++    return found
++
++
++def _working_directory_environment() -> str | None:
++    """The environment the working directory is inside, or the nearest
++    ``.venv`` in it or a directory above it."""
++    directory = os.path.abspath(os.getcwd())
++    while True:
++        if os.path.isfile(os.path.join(directory, "pyvenv.cfg")):
++            return directory
++        candidate = os.path.join(directory, ".venv")
++        if os.path.isfile(os.path.join(candidate, "pyvenv.cfg")):
++            return candidate
++        if os.path.isdir(candidate):
++            logger.warning("Ignoring %s, which is not a virtual environment", candidate)
++        parent = os.path.dirname(directory)
++        if parent == directory:
++            return None
++        directory = parent
++
++
++def _is_conda_base(prefix: str) -> bool:
++    """Whether ``prefix`` is conda's base environment, which uv takes as a
++    system Python, after any other environment."""
++    if os.path.isdir(os.path.join(prefix, "conda-meta", "pixi")):
++        return False
++    root = os.environ.get("_CONDA_ROOT")
++    if root and os.path.normcase(os.path.abspath(root)) == os.path.normcase(
++        os.path.abspath(prefix)
++    ):
++        return True
++    default = os.environ.get("CONDA_DEFAULT_ENV")
++    if not default or default == prefix:
++        return False
++    return os.path.basename(prefix) != default
+diff --git a/src/kpip/_internal/interpreters/facts.py b/src/kpip/_internal/interpreters/facts.py
+new file mode 100644
+index 0000000..0d2b6c2
+--- /dev/null
++++ b/src/kpip/_internal/interpreters/facts.py
+@@ -0,0 +1,504 @@
++"""What kpip knows about a Python it installs for.
++
++pip works for the interpreter it runs under. kpip may not: ``--python``
++names another, and the compiled kpip has no Python of its own. So the facts
++come from the interpreter itself: read live in this process when it is the
++one running kpip (:class:`OwnInterpreter`), otherwise by running the probe
++with it (:class:`ProbedInterpreter`), whose answer is kept on disk until the
++interpreter or its search path changes.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import logging
++import os
++import subprocess
++import sys
++import sysconfig
++import tempfile
++import time
++from typing import Any
++
++from kpip._internal.exceptions import CommandError
++from kpip._internal.interpreters.probe import OLDEST_TARGET, probe_digest, probe_source
++from kpip._internal.utils.compiled import is_compiled
++from kpip._vendor.packaging.tags import Tag, parse_tag
++
++logger = logging.getLogger(__name__)
++
++
++class Interpreter:
++    """A Python kpip installs for, and the facts kpip decides from."""
++
++    executable: str
++    prefix: str
++    base_prefix: str
++    exec_prefix: str
++    version: tuple[int, int, int]
++    implementation: str
++    cache_tag: str | None
++    magic: bytes
++    stdlib: str
++    platlibdir: str
++    pointer_bits: int
++    user_site: str
++    user_base: str
++    user_site_enabled: bool
++    has_venv: bool
++
++    @property
++    def is_own(self) -> bool:
++        """Whether this is the Python running kpip."""
++        return False
++
++    @property
++    def is_bundled(self) -> bool:
++        """Whether this is the CPython inside the compiled kpip, which no one
++        installs into: it stands in only for resolving, with no other found."""
++        return False
++
++    @property
++    def major_minor(self) -> str:
++        return "%d.%d" % self.version[:2]
++
++    @property
++    def in_virtualenv(self) -> bool:
++        """Whether this is a PEP 405 virtual environment's interpreter."""
++        return self.prefix != self.base_prefix
++
++    @property
++    def path(self) -> list[str]:
++        """Where it imports from: its ``sys.path``."""
++        raise NotImplementedError
++
++    @property
++    def markers(self) -> dict[str, str]:
++        """Its environment markers (PEP 508)."""
++        raise NotImplementedError
++
++    @property
++    def tags(self) -> list[Tag]:
++        """The wheel tags it supports, most preferred first."""
++        raise NotImplementedError
++
++    @property
++    def platforms(self) -> list[str]:
++        """Its platform tags, most preferred first."""
++        raise NotImplementedError
++
++    @property
++    def interpreter_name(self) -> str:
++        """Its short implementation name in wheel tags, such as ``cp``."""
++        raise NotImplementedError
++
++    @property
++    def interpreter_version(self) -> str:
++        """Its version in wheel tags, such as ``312``."""
++        raise NotImplementedError
++
++    @property
++    def abis(self) -> list[str]:
++        """The ABI tags it supports, most preferred first."""
++        raise NotImplementedError
++
++    def scheme_names(self) -> tuple[str, ...]:
++        raise NotImplementedError
++
++    def preferred_scheme(self, key: str) -> str:
++        """``sysconfig.get_preferred_scheme(key)``, as it would answer."""
++        raise NotImplementedError
++
++    def get_paths(
++        self, scheme: str, variables: dict[str, str] | None = None
++    ) -> dict[str, str]:
++        """``sysconfig.get_paths(scheme, variables)``, as it would answer."""
++        raise NotImplementedError
++
++    def get_config_var(self, name: str) -> Any:
++        """``sysconfig.get_config_var(name)``, as it would answer."""
++        raise NotImplementedError
++
++
++class OwnInterpreter(Interpreter):
++    """The Python running kpip, read live: nothing is copied, so what this
++    process changes (and tests patch) is what kpip sees."""
++
++    @property
++    def is_own(self) -> bool:
++        return True
++
++    @property
++    def is_bundled(self) -> bool:
++        return is_compiled()
++
++    executable = property(lambda self: sys.executable)  # type: ignore[assignment]
++    prefix = property(lambda self: sys.prefix)  # type: ignore[assignment]
++    base_prefix = property(lambda self: sys.base_prefix)  # type: ignore[assignment]
++    exec_prefix = property(lambda self: sys.exec_prefix)  # type: ignore[assignment]
++    version = property(lambda self: tuple(sys.version_info[:3]))  # type: ignore[assignment]
++    implementation = property(lambda self: sys.implementation.name)  # type: ignore[assignment]
++    cache_tag = property(lambda self: sys.implementation.cache_tag)  # type: ignore[assignment]
++    platlibdir = property(lambda self: getattr(sys, "platlibdir", "lib"))  # type: ignore[assignment]
++    pointer_bits = property(lambda self: sys.maxsize.bit_length() + 1)  # type: ignore[assignment]
++
++    @property  # type: ignore[override]
++    def magic(self) -> bytes:
++        import importlib.util
++
++        return importlib.util.MAGIC_NUMBER
++
++    @property  # type: ignore[override]
++    def stdlib(self) -> str:
++        return sysconfig.get_path("stdlib")
++
++    @property  # type: ignore[override]
++    def user_site(self) -> str:
++        import site
++
++        return site.getusersitepackages()
++
++    @property  # type: ignore[override]
++    def user_base(self) -> str:
++        import site
++
++        return site.getuserbase()
++
++    @property  # type: ignore[override]
++    def user_site_enabled(self) -> bool:
++        import site
++
++        return bool(site.ENABLE_USER_SITE)
++
++    @property  # type: ignore[override]
++    def has_venv(self) -> bool:
++        import importlib.util
++
++        return importlib.util.find_spec("venv") is not None
++
++    @property
++    def path(self) -> list[str]:
++        return list(sys.path)
++
++    @property
++    def markers(self) -> dict[str, str]:
++        from kpip._vendor.packaging.markers import default_environment
++
++        return dict(default_environment())
++
++    @property
++    def tags(self) -> list[Tag]:
++        from kpip._vendor.packaging.tags import sys_tags
++
++        return list(sys_tags())
++
++    @property
++    def platforms(self) -> list[str]:
++        from kpip._vendor.packaging.tags import platform_tags
++
++        return list(platform_tags())
++
++    @property
++    def interpreter_name(self) -> str:
++        from kpip._vendor.packaging.tags import interpreter_name
++
++        return interpreter_name()
++
++    @property
++    def interpreter_version(self) -> str:
++        from kpip._vendor.packaging.tags import interpreter_version
++
++        return interpreter_version()
++
++    @property
++    def abis(self) -> list[str]:
++        from kpip._vendor.packaging import tags
++
++        if tags.interpreter_name() == "cp":
++            return tags._cpython_abis(sys.version_info[:2])
++        return tags._generic_abi()
++
++    def scheme_names(self) -> tuple[str, ...]:
++        return sysconfig.get_scheme_names()
++
++    def preferred_scheme(self, key: str) -> str:
++        return sysconfig.get_preferred_scheme(key)  # type: ignore[arg-type]
++
++    def get_paths(
++        self, scheme: str, variables: dict[str, str] | None = None
++    ) -> dict[str, str]:
++        return sysconfig.get_paths(scheme, vars=variables)
++
++    def get_config_var(self, name: str) -> Any:
++        return sysconfig.get_config_var(name)
++
++
++class ProbedInterpreter(Interpreter):
++    """Another Python, as the probe found it."""
++
++    def __init__(self, facts: dict[str, Any]) -> None:
++        if "tags" not in facts:
++            version = ".".join(str(part) for part in facts["version"])
++            oldest = ".".join(str(part) for part in OLDEST_TARGET)
++            raise CommandError(
++                f"The Python interpreter {facts['executable']} is Python {version}; "
++                f"kpip installs for Python {oldest} or newer."
++            )
++        self.facts = facts
++        self.executable = facts["executable"]
++        self.prefix = facts["prefix"]
++        self.base_prefix = facts["base_prefix"]
++        self.exec_prefix = facts["exec_prefix"]
++        self.version = tuple(facts["version"])  # type: ignore[assignment]
++        self.implementation = facts["implementation"]
++        self.cache_tag = facts["cache_tag"]
++        self.magic = bytes.fromhex(facts["magic"])
++        self.stdlib = facts["stdlib"]
++        self.platlibdir = facts["platlibdir"]
++        self.pointer_bits = facts["pointer_bits"]
++        self.user_site = facts["user_site"]
++        self.user_base = facts["user_base"]
++        self.user_site_enabled = facts["user_site_enabled"]
++        self.has_venv = facts["venv"]
++        self._tags = [tag for text in facts["tags"] for tag in parse_tag(text)]
++
++    @property
++    def path(self) -> list[str]:
++        return list(self.facts["path"])
++
++    @property
++    def markers(self) -> dict[str, str]:
++        return dict(self.facts["markers"])
++
++    @property
++    def tags(self) -> list[Tag]:
++        return list(self._tags)
++
++    @property
++    def platforms(self) -> list[str]:
++        return list(self.facts["platforms"])
++
++    @property
++    def interpreter_name(self) -> str:
++        return self.facts["interpreter_name"]
++
++    @property
++    def interpreter_version(self) -> str:
++        return self.facts["interpreter_version"]
++
++    @property
++    def abis(self) -> list[str]:
++        return list(self.facts["abis"])
++
++    def scheme_names(self) -> tuple[str, ...]:
++        return tuple(sorted(self.facts["schemes"]))
++
++    def preferred_scheme(self, key: str) -> str:
++        try:
++            return self.facts["preferred"][key]
++        except KeyError:
++            raise KeyError(key) from None
++
++    def get_config_var(self, name: str) -> Any:
++        return self.facts["config"].get(name)
++
++    def get_paths(
++        self, scheme: str, variables: dict[str, str] | None = None
++    ) -> dict[str, str]:
++        # sysconfig's _expand_vars, with this interpreter's config.
++        values: dict[str, Any] = dict(variables or {})
++        for name, value in self.facts["config"].items():
++            values.setdefault(name, value)
++        if os.name == "nt":
++            values = values | {"platlibdir": "lib"}
++        result = {}
++        for key, template in self.facts["schemes"][scheme].items():
++            if os.name in ("posix", "nt"):
++                template = os.path.expanduser(template)
++            try:
++                text = template.format(**values)
++            except KeyError:
++                try:
++                    text = template.format(**os.environ)
++                except KeyError as missing:
++                    raise AttributeError(str(missing)) from None
++            result[key] = os.path.normpath(text)
++        return result
++
++
++# Where answers are kept between runs; None keeps none. Set from the
++# command's options (``--cache-dir``, ``--no-cache-dir``).
++_cache_dir: str | None = None
++
++_probed: dict[str, ProbedInterpreter] = {}
++
++# What changes the facts without changing the interpreter's files: where it
++# looks for modules and for its user site.
++_PROBE_ENVIRONMENT = (
++    "PYTHONHOME",
++    "PYTHONNOUSERSITE",
++    "PYTHONPATH",
++    "PYTHONPLATLIBDIR",
++    "PYTHONSAFEPATH",
++    "PYTHONUSERBASE",
++)
++
++_CACHE_ENTRIES = 256
++"""Answers kept: each build environment probed leaves one."""
++
++
++def set_cache_dir(cache_dir: str | None) -> None:
++    global _cache_dir
++    _cache_dir = os.path.join(cache_dir, "interpreters-v1") if cache_dir else None
++
++
++def probe(executable: str) -> ProbedInterpreter:
++    """The Python at ``executable``, read by running the probe with it.
++
++    About 40 ms, unless an earlier run left its answer in the cache. The
++    probe goes on its standard input rather than with ``-c``: a ``.bat``
++    shim, as pyenv-win puts on ``PATH``, runs through ``cmd.exe``, which
++    ends an argument at its first newline. Kept by the path as given, not
++    resolved: a virtual environment's ``python`` links to its base's.
++    """
++    key = os.path.abspath(executable)
++    found = _probed.get(key)
++    if found is None:
++        facts, store = _cached_facts(key)
++        if facts is None:
++            started = time.time_ns()
++            facts = _run_probe(executable)
++            if store is not None:
++                _store_facts(store, facts, key, started)
++        found = _probed[key] = ProbedInterpreter(facts)
++    return found
++
++
++def _run_probe(executable: str) -> dict[str, Any]:
++    try:
++        result = subprocess.run(
++            [executable, "-"],
++            input=probe_source(),
++            capture_output=True,
++            encoding="utf-8",
++            errors="replace",
++            check=False,
++        )
++    except OSError as exc:
++        raise CommandError(
++            f"Could not run the Python interpreter {executable}: {exc}"
++        ) from exc
++    if result.returncode != 0:
++        said = result.stderr.strip().splitlines()
++        raise CommandError(
++            f"Could not run the Python interpreter {executable} "
++            f"(exit status {result.returncode})"
++            + (f": {said[-1]}" if said else "")
++            + ". Name a working one with --python."
++        )
++    try:
++        return json.loads(result.stdout)
++    except ValueError:
++        raise CommandError(
++            f"The Python interpreter {executable} did not answer as one; "
++            "name a working one with --python."
++        ) from None
++
++
++def _stamp(path: str) -> list[int] | None:
++    try:
++        stat = os.stat(path)
++    except OSError:
++        return None
++    return [stat.st_mtime_ns, stat.st_size]
++
++
++def _cached_facts(
++    path: str,
++) -> tuple[dict[str, Any] | None, tuple[str, list[Any]] | None]:
++    """An earlier answer for the interpreter at ``path``, if nothing it
++    depends on changed; and where to keep this one's, or None.
++
++    The facts hold while the interpreter's file, its environment's
++    ``pyvenv.cfg``, the variables that move its search path, and the probe
++    are what they were; and while every directory on its ``sys.path``, and
++    its user site, has the modification time it had: adding or removing a
++    ``.pth`` file changes the directory's.
++    """
++    if _cache_dir is None:
++        return None, None
++    real = os.path.realpath(path)
++    executable_stamp = _stamp(real)
++    if executable_stamp is None:
++        return None, None
++    key = [
++        path,
++        real,
++        executable_stamp,
++        _stamp(os.path.join(os.path.dirname(os.path.dirname(path)), "pyvenv.cfg")),
++        [os.environ.get(name) for name in _PROBE_ENVIRONMENT],
++        probe_digest(),
++    ]
++    name = hashlib.sha256(json.dumps(key).encode()).hexdigest()[:32]
++    store = os.path.join(_cache_dir, f"{name}.json")
++    try:
++        with open(store, encoding="utf-8") as file:
++            cached = json.load(file)
++    except (OSError, ValueError):
++        return None, (store, key)
++    if not isinstance(cached, dict) or cached.get("key") != key:
++        return None, (store, key)
++    for directory, stamp in cached.get("directories", ()):
++        if _stamp(directory) != stamp:
++            return None, (store, key)
++    return cached.get("facts"), (store, key)
++
++
++def _store_facts(
++    store: tuple[str, list[Any]], facts: dict[str, Any], path: str, started: int
++) -> None:
++    """Keep ``facts`` for the next run, unless they may not hold for it.
++
++    Not when the file run is not the interpreter that answered -- a pyenv,
++    asdf or mise shim, which never changes while the version it picks does
++    -- nor when a directory on its search path changed while it was probed.
++    """
++    location, key = store
++    if os.path.realpath(facts.get("executable") or "") != os.path.realpath(path):
++        return
++    directories = [*facts.get("path", ()), facts.get("user_site")]
++    for directory in directories:
++        stamp = _stamp(directory) if directory else None
++        if stamp is not None and stamp[0] >= started:
++            return
++    entry = {
++        "key": key,
++        "directories": [
++            [directory, _stamp(directory)] for directory in directories if directory
++        ],
++        "facts": facts,
++    }
++    try:
++        os.makedirs(os.path.dirname(location), exist_ok=True)
++        fd, temporary = tempfile.mkstemp(dir=os.path.dirname(location), suffix=".tmp")
++        with os.fdopen(fd, "w", encoding="utf-8") as file:
++            json.dump(entry, file)
++        os.replace(temporary, location)
++        _prune(os.path.dirname(location))
++    except OSError:
++        logger.debug("Could not keep the facts of %s", path, exc_info=True)
++
++
++def _prune(directory: str) -> None:
++    """Keep the newest :data:`_CACHE_ENTRIES` answers."""
++    with os.scandir(directory) as entries:
++        kept = [entry for entry in entries if entry.name.endswith(".json")]
++    if len(kept) <= _CACHE_ENTRIES:
++        return
++    kept.sort(key=lambda entry: entry.stat().st_mtime_ns)
++    for entry in kept[: len(kept) - _CACHE_ENTRIES]:
++        try:
++            os.unlink(entry.path)
++        except OSError:
++            pass
+diff --git a/src/kpip/_internal/interpreters/probe.py b/src/kpip/_internal/interpreters/probe.py
+new file mode 100644
+index 0000000..026ec88
+--- /dev/null
++++ b/src/kpip/_internal/interpreters/probe.py
+@@ -0,0 +1,159 @@
++"""The code kpip runs with another Python to learn about it.
++
++The probe gathers, and decides nothing: everything kpip decides from the
++facts, it decides the same way for its own interpreter. It runs under
++whatever Python the user has, so it is written for the oldest kpip installs
++for (:data:`OLDEST_TARGET`). The wheel tags come from the vendored
++``packaging``, sent along as text and run in the target, so they are
++exactly what that interpreter supports -- manylinux and musllinux included,
++which ``packaging`` reads from the interpreter's own executable.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import functools
++
++from kpip._internal.utils.compat import open_text_resource
++
++OLDEST_TARGET = (3, 10)
++"""The oldest Python kpip installs for, as pip's ``--python`` does."""
++
++SAFE_PATH = 'import sys\nif sys.path and sys.path[0] == "":\n    del sys.path[0]\n'
++"""Run first by code given to another interpreter with ``-c`` or on its
++standard input, which puts the working directory first on its ``sys.path``:
++a project's own ``platform.py`` or ``json.py`` must not stand in for the
++standard library. Only that entry: under ``PYTHONSAFEPATH``, or an
++embeddable Python's ``._pth``, the first entry is the standard library's."""
++
++# Loaded in this order: each imports only the ones before it.
++_PACKAGING_MODULES = ("_elffile", "_manylinux", "_musllinux", "tags")
++
++PROBE = r"""
++import importlib.util
++import json
++import os
++import platform
++import site
++import struct
++import sys
++import sysconfig
++import types
++
++
++def full_version(info):
++    version = "%d.%d.%d" % (info.major, info.minor, info.micro)
++    if info.releaselevel != "final":
++        version += info.releaselevel[0] + str(info.serial)
++    return version
++
++
++def load_tags():
++    package = types.ModuleType("_kpip_probe_packaging")
++    package.__path__ = []
++    sys.modules[package.__name__] = package
++    for name in PACKAGING_MODULES:
++        module = types.ModuleType(package.__name__ + "." + name)
++        module.__package__ = package.__name__
++        sys.modules[module.__name__] = module
++        setattr(package, name, module)
++        exec(compile(PACKAGING_SOURCES[name], module.__name__, "exec"), module.__dict__)
++    return package.tags
++
++
++def tag_facts():
++    if sys.version_info[:2] < OLDEST_TARGET:
++        return {}
++    tags = load_tags()
++    name = tags.interpreter_name()
++    if name == "cp":
++        abis = tags._cpython_abis(sys.version_info[:2])
++    else:
++        abis = tags._generic_abi()
++    return {
++        "tags": [str(tag) for tag in tags.sys_tags()],
++        "platforms": list(tags.platform_tags()),
++        "interpreter_name": name,
++        "interpreter_version": tags.interpreter_version(),
++        "abis": list(abis),
++    }
++
++
++def facts():
++    preferred = {}
++    if hasattr(sysconfig, "get_preferred_scheme"):
++        for key in ("prefix", "home", "user"):
++            try:
++                preferred[key] = sysconfig.get_preferred_scheme(key)
++            except KeyError:
++                pass
++    config = {}
++    for name, value in sysconfig.get_config_vars().items():
++        if value is None or isinstance(value, (str, int, float)):
++            config[name] = value
++    result = {
++        "executable": sys.executable,
++        "prefix": sys.prefix,
++        "base_prefix": getattr(sys, "base_prefix", sys.prefix),
++        "exec_prefix": sys.exec_prefix,
++        "version": list(sys.version_info[:3]),
++        "implementation": sys.implementation.name,
++        "cache_tag": sys.implementation.cache_tag,
++        "magic": importlib.util.MAGIC_NUMBER.hex(),
++        "path": [entry for entry in sys.path if entry],
++        "stdlib": sysconfig.get_path("stdlib"),
++        "platform": sysconfig.get_platform(),
++        "platlibdir": getattr(sys, "platlibdir", "lib"),
++        "pointer_bits": struct.calcsize("P") * 8,
++        "user_site": site.getusersitepackages(),
++        "user_base": site.getuserbase(),
++        "user_site_enabled": bool(site.ENABLE_USER_SITE),
++        "venv": importlib.util.find_spec("venv") is not None,
++        "schemes": dict(
++            (name, sysconfig.get_paths(name, expand=False))
++            for name in sysconfig.get_scheme_names()
++        ),
++        "preferred": preferred,
++        "config": config,
++        "markers": {
++            "implementation_name": sys.implementation.name,
++            "implementation_version": full_version(sys.implementation.version),
++            "os_name": os.name,
++            "platform_machine": platform.machine(),
++            "platform_release": platform.release(),
++            "platform_system": platform.system(),
++            "platform_version": platform.version(),
++            "python_full_version": platform.python_version(),
++            "platform_python_implementation": platform.python_implementation(),
++            "python_version": ".".join(platform.python_version_tuple()[:2]),
++            "sys_platform": sys.platform,
++        },
++    }
++    result.update(tag_facts())
++    return result
++
++
++sys.stdout.write(json.dumps(facts()))
++"""
++
++
++@functools.cache
++def probe_source() -> str:
++    """The whole program a probed interpreter runs, ``packaging`` included."""
++    sources = {}
++    for name in _PACKAGING_MODULES:
++        with open_text_resource("kpip._vendor.packaging", f"{name}.py") as source:
++            sources[name] = source.read()
++    return (
++        SAFE_PATH
++        + f"OLDEST_TARGET = {OLDEST_TARGET!r}\n"
++        + f"PACKAGING_MODULES = {_PACKAGING_MODULES!r}\n"
++        + f"PACKAGING_SOURCES = {sources!r}\n"
++        + PROBE
++    )
++
++
++@functools.cache
++def probe_digest() -> str:
++    """Identifies the probe, so a cached answer from another is not used."""
++    return hashlib.sha256(probe_source().encode()).hexdigest()[:16]
+diff --git a/src/kpip/_internal/utils/compiled.py b/src/kpip/_internal/utils/compiled.py
+new file mode 100644
+index 0000000..dd2682f
+--- /dev/null
++++ b/src/kpip/_internal/utils/compiled.py
+@@ -0,0 +1,25 @@
++"""Whether kpip runs compiled, and how it starts itself again.
++
++kpip ships as a Nuitka-compiled binary. There, ``sys.executable`` names a
++``python`` beside the binary that does not exist, and ``sys.prefix``,
++``sys.path`` and ``sysconfig`` describe the bundle kpip was built with, not
++an environment anyone installs into.
++"""
++
++from __future__ import annotations
++
++import sys
++
++
++def is_compiled() -> bool:
++    """Whether this kpip is the compiled binary. Nuitka sets ``__compiled__``
++    in every module it compiles."""
++    return "__compiled__" in globals()
++
++
++def own_command() -> list[str]:
++    """The command that runs this kpip again."""
++    compiled = globals().get("__compiled__")
++    if compiled is None:
++        return [sys.executable, "-m", "kpip"]
++    return [compiled.process_exe]
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+new file mode 100644
+index 0000000..a993d3b
+--- /dev/null
++++ b/tests/unit/test_interpreters.py
+@@ -0,0 +1,254 @@
++"""The target interpreter: the Python kpip installs for."""
++
++from __future__ import annotations
++
++import os
++import subprocess
++import sys
++import venv
++from collections.abc import Iterator
++from pathlib import Path
++
++import pytest
++
++from kpip._internal import interpreters
++from kpip._internal.exceptions import CommandError
++from kpip._internal.interpreters import facts
++from kpip._internal.interpreters.facts import OwnInterpreter, probe
++
++
++@pytest.fixture(autouse=True)
++def fresh(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
++    """No interpreter known yet, no environment activated, and a working
++    directory with nothing above it that looks like one."""
++    for name in ("VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "_CONDA_ROOT"):
++        monkeypatch.delenv(name, raising=False)
++    monkeypatch.setattr(facts, "_probed", {})
++    work = tmp_path / "work"
++    work.mkdir()
++    monkeypatch.chdir(work)
++    interpreters.configure(None, str(tmp_path / "cache"))
++    yield
++    interpreters.configure(None, None)
++
++
++def compiled(monkeypatch: pytest.MonkeyPatch) -> None:
++    """Act as the compiled kpip, which has no Python of its own."""
++    monkeypatch.setattr(interpreters, "is_compiled", lambda: True)
++    monkeypatch.setattr(facts, "is_compiled", lambda: True)
++
++
++@pytest.fixture(scope="module")
++def environment(tmp_path_factory: pytest.TempPathFactory) -> Path:
++    """A virtual environment of the Python running the tests."""
++    path = tmp_path_factory.mktemp("env") / "env"
++    venv.create(path, with_pip=False, symlinks=os.name != "nt")
++    return path
++
++
++def environment_python(path: Path) -> str:
++    return interpreters.identify(str(path))
++
++
++def test_probing_this_python_finds_what_it_knows_of_itself() -> None:
++    own = OwnInterpreter()
++    probed = probe(sys.executable)
++
++    assert probed.version == own.version
++    assert probed.prefix == own.prefix
++    assert probed.markers == own.markers
++    assert [str(tag) for tag in probed.tags] == [str(tag) for tag in own.tags]
++    assert probed.platforms == own.platforms
++    assert probed.abis == own.abis
++    assert probed.interpreter_name == own.interpreter_name
++    assert probed.interpreter_version == own.interpreter_version
++    assert probed.cache_tag == own.cache_tag
++    assert probed.magic == own.magic
++    # This process read its user base before the tests isolated HOME; the
++    # probe reads the isolated one.
++    for scheme in [name for name in own.scheme_names() if "user" not in name]:
++        assert probed.get_paths(scheme) == own.get_paths(scheme), scheme
++        variables = {"base": "/somewhere", "platbase": "/somewhere"}
++        assert probed.get_paths(scheme, variables) == own.get_paths(
++            scheme, variables
++        ), scheme
++
++
++def test_an_environment_is_probed_as_itself(environment: Path) -> None:
++    probed = probe(environment_python(environment))
++
++    assert probed.in_virtualenv
++    assert os.path.samefile(probed.prefix, environment)
++    purelib = probed.get_paths(probed.preferred_scheme("prefix"))["purelib"]
++    assert Path(purelib).is_relative_to(probed.prefix)
++    assert purelib in probed.path
++
++
++def test_answers_are_kept_until_the_search_path_changes(
++    environment: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    python = environment_python(environment)
++    first = probe(python)
++
++    def no_probe(executable: str) -> dict[str, object]:
++        raise AssertionError("probed again")
++
++    monkeypatch.setattr(facts, "_run_probe", no_probe)
++    monkeypatch.setattr(facts, "_probed", {})
++    assert probe(python).facts == first.facts
++
++    purelib = first.get_paths(first.preferred_scheme("prefix"))["purelib"]
++    (Path(purelib) / "added.pth").write_text("")
++    monkeypatch.setattr(facts, "_probed", {})
++    with pytest.raises(AssertionError, match="probed again"):
++        probe(python)
++
++
++def test_a_shims_answer_is_not_kept(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    if os.name == "nt":
++        pytest.skip("a shell script shim")
++    shim = tmp_path / "python"
++    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
++    shim.chmod(0o755)
++    probe(str(shim))
++
++    calls = []
++    run_probe = facts._run_probe
++
++    def counting(executable: str) -> dict[str, object]:
++        calls.append(executable)
++        return run_probe(executable)
++
++    monkeypatch.setattr(facts, "_run_probe", counting)
++    monkeypatch.setattr(facts, "_probed", {})
++    probe(str(shim))
++    assert calls == [str(shim)]
++
++
++def test_something_that_is_not_python_is_refused(tmp_path: Path) -> None:
++    if os.name == "nt":
++        pytest.skip("a shell script")
++    impostor = tmp_path / "python"
++    impostor.write_text("#!/bin/sh\necho hello\n")
++    impostor.chmod(0o755)
++    with pytest.raises(CommandError, match="did not answer as one"):
++        probe(str(impostor))
++
++
++def test_identify_takes_an_interpreter_or_an_environment(
++    environment: Path, tmp_path: Path
++) -> None:
++    python = environment_python(environment)
++    assert interpreters.identify(python) == python
++    assert Path(python).is_relative_to(environment)
++    with pytest.raises(CommandError, match="Could not locate"):
++        interpreters.identify(str(tmp_path / "missing"))
++
++
++def test_from_source_kpip_installs_for_itself() -> None:
++    target = interpreters.target_interpreter()
++    assert target.is_own
++    assert not target.is_bundled
++
++
++def test_python_option_names_the_target(environment: Path) -> None:
++    interpreters.configure(str(environment), None)
++    target = interpreters.target_interpreter()
++    assert not target.is_own
++    assert os.path.samefile(target.prefix, environment)
++
++
++def test_python_option_naming_this_python_reads_it_live() -> None:
++    interpreters.configure(sys.executable, None)
++    assert interpreters.target_interpreter().is_own
++
++
++def test_compiled_kpip_installs_into_the_activated_environment(
++    environment: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    compiled(monkeypatch)
++    monkeypatch.setenv("VIRTUAL_ENV", str(environment))
++    target = interpreters.target_interpreter()
++    assert os.path.samefile(target.prefix, environment)
++
++
++def test_compiled_kpip_finds_a_dot_venv_above_the_working_directory(
++    environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    compiled(monkeypatch)
++    project = tmp_path / "project"
++    (project / "src" / "deep").mkdir(parents=True)
++    (project / ".venv").symlink_to(environment, target_is_directory=True)
++    monkeypatch.chdir(project / "src" / "deep")
++    target = interpreters.target_interpreter()
++    assert os.path.samefile(target.prefix, environment)
++
++
++def test_an_activated_environment_without_python_is_an_error(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    compiled(monkeypatch)
++    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "gone"))
++    with pytest.raises(CommandError, match="VIRTUAL_ENV names"):
++        interpreters.target_interpreter()
++
++
++def test_compiled_kpip_falls_back_to_python_on_path(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    compiled(monkeypatch)
++    monkeypatch.setenv("PATH", os.path.dirname(sys.executable))
++    found = interpreters.target_interpreter()
++    assert not found.is_own
++    assert found.version == tuple(sys.version_info[:3])
++
++
++def test_with_no_python_at_all_only_resolving_works(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    compiled(monkeypatch)
++    monkeypatch.setenv("PATH", str(tmp_path))
++    target = interpreters.target_interpreter()
++    assert target.is_bundled
++    assert target.tags
++    with pytest.raises(interpreters.NoTargetInterpreter):
++        interpreters.installing_interpreter()
++
++
++def test_conda_base_comes_after_a_dot_venv(
++    environment: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    compiled(monkeypatch)
++    project = tmp_path / "project"
++    project.mkdir()
++    (project / ".venv").symlink_to(environment, target_is_directory=True)
++    monkeypatch.chdir(project)
++    base = tmp_path / "miniconda3"
++    base.mkdir()
++    monkeypatch.setenv("CONDA_PREFIX", str(base))
++    monkeypatch.setenv("CONDA_DEFAULT_ENV", "base")
++    target = interpreters.target_interpreter()
++    assert os.path.samefile(target.prefix, environment)
++
++
++def test_the_probe_is_not_shadowed_by_the_working_directory(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    (tmp_path / "work" / "json.py").write_text("raise SystemExit('shadowed')\n")
++    assert probe(sys.executable).version == tuple(sys.version_info[:3])
++
++
++def test_the_probe_runs_under_safe_path(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.setenv("PYTHONSAFEPATH", "1")
++    assert probe(sys.executable).path == [
++        entry
++        for entry in subprocess.run(
++            [sys.executable, "-c", "import sys; print('\\n'.join(sys.path))"],
++            capture_output=True,
++            text=True,
++            check=True,
++        ).stdout.splitlines()
++        if entry
++    ]

@@ -1,9 +1,9 @@
 from collections.abc import Sequence
 from typing import Any
 
-from kpip._vendor.packaging.markers import default_environment
 
 from kpip import __pip_version__
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.req.req_install import InstallRequirement
 
 
@@ -53,5 +53,5 @@ class InstallationReport:
             # should also take into account options such as --python-version or
             # --platform, perhaps under the form of an environment_override field?
             # https://github.com/pypa/pip/issues/11198
-            "environment": default_environment(),
+            "environment": target_interpreter().markers,
         }

@@ -1,0 +1,145 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:44:17 -0500
+Subject: [PATCH] Compile bytecode with the target interpreter
+
+pip compiles what it installs in its own process, so the .pyc files carry
+that interpreter's magic number and cache tag: in the compiled kpip, the
+bundle's, which no Python installed for loads. Another Python now compiles
+a wheel's modules itself, in one process per wheel, and kpip records the
+files it wrote; kpip's own interpreter still compiles in-process.
+---
+ src/kpip/_internal/interpreters/bytecode.py   | 69 +++++++++++++++++++
+ .../_internal/operations/install/wheel.py     | 11 ++-
+ tests/unit/test_interpreters.py               | 16 +++++
+ 3 files changed, 95 insertions(+), 1 deletion(-)
+ create mode 100644 src/kpip/_internal/interpreters/bytecode.py
+
+diff --git a/src/kpip/_internal/interpreters/bytecode.py b/src/kpip/_internal/interpreters/bytecode.py
+new file mode 100644
+index 0000000..c846cef
+--- /dev/null
++++ b/src/kpip/_internal/interpreters/bytecode.py
+@@ -0,0 +1,69 @@
++"""Compiling installed modules to bytecode with the target interpreter.
++
++Bytecode is only good for the interpreter that wrote it: its magic number
++and its cache tag name the ``.pyc`` file. So another Python compiles what is
++installed for it, in one process per wheel; kpip's own interpreter compiles
++in this process, as pip does.
++"""
++
++from __future__ import annotations
++
++import json
++import logging
++import subprocess
++
++from kpip._internal.exceptions import InstallationError
++from kpip._internal.interpreters.facts import Interpreter
++from kpip._internal.interpreters.probe import SAFE_PATH
++
++logger = logging.getLogger(__name__)
++
++# Reads a JSON list of source paths and answers with the [source, pyc] of
++# each one compiled. compileall says what failed on stdout, which is the
++# answer's, so it says it on stderr instead.
++_WORKER = r"""
++import compileall
++import contextlib
++import importlib.util
++import json
++import sys
++import warnings
++
++warnings.filterwarnings("ignore")
++sys.stdin.reconfigure(encoding="utf-8", errors="surrogateescape")
++sys.stdout.reconfigure(encoding="utf-8", errors="surrogateescape")
++compiled = []
++with contextlib.redirect_stdout(sys.stderr):
++    for source in json.load(sys.stdin):
++        if compileall.compile_file(source, force=True, quiet=1):
++            compiled.append([source, importlib.util.cache_from_source(source)])
++json.dump(compiled, sys.stdout)
++"""
++
++
++def compile_with(interpreter: Interpreter, sources: list[str]) -> list[tuple[str, str]]:
++    """Compile ``sources`` with ``interpreter``: the (source, pyc) of each
++    compiled; one that does not compile, as with pip, is left without."""
++    if not sources:
++        return []
++    try:
++        result = subprocess.run(
++            [interpreter.executable, "-c", SAFE_PATH + _WORKER],
++            input=json.dumps(sources),
++            capture_output=True,
++            encoding="utf-8",
++            errors="surrogateescape",
++            check=False,
++        )
++    except OSError as exc:
++        raise InstallationError(
++            f"Could not run {interpreter.executable} to compile bytecode: {exc}"
++        ) from exc
++    if result.stderr:
++        logger.debug(result.stderr)
++    if result.returncode != 0:
++        raise InstallationError(
++            f"Compiling bytecode with {interpreter.executable} failed "
++            f"(exit status {result.returncode})."
++        )
++    return [(source, pyc) for source, pyc in json.loads(result.stdout)]
+diff --git a/src/kpip/_internal/operations/install/wheel.py b/src/kpip/_internal/operations/install/wheel.py
+index b5c940b..633e294 100644
+--- a/src/kpip/_internal/operations/install/wheel.py
++++ b/src/kpip/_internal/operations/install/wheel.py
+@@ -34,6 +34,7 @@ from kpip._vendor.distlib.util import get_export_entry
+ from kpip._vendor.packaging.utils import canonicalize_name
+ 
+ from kpip._internal.interpreters import target_interpreter
++from kpip._internal.interpreters.bytecode import compile_with
+ from kpip._internal.exceptions import InstallationError
+ from kpip._internal.locations import get_major_minor_version
+ from kpip._internal.metadata import (
+@@ -643,7 +644,15 @@ def _install_wheel(  # noqa: C901, PLR0915 function is too long
+         return importlib.util.cache_from_source(path)
+ 
+     # Compile all of the pyc files for the installed files
+-    if pycompile:
++    if pycompile and not target_interpreter().is_own:
++        # Only the target Python writes bytecode it can load.
++        for _, pyc_path in compile_with(
++            target_interpreter(), list(pyc_source_file_paths())
++        ):
++            assert os.path.exists(pyc_path)
++            pyc_record_path = cast("RecordPath", pyc_path.replace(os.path.sep, "/"))
++            record_installed(pyc_record_path, pyc_path)
++    elif pycompile:
+         with contextlib.redirect_stdout(
+             StreamWrapper.from_stream(sys.stdout)
+         ) as stdout:
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index 13f321d..d0c0fe6 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -419,3 +419,19 @@ def test_scripts_run_with_the_target(environment: Path, tmp_path: Path) -> None:
+         first = (scripts / name).read_bytes().splitlines()[0].decode()
+         assert target.executable in first, name
+         assert sys.executable not in first or sys.executable in target.executable
++
++
++def test_bytecode_is_written_by_the_target(
++    other_python: facts.ProbedInterpreter, tmp_path: Path
++) -> None:
++    from kpip._internal.interpreters.bytecode import compile_with
++
++    good = tmp_path / "good.py"
++    good.write_text("VALUE = 1\n")
++    bad = tmp_path / "bad.py"
++    bad.write_text("def\n")
++    compiled = compile_with(other_python, [str(good), str(bad)])
++    assert [source for source, _ in compiled] == [str(good)]
++    pyc = Path(compiled[0][1])
++    assert pyc.is_file()
++    assert pyc.read_bytes()[:4] == other_python.magic

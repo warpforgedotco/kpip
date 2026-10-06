@@ -22,7 +22,13 @@ from kpip._vendor.packaging.utils import NormalizedName, canonicalize_name
 from kpip._vendor.packaging.version import Version
 
 from kpip._internal.exceptions import NoneMetadataError
-from kpip._internal.locations import site_packages, user_site
+from kpip._internal.interpreters import target_interpreter
+from kpip._internal.locations import (
+    get_site_packages,
+    get_user_site,
+    site_packages,
+    user_site,
+)
 from kpip._internal.models.direct_url import (
     DIRECT_URL_METADATA_NAME,
     DirectUrl,
@@ -347,15 +353,23 @@ class BaseDistribution(Protocol):
 
     @property
     def in_usersite(self) -> bool:
-        if self.installed_location is None or user_site is None:
+        target_user_site = user_site
+        if not target_interpreter().is_own:
+            target_user_site = get_user_site()
+        if self.installed_location is None or target_user_site is None:
             return False
-        return self.installed_location.startswith(normalize_path(user_site))
+        return self.installed_location.startswith(normalize_path(target_user_site))
 
     @property
     def in_site_packages(self) -> bool:
-        if self.installed_location is None or site_packages is None:
+        target_site_packages = site_packages
+        if not target_interpreter().is_own:
+            target_site_packages = get_site_packages()
+        if self.installed_location is None or target_site_packages is None:
             return False
-        return self.installed_location.startswith(normalize_path(site_packages))
+        return self.installed_location.startswith(
+            normalize_path(target_site_packages)
+        )
 
     def is_file(self, path: InfoPath) -> bool:
         """Check whether an entry in the info directory is a file."""

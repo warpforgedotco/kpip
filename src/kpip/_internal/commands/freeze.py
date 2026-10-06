@@ -1,6 +1,7 @@
 import sys
 from optparse import Values
 
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.cli import cmdoptions
 from kpip._internal.cli.base_command import Command
 from kpip._internal.cli.status_codes import SUCCESS
@@ -9,7 +10,7 @@ from kpip._internal.operations.freeze import freeze
 
 
 def _should_suppress_build_backends() -> bool:
-    return sys.version_info < (3, 12)
+    return target_interpreter().version < (3, 12)
 
 
 def _dev_pkgs() -> set[str]:

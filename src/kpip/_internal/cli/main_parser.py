@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 
 from kpip._vendor.rich.markup import escape
@@ -12,7 +11,7 @@ from kpip._internal.cli import cmdoptions
 from kpip._internal.cli.parser import ConfigOptionParser, UpdatingDefaultsHelpFormatter
 from kpip._internal.commands import commands_dict, get_similar_commands
 from kpip._internal.exceptions import CommandError
-from kpip._internal.utils.misc import get_pip_version, get_prog, get_runnable_pip
+from kpip._internal.utils.misc import get_pip_version, get_prog
 
 __all__ = ["create_main_parser", "parse_command"]
 
@@ -80,31 +79,9 @@ def parse_command(args: list[str]) -> tuple[str, list[str]]:
     #  args_else: ['install', '--user', 'INITools']
     general_options, args_else = parser.parse_args(args)
 
-    # --python
-    if general_options.python and "_PIP_RUNNING_IN_SUBPROCESS" not in os.environ:
-        # Re-invoke pip using the specified Python interpreter
-        interpreter = identify_python_interpreter(general_options.python)
-        if interpreter is None:
-            raise CommandError(
-                f"Could not locate Python interpreter {general_options.python}"
-            )
-
-        pip_cmd = [
-            interpreter,
-            get_runnable_pip(),
-        ]
-        pip_cmd.extend(args)
-
-        # Set a flag so the child doesn't re-invoke itself, causing
-        # an infinite loop.
-        os.environ["_PIP_RUNNING_IN_SUBPROCESS"] = "1"
-        returncode = 0
-        try:
-            proc = subprocess.run(pip_cmd)
-            returncode = proc.returncode
-        except (subprocess.SubprocessError, OSError) as exc:
-            raise CommandError(f"Failed to run pip under {interpreter}: {exc}")
-        sys.exit(returncode)
+    # --python names the interpreter to install for; it is read when the
+    # command starts (kpip._internal.interpreters), not by running kpip again
+    # with it: the compiled kpip has no source to run.
 
     # --version
     if general_options.version:

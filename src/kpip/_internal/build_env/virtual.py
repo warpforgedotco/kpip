@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import os
-import site
-import sys
 import textwrap
 from collections import OrderedDict
 from collections.abc import Iterable
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from kpip._internal.interpreters import build_interpreter
 from kpip._internal.build_env.base import (
     BuildEnvironment,
     BuildEnvironmentInstaller,
@@ -21,8 +20,9 @@ if TYPE_CHECKING:
 
 
 def get_system_sitepackages() -> set[str]:
-    """Get system site packages, as a normalized set of strings."""
-    system_sites = site.getsitepackages()
+    """Get the build interpreter's system site packages, as a normalized set
+    of strings."""
+    system_sites = build_interpreter().system_sites
     return {os.path.normcase(path) for path in system_sites}
 
 
@@ -35,7 +35,7 @@ class VirtualBuildEnvironment(BuildEnvironment):
     """
 
     def __init__(self, installer: BuildEnvironmentInstaller) -> None:
-        self.python_executable = sys.executable
+        self.python_executable = build_interpreter().executable
         self.installer = installer
         temp_dir = TempDirectory(kind=tempdir_kinds.BUILD_ENV, globally_managed=True)
 

@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 00:43:20 -0500
+Subject: [PATCH] Write scripts for the target interpreter
+
+Console and GUI scripts were written for the Python running pip: distlib
+defaults their shebang to sys.executable, #!python in a wheel's scripts
+was rewritten to it, and Windows launchers were chosen by this process's
+pointer size and platform. In the compiled kpip that Python does not
+exist. Scripts are now written for the target interpreter, and scripts
+that sit beside it are not warned about as off PATH.
+---
+ src/kpip/_internal/interpreters/facts.py      |  3 ++
+ .../_internal/operations/install/wheel.py     | 23 +++++++++---
+ tests/unit/test_interpreters.py               | 36 +++++++++++++++++++
+ 3 files changed, 58 insertions(+), 4 deletions(-)
+
+diff --git a/src/kpip/_internal/interpreters/facts.py b/src/kpip/_internal/interpreters/facts.py
+index 88b7155..7fd4e9c 100644
+--- a/src/kpip/_internal/interpreters/facts.py
++++ b/src/kpip/_internal/interpreters/facts.py
+@@ -47,6 +47,7 @@ class Interpreter:
+     magic: bytes
+     stdlib: str
+     platlibdir: str
++    platform: str
+     pointer_bits: int
+     user_site: str
+     user_base: str
+@@ -146,6 +147,7 @@ class OwnInterpreter(Interpreter):
+     implementation = property(lambda self: sys.implementation.name)  # type: ignore[assignment]
+     cache_tag = property(lambda self: sys.implementation.cache_tag)  # type: ignore[assignment]
+     platlibdir = property(lambda self: getattr(sys, "platlibdir", "lib"))  # type: ignore[assignment]
++    platform = property(lambda self: sysconfig.get_platform())  # type: ignore[assignment]
+     pointer_bits = property(lambda self: sys.maxsize.bit_length() + 1)  # type: ignore[assignment]
+ 
+     @property  # type: ignore[override]
+@@ -259,6 +261,7 @@ class ProbedInterpreter(Interpreter):
+         self.magic = bytes.fromhex(facts["magic"])
+         self.stdlib = facts["stdlib"]
+         self.platlibdir = facts["platlibdir"]
++        self.platform = facts["platform"]
+         self.pointer_bits = facts["pointer_bits"]
+         self.user_site = facts["user_site"]
+         self.user_base = facts["user_base"]
+diff --git a/src/kpip/_internal/operations/install/wheel.py b/src/kpip/_internal/operations/install/wheel.py
+index 0d940a4..b5c940b 100644
+--- a/src/kpip/_internal/operations/install/wheel.py
++++ b/src/kpip/_internal/operations/install/wheel.py
+@@ -29,7 +29,7 @@ from typing import (
+ )
+ from zipfile import ZipFile, ZipInfo
+ 
+-from kpip._vendor.distlib.scripts import ScriptMaker
++from kpip._vendor.distlib.scripts import ScriptMaker, enquote_executable
+ from kpip._vendor.distlib.util import get_export_entry
+ from kpip._vendor.packaging.utils import canonicalize_name
+ 
+@@ -94,7 +94,7 @@ def fix_script(path: str) -> bool:
+         firstline = script.readline()
+         if not firstline.startswith(b"#!python"):
+             return False
+-        exename = sys.executable.encode(sys.getfilesystemencoding())
++        exename = target_interpreter().executable.encode(sys.getfilesystemencoding())
+         firstline = b"#!" + exename + os.linesep.encode("ascii")
+         rest = script.read()
+     with open(path, "wb") as script:
+@@ -134,9 +134,9 @@ def message_about_scripts_not_on_PATH(scripts: Sequence[str]) -> str | None:
+         script_name = dest_path.name
+         grouped_by_dir[parent_dir].add(script_name)
+ 
+-    # If an executable sits with sys.executable, we don't warn for it.
++    # If an executable sits with the target Python, we don't warn for it.
+     #     This covers the case of venv invocations without activating the venv.
+-    executable_dir = Path(sys.executable).parent.resolve()
++    executable_dir = Path(target_interpreter().executable).parent.resolve()
+     path_entries = os.environ.get("PATH", "").split(os.pathsep)
+ 
+     # We don't want to warn for directories that are on PATH.
+@@ -439,6 +439,18 @@ class PipScriptMaker(ScriptMaker):
+         _raise_for_invalid_entrypoint(specification, self.target_dir)
+         return super().make(specification, options)
+ 
++    def _get_launcher(self, kind: str) -> bytes:
++        # distlib picks the Windows launcher for the Python running it;
++        # scripts are launched with the target's.
++        interpreter = target_interpreter()
++        if interpreter.is_own:
++            return super()._get_launcher(kind)  # type: ignore[misc]
++        from kpip._vendor.distlib.scripts import WRAPPERS  # Windows only
++
++        bits = "64" if interpreter.pointer_bits == 64 else "32"
++        platform_suffix = "-arm" if interpreter.platform == "win-arm64" else ""
++        return WRAPPERS[f"{kind}{bits}{platform_suffix}.exe"]
++
+ 
+ def _install_wheel(  # noqa: C901, PLR0915 function is too long
+     name: str,
+@@ -653,6 +665,9 @@ def _install_wheel(  # noqa: C901, PLR0915 function is too long
+     # Embed the target environment's interpreter in console-script launchers
+     # rather than the one running pip, so an in-process install into another
+     # environment (e.g. a venv build environment) produces working launchers.
++    if script_executable is None and not target_interpreter().is_own:
++        # distlib's default is the Python running it.
++        script_executable = enquote_executable(target_interpreter().executable)
+     if script_executable is not None:
+         maker.executable = script_executable  # type: ignore  # it's untyped in distlib
+ 
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index 3076d7b..13f321d 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -383,3 +383,39 @@ def test_markers_and_requires_python_are_the_targets(
+     assert Marker("python_version < '3.12'").evaluate()
+     assert Marker("sys_platform == 'emscripten'").evaluate()
+     assert str(RequiresPythonCandidate(None).version) == "3.11.9"
++
++
++def test_scripts_run_with_the_target(environment: Path, tmp_path: Path) -> None:
++    import zipfile
++
++    from kpip._internal.locations import get_scheme
++    from kpip._internal.operations.install.wheel import install_wheel
++
++    wheel = tmp_path / "demo-1.0-py3-none-any.whl"
++    with zipfile.ZipFile(wheel, "w") as archive:
++        archive.writestr("demo.py", "def main():\n    pass\n")
++        archive.writestr(
++            "demo-1.0.dist-info/METADATA",
++            "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n",
++        )
++        archive.writestr(
++            "demo-1.0.dist-info/WHEEL",
++            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
++        )
++        archive.writestr(
++            "demo-1.0.dist-info/entry_points.txt",
++            "[console_scripts]\ndemo = demo:main\n",
++        )
++        archive.writestr("demo-1.0.data/scripts/raw", "#!python\nprint('raw')\n")
++        archive.writestr("demo-1.0.dist-info/RECORD", "")
++
++    interpreters.configure(str(environment), None)
++    target = interpreters.target_interpreter()
++    scheme = get_scheme("demo", home=str(tmp_path / "home"))
++    install_wheel("demo", str(wheel), scheme, "demo==1.0", pycompile=False)
++
++    scripts = Path(scheme.scripts)
++    for name in ("demo", "raw"):
++        first = (scripts / name).read_bytes().splitlines()[0].decode()
++        assert target.executable in first, name
++        assert sys.executable not in first or sys.executable in target.executable

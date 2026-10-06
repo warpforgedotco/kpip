@@ -29,10 +29,12 @@ from typing import (
 )
 from zipfile import ZipFile, ZipInfo
 
-from kpip._vendor.distlib.scripts import ScriptMaker
+from kpip._vendor.distlib.scripts import ScriptMaker, enquote_executable
 from kpip._vendor.distlib.util import get_export_entry
 from kpip._vendor.packaging.utils import canonicalize_name
 
+from kpip._internal.interpreters import target_interpreter
+from kpip._internal.interpreters.bytecode import compile_with
 from kpip._internal.exceptions import InstallationError
 from kpip._internal.locations import get_major_minor_version
 from kpip._internal.metadata import (
@@ -93,7 +95,7 @@ def fix_script(path: str) -> bool:
         firstline = script.readline()
         if not firstline.startswith(b"#!python"):
             return False
-        exename = sys.executable.encode(sys.getfilesystemencoding())
+        exename = target_interpreter().executable.encode(sys.getfilesystemencoding())
         firstline = b"#!" + exename + os.linesep.encode("ascii")
         rest = script.read()
     with open(path, "wb") as script:
@@ -133,9 +135,9 @@ def message_about_scripts_not_on_PATH(scripts: Sequence[str]) -> str | None:
         script_name = dest_path.name
         grouped_by_dir[parent_dir].add(script_name)
 
-    # If an executable sits with sys.executable, we don't warn for it.
+    # If an executable sits with the target Python, we don't warn for it.
     #     This covers the case of venv invocations without activating the venv.
-    executable_dir = Path(sys.executable).parent.resolve()
+    executable_dir = Path(target_interpreter().executable).parent.resolve()
     path_entries = os.environ.get("PATH", "").split(os.pathsep)
 
     # We don't want to warn for directories that are on PATH.
@@ -312,7 +314,8 @@ def get_console_script_specs(console: dict[str, str]) -> list[str]:
             scripts_to_generate.append("pip = " + pip_script)
 
         if os.environ.get("ENSUREPIP_OPTIONS", "") != "altinstall":
-            scripts_to_generate.append(f"pip{sys.version_info[0]} = {pip_script}")
+            major = target_interpreter().version[0]
+            scripts_to_generate.append(f"pip{major} = {pip_script}")
 
         scripts_to_generate.append(f"pip{get_major_minor_version()} = {pip_script}")
         # Delete any other versioned pip entry points
@@ -436,6 +439,18 @@ class PipScriptMaker(ScriptMaker):
     ) -> list[str]:
         _raise_for_invalid_entrypoint(specification, self.target_dir)
         return super().make(specification, options)
+
+    def _get_launcher(self, kind: str) -> bytes:
+        # distlib picks the Windows launcher for the Python running it;
+        # scripts are launched with the target's.
+        interpreter = target_interpreter()
+        if interpreter.is_own:
+            return super()._get_launcher(kind)  # type: ignore[misc]
+        from kpip._vendor.distlib.scripts import WRAPPERS  # Windows only
+
+        bits = "64" if interpreter.pointer_bits == 64 else "32"
+        platform_suffix = "-arm" if interpreter.platform == "win-arm64" else ""
+        return WRAPPERS[f"{kind}{bits}{platform_suffix}.exe"]
 
 
 def _install_wheel(  # noqa: C901, PLR0915 function is too long
@@ -629,7 +644,15 @@ def _install_wheel(  # noqa: C901, PLR0915 function is too long
         return importlib.util.cache_from_source(path)
 
     # Compile all of the pyc files for the installed files
-    if pycompile:
+    if pycompile and not target_interpreter().is_own:
+        # Only the target Python writes bytecode it can load.
+        for _, pyc_path in compile_with(
+            target_interpreter(), list(pyc_source_file_paths())
+        ):
+            assert os.path.exists(pyc_path)
+            pyc_record_path = cast("RecordPath", pyc_path.replace(os.path.sep, "/"))
+            record_installed(pyc_record_path, pyc_path)
+    elif pycompile:
         with contextlib.redirect_stdout(
             StreamWrapper.from_stream(sys.stdout)
         ) as stdout:
@@ -651,6 +674,9 @@ def _install_wheel(  # noqa: C901, PLR0915 function is too long
     # Embed the target environment's interpreter in console-script launchers
     # rather than the one running pip, so an in-process install into another
     # environment (e.g. a venv build environment) produces working launchers.
+    if script_executable is None and not target_interpreter().is_own:
+        # distlib's default is the Python running it.
+        script_executable = enquote_executable(target_interpreter().executable)
     if script_executable is not None:
         maker.executable = script_executable  # type: ignore  # it's untyped in distlib
 

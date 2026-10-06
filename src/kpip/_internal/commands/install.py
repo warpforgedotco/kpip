@@ -6,7 +6,6 @@ import json
 import operator
 import os
 import shutil
-import site
 import sys
 from collections.abc import Iterator
 from optparse import SUPPRESS_HELP, Values
@@ -38,6 +37,7 @@ from kpip._internal.exceptions import (
     InstallationError,
     InstallWheelBuildError,
 )
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.locations import get_scheme
 from kpip._internal.metadata import BaseEnvironment, get_environment
 from kpip._internal.models.installation_report import InstallationReport
@@ -802,7 +802,7 @@ def decide_user_install(
             )
         # Catch all remaining cases which honour the site.ENABLE_USER_SITE
         # value, such as a plain Python installation (e.g. no virtualenv).
-        if not site.ENABLE_USER_SITE:
+        if not target_interpreter().user_site_enabled:
             raise InstallationError(
                 "Can not perform a '--user' install. User site-packages "
                 "are disabled for this Python."
@@ -819,7 +819,7 @@ def decide_user_install(
         return False
 
     # If user installs are not enabled, choose a non-user install
-    if not site.ENABLE_USER_SITE:
+    if not target_interpreter().user_site_enabled:
         logger.debug("Non-user install because user site-packages disabled")
         return False
 

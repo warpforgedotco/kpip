@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import configparser
 import os
-import sys
 from collections.abc import Iterable
 from typing import Any, NewType
 
@@ -23,6 +22,7 @@ from kpip._internal.exceptions import (
     ConfigurationError,
     ConfigurationFileCouldNotBeLoaded,
 )
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.utils import appdirs
 from kpip._internal.utils.compat import WINDOWS, get_locale_encoding
 from kpip._internal.utils.logging import getLogger
@@ -71,7 +71,7 @@ def get_configuration_files() -> dict[Kind, list[str]]:
         os.path.join(path, CONFIG_BASENAME) for path in appdirs.site_config_dirs("pip")
     ]
 
-    site_config_file = os.path.join(sys.prefix, CONFIG_BASENAME)
+    site_config_file = os.path.join(target_interpreter().prefix, CONFIG_BASENAME)
     legacy_config_file = os.path.join(
         os.path.expanduser("~"),
         "pip" if WINDOWS else ".pip",

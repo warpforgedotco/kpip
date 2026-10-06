@@ -4,7 +4,6 @@ import importlib.metadata
 import logging
 import os
 import pathlib
-import sys
 import zipfile
 from collections.abc import Iterator, Sequence
 
@@ -15,6 +14,7 @@ from kpip._vendor.packaging.utils import (
     parse_wheel_filename,
 )
 
+from kpip._internal.interpreters import search_path
 from kpip._internal.metadata.base import BaseDistribution, BaseEnvironment
 from kpip._internal.utils.filetypes import WHEEL_EXTENSION
 
@@ -124,12 +124,12 @@ class Environment(BaseEnvironment):
 
     @classmethod
     def default(cls) -> BaseEnvironment:
-        return cls(sys.path)
+        return cls(search_path())
 
     @classmethod
     def from_paths(cls, paths: list[str] | None) -> BaseEnvironment:
         if paths is None:
-            return cls(sys.path)
+            return cls(search_path())
         return cls(paths)
 
     def _iter_distributions(self) -> Iterator[BaseDistribution]:

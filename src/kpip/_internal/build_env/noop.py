@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterable
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from kpip._internal.interpreters import build_interpreter
 from kpip._internal.build_env.base import BuildEnvironment
 
 if TYPE_CHECKING:
@@ -15,7 +15,12 @@ class NoOpBuildEnvironment(BuildEnvironment):
     """A no-op drop-in replacement for BuildEnvironment"""
 
     def __init__(self) -> None:
-        self.python_executable = sys.executable
+        pass
+
+    @property  # type: ignore[override]
+    def python_executable(self) -> str:
+        # Asked only when something is built: every requirement has one.
+        return build_interpreter().executable
 
     def __enter__(self) -> None:
         pass
