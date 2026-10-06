@@ -546,11 +546,9 @@ def test_prompt_for_keyring_if_needed(
     "isolation",
     [
         pytest.param("", id="legacy-isolation"),
-        pytest.param(
-            "--use-feature=venv-isolation",
-            id="venv-isolation",
-            marks=pytest.mark.xfail(reason="needs inprocess-build-deps to work"),
-        ),
+        # kpip installs build dependencies with itself, told with --python
+        # which environment they are for, so venv isolation works too.
+        pytest.param("--use-feature=venv-isolation", id="venv-isolation"),
     ],
 )
 def test_build_dependency_install_uses_same_keyring_as_root(
@@ -634,7 +632,7 @@ def test_build_dependency_install_uses_same_keyring_as_root(
             # we removed the venv's bin directory from PATH.
             str(script.bin_path / f"python{script.exe}"),
             "-m",
-            "pip",
+            "kpip",
             "wheel",
             "--no-cache-dir",
             "--index-url",

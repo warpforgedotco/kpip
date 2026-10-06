@@ -116,10 +116,59 @@ def pytest_addoption(parser: Parser) -> None:
     )
 
 
+# Tests of pip as an installed distribution -- one named "pip", which lists,
+# shows, freezes and upgrades itself, and installs pip and pip3.X scripts and
+# completion for "pip" -- which kpip, a binary installed into no environment,
+# is not. Strict, so one that passes is noticed.
+KPIP_IS_NOT_THE_PIP_DISTRIBUTION = frozenset(
+    (
+        "test_completion.py::test_completion_for_supported_shells[bash]",
+        "test_completion.py::test_completion_for_supported_shells[fish]",
+        "test_completion.py::test_completion_for_supported_shells[powershell]",
+        "test_freeze.py::test_freeze_multiple_exclude_with_all",
+        "test_freeze.py::test_freeze_with_pip",
+        "test_inspect.py::test_inspect_basic",
+        "test_install_wheel.py::test_basic_install_from_wheel_file",
+        "test_install.py::test_double_install",
+        "test_install.py::test_install_pip_does_not_modify_pip_when_satisfied",
+        "test_install.py::test_pip_second_command_line_interface_works",
+        "test_list.py::test_multiple_exclude_and_normalization",
+        "test_pep668.py::test_succeeds_when_overridden",
+        "test_pip_runner_script.py::test_runner_work_in_environments_with_no_pip",
+        "test_show.py::test_all_fields",
+        "test_show.py::test_basic_show",
+        "test_show.py::test_more_than_one_package",
+        "test_show.py::test_pip_show_divider",
+        "test_show.py::test_pip_show_is_short",
+        "test_show.py::test_report_mixed_not_found",
+        "test_show.py::test_search_any_case",
+        "test_show.py::test_show_verbose",
+        "test_show.py::test_show_verbose_installer",
+        "test_show.py::test_show_verbose_project_urls",
+        "test_show.py::test_show_verbose_with_classifiers",
+        "test_show.py::test_show_without_files_does_not_read_installed_files",
+        "test_uninstall.py::test_uninstallpathset_no_paths",
+    )
+)
+
+
+def _is_about_the_pip_distribution(item: pytest.Function) -> bool:
+    test = item.nodeid.rpartition("/")[2]
+    return (
+        test in KPIP_IS_NOT_THE_PIP_DISTRIBUTION
+        or test.partition("[")[0] in KPIP_IS_NOT_THE_PIP_DISTRIBUTION
+    )
+
+
 def pytest_collection_modifyitems(config: Config, items: list[pytest.Function]) -> None:
     for item in items:
         if not hasattr(item, "module"):  # e.g.: DoctestTextfile
             continue
+
+        if _is_about_the_pip_distribution(item):
+            item.add_marker(
+                pytest.mark.xfail(reason="kpip is not the pip distribution", strict=True)
+            )
 
         if item.get_closest_marker("search") and not config.getoption("--run-search"):
             item.add_marker(pytest.mark.skip("pip search test skipped"))
@@ -430,6 +479,9 @@ def pip_src(tmpdir_factory: pytest.TempPathFactory) -> Path:
 def pip_editable_parts(
     pip_src: Path, tmpdir_factory: pytest.TempPathFactory
 ) -> tuple[Path, ...]:
+    """kpip installed in editable mode: a .pth file naming its source, and its
+    dist-info. Written here rather than by installing kpip, whose build
+    backend is not in the test environment."""
     pip_editable = tmpdir_factory.mktemp("pip") / "pip"
     shutil.copytree(pip_src, pip_editable, symlinks=True)
     # noxfile.py is Python 3 only
@@ -438,22 +490,29 @@ def pip_editable_parts(
         quiet=1,
         rx=re.compile("noxfile.py$"),
     )
+    from kpip import __version__
+
     pip_self_install_path = tmpdir_factory.mktemp("pip_self_install")
-    subprocess.check_call(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--no-build-isolation",
-            "--target",
-            pip_self_install_path,
-            "-e",
-            pip_editable,
-        ]
+    pth = pip_self_install_path / "__editable__.kpip.pth"
+    pth.write_text(f"{(pip_editable / 'src').resolve()}\n", encoding="utf-8")
+    dist_info = pip_self_install_path / f"kpip-{__version__}.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: kpip\nVersion: {__version__}\n",
+        encoding="utf-8",
     )
-    pth = next(pip_self_install_path.glob("*pip*.pth"))
-    dist_info = next(pip_self_install_path.glob("*.dist-info"))
+    (dist_info / "INSTALLER").write_text("kpip\n", encoding="utf-8")
+    (dist_info / "entry_points.txt").write_text(
+        "[console_scripts]\nkpip = kpip._internal.cli.main:main\n", encoding="utf-8"
+    )
+    (dist_info / "RECORD").write_text(
+        f"{pth.name},,\n"
+        + "".join(
+            f"{dist_info.name}/{name},,\n"
+            for name in ("METADATA", "INSTALLER", "entry_points.txt", "RECORD")
+        ),
+        encoding="utf-8",
+    )
     return (pth, dist_info)
 
 
@@ -656,7 +715,7 @@ import sys
 lib = os.path.join(os.path.dirname(__file__), "lib")
 sys.path.insert(0, lib)
 
-runpy.run_module("pip", run_name="__main__")
+runpy.run_module("kpip", run_name="__main__")
 """
 
 

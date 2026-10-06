@@ -185,11 +185,11 @@ def test_pep518_build_env_uses_same_pip(
     """Ensure the subprocess call to pip for installing the
     build dependencies is using the same version of pip.
     """
-    with open(script.scratch_path / "pip.py", "w") as fp:
+    with open(script.scratch_path / "kpip.py", "w") as fp:
         fp.write("raise ImportError")
     script.run(
         "python",
-        os.fspath(pip_src / "src/pip"),
+        os.fspath(pip_src / "src/kpip"),
         "install",
         "--no-index",
         "-f",
@@ -295,7 +295,7 @@ def test_pep518_with_user_pip(
     non-isolated environment, and break pip in the system site-packages,
     so that isolated uses of pip will fail.
     """
-    script.pip_install_local("flit-core", "-f", common_wheels)
+    script.pip_install_local("uv_build", "-f", common_wheels)
     script.pip_install_local(
         "--ignore-installed",
         "--user",
@@ -304,7 +304,7 @@ def test_pep518_with_user_pip(
         # WARNING: The scripts pip, pip3, ... are installed in ... which is not on PATH
         allow_stderr_warning=True,
     )
-    system_pip_dir = script.site_packages_path / "pip"
+    system_pip_dir = script.site_packages_path / "kpip"
     assert not system_pip_dir.exists()
     system_pip_dir.mkdir()
     with open(system_pip_dir / "__init__.py", "w") as fp:
@@ -2616,7 +2616,7 @@ def test_install_logs_pip_version_in_debug(
 ) -> None:
     fake_package = shared_data.packages / "simple-2.0.tar.gz"
     result = script.pip("install", "--no-build-isolation", "-v", fake_package)
-    pattern = "Using pip .* from .*"
+    pattern = "Using kpip .* from .*"
     assert_re_match(pattern, result.stdout)
 
 

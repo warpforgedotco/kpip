@@ -709,9 +709,9 @@ class PipTestEnvironment(TestFileEnvironment):
             args = (self.zipapp,) + args
         elif use_module:
             exe = "python"
-            args = ("-m", "pip") + args
+            args = ("-m", "kpip") + args
         else:
-            exe = "pip"
+            exe = "kpip"
         return self.run(exe, *(os.fspath(a) for a in args), **kwargs)
 
     def pip_install_local(
