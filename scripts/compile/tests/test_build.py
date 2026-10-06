@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 from kpip_compile.build import (
-    build_id,
     KPIP_PACKAGE,
+    RUNTIME_SOURCES,
     BuildOptions,
     interpreter_tag,
     kpip_version,
@@ -42,7 +42,7 @@ def test_cached_onefile_uses_a_static_spec() -> None:
     assert "--product-version=1.2.3" in command
     assert "--include-package=kpip" in command
     assert "--include-package-data=kpip" in command
-    assert "--include-package=msgspec" in command
+    assert not any("msgspec" in arg for arg in command)
     assert command[-1] == str(KPIP_PACKAGE)
 
 
@@ -67,9 +67,22 @@ def test_windows_ships_the_launchers() -> None:
 
     assert "--output-filename=kpip.exe" in command
     assert any(
-        arg.startswith("--include-data-files=") and arg.endswith("=kpip/_launchers/")
+        arg.startswith("--include-data-files=")
+        and arg.endswith("=kpip/_vendor/distlib/")
         for arg in command
     )
+    assert not any(
+        arg.endswith("=kpip/_vendor/distlib/")
+        for arg in nuitka_command(BuildOptions(platform="linux"), "1")
+    )
+
+
+def test_source_read_at_runtime_is_shipped_as_data() -> None:
+    command = nuitka_command(BuildOptions(platform="linux"), "1")
+
+    for source in RUNTIME_SOURCES:
+        assert (KPIP_PACKAGE / source).is_file(), source
+        assert f"--include-data-files={KPIP_PACKAGE / source}=kpip/{source}" in command
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
@@ -116,43 +129,3 @@ def test_each_python_unpacks_into_its_own_directory() -> None:
 
 def test_the_tag_comes_from_the_build_interpreter() -> None:
     assert interpreter_tag(sys.executable) == sys.implementation.cache_tag
-
-
-def test_subinterpreter_modules_are_named_in_one_argument() -> None:
-    command = nuitka_command(
-        BuildOptions(platform="linux"),
-        "1",
-        subinterpreter_modules=("encodings", "kpip.install.archive_workers"),
-    )
-
-    assert "--subinterpreter-bytecode=encodings,kpip.install.archive_workers" in command
-    assert command[-1] == str(KPIP_PACKAGE)
-    assert not any(
-        argument.startswith("--subinterpreter-bytecode")
-        for argument in nuitka_command(BuildOptions(platform="linux"), "1")
-    )
-
-
-def test_the_build_id_is_shipped_as_package_data(tmp_path: Path) -> None:
-    build_id_file = tmp_path / "BUILD_ID"
-
-    command = nuitka_command(
-        BuildOptions(platform="linux"), "1", build_id_file=build_id_file
-    )
-
-    assert f"--include-data-files={build_id_file}=kpip/BUILD_ID" in command
-
-
-def test_the_build_id_changes_with_any_module_and_the_interpreter(
-    tmp_path: Path,
-) -> None:
-    package = tmp_path / "kpip"
-    (package / "core").mkdir(parents=True)
-    module = package / "core" / "a.py"
-    module.write_text("A = 1\n")
-    first = build_id("cpython-315", package)
-
-    assert build_id("cpython-315", package) == first
-    assert build_id("cpython-315t", package) != first
-    module.write_text("A = 2\n")
-    assert build_id("cpython-315", package) != first

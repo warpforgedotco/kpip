@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import subprocess
@@ -20,7 +19,7 @@ def onefile_tempdir_spec(interpreter: str) -> str:
     """Where a cached onefile binary unpacks: one directory per kpip and Python.
 
     Static, so runs after the first reuse the unpacked files, and outside
-    kpip's own cache directory, which ``kpip cache`` may clear. The payload
+    kpip's cache directory, which ``kpip cache purge`` clears. The payload
     hash in the unpacking manifest tells builds of one version apart, but
     unpacking never removes a file the new payload lacks, so builds for
     another Python -- whose runtime library has another name -- get a
@@ -59,23 +58,6 @@ def kpip_version(package_dir: Path = KPIP_PACKAGE) -> str:
     return match.group(1)
 
 
-def build_id(interpreter: str, package_dir: Path = KPIP_PACKAGE) -> str:
-    """What the binary's code is: a digest of kpip's modules, as built, and
-    the Python they are built into.
-
-    The binary ships it as ``kpip/BUILD_ID`` for the caches that replay what
-    an earlier kpip rendered (``kpip.core.code_identity``): two copies of one
-    build share them, and any change to a module retires them.
-    """
-    digest = hashlib.sha256(interpreter.encode())
-    for path in sorted(package_dir.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        digest.update(b"\0" + path.relative_to(package_dir).as_posix().encode() + b"\0")
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
-
-
 def executable_name(options: BuildOptions) -> str:
     """The binary's name; a standalone folder already holds a ``kpip`` package."""
 
@@ -84,12 +66,24 @@ def executable_name(options: BuildOptions) -> str:
     return "kpip" if options.mode == "onefile" else "kpip.bin"
 
 
+# Python source kpip reads as data at runtime, which Nuitka compiles rather
+# than ships: run by another interpreter, or sent to one.
+RUNTIME_SOURCES = (
+    # Build backends' hooks run in the build interpreter.
+    "_vendor/pyproject_hooks/_in_process/_in_process.py",
+    # The probe carries packaging's tag code to the target interpreter
+    # (kpip._internal.interpreters.probe).
+    "_vendor/packaging/_elffile.py",
+    "_vendor/packaging/_manylinux.py",
+    "_vendor/packaging/_musllinux.py",
+    "_vendor/packaging/tags.py",
+)
+
+
 def nuitka_command(
     options: BuildOptions,
     version: str,
     interpreter: str = "cpython-314",
-    subinterpreter_modules: tuple[str, ...] = (),
-    build_id_file: Path | None = None,
 ) -> list[str]:
     is_windows = options.platform == "win32"
     command = [
@@ -101,28 +95,22 @@ def nuitka_command(
         f"--output-dir={options.output_dir}",
         f"--output-filename={executable_name(options)}",
         f"--product-version={version}",
-        # The command registry imports each command's module by name, which
-        # Nuitka cannot follow.
+        # pip's command registry imports each command's module by name,
+        # which Nuitka cannot follow.
         "--include-package=kpip",
         # certifi's cacert.pem and the vendored license texts.
         "--include-package-data=kpip",
-        # Imported only when an index page is read, and optional to kpip;
-        # the binary always has it (kpip.index.typed_pages).
-        "--include-package=msgspec",
         # Nuitka's automatic choice turns LTO off past 250 compiled modules,
-        # even for PGO builds, and kpip is close to that.
+        # even for PGO builds, and kpip is well past that.
         "--lto=yes",
     ]
-    if subinterpreter_modules:
-        # Bytecode for the subinterpreters kpip unpacks wheels on, which
-        # cannot import compiled modules (kpip_compile.workers).
-        command.append("--subinterpreter-bytecode=" + ",".join(subinterpreter_modules))
-    if build_id_file is not None:
-        command.append(f"--include-data-files={build_id_file}=kpip/BUILD_ID")
+    for source in RUNTIME_SOURCES:
+        command.append(f"--include-data-files={KPIP_PACKAGE / source}=kpip/{source}")
     if is_windows:
-        # Nuitka never treats ``.exe`` files as package data on its own.
-        launchers = KPIP_PACKAGE / "_launchers"
-        command.append(f"--include-data-files={launchers}/*.exe=kpip/_launchers/")
+        # distlib's script launchers. Nuitka never treats ``.exe`` files as
+        # package data on its own.
+        launchers = KPIP_PACKAGE / "_vendor" / "distlib"
+        command.append(f"--include-data-files={launchers}/*.exe=kpip/_vendor/distlib/")
     if options.mode == "onefile":
         command.append(f"--onefile-cache-mode={options.cache_mode}")
         if options.cache_mode == "cached":
@@ -137,16 +125,7 @@ def nuitka_command(
 def _run_nuitka(
     options: BuildOptions, nuitka_dir: Path, environ: dict[str, str], interpreter: str
 ) -> int:
-    from kpip_compile.workers import subinterpreter_modules
-
-    modules = tuple(subinterpreter_modules(options.python))
-    print(f"{len(modules)} modules for subinterpreters", flush=True)
-    options.output_dir.mkdir(parents=True, exist_ok=True)
-    build_id_file = options.output_dir / "BUILD_ID"
-    build_id_file.write_text(build_id(interpreter), encoding="ascii")
-    command = nuitka_command(
-        options, kpip_version(), interpreter, modules, build_id_file
-    )
+    command = nuitka_command(options, kpip_version(), interpreter)
     env = dict(environ)
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(nuitka_dir), env.get("PYTHONPATH")))

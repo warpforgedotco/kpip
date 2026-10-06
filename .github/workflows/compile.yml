@@ -69,7 +69,7 @@ jobs:
         run: uv run --group tests pytest tests/test_nuitka_subinterpreters.py
       - name: Compiled code shared by threads
         # Races threads through a program compiled with the same Nuitka: with
-        # the GIL, it checks what applies to both builds (patches 0015, 0016).
+        # the GIL, it checks what applies to both builds (patch 0015).
         if: runner.os == 'Linux'
         env:
           KPIP_NUITKA_TESTS: "1"
@@ -94,20 +94,25 @@ jobs:
           "$kpip" download certifi --no-cache-dir -d "$RUNNER_TEMP/download"
           ls "$RUNNER_TEMP"/download/certifi-*.whl
 
-          # A source-only package is built with a real Python, not the binary.
+          # A source-only package is built with a real Python, not the binary:
+          # the python3 on PATH, which the binary installs for.
           "$kpip" lock --no-cache-dir --output "$RUNNER_TEMP/sdist.toml" atlasclient==1.0.0
           grep -q 'name = "atlasclient"' "$RUNNER_TEMP/sdist.toml"
 
-          # A build that fails reaches the user as kpip reports it, rather
-          # than being taken for "no dependencies" or lost in a SystemError.
-          if KPIP_BUILD_PYTHON=/nonexistent/python "$kpip" lock --no-cache-dir \
-              --output "$RUNNER_TEMP/failed.toml" atlasclient==1.0.0 2> "$RUNNER_TEMP/failed.err"; then
+          # With no Python at all, the binary still resolves with the one it
+          # bundles, and refuses to build, saying why, rather than crashing.
+          env -u VIRTUAL_ENV -u CONDA_PREFIX PATH=/nonexistent "$kpip" download \
+            certifi --no-cache-dir -d "$RUNNER_TEMP/no-python"
+          ls "$RUNNER_TEMP"/no-python/certifi-*.whl
+          if env -u VIRTUAL_ENV -u CONDA_PREFIX PATH=/nonexistent "$kpip" lock \
+              --no-cache-dir --output "$RUNNER_TEMP/failed.toml" atlasclient==1.0.0 \
+              2> "$RUNNER_TEMP/failed.err"; then
             echo "a lock whose only sdist cannot be built succeeded"
             exit 1
           fi
           cat "$RUNNER_TEMP/failed.err"
-          grep -q "Failed to build 'atlasclient'" "$RUNNER_TEMP/failed.err"
-          if grep -q "SystemError" "$RUNNER_TEMP/failed.err"; then
+          grep -q "No Python interpreter to build with" "$RUNNER_TEMP/failed.err"
+          if grep -q "SystemError\|Traceback" "$RUNNER_TEMP/failed.err"; then
             exit 1
           fi
       - name: Installs for another Python
@@ -148,9 +153,10 @@ jobs:
           # The active environment is the one listed.
           VIRTUAL_ENV=$envs/warm "$kpip" list | grep -q '^rich '
 
-          # Run from PATH, --version names the binary itself.
+          # Run from PATH, --version names kpip, the pip it is built from, and
+          # the Python it installs for.
           PATH=$(dirname "$kpip"):$PATH "$(basename "$kpip")" --version | tee "$RUNNER_TEMP/version.txt"
-          grep -q "kpip .* from .*build" "$RUNNER_TEMP/version.txt"
+          grep -q "^kpip .* (pip .*) from " "$RUNNER_TEMP/version.txt"
           grep -q "(python 3\." "$RUNNER_TEMP/version.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

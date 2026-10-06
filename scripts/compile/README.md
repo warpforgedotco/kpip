@@ -40,7 +40,7 @@ uv run kpip-compile build --pgo
 This uses Nuitka's `--pgo-c`, as fixed by the vendored patch `0005`:
 
 1. **Instrumented build:** Nuitka compiles kpip with profiling and assembles its standalone distribution.
-2. **Training run:** Nuitka runs `build/pgo-train`, which runs `python -m kpip_compile.pgo` over 72 kpip commands in that distribution. They cover startup, help, locks of every benchmark requirement set (from a fresh cache and from a warm one, with backtracking and unsatisfiable sets), a download, installs, `list`, `freeze`, `inspect`, an sdist wheel build and `cache`. Each process writes a profile, and Nuitka merges them.
+2. **Training run:** Nuitka runs `build/pgo-train`, which runs `python -m kpip_compile.pgo` over 72 kpip commands in that distribution. They cover startup, help, locks of every benchmark requirement set for the Python the binary finds (from a fresh HTTP cache and from a warm one, with backtracking and unsatisfiable sets), a download, installs, `list`, `freeze`, `inspect`, an sdist wheel build and `cache`. Each process writes a profile, and Nuitka merges them.
 3. **Final build:** Nuitka compiles again with the profile and builds the binary you asked for.
 
 A failed training step fails the build. Steps that need the network, git or a build backend, or that are meant to fail, are allowed to fail.

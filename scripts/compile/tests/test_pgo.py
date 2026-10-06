@@ -25,16 +25,15 @@ def test_training_resolves_every_set_and_exercises_other_commands(
     steps = pgo.training_steps(tmp_path, cache)
     arguments = [step.arguments for step in steps]
 
-    for name, python_version in pgo.TRAINING_RESOLVES:
+    for name in pgo.TRAINING_RESOLVES:
         locks = [
             a
             for a in arguments
             if a[0] == "lock" and str(pgo.REQUIREMENTS_DIR / name) in a
         ]
         assert len(locks) == 3, name
-        assert all(("--python-version" in a) == bool(python_version) for a in locks), (
-            name
-        )
+        # pip's lock resolves for the Python it installs for.
+        assert not any("--python-version" in a for a in locks), name
     commands = {a[0] for a in arguments}
     assert commands >= {
         "--version",
@@ -52,7 +51,7 @@ def test_training_resolves_every_set_and_exercises_other_commands(
 
 def test_every_training_set_exists() -> None:
     """The sets are the benchmark's; renaming one there must not break a PGO build."""
-    for name, _ in pgo.TRAINING_RESOLVES:
+    for name in pgo.TRAINING_RESOLVES:
         assert (pgo.REQUIREMENTS_DIR / name).is_file(), name
 
 

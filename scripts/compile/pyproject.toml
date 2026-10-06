@@ -4,8 +4,6 @@ version = "0.0.1"
 description = "Compile kpip with a vendored, patched Nuitka"
 requires-python = ">=3.10"
 dependencies = [
-  # Shipped in the binary: kpip.index.typed_pages decodes index pages with it.
-  "msgspec>=0.19",
   # Onefile payload compression; 3.14 ships compression.zstd instead.
   "zstandard>=0.15; python_version < '3.14'",
 ]

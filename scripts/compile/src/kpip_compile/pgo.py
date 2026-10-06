@@ -9,7 +9,6 @@ as ``python -m kpip_compile.pgo <binary> <result file>``.
 from __future__ import annotations
 
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,29 +19,29 @@ from kpip_compile.vendor import REPO_ROOT
 REQUIREMENTS_DIR = REPO_ROOT / "scripts" / "benchmark" / "requirements"
 """The benchmark's requirement sets, which the training resolves as well."""
 
-# What the training resolves, and for which Python. The widest mix the
-# benchmark sets allow: large and small graphs, heavy backtracking, URL and
-# VCS requirements, an sdist to build, extras, and two sets with no answer,
-# so the conflict report is profiled too. A set that needs another Python
-# resolves for it with --python-version, which is a path of its own.
-TRAINING_RESOLVES: tuple[tuple[str, str | None], ...] = (
-    ("airflow.in", None),
-    ("jupyter.in", None),
-    ("black.in", None),
-    ("boto3.in", None),
-    ("dtlssocket.in", None),
-    ("trio.in", "3.12"),
-    ("scispacy.in", "3.12"),
-    ("slow.in", "3.12"),
-    ("all-kinds.in", "3.12"),
-    ("bio_embeddings.in", "3.12"),
-    ("backtracking/sentry.in", "3.12"),
-    ("backtracking/starlette-fastapi.in", "3.12"),
-    ("backtracking/numpy-numba.in", "3.12"),
-    ("backtracking/numpy-sparse.in", "3.12"),
-    ("backtracking/apache-beam-dill.in", "3.10"),
-    ("pydantic.in", "3.12"),
-    ("flyte.in", "3.12"),
+# What the training resolves: the widest mix the benchmark sets allow --
+# large and small graphs, heavy backtracking, URL and VCS requirements, an
+# sdist to build, extras, and two sets with no answer, so the conflict report
+# is profiled too. Each resolves for the Python the binary finds, so a set
+# curated for another may fail; what it ran still left a profile.
+TRAINING_RESOLVES: tuple[str, ...] = (
+    "airflow.in",
+    "jupyter.in",
+    "black.in",
+    "boto3.in",
+    "dtlssocket.in",
+    "trio.in",
+    "scispacy.in",
+    "slow.in",
+    "all-kinds.in",
+    "bio_embeddings.in",
+    "backtracking/sentry.in",
+    "backtracking/starlette-fastapi.in",
+    "backtracking/numpy-numba.in",
+    "backtracking/numpy-sparse.in",
+    "backtracking/apache-beam-dill.in",
+    "pydantic.in",
+    "flyte.in",
 )
 
 WEB_REQUIREMENTS = "requests\nrich\nhttpx\nfastapi\n"
@@ -85,19 +84,15 @@ def training_steps(work: Path, cache: Path) -> list[TrainingStep]:
     ]
 
     web = str(work / "web.txt")
-    for name, python_version in (
-        (str(REQUIREMENTS_DIR / name), version) for name, version in TRAINING_RESOLVES
-    ):
-        target = ["--python-version", python_version] if python_version else []
-        # The first lock of each fills the cache; the replays are removed
-        # before every step, so the others resolve from it again.
+    for name in (str(REQUIREMENTS_DIR / name) for name in TRAINING_RESOLVES):
+        # The first lock of each fills the HTTP cache; the others resolve
+        # from it.
         steps.extend(
             TrainingStep(
                 [
                     "lock",
                     "--quiet",
                     *cache_dir,
-                    *target,
                     "-r",
                     name,
                     "--output",
@@ -201,7 +196,6 @@ def train(binary: Path) -> None:
         steps = training_steps(work, cache)
         failed = 0
         for number, step in enumerate(steps, start=1):
-            shutil.rmtree(cache / "v1" / "lock-replay-v1", ignore_errors=True)
             print(
                 f"pgo [{number}/{len(steps)}]: kpip {' '.join(step.arguments[:2])}",
                 flush=True,
