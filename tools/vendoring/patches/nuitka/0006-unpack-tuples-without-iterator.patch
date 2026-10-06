@@ -30,7 +30,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  4 files changed, 99 insertions(+), 5 deletions(-)
 
 diff --git a/nuitka/build/include/nuitka/helper/iterators.h b/nuitka/build/include/nuitka/helper/iterators.h
-index 173251e31..cb8b71892 100644
+index 173251e..cb8b718 100644
 --- a/nuitka/build/include/nuitka/helper/iterators.h
 +++ b/nuitka/build/include/nuitka/helper/iterators.h
 @@ -173,6 +173,20 @@ NUITKA_MAY_BE_UNUSED static PyObject *MAKE_UNPACK_ITERATOR(PyObject *iterated) {
@@ -99,10 +99,10 @@ index 173251e31..cb8b71892 100644
  
      if (likely(attempt == NULL)) {
 diff --git a/nuitka/code_generation/IteratorCodes.py b/nuitka/code_generation/IteratorCodes.py
-index fe1734460..595671567 100644
+index ca771f1..175798b 100644
 --- a/nuitka/code_generation/IteratorCodes.py
 +++ b/nuitka/code_generation/IteratorCodes.py
-@@ -232,7 +232,10 @@ def generateSpecialUnpackCode(to_name, expression, emit, context):
+@@ -230,7 +230,10 @@ def generateSpecialUnpackCode(to_name, expression, emit, context):
          needs_check = expression.mayRaiseExceptionOperation()
  
          if not needs_check:
@@ -114,7 +114,7 @@ index fe1734460..595671567 100644
          elif python_version < 0x350:
              (
                  exception_state_name,
-@@ -467,6 +470,43 @@ def generateBuiltinIter1Code(to_name, expression, emit, context):
+@@ -465,6 +468,43 @@ def generateBuiltinIter1Code(to_name, expression, emit, context):
  
  def generateBuiltinIterForUnpackCode(to_name, expression, emit, context):
      may_raise = expression.mayRaiseExceptionOperation()
@@ -159,7 +159,7 @@ index fe1734460..595671567 100644
      generateCAPIObjectCode(
          to_name=to_name,
 diff --git a/nuitka/nodes/BuiltinIteratorNodes.py b/nuitka/nodes/BuiltinIteratorNodes.py
-index 47b078cad..fdb7a8e15 100644
+index 47b078c..fdb7a8e 100644
 --- a/nuitka/nodes/BuiltinIteratorNodes.py
 +++ b/nuitka/nodes/BuiltinIteratorNodes.py
 @@ -353,6 +353,22 @@ class ExpressionBuiltinZip310(
@@ -186,10 +186,10 @@ index 47b078cad..fdb7a8e15 100644
          result = self.subnode_value.computeExpressionIter1(
              iter_node=self, trace_collection=trace_collection
 diff --git a/nuitka/tree/ReformulationAssignmentStatements.py b/nuitka/tree/ReformulationAssignmentStatements.py
-index 4af479afe..b9a9d92e9 100644
+index 48f2bfd..a3c47ed 100644
 --- a/nuitka/tree/ReformulationAssignmentStatements.py
 +++ b/nuitka/tree/ReformulationAssignmentStatements.py
-@@ -329,14 +329,18 @@ not enough values to unpack (expected at least %d, got %%d)""" % (len(statements
+@@ -330,14 +330,18 @@ not enough values to unpack (expected at least %d, got %%d)""" % (len(statements
              )
  
          if python_version >= 0x370:

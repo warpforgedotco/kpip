@@ -19,7 +19,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/nuitka/build/static_src/HelpersBuiltin.c b/nuitka/build/static_src/HelpersBuiltin.c
-index 3e798b41a..f5c36715b 100644
+index 3e798b4..f5c3671 100644
 --- a/nuitka/build/static_src/HelpersBuiltin.c
 +++ b/nuitka/build/static_src/HelpersBuiltin.c
 @@ -738,10 +738,14 @@ PyObject *BUILTIN_GETATTR(PyThreadState *tstate, PyObject *object, PyObject *att

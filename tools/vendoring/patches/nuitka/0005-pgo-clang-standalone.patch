@@ -28,7 +28,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  5 files changed, 206 insertions(+), 48 deletions(-)
 
 diff --git a/nuitka/MainControl.py b/nuitka/MainControl.py
-index 0962da23d..c3a97c930 100644
+index fd9a246..e1b96cd 100644
 --- a/nuitka/MainControl.py
 +++ b/nuitka/MainControl.py
 @@ -20,8 +20,11 @@ from nuitka.build.SconsInterface import (
@@ -43,7 +43,7 @@ index 0962da23d..c3a97c930 100644
      readSconsErrorReport,
      readSconsObjectSizes,
      readSconsReport,
-@@ -173,6 +176,9 @@ from nuitka.tree.ReformulationMultidist import createMultidistMainSourceCode
+@@ -175,6 +178,9 @@ from nuitka.tree.ReformulationMultidist import createMultidistMainSourceCode
  from nuitka.utils.Distributions import getDistribution, getDistributionName
  from nuitka.utils.Execution import (
      executeCompiledBinary,
@@ -53,7 +53,7 @@ index 0962da23d..c3a97c930 100644
      withEnvironmentVarOverridden,
      wrapCommandForDebuggerForExec,
  )
-@@ -183,6 +189,7 @@ from nuitka.utils.FileOperations import (
+@@ -185,6 +191,7 @@ from nuitka.utils.FileOperations import (
      getNormalizedPathJoin,
      getReportPath,
      isFilesystemEncodable,
@@ -61,7 +61,7 @@ index 0962da23d..c3a97c930 100644
      openTextFile,
      removeDirectory,
  )
-@@ -663,6 +670,89 @@ def _deleteMsvcPGOFiles(pgo_mode):
+@@ -704,6 +711,89 @@ def _deleteMsvcPGOFiles(pgo_mode):
      return msvc_pgc_filename
  
  
@@ -151,7 +151,7 @@ index 0962da23d..c3a97c930 100644
  def _runCPgoBinary():
      # Note: For exit codes, we do not insist on anything yet, maybe we could point it out
      # or ask people to make scripts that buffer these kinds of errors, and take an error
-@@ -672,30 +762,43 @@ def _runCPgoBinary():
+@@ -713,30 +803,43 @@ def _runCPgoBinary():
          "Running created binary to produce C level PGO information:", style="blue"
      )
  
@@ -206,7 +206,7 @@ index 0962da23d..c3a97c930 100644
          )
  
          pgo_data_collected = os.path.exists(gcc_constants_pgo_filename)
-@@ -929,9 +1032,7 @@ def runSconsBackend():
+@@ -974,9 +1077,7 @@ def runSconsBackend():
  
          # Need to restart compilation from scratch here.
      if isCPgoMode():
@@ -217,7 +217,7 @@ index 0962da23d..c3a97c930 100644
          if isCPgoMode():
              scons_options["pgo_mode"] = "generate"
  
-@@ -950,7 +1051,17 @@ def runSconsBackend():
+@@ -995,7 +1096,17 @@ def runSconsBackend():
  
              # Need to make it usable before executing it.
              executePostProcessing(scons_options["result_exe"])
@@ -236,7 +236,7 @@ index 0962da23d..c3a97c930 100644
              scons_options["pgo_mode"] = "use"
  
      applyPreprocessorSymbols(scons_options, onefile=False)
-@@ -1201,8 +1312,19 @@ def _detectEarlyDLLs():
+@@ -1246,8 +1357,19 @@ def _detectEarlyDLLs():
      )
  
  
@@ -256,7 +256,7 @@ index 0962da23d..c3a97c930 100644
      binary_filename = scons_options["result_exe"]
  
      detectUsedDLLs(
-@@ -1213,6 +1335,34 @@ def _detectLateDLLs(scons_options):
+@@ -1258,6 +1380,34 @@ def _detectLateDLLs(scons_options):
      )
  
  
@@ -291,7 +291,7 @@ index 0962da23d..c3a97c930 100644
  def _main():
      """Main program flow of Nuitka
  
-@@ -1321,29 +1471,7 @@ def _main():
+@@ -1366,29 +1516,7 @@ def _main():
      executePostProcessing(scons_options["result_exe"])
  
      if isStandaloneMode():
@@ -323,7 +323,7 @@ index 0962da23d..c3a97c930 100644
          onStandaloneDistributionFinished(
              dist_dir=dist_dir,
 diff --git a/nuitka/build/SconsCompilerSettings.py b/nuitka/build/SconsCompilerSettings.py
-index 5d1e541bc..0e75b9b09 100644
+index 7a7a338..24358fb 100644
 --- a/nuitka/build/SconsCompilerSettings.py
 +++ b/nuitka/build/SconsCompilerSettings.py
 @@ -50,6 +50,7 @@ from .SconsUtils import (
@@ -344,7 +344,7 @@ index 5d1e541bc..0e75b9b09 100644
  
  
  def _detectWindowsSDK(env):
-@@ -1794,7 +1796,13 @@ def _enablePgoSettings(env):
+@@ -1803,7 +1805,13 @@ def _enablePgoSettings(env):
          env.progressbar_name = "Profile"
          env.Append(CPPDEFINES=["_NUITKA_PGO_GENERATE"])
  
@@ -359,7 +359,7 @@ index 5d1e541bc..0e75b9b09 100644
              env.Append(CCFLAGS=["-fprofile-generate"])
              env.Append(LINKFLAGS=["-fprofile-generate"])
          elif env.msvc_mode:
-@@ -1812,7 +1820,24 @@ def _enablePgoSettings(env):
+@@ -1821,7 +1829,24 @@ def _enablePgoSettings(env):
  
          env.Append(CPPDEFINES=["_NUITKA_PGO_USE"])
  
@@ -386,10 +386,10 @@ index 5d1e541bc..0e75b9b09 100644
              env.Append(LINKFLAGS=["-fprofile-use"])
          elif env.msvc_mode:
 diff --git a/nuitka/build/SconsUtils.py b/nuitka/build/SconsUtils.py
-index 314bbfae5..f2c3d7137 100644
+index 07fef89..5b13ec3 100644
 --- a/nuitka/build/SconsUtils.py
 +++ b/nuitka/build/SconsUtils.py
-@@ -788,6 +788,16 @@ def getSconsCompilerUsed(source_dir):
+@@ -829,6 +829,16 @@ def getSconsCompilerUsed(source_dir):
      return "Unknown"
  
  
@@ -407,10 +407,10 @@ index 314bbfae5..f2c3d7137 100644
      if source_dir not in _scons_error_reports:
          scons_error_report = OrderedDict()
 diff --git a/nuitka/options/OptionParsing.py b/nuitka/options/OptionParsing.py
-index d2d1d7931..b1a4aa5dd 100644
+index d2e9c73..02de43d 100644
 --- a/nuitka/options/OptionParsing.py
 +++ b/nuitka/options/OptionParsing.py
-@@ -1556,8 +1556,8 @@ pgo_group.add_option(
+@@ -1568,8 +1568,8 @@ pgo_group.add_option(
      help="""\
  Enables C level profile guided optimization (PGO), by executing a dedicated build first
  for a profiling run, and then using the result to feedback into the C compilation.
@@ -422,10 +422,10 @@ index d2d1d7931..b1a4aa5dd 100644
  
  pgo_group.add_option(
 diff --git a/nuitka/options/Options.py b/nuitka/options/Options.py
-index 80a52213a..65b8fb8fa 100644
+index 9ad11bc..3c70545 100644
 --- a/nuitka/options/Options.py
 +++ b/nuitka/options/Options.py
-@@ -1323,11 +1323,6 @@ make sure that is intended."""
+@@ -1341,11 +1341,6 @@ make sure that is intended."""
          )
  
      if isCPgoMode():

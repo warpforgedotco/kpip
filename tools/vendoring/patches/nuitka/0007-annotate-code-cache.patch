@@ -16,44 +16,40 @@ where CPython 3.14 takes 4.0 ms.
 Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- .../code_generation/AnnotateFunctionCodes.py  | 24 ++++++++++++-------
- 1 file changed, 15 insertions(+), 9 deletions(-)
+ .../code_generation/AnnotateFunctionCodes.py   | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
 
 diff --git a/nuitka/code_generation/AnnotateFunctionCodes.py b/nuitka/code_generation/AnnotateFunctionCodes.py
-index 81e06a3ae..8103aa500 100644
+index f3881b6..8e55d2a 100644
 --- a/nuitka/code_generation/AnnotateFunctionCodes.py
 +++ b/nuitka/code_generation/AnnotateFunctionCodes.py
-@@ -79,18 +79,24 @@ def _generateAnnotateFunctionMaker(function_body, function_identifier, context):
-     qualname = function_body.getFunctionQualname()
-     qualname_obj = context.getConstantCode(constant=qualname)
+@@ -121,16 +121,24 @@ def _generateAnnotateFunctionMaker(function_body, function_identifier, context):
+ 
+     closure_parameter, closure_setup = _getClosureSetupCode(closure_variables)
  
 +    # The code object is immutable, so it is unmarshalled once and shared by
 +    # every function created from it, as CPython does. That matters for a
 +    # definition that is executed repeatedly, e.g. a nested function. Racing
 +    # threads can at worst each unmarshal it, and keep one.
      maker_code = """\
- static PyObject *%(maker)s(PyThreadState *tstate) {
--    PyObject *result;
+ static PyObject *%(maker)s(PyThreadState *tstate%(closure_parameter)s) {
++    static PyObject *code_cache = NULL;
+     PyObject *result;
 -    PyObject *code = PyMarshal_ReadObjectFromString(
 -        %(marshalled)s,
 -        %(marshalled_size)d);
--    if (unlikely(code == NULL)) {
--        return NULL;
-+    static PyObject *code_cache = NULL;
+-    assert(code != NULL);
 +    PyObject *code = code_cache;
 +    if (code == NULL) {
 +        code = PyMarshal_ReadObjectFromString(
 +            %(marshalled)s,
 +            %(marshalled_size)d);
-+        if (unlikely(code == NULL)) {
-+            return NULL;
-+        }
++        assert(code != NULL);
 +        code_cache = code;
-     }
--    result = PyFunction_NewWithQualName(code, %(module_dict)s, %(qualname)s);
++    }
+ 
+     result = PyFunction_NewWithQualName(code, %(module_dict)s, %(qualname)s);
 -    Py_DECREF(code);
--    return result;
-+    return PyFunction_NewWithQualName(code, %(module_dict)s, %(qualname)s);
- }
- """ % {
-         "maker": maker_identifier,
+     assert(result != NULL);
+ %(closure_setup)s
+     return result;

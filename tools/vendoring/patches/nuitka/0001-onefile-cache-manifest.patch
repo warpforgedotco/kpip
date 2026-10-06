@@ -29,7 +29,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  2 files changed, 464 insertions(+), 102 deletions(-)
 
 diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
-index 9d66b146d..cef4be5ee 100644
+index 9d66b14..cef4be5 100644
 --- a/nuitka/build/static_src/OnefileBootstrap.c
 +++ b/nuitka/build/static_src/OnefileBootstrap.c
 @@ -66,6 +66,7 @@
@@ -681,7 +681,7 @@ index 9d66b146d..cef4be5ee 100644
      closePayloadData();
  #endif
 diff --git a/nuitka/freezer/Onefile.py b/nuitka/freezer/Onefile.py
-index 1886266ec..886cca1f3 100644
+index 1886266..886cca1 100644
 --- a/nuitka/freezer/Onefile.py
 +++ b/nuitka/freezer/Onefile.py
 @@ -52,6 +52,7 @@ from nuitka.utils.Execution import withEnvironmentVarsOverridden
