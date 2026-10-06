@@ -188,17 +188,46 @@ def generate(commit: str, checkout: Path) -> None:
             ) from error
 
 
+def _ignored_files(destination: Path) -> list[Path]:
+    """Files git ignores under ``TREES`` in ``destination``, but for bytecode:
+    what was put there, such as the functional tests' common wheels."""
+    if not (destination / ".git").exists():
+        return []
+    output = subprocess.run(
+        ["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--"]
+        + [str(tree) for tree in TREES],
+        cwd=destination,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return [
+        Path(name)
+        for name in output.split("\0")
+        if name and "__pycache__" not in Path(name).parts and not name.endswith(".pyc")
+    ]
+
+
 def copy_out(checkout: Path, destination: Path) -> None:
-    """Replace each of ``TREES`` under ``destination`` with the checkout's."""
-    for tree in TREES:
-        target = destination / tree
-        if target.exists():
-            _remove_tree(target)
-        shutil.copytree(
-            checkout / tree,
-            target,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
+    """Replace each of ``TREES`` under ``destination`` with the checkout's,
+    keeping what git ignores there."""
+    with tempfile.TemporaryDirectory() as kept:
+        ignored = _ignored_files(destination)
+        for path in ignored:
+            (Path(kept) / path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(destination / path, Path(kept) / path)
+        for tree in TREES:
+            target = destination / tree
+            if target.exists():
+                _remove_tree(target)
+            shutil.copytree(
+                checkout / tree,
+                target,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+        for path in ignored:
+            (destination / path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(Path(kept) / path, destination / path)
 
 
 def sync(commit: str | None) -> None:
