@@ -55,9 +55,14 @@ class Resolver(BaseResolver):
         force_reinstall: bool,
         upgrade_strategy: str,
         py_version_info: tuple[int, ...] | None = None,
+        solver: str = "resolvelib",
     ):
         super().__init__()
         assert upgrade_strategy in self._allowed_strategies
+        assert solver in ("resolvelib", "nab"), solver
+        # What searches for the answer: resolvelib, or nab-resolver
+        # (--use-feature=nab-resolver). Everything around it is the same.
+        self.solver = solver
         assert not (ignore_dependencies and only_dependencies)
 
         self.factory = Factory(
@@ -93,10 +98,19 @@ class Resolver(BaseResolver):
         else:
             reporter = PipReporter(constraints=provider.constraints)
 
-        resolver: RLResolver[Requirement, Candidate, str] = RLResolver(
-            provider,
-            reporter,
-        )
+        resolver: RLResolver[Requirement, Candidate, str]
+        if self.solver == "nab":
+            from kpip._internal.resolution.resolvelib.nab import NabResolver
+
+            resolver = cast(
+                "RLResolver[Requirement, Candidate, str]",
+                NabResolver(provider, reporter),
+            )
+        else:
+            resolver = RLResolver(
+                provider,
+                reporter,
+            )
 
         try:
             limit_how_complex_resolution_can_be = 200000
