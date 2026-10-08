@@ -1331,6 +1331,7 @@ use_new_feature: Callable[..., Option] = partial(
         "fast-deps",
         "inprocess-build-deps",
         "venv-isolation",
+        "nab-resolver",
     ]
     + ALWAYS_ENABLED_FEATURES,
     help="Enable new functionality, that may be backward incompatible.",
