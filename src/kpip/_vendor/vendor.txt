@@ -16,3 +16,4 @@ setuptools==70.3.0
 tomli==2.4.1
 tomli-w==1.2.0
 truststore==0.10.4
+nab-resolver==0.0.19.dev0  # nab b302a681989f4249eb6efaa3fc015d9e0ff6dfd9

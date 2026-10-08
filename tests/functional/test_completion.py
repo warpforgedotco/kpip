@@ -416,12 +416,12 @@ def test_completion_path_after_option(
     )
 
 
-# zsh completion script doesn't contain pip3
+# zsh completion script doesn't contain the executable's name
 @pytest.mark.parametrize("flag", ["--bash", "--fish", "--powershell"])
 def test_completion_uses_same_executable_name(
     autocomplete_script: PipTestEnvironment, flag: str, deprecated_python: bool
 ) -> None:
-    executable_name = f"pip{sys.version_info[0]}"
+    executable_name = "kpip"
     # Deprecated python versions produce an extra deprecation warning
     result = autocomplete_script.run(
         executable_name,

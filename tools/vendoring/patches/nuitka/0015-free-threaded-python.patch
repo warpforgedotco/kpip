@@ -84,7 +84,6 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  nuitka/build/static_src/HelpersTypes.c        |  17 +-
  nuitka/code_generation/FrameCodes.py          |  19 +-
  nuitka/code_generation/GlobalsLocalsCodes.py  |  26 +-
- nuitka/code_generation/LocalsDictCodes.py     |   5 +-
  nuitka/code_generation/ModuleCodes.py         |   9 +-
  nuitka/code_generation/OperationCodes.py      |  26 +-
  nuitka/code_generation/VariableCodes.py       |  57 ++-
@@ -99,7 +98,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  .../templates_c/HelperOperationInplace.c.j2   |   2 +-
  .../templates_c/HelperSlotsFloat.c.j2         |   2 +-
  .../templates_c/HelperSlotsLong.c.j2          |   8 +-
- 56 files changed, 1033 insertions(+), 401 deletions(-)
+ 55 files changed, 1030 insertions(+), 399 deletions(-)
 
 diff --git a/nuitka/PythonVersions.py b/nuitka/PythonVersions.py
 index bf167eb..47f962b 100644
@@ -3403,22 +3402,6 @@ index b6fd857..6927c67 100644
              }
          )
  
-diff --git a/nuitka/code_generation/LocalsDictCodes.py b/nuitka/code_generation/LocalsDictCodes.py
-index 470642b..e977493 100644
---- a/nuitka/code_generation/LocalsDictCodes.py
-+++ b/nuitka/code_generation/LocalsDictCodes.py
-@@ -235,8 +235,9 @@ def generateLocalsDictVariableRefOrFallbackCode(to_name, expression, emit, conte
-                 }
-             )
- 
--            if needs_ref:
--                context.addCleanupTempName(value_name)
-+            # With a fallback that took a reference, e.g. a module variable
-+            # read without the GIL, the value is released already, and the
-+            # dictionary read takes one too.
-         else:
-             if needs_ref:
-                 template = template_read_locals_mapping_with_fallback_ref
 diff --git a/nuitka/code_generation/ModuleCodes.py b/nuitka/code_generation/ModuleCodes.py
 index f5fc8e1..041a782 100644
 --- a/nuitka/code_generation/ModuleCodes.py
