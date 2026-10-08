@@ -8,7 +8,6 @@ import os
 import py_compile
 import re
 import shutil
-import subprocess
 import sys
 import threading
 import zlib
@@ -635,6 +634,19 @@ def virtualenv_template(
     for exe in os.listdir(venv.bin):
         if not exe.startswith(("python", "libpy")):  # Don't remove libpypy-c.so...
             (venv.bin / exe).unlink()
+
+    # kpip's own launcher, which survives the environment being copied: it
+    # runs the first python on PATH, which in a test is the copy's own.
+    if sys.platform != "win32":
+        launcher = venv.bin / "kpip"
+        launcher.write_text(
+            "#!/usr/bin/env python\n"
+            "import sys\n"
+            "from kpip._internal.cli.main import main\n"
+            "sys.exit(main())\n",
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
 
     # Rename original virtualenv directory to make sure
     # it's not reused by mistake from one of the copies.

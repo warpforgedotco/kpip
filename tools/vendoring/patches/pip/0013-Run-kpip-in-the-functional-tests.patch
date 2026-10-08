@@ -9,22 +9,31 @@ run it with "python -m pip". They now run kpip: "python -m kpip", or the
 kpip script, installed editable by writing its .pth file and dist-info,
 as kpip's build backend is not in the test environment.
 ---
- tests/conftest.py                       | 89 ++++++++++++++++++++-----
- tests/functional/test_broken_stdout.py  |  6 +-
- tests/functional/test_cli.py            |  4 +-
- tests/functional/test_install.py        | 10 +--
- tests/functional/test_install_config.py | 10 ++-
- tests/functional/test_no_color.py       |  2 +-
- tests/functional/test_self_update.py    |  4 +-
- tests/lib/__init__.py                   |  4 +-
- tests/lib/test_lib.py                   |  2 +-
- 9 files changed, 94 insertions(+), 37 deletions(-)
+ tests/conftest.py                       | 103 ++++++++++++++++++++----
+ tests/functional/test_broken_stdout.py  |   6 +-
+ tests/functional/test_cli.py            |   4 +-
+ tests/functional/test_completion.py     |   4 +-
+ tests/functional/test_install.py        |  10 +--
+ tests/functional/test_install_config.py |  10 +--
+ tests/functional/test_no_color.py       |   2 +-
+ tests/functional/test_self_update.py    |   4 +-
+ tests/lib/__init__.py                   |   4 +-
+ tests/lib/test_lib.py                   |   2 +-
+ 10 files changed, 109 insertions(+), 40 deletions(-)
 
 diff --git a/tests/conftest.py b/tests/conftest.py
-index 2a46e9c..922ece2 100644
+index 2a46e9c..a0e5d46 100644
 --- a/tests/conftest.py
 +++ b/tests/conftest.py
-@@ -116,11 +116,60 @@ def pytest_addoption(parser: Parser) -> None:
+@@ -8,7 +8,6 @@ import os
+ import py_compile
+ import re
+ import shutil
+-import subprocess
+ import sys
+ import threading
+ import zlib
+@@ -116,11 +115,60 @@ def pytest_addoption(parser: Parser) -> None:
      )
  
  
@@ -85,7 +94,7 @@ index 2a46e9c..922ece2 100644
          if item.get_closest_marker("search") and not config.getoption("--run-search"):
              item.add_marker(pytest.mark.skip("pip search test skipped"))
  
-@@ -430,6 +479,9 @@ def pip_src(tmpdir_factory: pytest.TempPathFactory) -> Path:
+@@ -430,6 +478,9 @@ def pip_src(tmpdir_factory: pytest.TempPathFactory) -> Path:
  def pip_editable_parts(
      pip_src: Path, tmpdir_factory: pytest.TempPathFactory
  ) -> tuple[Path, ...]:
@@ -95,7 +104,7 @@ index 2a46e9c..922ece2 100644
      pip_editable = tmpdir_factory.mktemp("pip") / "pip"
      shutil.copytree(pip_src, pip_editable, symlinks=True)
      # noxfile.py is Python 3 only
-@@ -438,22 +490,29 @@ def pip_editable_parts(
+@@ -438,22 +489,29 @@ def pip_editable_parts(
          quiet=1,
          rx=re.compile("noxfile.py$"),
      )
@@ -139,7 +148,27 @@ index 2a46e9c..922ece2 100644
      return (pth, dist_info)
  
  
-@@ -656,7 +715,7 @@ import sys
+@@ -577,6 +635,19 @@ def virtualenv_template(
+         if not exe.startswith(("python", "libpy")):  # Don't remove libpypy-c.so...
+             (venv.bin / exe).unlink()
+ 
++    # kpip's own launcher, which survives the environment being copied: it
++    # runs the first python on PATH, which in a test is the copy's own.
++    if sys.platform != "win32":
++        launcher = venv.bin / "kpip"
++        launcher.write_text(
++            "#!/usr/bin/env python\n"
++            "import sys\n"
++            "from kpip._internal.cli.main import main\n"
++            "sys.exit(main())\n",
++            encoding="utf-8",
++        )
++        launcher.chmod(0o755)
++
+     # Rename original virtualenv directory to make sure
+     # it's not reused by mistake from one of the copies.
+     venv_template = tmpdir / "venv_template"
+@@ -656,7 +727,7 @@ import sys
  lib = os.path.join(os.path.dirname(__file__), "lib")
  sys.path.insert(0, lib)
  
@@ -201,6 +230,25 @@ index a7e8316..e0cf06f 100644
  finally:
      with open({str(file)!r}, "w") as f:
          print(*sys.modules.keys(), sep="\\n", file=f)
+diff --git a/tests/functional/test_completion.py b/tests/functional/test_completion.py
+index 54fd68a..55c0fd8 100644
+--- a/tests/functional/test_completion.py
++++ b/tests/functional/test_completion.py
+@@ -416,12 +416,12 @@ def test_completion_path_after_option(
+     )
+ 
+ 
+-# zsh completion script doesn't contain pip3
++# zsh completion script doesn't contain the executable's name
+ @pytest.mark.parametrize("flag", ["--bash", "--fish", "--powershell"])
+ def test_completion_uses_same_executable_name(
+     autocomplete_script: PipTestEnvironment, flag: str, deprecated_python: bool
+ ) -> None:
+-    executable_name = f"pip{sys.version_info[0]}"
++    executable_name = "kpip"
+     # Deprecated python versions produce an extra deprecation warning
+     result = autocomplete_script.run(
+         executable_name,
 diff --git a/tests/functional/test_install.py b/tests/functional/test_install.py
 index 638b1d7..969fd13 100644
 --- a/tests/functional/test_install.py
