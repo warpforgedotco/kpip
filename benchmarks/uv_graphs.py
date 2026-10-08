@@ -325,6 +325,40 @@ def _write_metadata_directory(req: Any, pkg_info: bytes) -> None:
     req.assert_source_matches_version()
 
 
+def _metadata_from_index(pkg_info: bytes) -> bytes:
+    """Metadata for a release whose sdist will not build here, from PyPI's
+    JSON API: its Requires-Dist and Requires-Python, which PyPI takes from
+    the release's wheels. An sdist's own ``PKG-INFO`` often lists no
+    dependencies at all, which would make the release look free of them."""
+    import re
+    import urllib.request
+
+    message = email.parser.BytesHeaderParser().parsebytes(pkg_info)
+    name, version = message["Name"], message["Version"]
+    url = f"https://pypi.org/pypi/{name}/{version}/json"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            info = json.load(response)["info"]
+    except Exception as error:
+        print(f"  no metadata from {url} ({error}); using its PKG-INFO")
+        return pkg_info
+    requires = info.get("requires_dist") or []
+    extras = sorted(
+        {
+            extra
+            for requirement in requires
+            for extra in re.findall(r"""extra\s*==\s*['"]([^'"]+)['"]""", requirement)
+        }
+    )
+    lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
+    if info.get("requires_python"):
+        lines.append(f"Requires-Python: {info['requires_python']}")
+    lines += [f"Provides-Extra: {extra}" for extra in extras]
+    lines += [f"Requires-Dist: {requirement}" for requirement in requires]
+    print(f"  {len(requires)} requirements from {url}")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def _is_static(pkg_info: bytes) -> bool:
     """Whether ``PKG-INFO`` is the metadata a build would produce (PEP 643)."""
     message = email.parser.BytesHeaderParser().parsebytes(pkg_info)
@@ -355,8 +389,9 @@ def static_sdist_metadata(build: set[str] | None = None) -> Iterator[Built]:
 
     The sdists whose URLs are in ``build`` are read as uv reads them: from a
     ``PKG-INFO`` that PEP 643 makes reliable, otherwise from a real build,
-    otherwise (the build failed) from ``PKG-INFO`` anyway. What each yields
-    is kept, by URL.
+    otherwise (the build failed) from what the index says of the release's
+    dependencies (:func:`_metadata_from_index`). What each yields is kept, by
+    URL.
     """
     previous = SourceDistribution.prepare_distribution_metadata
     built = Built()
@@ -372,8 +407,9 @@ def static_sdist_metadata(build: set[str] | None = None) -> Iterator[Built]:
             try:
                 previous(self, *args, **kwargs)
             except Exception as error:
-                print(f"building {url} failed ({error}); using its PKG-INFO")
+                print(f"building {url} failed ({error}); asking the index")
                 built.approximate.append(url.rsplit("/", 1)[-1])
+                pkg_info = _metadata_from_index(pkg_info)
             else:
                 assert self.req.metadata_directory is not None
                 metadata = Path(self.req.metadata_directory) / "METADATA"
