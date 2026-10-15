@@ -21,10 +21,10 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  1 file changed, 87 insertions(+), 10 deletions(-)
 
 diff --git a/nuitka/build/static_src/HelpersConstantsBlob.c b/nuitka/build/static_src/HelpersConstantsBlob.c
-index fab7426..aa5d17e 100644
+index f36b78d5..b89b3445 100644
 --- a/nuitka/build/static_src/HelpersConstantsBlob.c
 +++ b/nuitka/build/static_src/HelpersConstantsBlob.c
-@@ -356,6 +356,78 @@ static PyObject *our_frozendict_tp_richcompare(PyObject *a, PyObject *b, int op)
+@@ -375,6 +375,78 @@ static PyObject *our_frozendict_tp_richcompare(PyObject *a, PyObject *b, int op)
  }
  #endif
  
@@ -103,7 +103,7 @@ index fab7426..aa5d17e 100644
  // For creation of small long singleton long values as required by Python3.
  #if PYTHON_VERSION < 0x3b0
  #if PYTHON_VERSION >= 0x390
-@@ -399,6 +471,8 @@ static void initCaches(void) {
+@@ -418,6 +490,8 @@ static void initCaches(void) {
  
      frozenset_cache = PyDict_New();
  
@@ -112,7 +112,7 @@ index fab7426..aa5d17e 100644
  #if PYTHON_VERSION >= 0x3f0
      frozendict_cache = PyDict_New();
  #endif
-@@ -452,20 +526,23 @@ static void _finalizeUnpackedConstantObject(void **output, PyObject *value) {
+@@ -471,20 +545,23 @@ static void _finalizeUnpackedConstantObject(void **output, PyObject *value) {
  
  static void insertToDictCacheForcedHash(PyObject *dict, PyObject **value, hashfunc tp_hash,
                                          richcmpfunc tp_richcompare) {

@@ -7,7 +7,7 @@ compile workflow sets it after building kpip, which vendors Nuitka).
 Run by a free-threaded Python, the program compiles without the GIL and its
 threaded cases check patch 0015. With the GIL they still check what applies
 to both builds: references released, exact results, and assignment
-expressions bound in their function (patch 0016).
+expressions bound in their function (fixed upstream since).
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def test_compiled_code_shared_by_threads_stays_correct(binary: Path) -> None:
     """Unpatched without the GIL, this crashed, hung, or computed wrong
     results within a run; unpatched with it, assignment expressions in
-    generator expressions leaked into the module (patch 0016)."""
+    generator expressions leaked into the module (fixed upstream since)."""
     # Races show some of the time: a few runs, each on fresh threads.
     for _ in range(3):
         result = subprocess.run(

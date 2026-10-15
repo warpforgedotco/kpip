@@ -30,7 +30,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  4 files changed, 99 insertions(+), 5 deletions(-)
 
 diff --git a/nuitka/build/include/nuitka/helper/iterators.h b/nuitka/build/include/nuitka/helper/iterators.h
-index 173251e..cb8b718 100644
+index 173251e3..cb8b7189 100644
 --- a/nuitka/build/include/nuitka/helper/iterators.h
 +++ b/nuitka/build/include/nuitka/helper/iterators.h
 @@ -173,6 +173,20 @@ NUITKA_MAY_BE_UNUSED static PyObject *MAKE_UNPACK_ITERATOR(PyObject *iterated) {
@@ -99,7 +99,7 @@ index 173251e..cb8b718 100644
  
      if (likely(attempt == NULL)) {
 diff --git a/nuitka/code_generation/IteratorCodes.py b/nuitka/code_generation/IteratorCodes.py
-index ca771f1..175798b 100644
+index ca771f1d..175798b9 100644
 --- a/nuitka/code_generation/IteratorCodes.py
 +++ b/nuitka/code_generation/IteratorCodes.py
 @@ -230,7 +230,10 @@ def generateSpecialUnpackCode(to_name, expression, emit, context):
@@ -159,10 +159,10 @@ index ca771f1..175798b 100644
      generateCAPIObjectCode(
          to_name=to_name,
 diff --git a/nuitka/nodes/BuiltinIteratorNodes.py b/nuitka/nodes/BuiltinIteratorNodes.py
-index 47b078c..fdb7a8e 100644
+index d5b63a06..8d1ee19b 100644
 --- a/nuitka/nodes/BuiltinIteratorNodes.py
 +++ b/nuitka/nodes/BuiltinIteratorNodes.py
-@@ -353,6 +353,22 @@ class ExpressionBuiltinZip310(
+@@ -376,6 +376,22 @@ class ExpressionBuiltinZip310(
  class ExpressionBuiltinIterForUnpack(ExpressionBuiltinIter1):
      kind = "EXPRESSION_BUILTIN_ITER_FOR_UNPACK"
  
@@ -186,10 +186,10 @@ index 47b078c..fdb7a8e 100644
          result = self.subnode_value.computeExpressionIter1(
              iter_node=self, trace_collection=trace_collection
 diff --git a/nuitka/tree/ReformulationAssignmentStatements.py b/nuitka/tree/ReformulationAssignmentStatements.py
-index 48f2bfd..a3c47ed 100644
+index ea8fb1ce..7ca3f8bc 100644
 --- a/nuitka/tree/ReformulationAssignmentStatements.py
 +++ b/nuitka/tree/ReformulationAssignmentStatements.py
-@@ -330,14 +330,18 @@ not enough values to unpack (expected at least %d, got %%d)""" % (len(statements
+@@ -335,14 +335,18 @@ not enough values to unpack (expected at least %d, got %%d)""" % (len(statements
              )
  
          if python_version >= 0x370:

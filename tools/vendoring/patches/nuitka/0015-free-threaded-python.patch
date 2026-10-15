@@ -37,9 +37,8 @@ concatenation and comparison use CPython's, which lock; counters are atomic
 and code objects are completed once, under their lock.
 
 Also fixed, with or without the GIL: "list.remove"/"list.count" with a
-tuple argument, a double release in "list.index" with a bad stop, a leaked
-cell in "__reduce__", and a code generation assertion when a class body
-falls back to a module variable read with a reference.
+tuple argument, a double release in "list.index" with a bad stop, and a
+leaked cell in "__reduce__".
 
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
@@ -84,7 +83,6 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  nuitka/build/static_src/HelpersTypes.c        |  17 +-
  nuitka/code_generation/FrameCodes.py          |  19 +-
  nuitka/code_generation/GlobalsLocalsCodes.py  |  26 +-
- nuitka/code_generation/LocalsDictCodes.py     |   5 +-
  nuitka/code_generation/ModuleCodes.py         |   9 +-
  nuitka/code_generation/OperationCodes.py      |  26 +-
  nuitka/code_generation/VariableCodes.py       |  57 ++-
@@ -99,13 +97,13 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  .../templates_c/HelperOperationInplace.c.j2   |   2 +-
  .../templates_c/HelperSlotsFloat.c.j2         |   2 +-
  .../templates_c/HelperSlotsLong.c.j2          |   8 +-
- 56 files changed, 1033 insertions(+), 401 deletions(-)
+ 55 files changed, 1030 insertions(+), 399 deletions(-)
 
 diff --git a/nuitka/PythonVersions.py b/nuitka/PythonVersions.py
-index bf167eb..47f962b 100644
+index c9b278b3..0acd512e 100644
 --- a/nuitka/PythonVersions.py
 +++ b/nuitka/PythonVersions.py
-@@ -711,7 +711,12 @@ def getModuleLinkerLibs():
+@@ -517,7 +517,12 @@ def getModuleLinkerLibs():
  
  
  def isPythonWithGil():
@@ -120,7 +118,7 @@ index bf167eb..47f962b 100644
  
  def getSitePackageCandidateNames():
 diff --git a/nuitka/build/include/nuitka/allocator.h b/nuitka/build/include/nuitka/allocator.h
-index c51868b..a20a4a9 100644
+index f9c07705..cc8659df 100644
 --- a/nuitka/build/include/nuitka/allocator.h
 +++ b/nuitka/build/include/nuitka/allocator.h
 @@ -359,6 +359,26 @@ NUITKA_MAY_BE_UNUSED static void NuitkaMem_Free(void *ptr) { python_mem_free(pyt
@@ -262,20 +260,20 @@ index c51868b..a20a4a9 100644
  #else
      assert(pre_size != 0);
      ((PyObject **)alloc)[0] = NULL;
-@@ -903,7 +948,7 @@ static void inline Py_SET_REFCNT_IMMORTAL(PyObject *object) {
-     object->ob_ref_local = _Py_IMMORTAL_INITIAL_REFCNT;
-     object->ob_ref_shared = 0;
+@@ -901,7 +946,7 @@ static inline void Py_SET_REFCNT_IMMORTAL(PyObject *obj) {
+     obj->ob_ref_local = _Py_IMMORTAL_INITIAL_REFCNT;
+     obj->ob_ref_shared = 0;
  #if PYTHON_VERSION >= 0x3e0
 -    _Py_atomic_or_uint8(&op->ob_gc_bits, _PyGC_BITS_DEFERRED);
-+    _Py_atomic_or_uint8(&object->ob_gc_bits, _PyGC_BITS_DEFERRED);
++    _Py_atomic_or_uint8(&obj->ob_gc_bits, _PyGC_BITS_DEFERRED);
  #endif
  
  #else
 diff --git a/nuitka/build/include/nuitka/compiled_cell.h b/nuitka/build/include/nuitka/compiled_cell.h
-index 9a06c81..7081497 100644
+index 8beecaac..60aa8eed 100644
 --- a/nuitka/build/include/nuitka/compiled_cell.h
 +++ b/nuitka/build/include/nuitka/compiled_cell.h
-@@ -34,7 +34,12 @@ extern struct Nuitka_CellObject *Nuitka_Cell_New0(PyObject *value);
+@@ -32,7 +32,12 @@ extern struct Nuitka_CellObject *Nuitka_Cell_New0(PyObject *value);
  extern struct Nuitka_CellObject *Nuitka_Cell_New1(PyObject *value);
  
  // Check stuff while accessing a compile cell in debug mode.
@@ -289,7 +287,7 @@ index 9a06c81..7081497 100644
  #define Nuitka_Cell_GET(cell) (((struct Nuitka_CellObject *)(cell))->ob_ref)
  #else
  #define Nuitka_Cell_GET(cell)                                                                                          \
-@@ -45,7 +50,52 @@ NUITKA_MAY_BE_UNUSED static inline PyObject *Nuitka_CellOrPyCell_GET(PyObject *c
+@@ -43,7 +48,52 @@ NUITKA_MAY_BE_UNUSED static inline PyObject *Nuitka_CellOrPyCell_GET(PyObject *c
      CHECK_OBJECT(cell);
      assert(Nuitka_CellOrPyCell_Check(cell));
  
@@ -342,7 +340,7 @@ index 9a06c81..7081497 100644
  }
  
  #if _DEBUG_REFCOUNTS
-@@ -59,7 +109,11 @@ NUITKA_MAY_BE_UNUSED static inline void Nuitka_Cell_SET(struct Nuitka_CellObject
+@@ -57,7 +107,11 @@ NUITKA_MAY_BE_UNUSED static inline void Nuitka_Cell_SET(struct Nuitka_CellObject
      CHECK_OBJECT(cell_object);
  
      assert(Nuitka_Cell_Check((PyObject *)cell_object));
@@ -354,7 +352,7 @@ index 9a06c81..7081497 100644
  }
  
  NUITKA_MAY_BE_UNUSED static inline void Nuitka_CellOrPyCell_SET(PyObject *cell, PyObject *value) {
-@@ -67,7 +121,11 @@ NUITKA_MAY_BE_UNUSED static inline void Nuitka_CellOrPyCell_SET(PyObject *cell,
+@@ -65,7 +119,11 @@ NUITKA_MAY_BE_UNUSED static inline void Nuitka_CellOrPyCell_SET(PyObject *cell,
      CHECK_OBJECT(cell);
  
      assert(Nuitka_CellOrPyCell_Check(cell));
@@ -367,7 +365,7 @@ index 9a06c81..7081497 100644
  
  #endif
 diff --git a/nuitka/build/include/nuitka/freelists.h b/nuitka/build/include/nuitka/freelists.h
-index 6fb8cb8..17cdf10 100644
+index 6fb8cb86..17cdf105 100644
 --- a/nuitka/build/include/nuitka/freelists.h
 +++ b/nuitka/build/include/nuitka/freelists.h
 @@ -13,7 +13,9 @@
@@ -382,7 +380,7 @@ index 6fb8cb8..17cdf10 100644
  #else
  static const bool use_freelists = true;
 diff --git a/nuitka/build/include/nuitka/helper/dict_internals.h b/nuitka/build/include/nuitka/helper/dict_internals.h
-index 63a3df0..35783d8 100644
+index 63a3df0b..35783d85 100644
 --- a/nuitka/build/include/nuitka/helper/dict_internals.h
 +++ b/nuitka/build/include/nuitka/helper/dict_internals.h
 @@ -43,6 +43,9 @@ static PyDictObject *_Nuitka_AllocatePyDictObject(PyThreadState *tstate);
@@ -396,7 +394,7 @@ index 63a3df0..35783d8 100644
  #endif
  static PyDictValues *_Nuitka_PyDict_new_values(Py_ssize_t size);
 diff --git a/nuitka/build/include/nuitka/helper/dictionaries.h b/nuitka/build/include/nuitka/helper/dictionaries.h
-index 9d7ef9f..39e792a 100644
+index 9d7ef9f4..39e792ad 100644
 --- a/nuitka/build/include/nuitka/helper/dictionaries.h
 +++ b/nuitka/build/include/nuitka/helper/dictionaries.h
 @@ -318,6 +318,13 @@ extern uint64_t nuitka_dict_version_tag_counter;
@@ -441,7 +439,7 @@ index 9d7ef9f..39e792a 100644
  
  #if PYTHON_VERSION >= 0x360
 diff --git a/nuitka/build/include/nuitka/helper/subscripts.h b/nuitka/build/include/nuitka/helper/subscripts.h
-index 2d11f38..4f8dcd6 100644
+index 2d11f389..4f8dcd6d 100644
 --- a/nuitka/build/include/nuitka/helper/subscripts.h
 +++ b/nuitka/build/include/nuitka/helper/subscripts.h
 @@ -17,7 +17,7 @@
@@ -454,10 +452,10 @@ index 2d11f38..4f8dcd6 100644
                                          ((PyTypeObject *)type)->tp_name);
  }
 diff --git a/nuitka/build/include/nuitka/prelude.h b/nuitka/build/include/nuitka/prelude.h
-index 7cedf40..c285694 100644
+index 59d72ecb..e951a1e8 100644
 --- a/nuitka/build/include/nuitka/prelude.h
 +++ b/nuitka/build/include/nuitka/prelude.h
-@@ -434,6 +434,28 @@ NUITKA_MAY_BE_UNUSED static PyObject *Nuitka_TypeLookup(PyTypeObject *type, PyOb
+@@ -436,6 +436,28 @@ NUITKA_MAY_BE_UNUSED static PyObject *Nuitka_TypeLookup(PyTypeObject *type, PyOb
  
  #endif
  
@@ -486,7 +484,7 @@ index 7cedf40..c285694 100644
  /* With the idea to reduce the amount of exported symbols in the DLLs, make it
   * clear that the module "init" function should of course be exported, but not
   * for executable, where we call it ourselves from the main code.
-@@ -577,6 +599,21 @@ typedef signed int sdigit;
+@@ -598,6 +620,21 @@ typedef union Nuitka_PyCFunctionUnion {
  // A long value that represents a signed digit on the helper interface.
  typedef long nuitka_digit;
  
@@ -509,10 +507,10 @@ index 7cedf40..c285694 100644
  
  #include "nuitka/compiled_frame.h"
 diff --git a/nuitka/build/static_src/CompiledAsyncgenType.c b/nuitka/build/static_src/CompiledAsyncgenType.c
-index bab5fbf..f65f483 100644
+index 0ae73366..ca318643 100644
 --- a/nuitka/build/static_src/CompiledAsyncgenType.c
 +++ b/nuitka/build/static_src/CompiledAsyncgenType.c
-@@ -1182,8 +1182,14 @@ PyObject *Nuitka_Asyncgen_New(asyncgen_code code, PyObject *module, PyObject *na
+@@ -1196,8 +1196,14 @@ PyObject *Nuitka_Asyncgen_New(asyncgen_code code, PyObject *module, PyObject *na
      result->m_exc_state = Nuitka_ExceptionStackItem_Empty;
  #endif
  
@@ -528,10 +526,10 @@ index bab5fbf..f65f483 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledCellType.c b/nuitka/build/static_src/CompiledCellType.c
-index 80c642b..5d4ef97 100644
+index 8ac3059a..697b54bc 100644
 --- a/nuitka/build/static_src/CompiledCellType.c
 +++ b/nuitka/build/static_src/CompiledCellType.c
-@@ -154,22 +154,21 @@ static int Nuitka_Cell_tp_clear(struct Nuitka_CellObject *cell) {
+@@ -162,22 +162,21 @@ static int Nuitka_Cell_tp_clear(PyObject *self) {
  }
  
  static PyObject *Nuitka_Cell_get_contents(PyObject *self, void *data) {
@@ -559,7 +557,7 @@ index 80c642b..5d4ef97 100644
  
      if (old != NULL && value == NULL) {
          PyThreadState *tstate = PyThreadState_GET();
-@@ -179,8 +178,8 @@ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data)
+@@ -187,8 +186,8 @@ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data)
          return -1;
      }
  
@@ -570,10 +568,10 @@ index 80c642b..5d4ef97 100644
  
      return 0;
 diff --git a/nuitka/build/static_src/CompiledCoroutineType.c b/nuitka/build/static_src/CompiledCoroutineType.c
-index b1e7448..306f0c6 100644
+index 019dc8b5..d478349c 100644
 --- a/nuitka/build/static_src/CompiledCoroutineType.c
 +++ b/nuitka/build/static_src/CompiledCoroutineType.c
-@@ -1505,8 +1505,14 @@ PyObject *Nuitka_Coroutine_New(PyThreadState *tstate, coroutine_code code, PyObj
+@@ -1528,8 +1528,14 @@ PyObject *Nuitka_Coroutine_New(PyThreadState *tstate, coroutine_code code, PyObj
      result->m_exc_state = Nuitka_ExceptionStackItem_Empty;
  #endif
  
@@ -589,7 +587,7 @@ index b1e7448..306f0c6 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledFrameLocalsProxyType.c b/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
-index fb17a26..ccdc9ad 100644
+index fb17a269..ccdc9ad1 100644
 --- a/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
 +++ b/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
 @@ -75,6 +75,9 @@ static PyObject *_Nuitka_FrameLocalsProxy_to_dict(Nuitka_FrameLocalsProxyObject
@@ -647,7 +645,7 @@ index fb17a26..ccdc9ad 100644
              return 0;
          }
 diff --git a/nuitka/build/static_src/CompiledFrameType.c b/nuitka/build/static_src/CompiledFrameType.c
-index 9d44501..6ec70ac 100644
+index 46eb9c9f..98fc68be 100644
 --- a/nuitka/build/static_src/CompiledFrameType.c
 +++ b/nuitka/build/static_src/CompiledFrameType.c
 @@ -222,10 +222,11 @@ static PyObject *_Nuitka_Frame_GetLocalsDict(struct Nuitka_FrameObject *nuitka_f
@@ -663,7 +661,7 @@ index 9d44501..6ec70ac 100644
                  }
              }
  
-@@ -934,6 +935,8 @@ static struct Nuitka_FrameObject *_MAKE_COMPILED_FRAME(PyCodeObject *code, PyObj
+@@ -944,6 +945,8 @@ static struct Nuitka_FrameObject *_MAKE_COMPILED_FRAME(PyCodeObject *code, PyObj
      locals_owner->f_code = code;
  #elif PYTHON_VERSION < 0x3e0
      locals_owner->f_executable = (PyObject *)code;
@@ -672,7 +670,7 @@ index 9d44501..6ec70ac 100644
  #else
      // TODO: Why is our code object not immortal?
      locals_owner->f_executable = _PyStackRef_FromPyObjectNew((PyObject *)code);
-@@ -1282,6 +1285,32 @@ PyCodeObject *USE_CODE_OBJECT(PyThreadState *tstate, PyObject *code_object, PyOb
+@@ -1292,6 +1295,32 @@ PyCodeObject *USE_CODE_OBJECT(PyThreadState *tstate, PyObject *code_object, PyOb
      CHECK_OBJECT(module_filename_obj);
  
      PyCodeObject *co = (PyCodeObject *)code_object;
@@ -706,10 +704,10 @@ index 9d44501..6ec70ac 100644
  
      if (old == const_str_empty) {
 diff --git a/nuitka/build/static_src/CompiledFunctionType.c b/nuitka/build/static_src/CompiledFunctionType.c
-index adade2c..f32a9b4 100644
+index 52e64131..c611fba8 100644
 --- a/nuitka/build/static_src/CompiledFunctionType.c
 +++ b/nuitka/build/static_src/CompiledFunctionType.c
-@@ -1362,10 +1362,12 @@ PyObject *Nuitka_Function_GetFunctionState(struct Nuitka_FunctionObject *functio
+@@ -1374,10 +1374,12 @@ PyObject *Nuitka_Function_GetFunctionState(struct Nuitka_FunctionObject *functio
              PyObject *cell = PyTuple_GET_ITEM(closure, i);
              assert(Nuitka_CellOrPyCell_Check(cell));
  
@@ -724,7 +722,7 @@ index adade2c..f32a9b4 100644
          }
      }
  
-@@ -1674,8 +1676,14 @@ Nuitka_Function_New(function_impl_code c_code, PyObject *name, PyObject *qualnam
+@@ -1686,8 +1688,14 @@ Nuitka_Function_New(function_impl_code c_code, PyObject *name, PyObject *qualnam
      result->m_dict = NULL;
      result->m_weakrefs = NULL;
  
@@ -740,10 +738,10 @@ index adade2c..f32a9b4 100644
  #if PYTHON_VERSION >= 0x380 && !defined(_NUITKA_EXPERIMENTAL_DISABLE_VECTORCALL_SLOT)
      result->m_vectorcall = (vectorcallfunc)Nuitka_Function_tp_vectorcall;
 diff --git a/nuitka/build/static_src/CompiledGeneratorType.c b/nuitka/build/static_src/CompiledGeneratorType.c
-index 149626f..975cc67 100644
+index 8695e4e1..8e4140e3 100644
 --- a/nuitka/build/static_src/CompiledGeneratorType.c
 +++ b/nuitka/build/static_src/CompiledGeneratorType.c
-@@ -1972,8 +1972,14 @@ PyObject *Nuitka_Generator_New(generator_code code, PyObject *module, PyObject *
+@@ -1992,8 +1992,14 @@ PyObject *Nuitka_Generator_New(generator_code code, PyObject *module, PyObject *
      result->m_resume_exception = Nuitka_ExceptionStackItem_Empty;
  #endif
  
@@ -759,13 +757,13 @@ index 149626f..975cc67 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledMethodType.c b/nuitka/build/static_src/CompiledMethodType.c
-index eeae5cd..f81ca40 100644
+index 8199d6f4..acbfed62 100644
 --- a/nuitka/build/static_src/CompiledMethodType.c
 +++ b/nuitka/build/static_src/CompiledMethodType.c
-@@ -304,13 +304,14 @@ static PyObject *Nuitka_Method_tp_descr_get(struct Nuitka_MethodObject *method,
- #endif
+@@ -318,13 +318,14 @@ static PyObject *Nuitka_Method_tp_descr_get(PyObject *self, PyObject *obj, PyObj
+ static PyObject *Nuitka_Method_tp_getattro(PyObject *self, PyObject *name) {
+     struct Nuitka_MethodObject *method = (struct Nuitka_MethodObject *)self;
  
- static PyObject *Nuitka_Method_tp_getattro(struct Nuitka_MethodObject *method, PyObject *name) {
 -    PyObject *descr = Nuitka_TypeLookup(&Nuitka_Method_Type, name);
 +    PyObject *descr = Nuitka_TypeLookupRef(&Nuitka_Method_Type, name);
  
@@ -781,10 +779,10 @@ index eeae5cd..f81ca40 100644
          }
      }
 diff --git a/nuitka/build/static_src/HelpersAllocator.c b/nuitka/build/static_src/HelpersAllocator.c
-index c467479..5314cb5 100644
+index 480d00c7..e5d8a6aa 100644
 --- a/nuitka/build/static_src/HelpersAllocator.c
 +++ b/nuitka/build/static_src/HelpersAllocator.c
-@@ -662,7 +662,26 @@ static void Nuitka_Py_ScheduleGC(PyThreadState *tstate) {
+@@ -666,7 +666,26 @@ static void Nuitka_Py_ScheduleGC(PyThreadState *tstate) {
  
  // This is called during object creation and might trigger garbage collection
  void Nuitka_PyObject_GC_Link(PyObject *op) {
@@ -812,7 +810,7 @@ index c467479..5314cb5 100644
      PyGC_Head *g = AS_GC(op);
  
      PyThreadState *tstate = _PyThreadState_GET();
-@@ -858,8 +877,12 @@ static bool _Nuitka_qsbr_poll(struct _qsbr_thread_state *qsbr, uint64_t goal) {
+@@ -862,8 +881,12 @@ static bool _Nuitka_qsbr_poll(struct _qsbr_thread_state *qsbr, uint64_t goal) {
  }
  
  static void _NuitkaMem_free_work_item(uintptr_t ptr) {
@@ -826,7 +824,7 @@ index c467479..5314cb5 100644
      } else {
          NuitkaMem_Free((void *)ptr);
      }
-@@ -873,14 +896,17 @@ static void _Nuitka_process_queue(struct llist_node *head, struct _qsbr_thread_s
+@@ -877,14 +900,17 @@ static void _Nuitka_process_queue(struct llist_node *head, struct _qsbr_thread_s
      while (!llist_empty(head)) {
          struct _mem_work_chunk *buf = work_queue_first(head);
  
@@ -846,7 +844,7 @@ index c467479..5314cb5 100644
          }
  
          assert(buf->rd_idx == buf->wr_idx);
-@@ -977,7 +1003,13 @@ void _NuitkaMem_ProcessDelayed(PyThreadState *tstate) {
+@@ -981,7 +1007,13 @@ void _NuitkaMem_ProcessDelayed(PyThreadState *tstate) {
  
  static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
      // Free immediately if possible.
@@ -860,7 +858,7 @@ index c467479..5314cb5 100644
          _NuitkaMem_free_work_item(ptr);
          return;
      }
-@@ -998,9 +1030,24 @@ static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
+@@ -1002,9 +1034,24 @@ static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
  
      if (buf == NULL) {
          buf = NuitkaMem_Calloc(1, sizeof(*buf));
@@ -887,7 +885,7 @@ index c467479..5314cb5 100644
      buf->array[buf->wr_idx].ptr = ptr;
      buf->array[buf->wr_idx].qsbr_goal = seq;
 diff --git a/nuitka/build/static_src/HelpersAttributes.c b/nuitka/build/static_src/HelpersAttributes.c
-index a7afa09..1dfdad3 100644
+index a7511b3d..1dd6afdd 100644
 --- a/nuitka/build/static_src/HelpersAttributes.c
 +++ b/nuitka/build/static_src/HelpersAttributes.c
 @@ -113,12 +113,10 @@ PyObject *LOOKUP_ATTRIBUTE(PyThreadState *tstate, PyObject *source, PyObject *at
@@ -993,12 +991,12 @@ index a7afa09..1dfdad3 100644
              if (unlikely(func_result == NULL)) {
                  return NULL;
 diff --git a/nuitka/build/static_src/HelpersBuiltin.c b/nuitka/build/static_src/HelpersBuiltin.c
-index f5c3671..4545535 100644
+index f038300f..18328009 100644
 --- a/nuitka/build/static_src/HelpersBuiltin.c
 +++ b/nuitka/build/static_src/HelpersBuiltin.c
-@@ -665,6 +665,36 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
+@@ -764,6 +764,36 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
      CHECK_OBJECT(type);
-     CHECK_OBJECT_X(object);
+     CHECK_OBJECT_X(obj);
  
 +#ifdef Py_GIL_DISABLED
 +    // Another thread may rebind "super" and release the value read.
@@ -1019,8 +1017,8 @@ index f5c3671..4545535 100644
 +
 +    PyObject *result;
 +
-+    if (object != NULL) {
-+        PyObject *args[] = {type, object};
++    if (obj != NULL) {
++        PyObject *args[] = {type, obj};
 +
 +        result = CALL_FUNCTION_WITH_ARGS2(tstate, super_value, args);
 +    } else {
@@ -1033,19 +1031,19 @@ index f5c3671..4545535 100644
      PyObject *super_value = GET_STRING_DICT_VALUE(module_dict, (Nuitka_StringObject *)const_str_plain_super);
  
      if (super_value == NULL) {
-@@ -680,6 +710,7 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
+@@ -779,6 +809,7 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
      } else {
          return CALL_FUNCTION_WITH_SINGLE_ARG(tstate, super_value, type);
      }
 +#endif
  }
  
- PyObject *BUILTIN_SUPER0(PyThreadState *tstate, PyDictObject *module_dict, PyObject *type, PyObject *object) {
+ PyObject *BUILTIN_SUPER0(PyThreadState *tstate, PyDictObject *module_dict, PyObject *type, PyObject *obj) {
 diff --git a/nuitka/build/static_src/HelpersCallingGenerated.c b/nuitka/build/static_src/HelpersCallingGenerated.c
-index 2304c77..a2b059b 100644
+index 9ec2b09f..00d62193 100644
 --- a/nuitka/build/static_src/HelpersCallingGenerated.c
 +++ b/nuitka/build/static_src/HelpersCallingGenerated.c
-@@ -277,13 +277,12 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
+@@ -282,13 +282,12 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1060,7 +1058,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -291,8 +290,9 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
+@@ -296,8 +295,9 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1072,7 +1070,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -311,12 +311,11 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
+@@ -316,12 +316,11 @@ PyObject *CALL_FUNCTION_NO_ARGS(PyThreadState *tstate, PyObject *called) {
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj);
                          } else {
                              result = CALL_FUNCTION_NO_ARGS(tstate, init_method);
@@ -1088,7 +1086,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -726,13 +725,12 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
+@@ -733,13 +732,12 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1103,7 +1101,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -740,8 +738,9 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
+@@ -747,8 +745,9 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1115,7 +1113,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -760,12 +759,11 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
+@@ -767,12 +766,11 @@ PyObject *CALL_FUNCTION_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 1);
                          } else {
                              result = CALL_FUNCTION_WITH_SINGLE_ARG(tstate, init_method, args[0]);
@@ -1131,7 +1129,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -1174,13 +1172,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
+@@ -1183,13 +1181,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1146,7 +1144,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -1188,8 +1185,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
+@@ -1197,8 +1194,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1158,7 +1156,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -1208,12 +1206,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
+@@ -1217,12 +1215,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS1(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 1);
                          } else {
                              result = CALL_FUNCTION_WITH_SINGLE_ARG(tstate, init_method, args[0]);
@@ -1174,7 +1172,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -1608,13 +1605,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
+@@ -1619,13 +1616,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1189,7 +1187,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -1622,8 +1618,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
+@@ -1633,8 +1629,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1201,7 +1199,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -1642,11 +1639,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
+@@ -1653,11 +1650,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS2(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 2);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS2(tstate, init_method, args);
@@ -1216,7 +1214,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -2037,13 +2034,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
+@@ -2050,13 +2047,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1231,7 +1229,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -2051,8 +2047,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
+@@ -2064,8 +2060,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1243,7 +1241,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -2071,11 +2068,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
+@@ -2084,11 +2081,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS2(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 2);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS2(tstate, init_method, pos_args);
@@ -1258,7 +1256,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -2470,13 +2467,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
+@@ -2485,13 +2482,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1273,7 +1271,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -2484,8 +2480,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
+@@ -2499,8 +2495,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1285,7 +1283,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -2504,11 +2501,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
+@@ -2519,11 +2516,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS3(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 3);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS3(tstate, init_method, args);
@@ -1300,7 +1298,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -2899,13 +2896,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
+@@ -2916,13 +2913,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1315,7 +1313,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -2913,8 +2909,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
+@@ -2930,8 +2926,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1327,7 +1325,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -2933,11 +2930,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
+@@ -2950,11 +2947,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS3(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 3);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS3(tstate, init_method, pos_args);
@@ -1342,7 +1340,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -3332,13 +3329,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
+@@ -3351,13 +3348,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1357,7 +1355,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -3346,8 +3342,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
+@@ -3365,8 +3361,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1369,7 +1367,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -3366,11 +3363,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
+@@ -3385,11 +3382,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS4(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 4);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS4(tstate, init_method, args);
@@ -1384,7 +1382,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -3761,13 +3758,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
+@@ -3782,13 +3779,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1399,7 +1397,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -3775,8 +3771,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
+@@ -3796,8 +3792,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1411,7 +1409,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -3795,11 +3792,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
+@@ -3816,11 +3813,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS4(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 4);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS4(tstate, init_method, pos_args);
@@ -1426,7 +1424,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -4194,13 +4191,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
+@@ -4217,13 +4214,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1441,7 +1439,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -4208,8 +4204,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
+@@ -4231,8 +4227,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1453,7 +1451,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -4228,11 +4225,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
+@@ -4251,11 +4248,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS5(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 5);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS5(tstate, init_method, args);
@@ -1468,7 +1466,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -4623,13 +4620,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
+@@ -4648,13 +4645,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1483,7 +1481,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -4637,8 +4633,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
+@@ -4662,8 +4658,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1495,7 +1493,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -4657,11 +4654,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
+@@ -4682,11 +4679,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS5(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 5);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS5(tstate, init_method, pos_args);
@@ -1510,7 +1508,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -5056,13 +5053,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
+@@ -5083,13 +5080,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1525,7 +1523,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -5070,8 +5066,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
+@@ -5097,8 +5093,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1537,7 +1535,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -5090,11 +5087,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
+@@ -5117,11 +5114,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS6(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 6);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS6(tstate, init_method, args);
@@ -1552,7 +1550,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -5485,13 +5482,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
+@@ -5514,13 +5511,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1567,7 +1565,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -5499,8 +5495,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
+@@ -5528,8 +5524,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1579,7 +1577,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -5519,11 +5516,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
+@@ -5548,11 +5545,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS6(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 6);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS6(tstate, init_method, pos_args);
@@ -1594,7 +1592,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -5918,13 +5915,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
+@@ -5949,13 +5946,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1609,7 +1607,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -5932,8 +5928,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
+@@ -5963,8 +5959,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1621,7 +1619,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -5952,11 +5949,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
+@@ -5983,11 +5980,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS7(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 7);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS7(tstate, init_method, args);
@@ -1636,7 +1634,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -6347,13 +6344,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
+@@ -6380,13 +6377,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1651,7 +1649,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -6361,8 +6357,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
+@@ -6394,8 +6390,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1663,7 +1661,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -6381,11 +6378,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
+@@ -6414,11 +6411,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS7(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 7);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS7(tstate, init_method, pos_args);
@@ -1678,7 +1676,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -6780,13 +6777,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
+@@ -6815,13 +6812,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1693,7 +1691,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -6794,8 +6790,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
+@@ -6829,8 +6825,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1705,7 +1703,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -6814,11 +6811,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
+@@ -6849,11 +6846,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS8(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 8);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS8(tstate, init_method, args);
@@ -1720,7 +1718,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -7209,13 +7206,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
+@@ -7246,13 +7243,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1735,7 +1733,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -7223,8 +7219,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
+@@ -7260,8 +7256,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1747,7 +1745,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -7243,11 +7240,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
+@@ -7280,11 +7277,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS8(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 8);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS8(tstate, init_method, pos_args);
@@ -1762,7 +1760,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -7642,13 +7639,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
+@@ -7681,13 +7678,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1777,7 +1775,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -7656,8 +7652,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
+@@ -7695,8 +7691,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1789,7 +1787,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -7676,11 +7673,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
+@@ -7715,11 +7712,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS9(PyThreadState *tstate, PyObject *called, PyOb
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 9);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS9(tstate, init_method, args);
@@ -1804,7 +1802,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -8071,13 +8068,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
+@@ -8112,13 +8109,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1819,7 +1817,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -8085,8 +8081,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
+@@ -8126,8 +8122,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1831,7 +1829,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -8105,11 +8102,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
+@@ -8146,11 +8143,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS9(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 9);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS9(tstate, init_method, pos_args);
@@ -1846,7 +1844,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -8504,13 +8501,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
+@@ -8547,13 +8544,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
                          Py_XDECREF(pos_args);
                          pos_args = NULL;
  
@@ -1861,7 +1859,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -8518,8 +8514,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
+@@ -8561,8 +8557,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1873,7 +1871,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -8538,11 +8535,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
+@@ -8581,11 +8578,11 @@ PyObject *CALL_FUNCTION_WITH_ARGS10(PyThreadState *tstate, PyObject *called, PyO
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 10);
                          } else {
                              result = CALL_FUNCTION_WITH_ARGS10(tstate, init_method, args);
@@ -1888,7 +1886,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -8933,13 +8930,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
+@@ -8978,13 +8975,12 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
                  if (NuitkaType_HasFeatureClass(type) && type->tp_init != NULL) {
                      if (type->tp_init == default_tp_init_wrapper) {
  
@@ -1903,7 +1901,7 @@ index 2304c77..a2b059b 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -8947,8 +8943,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
+@@ -8992,8 +8988,9 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -1915,7 +1913,7 @@ index 2304c77..a2b059b 100644
                              }
                          }
  
-@@ -8967,11 +8964,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
+@@ -9012,11 +9009,11 @@ PyObject *CALL_FUNCTION_WITH_POS_ARGS10(PyThreadState *tstate, PyObject *called,
                                  tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, 10);
                          } else {
                              result = CALL_FUNCTION_WITH_POS_ARGS10(tstate, init_method, pos_args);
@@ -1930,7 +1928,7 @@ index 2304c77..a2b059b 100644
                          if (unlikely(result == NULL)) {
                              Py_DECREF(obj);
                              return NULL;
-@@ -12150,12 +12147,10 @@ PyObject *CALL_METHOD_NO_ARGS(PyThreadState *tstate, PyObject *source, PyObject
+@@ -12199,12 +12196,10 @@ PyObject *CALL_METHOD_NO_ARGS(PyThreadState *tstate, PyObject *source, PyObject
              }
          }
  
@@ -1944,7 +1942,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -12390,12 +12385,10 @@ PyObject *CALL_METHOD_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *source, P
+@@ -12439,12 +12434,10 @@ PyObject *CALL_METHOD_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *source, P
              }
          }
  
@@ -1958,7 +1956,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -12630,12 +12623,10 @@ PyObject *CALL_METHOD_WITH_ARGS2(PyThreadState *tstate, PyObject *source, PyObje
+@@ -12679,12 +12672,10 @@ PyObject *CALL_METHOD_WITH_ARGS2(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -1972,7 +1970,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -12871,12 +12862,10 @@ PyObject *CALL_METHOD_WITH_ARGS3(PyThreadState *tstate, PyObject *source, PyObje
+@@ -12920,12 +12911,10 @@ PyObject *CALL_METHOD_WITH_ARGS3(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -1986,7 +1984,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -13113,12 +13102,10 @@ PyObject *CALL_METHOD_WITH_ARGS4(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13162,12 +13151,10 @@ PyObject *CALL_METHOD_WITH_ARGS4(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -2000,7 +1998,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -13356,12 +13343,10 @@ PyObject *CALL_METHOD_WITH_ARGS5(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13405,12 +13392,10 @@ PyObject *CALL_METHOD_WITH_ARGS5(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -2014,7 +2012,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -13600,12 +13585,10 @@ PyObject *CALL_METHOD_WITH_ARGS6(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13649,12 +13634,10 @@ PyObject *CALL_METHOD_WITH_ARGS6(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -2028,7 +2026,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -13845,12 +13828,10 @@ PyObject *CALL_METHOD_WITH_ARGS7(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13894,12 +13877,10 @@ PyObject *CALL_METHOD_WITH_ARGS7(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -2042,7 +2040,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -14091,12 +14072,10 @@ PyObject *CALL_METHOD_WITH_ARGS8(PyThreadState *tstate, PyObject *source, PyObje
+@@ -14140,12 +14121,10 @@ PyObject *CALL_METHOD_WITH_ARGS8(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -2056,7 +2054,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -14338,12 +14317,10 @@ PyObject *CALL_METHOD_WITH_ARGS9(PyThreadState *tstate, PyObject *source, PyObje
+@@ -14387,12 +14366,10 @@ PyObject *CALL_METHOD_WITH_ARGS9(PyThreadState *tstate, PyObject *source, PyObje
              }
          }
  
@@ -2070,7 +2068,7 @@ index 2304c77..a2b059b 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -14586,12 +14563,10 @@ PyObject *CALL_METHOD_WITH_ARGS10(PyThreadState *tstate, PyObject *source, PyObj
+@@ -14635,12 +14612,10 @@ PyObject *CALL_METHOD_WITH_ARGS10(PyThreadState *tstate, PyObject *source, PyObj
              }
          }
  
@@ -2085,7 +2083,7 @@ index 2304c77..a2b059b 100644
                  func = Py_TYPE(descr)->tp_descr_get;
  
 diff --git a/nuitka/build/static_src/HelpersComparisonEq.c b/nuitka/build/static_src/HelpersComparisonEq.c
-index 5a3840f..7e2a844 100644
+index 5a3840f5..7e2a844b 100644
 --- a/nuitka/build/static_src/HelpersComparisonEq.c
 +++ b/nuitka/build/static_src/HelpersComparisonEq.c
 @@ -10411,6 +10411,14 @@ static PyObject *COMPARE_EQ_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2124,7 +2122,7 @@ index 5a3840f..7e2a844 100644
      if (Py_SIZE(a) != Py_SIZE(b)) {
          bool r = false;
 diff --git a/nuitka/build/static_src/HelpersComparisonGe.c b/nuitka/build/static_src/HelpersComparisonGe.c
-index 045053e..2bb6742 100644
+index 045053e2..2bb67424 100644
 --- a/nuitka/build/static_src/HelpersComparisonGe.c
 +++ b/nuitka/build/static_src/HelpersComparisonGe.c
 @@ -10181,6 +10181,14 @@ static PyObject *COMPARE_GE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2163,7 +2161,7 @@ index 045053e..2bb6742 100644
      bool found = false;
      nuitka_bool res = NUITKA_BOOL_TRUE;
 diff --git a/nuitka/build/static_src/HelpersComparisonGt.c b/nuitka/build/static_src/HelpersComparisonGt.c
-index 17bff42..a9582f3 100644
+index 17bff423..a9582f35 100644
 --- a/nuitka/build/static_src/HelpersComparisonGt.c
 +++ b/nuitka/build/static_src/HelpersComparisonGt.c
 @@ -10165,6 +10165,14 @@ static PyObject *COMPARE_GT_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2202,7 +2200,7 @@ index 17bff42..a9582f3 100644
      bool found = false;
      nuitka_bool res = NUITKA_BOOL_TRUE;
 diff --git a/nuitka/build/static_src/HelpersComparisonLe.c b/nuitka/build/static_src/HelpersComparisonLe.c
-index 3024964..72839ec 100644
+index 30249643..72839ec6 100644
 --- a/nuitka/build/static_src/HelpersComparisonLe.c
 +++ b/nuitka/build/static_src/HelpersComparisonLe.c
 @@ -10303,6 +10303,14 @@ static PyObject *COMPARE_LE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2241,7 +2239,7 @@ index 3024964..72839ec 100644
      bool found = false;
      nuitka_bool res = NUITKA_BOOL_TRUE;
 diff --git a/nuitka/build/static_src/HelpersComparisonLt.c b/nuitka/build/static_src/HelpersComparisonLt.c
-index 9036541..3889e6d 100644
+index 9036541b..3889e6dd 100644
 --- a/nuitka/build/static_src/HelpersComparisonLt.c
 +++ b/nuitka/build/static_src/HelpersComparisonLt.c
 @@ -10287,6 +10287,14 @@ static PyObject *COMPARE_LT_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2280,7 +2278,7 @@ index 9036541..3889e6d 100644
      bool found = false;
      nuitka_bool res = NUITKA_BOOL_TRUE;
 diff --git a/nuitka/build/static_src/HelpersComparisonNe.c b/nuitka/build/static_src/HelpersComparisonNe.c
-index e97d48a..a18d20c 100644
+index e97d48a5..a18d20cd 100644
 --- a/nuitka/build/static_src/HelpersComparisonNe.c
 +++ b/nuitka/build/static_src/HelpersComparisonNe.c
 @@ -10287,6 +10287,14 @@ static PyObject *COMPARE_NE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2319,7 +2317,7 @@ index e97d48a..a18d20c 100644
      if (Py_SIZE(a) != Py_SIZE(b)) {
          bool r = true;
 diff --git a/nuitka/build/static_src/HelpersDictionaries.c b/nuitka/build/static_src/HelpersDictionaries.c
-index 3051a00..484f57c 100644
+index 0edcf19a..33d48c3a 100644
 --- a/nuitka/build/static_src/HelpersDictionaries.c
 +++ b/nuitka/build/static_src/HelpersDictionaries.c
 @@ -94,9 +94,16 @@ static inline void ASSERT_DICT_LOCKED(PyObject *op) { _Py_CRITICAL_SECTION_ASSER
@@ -2437,7 +2435,7 @@ index 3051a00..484f57c 100644
 -static PyDictKeysObject *_Nuitka_AllocatePyDictKeysObject(PyThreadState *tstate, Py_ssize_t keys_size) {
 +NUITKA_MAY_BE_UNUSED static PyDictKeysObject *_Nuitka_AllocatePyDictKeysObject(PyThreadState *tstate,
 +                                                                                 Py_ssize_t keys_size) {
-     // CPython names, spell-checker: ignore numfree,dictkeys
+     // CPython names, spell-checker: ignore dictkeys,numfree
      PyDictKeysObject *dk;
  
 @@ -1235,7 +1270,7 @@ static inline PyDictValues *_Nuitka_PyDict_new_values(Py_ssize_t size) {
@@ -2494,7 +2492,7 @@ index 3051a00..484f57c 100644
                                                                                   PyObject *key, Py_hash_t hash) {
      PyDictKeyEntry *ep = &((PyDictKeyEntry *)ep0)[ix];
 diff --git a/nuitka/build/static_src/HelpersLists.c b/nuitka/build/static_src/HelpersLists.c
-index 6493b2b..7c496e8 100644
+index 6493b2bf..7c496e88 100644
 --- a/nuitka/build/static_src/HelpersLists.c
 +++ b/nuitka/build/static_src/HelpersLists.c
 @@ -129,6 +129,10 @@ PyObject *LIST_COPY(PyThreadState *tstate, PyObject *list) {
@@ -2615,7 +2613,7 @@ index 6493b2b..7c496e8 100644
  
      if (Py_SIZE(list_object) > 1) {
 diff --git a/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c b/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
-index 68f2e9c..23b0d34 100644
+index 68f2e9c7..23b0d34a 100644
 --- a/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
 +++ b/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
 @@ -20,6 +20,12 @@ static PyObject *LIST_CONCAT(PyThreadState *tstate, PyObject *operand1, PyObject
@@ -2632,7 +2630,7 @@ index 68f2e9c..23b0d34 100644
  
      PyListObject *result = (PyListObject *)MAKE_LIST_EMPTY(tstate, size);
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceAdd.c b/nuitka/build/static_src/HelpersOperationInplaceAdd.c
-index aac40b0..94d6dab 100644
+index aac40b03..94d6dab8 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceAdd.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceAdd.c
 @@ -636,7 +636,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_LONG(PyObject **operand1, PyObjec
@@ -2852,7 +2850,7 @@ index aac40b0..94d6dab 100644
          // execute stuff in-place.
  #if PYTHON_VERSION < 0x300
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c b/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
-index 4aa8ed6..02b95d2 100644
+index 4aa8ed61..02b95d2d 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
 @@ -1187,7 +1187,7 @@ static inline bool _INPLACE_OPERATION_FLOORDIV_FLOAT_FLOAT(PyObject **operand1,
@@ -2892,7 +2890,7 @@ index 4aa8ed6..02b95d2 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceMod.c b/nuitka/build/static_src/HelpersOperationInplaceMod.c
-index 3e07419..ac6db41 100644
+index 3e07419f..ac6db417 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceMod.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceMod.c
 @@ -1153,7 +1153,7 @@ static inline bool _INPLACE_OPERATION_MOD_FLOAT_FLOAT(PyObject **operand1, PyObj
@@ -2932,7 +2930,7 @@ index 3e07419..ac6db41 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceMult.c b/nuitka/build/static_src/HelpersOperationInplaceMult.c
-index f2ec109..216995f 100644
+index f2ec109b..216995f8 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceMult.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceMult.c
 @@ -1201,7 +1201,7 @@ static inline bool _INPLACE_OPERATION_MULT_FLOAT_FLOAT(PyObject **operand1, PyOb
@@ -2972,7 +2970,7 @@ index f2ec109..216995f 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c b/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c
-index 4bca9d9..28b6103 100644
+index 4bca9d99..28b61036 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceOlddiv.c
 @@ -1175,7 +1175,7 @@ static inline bool _INPLACE_OPERATION_OLDDIV_FLOAT_FLOAT(PyObject **operand1, Py
@@ -3012,7 +3010,7 @@ index 4bca9d9..28b6103 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersOperationInplacePow.c b/nuitka/build/static_src/HelpersOperationInplacePow.c
-index 8c418c8..ca72256 100644
+index 8c418c80..ca722569 100644
 --- a/nuitka/build/static_src/HelpersOperationInplacePow.c
 +++ b/nuitka/build/static_src/HelpersOperationInplacePow.c
 @@ -140,7 +140,7 @@ static inline bool _INPLACE_OPERATION_POW_FLOAT_FLOAT(PyObject **operand1, PyObj
@@ -3043,7 +3041,7 @@ index 8c418c8..ca72256 100644
          } else {
              // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceSub.c b/nuitka/build/static_src/HelpersOperationInplaceSub.c
-index a96d38a..f9e2f32 100644
+index a96d38ac..f9e2f322 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceSub.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceSub.c
 @@ -616,7 +616,7 @@ static inline bool _INPLACE_OPERATION_SUB_LONG_LONG(PyObject **operand1, PyObjec
@@ -3173,7 +3171,7 @@ index a96d38a..f9e2f32 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceTruediv.c b/nuitka/build/static_src/HelpersOperationInplaceTruediv.c
-index dae4a9f..d2ff3e9 100644
+index dae4a9f3..d2ff3e9d 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceTruediv.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceTruediv.c
 @@ -1215,7 +1215,7 @@ static inline bool _INPLACE_OPERATION_TRUEDIV_FLOAT_FLOAT(PyObject **operand1, P
@@ -3213,7 +3211,7 @@ index dae4a9f..d2ff3e9 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersStrings.c b/nuitka/build/static_src/HelpersStrings.c
-index 8400c8f..7c8a7d2 100644
+index 8400c8ff..7c8a7d20 100644
 --- a/nuitka/build/static_src/HelpersStrings.c
 +++ b/nuitka/build/static_src/HelpersStrings.c
 @@ -227,7 +227,7 @@ static void _NuitkaUnicode_FastCopyCharacters(PyObject *to, Py_ssize_t to_start,
@@ -3226,10 +3224,10 @@ index 8400c8f..7c8a7d2 100644
      if (_PyUnicode_HASH(unicode) != -1)
          return 0;
 diff --git a/nuitka/build/static_src/HelpersTypes.c b/nuitka/build/static_src/HelpersTypes.c
-index d81fa57..4cf8a66 100644
+index 90cc2864..91ba59a1 100644
 --- a/nuitka/build/static_src/HelpersTypes.c
 +++ b/nuitka/build/static_src/HelpersTypes.c
-@@ -58,7 +58,7 @@ static PyObject *lookupSpecialNoError(PyObject *source, PyObject *attr_name) {
+@@ -99,7 +99,7 @@ static PyObject *lookupSpecialNoError(PyObject *source, PyObject *attr_name) {
          }
      }
  
@@ -3238,7 +3236,7 @@ index d81fa57..4cf8a66 100644
  
      if (descr == NULL) {
          return NULL;
-@@ -67,10 +67,11 @@ static PyObject *lookupSpecialNoError(PyObject *source, PyObject *attr_name) {
+@@ -108,10 +108,11 @@ static PyObject *lookupSpecialNoError(PyObject *source, PyObject *attr_name) {
      descrgetfunc func = Py_TYPE(descr)->tp_descr_get;
  
      if (func == NULL) {
@@ -3252,7 +3250,7 @@ index d81fa57..4cf8a66 100644
      }
  }
  #endif
-@@ -782,15 +783,15 @@ int Nuitka_Object_IsSubclass(PyThreadState *tstate, PyObject *derived, PyObject
+@@ -823,15 +824,15 @@ int Nuitka_Object_IsSubclass(PyThreadState *tstate, PyObject *derived, PyObject
      }
  
      // TODO: For many of our uses, we know it.
@@ -3274,7 +3272,7 @@ index d81fa57..4cf8a66 100644
      }
  
 diff --git a/nuitka/code_generation/FrameCodes.py b/nuitka/code_generation/FrameCodes.py
-index 425b526..82a2354 100644
+index 425b526c..82a2354d 100644
 --- a/nuitka/code_generation/FrameCodes.py
 +++ b/nuitka/code_generation/FrameCodes.py
 @@ -8,7 +8,7 @@ of frames for different uses.
@@ -3345,7 +3343,7 @@ index 425b526..82a2354 100644
  
      # TODO: Wire the FrameLocalsProxy to generator/coroutine/asyncgen frames by
 diff --git a/nuitka/code_generation/GlobalsLocalsCodes.py b/nuitka/code_generation/GlobalsLocalsCodes.py
-index b6fd857..6927c67 100644
+index b6fd8576..6927c677 100644
 --- a/nuitka/code_generation/GlobalsLocalsCodes.py
 +++ b/nuitka/code_generation/GlobalsLocalsCodes.py
 @@ -121,14 +121,16 @@ def _getVariableDictUpdateCode(
@@ -3403,24 +3401,8 @@ index b6fd857..6927c67 100644
              }
          )
  
-diff --git a/nuitka/code_generation/LocalsDictCodes.py b/nuitka/code_generation/LocalsDictCodes.py
-index 470642b..e977493 100644
---- a/nuitka/code_generation/LocalsDictCodes.py
-+++ b/nuitka/code_generation/LocalsDictCodes.py
-@@ -235,8 +235,9 @@ def generateLocalsDictVariableRefOrFallbackCode(to_name, expression, emit, conte
-                 }
-             )
- 
--            if needs_ref:
--                context.addCleanupTempName(value_name)
-+            # With a fallback that took a reference, e.g. a module variable
-+            # read without the GIL, the value is released already, and the
-+            # dictionary read takes one too.
-         else:
-             if needs_ref:
-                 template = template_read_locals_mapping_with_fallback_ref
 diff --git a/nuitka/code_generation/ModuleCodes.py b/nuitka/code_generation/ModuleCodes.py
-index f5fc8e1..041a782 100644
+index f5fc8e1e..041a7822 100644
 --- a/nuitka/code_generation/ModuleCodes.py
 +++ b/nuitka/code_generation/ModuleCodes.py
 @@ -13,7 +13,7 @@ from nuitka.options.Options import (
@@ -3454,7 +3436,7 @@ index f5fc8e1..041a782 100644
                  "accessor_function_name": getModuleVariableAccessorCodeName(
                      module_identifier, module_variable_name
 diff --git a/nuitka/code_generation/OperationCodes.py b/nuitka/code_generation/OperationCodes.py
-index 6397978..b5e646c 100644
+index 63979780..b5e646c2 100644
 --- a/nuitka/code_generation/OperationCodes.py
 +++ b/nuitka/code_generation/OperationCodes.py
 @@ -9,6 +9,7 @@ in-place assignments, which have other operation variants.
@@ -3514,7 +3496,7 @@ index 6397978..b5e646c 100644
          if needs_argument_swap:
              arg1_name = right_name
 diff --git a/nuitka/code_generation/VariableCodes.py b/nuitka/code_generation/VariableCodes.py
-index b07ae2c..84d4588 100644
+index b07ae2cc..84d45884 100644
 --- a/nuitka/code_generation/VariableCodes.py
 +++ b/nuitka/code_generation/VariableCodes.py
 @@ -7,7 +7,7 @@ from nuitka.nodes.shapes.BuiltinTypeShapes import (
@@ -3603,7 +3585,7 @@ index b07ae2c..84d4588 100644
              to_name=to_name,
              variable_name=variable_name,
 diff --git a/nuitka/code_generation/c_types/CTypeBooleans.py b/nuitka/code_generation/c_types/CTypeBooleans.py
-index 1b7960b..9554248 100644
+index 1b7960b0..95542486 100644
 --- a/nuitka/code_generation/c_types/CTypeBooleans.py
 +++ b/nuitka/code_generation/c_types/CTypeBooleans.py
 @@ -3,6 +3,8 @@
@@ -3627,7 +3609,7 @@ index 1b7960b..9554248 100644
      def emitAssignmentCodeFromConstant(
          cls, to_name, constant, may_escape, emit, context
 diff --git a/nuitka/code_generation/c_types/CTypeModuleDictVariables.py b/nuitka/code_generation/c_types/CTypeModuleDictVariables.py
-index 5f64c32..3219d06 100644
+index 5f64c321..3219d061 100644
 --- a/nuitka/code_generation/c_types/CTypeModuleDictVariables.py
 +++ b/nuitka/code_generation/c_types/CTypeModuleDictVariables.py
 @@ -14,6 +14,7 @@ from nuitka.code_generation.templates.CodeTemplatesVariables import (
@@ -3662,7 +3644,7 @@ index 5f64c32..3219d06 100644
  
          emit(
 diff --git a/nuitka/code_generation/c_types/CTypePyObjectPointers.py b/nuitka/code_generation/c_types/CTypePyObjectPointers.py
-index 228f369..422d4f6 100644
+index 228f369a..422d4f61 100644
 --- a/nuitka/code_generation/c_types/CTypePyObjectPointers.py
 +++ b/nuitka/code_generation/c_types/CTypePyObjectPointers.py
 @@ -37,6 +37,7 @@ from nuitka.code_generation.templates.CodeTemplatesVariables import (
@@ -3703,7 +3685,7 @@ index 228f369..422d4f6 100644
  
          else:
 diff --git a/nuitka/code_generation/templates/CodeTemplatesFrames.py b/nuitka/code_generation/templates/CodeTemplatesFrames.py
-index 2ee5db9..137d2dd 100644
+index 2ee5db9d..137d2ddb 100644
 --- a/nuitka/code_generation/templates/CodeTemplatesFrames.py
 +++ b/nuitka/code_generation/templates/CodeTemplatesFrames.py
 @@ -53,7 +53,11 @@ pushFrameStackGeneratorCompiledFrame(tstate, {{frame_identifier}});
@@ -3766,7 +3748,7 @@ index 2ee5db9..137d2dd 100644
      assertFrameObject({{frame_identifier}});
  }
 diff --git a/nuitka/code_generation/templates/CodeTemplatesVariables.py b/nuitka/code_generation/templates/CodeTemplatesVariables.py
-index f5c05aa..389b2fd 100644
+index f5c05aaf..389b2fd0 100644
 --- a/nuitka/code_generation/templates/CodeTemplatesVariables.py
 +++ b/nuitka/code_generation/templates/CodeTemplatesVariables.py
 @@ -59,17 +59,15 @@ template_write_local_clear_ref1 = """\
@@ -3925,7 +3907,7 @@ index f5c05aa..389b2fd 100644
      CHECK_OBJECT(old);
      Py_DECREF(old);
 diff --git a/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2 b/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
-index 330bbdb..4032504 100644
+index 330bbdb1..40325044 100644
 --- a/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
 +++ b/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
 @@ -33,12 +33,10 @@ PyObject *CALL_METHOD_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject *s
@@ -3943,10 +3925,10 @@ index 330bbdb..4032504 100644
                  func = Py_TYPE(descr)->tp_descr_get;
  
 diff --git a/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2 b/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2
-index bdc6cd4..2f5e51e 100644
+index 50d6e93d..e1d34036 100644
 --- a/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2
 +++ b/nuitka/code_generation/templates_c/CodeTemplateCallsPositional.c.j2
-@@ -443,13 +443,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+@@ -445,13 +445,12 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
                          pos_args = NULL;
  {% endif %}
  
@@ -3961,7 +3943,7 @@ index bdc6cd4..2f5e51e 100644
  
                          if (likely(init_method != NULL)) {
                              descrgetfunc func = Py_TYPE(init_method)->tp_descr_get;
-@@ -457,8 +456,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+@@ -459,8 +458,9 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
                              if (func == Nuitka_Function_Type.tp_descr_get) {
                                  is_compiled_function = true;
                              } else if (func != NULL) {
@@ -3973,7 +3955,7 @@ index bdc6cd4..2f5e51e 100644
                              }
                          }
  
-@@ -476,21 +476,19 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+@@ -478,21 +478,19 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
                              result = Nuitka_CallMethodFunctionNoArgs(tstate, (struct Nuitka_FunctionObject const *)init_method, obj);
                          } else {
                              result = CALL_FUNCTION_NO_ARGS(tstate, init_method);
@@ -4001,7 +3983,7 @@ index bdc6cd4..2f5e51e 100644
  {% else %}
                          if (is_compiled_function) {
                              result = Nuitka_CallMethodFunctionPosArgs(tstate, (struct Nuitka_FunctionObject const *)init_method, obj, args, {{args_count}});
-@@ -500,10 +498,10 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
+@@ -502,10 +500,10 @@ PyObject *CALL_FUNCTION_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject
  {% else %}
                              result = CALL_FUNCTION_WITH_ARGS{{args_count}}(tstate, init_method, args);
  {% endif %}
@@ -4016,7 +3998,7 @@ index bdc6cd4..2f5e51e 100644
  
  
 diff --git a/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2 b/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
-index da83060..0a109c5 100644
+index da830608..0a109c5c 100644
 --- a/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
 +++ b/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
 @@ -7,6 +7,23 @@ static {{ target.getTypeDecl() }} COMPARE_{{op_code}}_{{target.getHelperCodeName
@@ -4044,7 +4026,7 @@ index da83060..0a109c5 100644
  {# Shortcut for equality, driven by length check. #}
  {% if operator in ("==", "!=") %}
 diff --git a/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2 b/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
-index bd5e318..daf020d 100644
+index bd5e3185..daf020de 100644
 --- a/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
 +++ b/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
 @@ -100,7 +100,7 @@ static inline bool _INPLACE_OPERATION_{{op_code}}_{{left.getHelperCodeName()}}_{
@@ -4057,7 +4039,7 @@ index bd5e318..daf020d 100644
          // execute stuff in-place.
  {% if operator == "+" and left.mayBothHaveType(right, "str") %}
 diff --git a/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2 b/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
-index ecbc6de..ed676d7 100644
+index ecbc6def..ed676d7b 100644
 --- a/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
 +++ b/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
 @@ -256,7 +256,7 @@ exit_result_ok_cfloat:
@@ -4070,7 +4052,7 @@ index ecbc6de..ed676d7 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2 b/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2
-index d780a1f..8be61c3 100644
+index d780a1fb..8be61c35 100644
 --- a/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2
 +++ b/nuitka/code_generation/templates_c/HelperSlotsLong.c.j2
 @@ -23,7 +23,7 @@
