@@ -32,7 +32,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  6 files changed, 262 insertions(+), 16 deletions(-)
 
 diff --git a/nuitka/build/include/nuitka/helper/attributes.h b/nuitka/build/include/nuitka/helper/attributes.h
-index 24f6ce7..60f06ab 100644
+index f2934dc1..1306c75d 100644
 --- a/nuitka/build/include/nuitka/helper/attributes.h
 +++ b/nuitka/build/include/nuitka/helper/attributes.h
 @@ -52,8 +52,13 @@ extern getattrofunc PyObject_GenericGetAttr_resolved;
@@ -52,10 +52,10 @@ index 24f6ce7..60f06ab 100644
      return type->tp_getattro == PyObject_GenericGetAttr_resolved;
  #endif
 diff --git a/nuitka/build/static_src/HelpersCallingGenerated.c b/nuitka/build/static_src/HelpersCallingGenerated.c
-index a5aa76c..2304c77 100644
+index 58e0c4c8..9ec2b09f 100644
 --- a/nuitka/build/static_src/HelpersCallingGenerated.c
 +++ b/nuitka/build/static_src/HelpersCallingGenerated.c
-@@ -12218,7 +12218,21 @@ PyObject *CALL_METHOD_NO_ARGS(PyThreadState *tstate, PyObject *source, PyObject
+@@ -12267,7 +12267,21 @@ PyObject *CALL_METHOD_NO_ARGS(PyThreadState *tstate, PyObject *source, PyObject
                  Py_DECREF(descr);
  
                  return result;
@@ -78,7 +78,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -12444,7 +12458,22 @@ PyObject *CALL_METHOD_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *source, P
+@@ -12493,7 +12507,22 @@ PyObject *CALL_METHOD_WITH_SINGLE_ARG(PyThreadState *tstate, PyObject *source, P
                  Py_DECREF(descr);
  
                  return result;
@@ -102,7 +102,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -12669,7 +12698,23 @@ PyObject *CALL_METHOD_WITH_ARGS2(PyThreadState *tstate, PyObject *source, PyObje
+@@ -12718,7 +12747,23 @@ PyObject *CALL_METHOD_WITH_ARGS2(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -127,7 +127,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -12894,7 +12939,24 @@ PyObject *CALL_METHOD_WITH_ARGS3(PyThreadState *tstate, PyObject *source, PyObje
+@@ -12943,7 +12988,24 @@ PyObject *CALL_METHOD_WITH_ARGS3(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -153,7 +153,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -13119,7 +13181,25 @@ PyObject *CALL_METHOD_WITH_ARGS4(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13168,7 +13230,25 @@ PyObject *CALL_METHOD_WITH_ARGS4(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -180,7 +180,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -13344,7 +13424,26 @@ PyObject *CALL_METHOD_WITH_ARGS5(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13393,7 +13473,26 @@ PyObject *CALL_METHOD_WITH_ARGS5(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -208,7 +208,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -13569,7 +13668,27 @@ PyObject *CALL_METHOD_WITH_ARGS6(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13618,7 +13717,27 @@ PyObject *CALL_METHOD_WITH_ARGS6(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -237,7 +237,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -13794,7 +13913,28 @@ PyObject *CALL_METHOD_WITH_ARGS7(PyThreadState *tstate, PyObject *source, PyObje
+@@ -13843,7 +13962,28 @@ PyObject *CALL_METHOD_WITH_ARGS7(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -267,7 +267,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -14019,7 +14159,29 @@ PyObject *CALL_METHOD_WITH_ARGS8(PyThreadState *tstate, PyObject *source, PyObje
+@@ -14068,7 +14208,29 @@ PyObject *CALL_METHOD_WITH_ARGS8(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -298,7 +298,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -14244,7 +14406,30 @@ PyObject *CALL_METHOD_WITH_ARGS9(PyThreadState *tstate, PyObject *source, PyObje
+@@ -14293,7 +14455,30 @@ PyObject *CALL_METHOD_WITH_ARGS9(PyThreadState *tstate, PyObject *source, PyObje
                  Py_DECREF(descr);
  
                  return result;
@@ -330,7 +330,7 @@ index a5aa76c..2304c77 100644
                  PyObject *called_object = func(descr, source, (PyObject *)type);
                  CHECK_OBJECT(called_object);
  
-@@ -14469,7 +14654,31 @@ PyObject *CALL_METHOD_WITH_ARGS10(PyThreadState *tstate, PyObject *source, PyObj
+@@ -14518,7 +14703,31 @@ PyObject *CALL_METHOD_WITH_ARGS10(PyThreadState *tstate, PyObject *source, PyObj
                  Py_DECREF(descr);
  
                  return result;
@@ -364,7 +364,7 @@ index a5aa76c..2304c77 100644
                  CHECK_OBJECT(called_object);
  
 diff --git a/nuitka/code_generation/CallCodes.py b/nuitka/code_generation/CallCodes.py
-index 8930af1..92abe1b 100644
+index 8930af12..92abe1b3 100644
 --- a/nuitka/code_generation/CallCodes.py
 +++ b/nuitka/code_generation/CallCodes.py
 @@ -379,9 +379,16 @@ def generateCallCode(to_name, expression, emit, context):
@@ -387,7 +387,7 @@ index 8930af1..92abe1b 100644
          and (
              call_args is None
 diff --git a/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2 b/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
-index 098730f..330bbdb 100644
+index 098730f3..330bbdb1 100644
 --- a/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
 +++ b/nuitka/code_generation/templates_c/CodeTemplateCallsMethodPositional.c.j2
 @@ -114,7 +114,24 @@ PyObject *CALL_METHOD_WITH_ARGS{{args_count}}(PyThreadState *tstate, PyObject *s
@@ -417,7 +417,7 @@ index 098730f..330bbdb 100644
                  CHECK_OBJECT(called_object);
  
 diff --git a/nuitka/nodes/AttributeLookupNodes.py b/nuitka/nodes/AttributeLookupNodes.py
-index ea4dbd5..22329f1 100644
+index ea4dbd51..22329f1e 100644
 --- a/nuitka/nodes/AttributeLookupNodes.py
 +++ b/nuitka/nodes/AttributeLookupNodes.py
 @@ -83,6 +83,10 @@ class ExpressionAttributeLookupFixedBase(ChildHavingExpressionMixin, ExpressionB
@@ -432,10 +432,10 @@ index ea4dbd5..22329f1 100644
      def getDetails():
          return {}
 diff --git a/nuitka/nodes/NodeBases.py b/nuitka/nodes/NodeBases.py
-index ca31450..d552cd0 100644
+index a28698b3..ad4315aa 100644
 --- a/nuitka/nodes/NodeBases.py
 +++ b/nuitka/nodes/NodeBases.py
-@@ -397,6 +397,10 @@ class NodeBase(NodeMetaClassBase):
+@@ -376,6 +376,10 @@ class NodeBase(NodeMetaClassBase):
      def isExpressionConstantRef():
          return False
  

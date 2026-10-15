@@ -22,10 +22,10 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  1 file changed, 72 insertions(+), 26 deletions(-)
 
 diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
-index cef4be5..379b311 100644
+index 3969bbd5..f7e2c8ae 100644
 --- a/nuitka/build/static_src/OnefileBootstrap.c
 +++ b/nuitka/build/static_src/OnefileBootstrap.c
-@@ -455,6 +455,37 @@ static bool payload_created = false;
+@@ -552,6 +552,37 @@ static bool payload_created = false;
  #define ONEFILE_CACHE_MANIFEST_MAGIC "NUITKAOM"
  #define ONEFILE_CACHE_MANIFEST_VERSION 1
  
@@ -63,7 +63,7 @@ index cef4be5..379b311 100644
  struct OnefileCacheFileIdentity {
      uint64_t size;
      uint64_t mtime;
-@@ -577,24 +608,8 @@ static void writeCacheManifest(void) {
+@@ -674,24 +705,8 @@ static void writeCacheManifest(void) {
  
      // Use a process specific temporary name, so concurrent unpacking never
      // exposes a partially written manifest.
@@ -90,7 +90,7 @@ index cef4be5..379b311 100644
  
      FILE_HANDLE manifest_file = createFileForWriting(manifest_filename_tmp);
  
-@@ -609,11 +624,7 @@ static void writeCacheManifest(void) {
+@@ -706,11 +721,7 @@ static void writeCacheManifest(void) {
      }
  
      if (success) {
@@ -103,7 +103,7 @@ index cef4be5..379b311 100644
      }
  
      if (success == false) {
-@@ -1559,6 +1570,9 @@ int main(int argc, char **argv) {
+@@ -1656,6 +1667,9 @@ int main(int argc, char **argv) {
  
              static filename_char_t target_path[4096] = {0};
              target_path[0] = 0;
@@ -113,7 +113,7 @@ index cef4be5..379b311 100644
  
              appendStringSafeFilename(target_path, payload_path, sizeof(target_path) / sizeof(filename_char_t));
              appendCharSafeFilename(target_path, FILENAME_SEP_CHAR, sizeof(target_path) / sizeof(filename_char_t));
-@@ -1588,13 +1602,25 @@ int main(int argc, char **argv) {
+@@ -1685,13 +1699,25 @@ int main(int argc, char **argv) {
  
                  createContainingDirectory(target_path);
  
@@ -142,7 +142,7 @@ index cef4be5..379b311 100644
  #endif
  
                  continue;
-@@ -1640,7 +1666,14 @@ int main(int argc, char **argv) {
+@@ -1737,7 +1763,14 @@ int main(int argc, char **argv) {
  
              if (needs_write) {
                  createContainingDirectory(target_path);
@@ -157,7 +157,7 @@ index cef4be5..379b311 100644
              }
  
              writeContainedFile(target_file, file_size);
-@@ -1680,6 +1713,19 @@ int main(int argc, char **argv) {
+@@ -1777,6 +1810,19 @@ int main(int argc, char **argv) {
                  if (closeFile(target_file) == false) {
                      fatalErrorTempFiles();
                  }

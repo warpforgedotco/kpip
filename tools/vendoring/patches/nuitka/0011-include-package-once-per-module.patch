@@ -18,10 +18,10 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  1 file changed, 52 insertions(+), 8 deletions(-)
 
 diff --git a/nuitka/importing/Recursion.py b/nuitka/importing/Recursion.py
-index 7bf89dd..44c58f1 100644
+index 5d070c96..e94f9969 100644
 --- a/nuitka/importing/Recursion.py
 +++ b/nuitka/importing/Recursion.py
-@@ -455,6 +455,8 @@ def _addIncludedModule(module, package_only):
+@@ -467,6 +467,8 @@ def _addIncludedModule(module, package_only):
              recursion_logger.info("Package directory '%s'." % package_dir)
  
          if not package_only:
@@ -30,9 +30,9 @@ index 7bf89dd..44c58f1 100644
              for sub_path, sub_filename in listPackageDirEntries(
                  package_dir, package_name=module.getFullName()
              ):
-@@ -474,10 +476,12 @@ def _addIncludedModule(module, package_only):
-                         if hasPackageDirFilename(sub_path[:-3]):
-                             continue
+@@ -487,10 +489,12 @@ def _addIncludedModule(module, package_only):
+                     ):
+                         continue
  
 -                    scanPluginSinglePath(
 -                        sub_path,
@@ -47,7 +47,7 @@ index 7bf89dd..44c58f1 100644
                      )
                  else:
                      for suffix in getExtensionModuleSuffixes():
-@@ -485,10 +489,12 @@ def _addIncludedModule(module, package_only):
+@@ -498,10 +502,12 @@ def _addIncludedModule(module, package_only):
                              sub_filename.endswith(suffix)
                              and "." not in sub_filename[: -len(suffix)]
                          ):
@@ -64,7 +64,7 @@ index 7bf89dd..44c58f1 100644
                              )
  
      elif module.isCompiledPythonModule() or module.isUncompiledPythonModule():
-@@ -500,6 +506,44 @@ def _addIncludedModule(module, package_only):
+@@ -513,6 +519,44 @@ def _addIncludedModule(module, package_only):
          assert False, module
  
  

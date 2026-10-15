@@ -20,7 +20,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  1 file changed, 13 insertions(+), 5 deletions(-)
 
 diff --git a/nuitka/code_generation/AnnotateFunctionCodes.py b/nuitka/code_generation/AnnotateFunctionCodes.py
-index f3881b6..8e55d2a 100644
+index f3881b63..8e55d2a1 100644
 --- a/nuitka/code_generation/AnnotateFunctionCodes.py
 +++ b/nuitka/code_generation/AnnotateFunctionCodes.py
 @@ -121,16 +121,24 @@ def _generateAnnotateFunctionMaker(function_body, function_identifier, context):

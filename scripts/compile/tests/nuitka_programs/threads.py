@@ -3,9 +3,9 @@
 Run compiled, by ``test_nuitka_threads``. Each threaded case runs its body on
 many threads at once and checks an invariant a race breaks, which matters
 most without the GIL (patch 0015); the others check exact results and that
-references are released. ``case_walrus_genexpr_scope`` fails with the GIL as
-well without patch 0016. Exits non-zero and names each case that failed;
-``THREADS_CASE`` runs one case only.
+references are released. ``case_walrus_genexpr_scope`` checks a fix with the
+GIL as well, which upstream Nuitka has since merged. Exits non-zero and names
+each case that failed; ``THREADS_CASE`` runs one case only.
 """
 
 import gc

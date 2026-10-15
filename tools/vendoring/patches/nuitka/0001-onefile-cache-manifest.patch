@@ -25,14 +25,14 @@ Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.githu
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
  nuitka/build/static_src/OnefileBootstrap.c | 550 +++++++++++++++++----
- nuitka/freezer/Onefile.py                  |  16 +-
- 2 files changed, 464 insertions(+), 102 deletions(-)
+ nuitka/freezer/Onefile.py                  |  17 +-
+ 2 files changed, 465 insertions(+), 102 deletions(-)
 
 diff --git a/nuitka/build/static_src/OnefileBootstrap.c b/nuitka/build/static_src/OnefileBootstrap.c
-index 9d66b14..cef4be5 100644
+index 4dcb0085..3969bbd5 100644
 --- a/nuitka/build/static_src/OnefileBootstrap.c
 +++ b/nuitka/build/static_src/OnefileBootstrap.c
-@@ -66,6 +66,7 @@
+@@ -65,6 +65,7 @@
  #define _NUITKA_ONEFILE_TEMP_BOOL 0
  #define _NUITKA_ONEFILE_CHILD_GRACE_TIME_INT 5000
  #define _NUITKA_ONEFILE_TEMP_SPEC "{TEMP}/onefile_{PID}_{TIME_US}_{RANDOM}"
@@ -40,7 +40,7 @@ index 9d66b14..cef4be5 100644
  
  #define _NUITKA_ONEFILE_PAYLOAD_SIZE_INT 27272
  
-@@ -151,7 +152,7 @@ static void fatalErrorAttachedData(void) { fatalError("Error, couldn't decode at
+@@ -150,7 +151,7 @@ static void fatalErrorAttachedData(void) { fatalError("Error, couldn't decode at
  static void fatalErrorHeaderAttachedData(void) { fatalError("Error, couldn't find attached data header."); }
  
  // Out of memory error.
@@ -49,7 +49,7 @@ index 9d66b14..cef4be5 100644
  static void fatalErrorMemory(void) { fatalError("Error, couldn't allocate memory."); }
  #endif
  
-@@ -444,6 +445,316 @@ static filename_char_t payload_path[4096] = {0};
+@@ -541,6 +542,316 @@ static filename_char_t payload_path[4096] = {0};
  static bool payload_created = false;
  #endif
  
@@ -366,22 +366,22 @@ index 9d66b14..cef4be5 100644
  #define MAX_CREATED_DIRS 1024
  static filename_char_t *created_dir_paths[MAX_CREATED_DIRS];
  int created_dir_count = 0;
-@@ -1175,176 +1486,213 @@ int main(int argc, char **argv) {
+@@ -1272,176 +1583,213 @@ int main(int argc, char **argv) {
      // The onefile bootstrap is setup now.
  
  #if _NUITKA_ONEFILE_HAS_PAYLOAD_BOOL == 1
 -    NUITKA_PRINT_TIMING("ONEFILE: Checking header for compression.");
 +    bool payload_cached = false;
-+
-+#if _NUITKA_ONEFILE_TEMP_BOOL == 0
-+    NUITKA_PRINT_TIMING("ONEFILE: Checking cache manifest.");
  
 -    char header[3];
 -    readChunk(&header, sizeof(header));
-+    payload_cached = checkCacheManifest(first_filename, sizeof(first_filename) / sizeof(filename_char_t));
++#if _NUITKA_ONEFILE_TEMP_BOOL == 0
++    NUITKA_PRINT_TIMING("ONEFILE: Checking cache manifest.");
  
 -    if (header[0] != 'K' || header[1] != 'A') {
 -        fatalErrorHeaderAttachedData();
++    payload_cached = checkCacheManifest(first_filename, sizeof(first_filename) / sizeof(filename_char_t));
++
 +    if (payload_cached) {
 +        NUITKA_PRINT_TIMING("ONEFILE: Cache manifest matches, no unpacking needed.");
 +
@@ -400,11 +400,11 @@ index 9d66b14..cef4be5 100644
 +
 +    if (payload_cached == false) {
 +        NUITKA_PRINT_TIMING("ONEFILE: Checking header for compression.");
- 
--    NUITKA_PRINT_TIMING("ONEFILE: Header is OK.");
++
 +        char header[3];
 +        readChunk(&header, sizeof(header));
-+
+ 
+-    NUITKA_PRINT_TIMING("ONEFILE: Header is OK.");
 +        if (header[0] != 'K' || header[1] != 'A') {
 +            fatalErrorHeaderAttachedData();
 +        }
@@ -681,31 +681,32 @@ index 9d66b14..cef4be5 100644
      closePayloadData();
  #endif
 diff --git a/nuitka/freezer/Onefile.py b/nuitka/freezer/Onefile.py
-index 1886266..886cca1 100644
+index b1ce7d29..c773976e 100644
 --- a/nuitka/freezer/Onefile.py
 +++ b/nuitka/freezer/Onefile.py
-@@ -52,6 +52,7 @@ from nuitka.utils.Execution import withEnvironmentVarsOverridden
- from nuitka.utils.FileOperations import (
+@@ -54,6 +54,7 @@ from nuitka.utils.FileOperations import (
+     appendFileToFile,
      areSamePaths,
      getExternalUsePath,
 +    getFileContentsHash,
      getFileSize,
      makeContainingPath,
      removeDirectory,
-@@ -91,7 +92,11 @@ def packDistFolderToOnefile(dist_dir):
+@@ -92,7 +93,12 @@ def packDistFolderToOnefile(dist_dir):
+     onOnefileFinished(onefile_output_filename)
  
  
- def _runOnefileScons(
--    onefile_compression, onefile_archive, backend_resource_mode, onefile_payload_size
+-def _runOnefileScons(onefile_compression, onefile_archive, onefile_payload_size):
++def _runOnefileScons(
 +    onefile_compression,
 +    onefile_archive,
-+    backend_resource_mode,
 +    onefile_payload_size,
 +    onefile_payload_hash,
- ):
++):
      scons_options, env_values = getCommonSconsOptions()
  
-@@ -117,6 +122,10 @@ def _runOnefileScons(
+     source_dir = getSourceDirectoryPath(onefile=True, create=False)
+@@ -117,6 +123,10 @@ def _runOnefileScons(onefile_compression, onefile_archive, onefile_payload_size)
      env_values["_NUITKA_ONEFILE_HAS_PAYLOAD_BOOL"] = "1" if hasOnefilePayload() else "0"
      env_values["_NUITKA_ONEFILE_PAYLOAD_SIZE_INT"] = str(onefile_payload_size)
  
@@ -716,7 +717,7 @@ index 1886266..886cca1 100644
      main_filename_in_payload = hasOnefilePayloadMainEntry()
  
      if not main_filename_in_payload:
-@@ -281,6 +290,7 @@ def packDistFolderToOnefileBootstrap(onefile_output_filename, dist_dir, start_bi
+@@ -279,6 +289,7 @@ def packDistFolderToOnefileBootstrap(onefile_output_filename, dist_dir, start_bi
      # The payload is optional, there might be none at all.
      has_payload = hasOnefilePayload()
      onefile_payload_size = 0
@@ -724,7 +725,7 @@ index 1886266..886cca1 100644
  
      if has_payload:
          expected_files = []
-@@ -304,12 +314,16 @@ def packDistFolderToOnefileBootstrap(onefile_output_filename, dist_dir, start_bi
+@@ -302,11 +313,15 @@ def packDistFolderToOnefileBootstrap(onefile_output_filename, dist_dir, start_bi
  
          onefile_payload_size = getFileSize(onefile_payload_filename)
  
@@ -735,7 +736,6 @@ index 1886266..886cca1 100644
      _runOnefileScons(
          onefile_compression=compressor_python is not None,
          onefile_archive=shallOnefileAsArchive(),
-         backend_resource_mode=backend_resource_mode,
          onefile_payload_size=onefile_payload_size,
 +        onefile_payload_hash=onefile_payload_hash,
      )
