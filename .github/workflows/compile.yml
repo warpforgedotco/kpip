@@ -13,8 +13,9 @@ on:
       - ".github/workflows/compile.yml"
   schedule:
     # kpip-compile follows Nuitka's develop, which moves on its own; this
-    # catches a patch that stopped applying without a kpip change.
-    - cron: "17 6 * * 1"
+    # catches a patch that stopped applying without a kpip change, while
+    # upstream has moved by a day's commits, not a week's.
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -193,3 +194,32 @@ jobs:
         env:
           KPIP_NUITKA_TESTS: "1"
         run: uv run --group tests pytest tests/test_nuitka_threads.py
+
+  report-scheduled-failure:
+    # A failed scheduled run only notifies whoever last edited the cron line,
+    # so breakage went unnoticed for weeks. Keep one open issue instead, and
+    # add each further failed run to it until someone closes it.
+    name: Report scheduled failure
+    needs: [compile, threads-free-threaded]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Scheduled compile failed against Nuitka develop"
+          body="The scheduled compile failed: $RUN_URL
+
+          Usually a patch in \`tools/vendoring/patches/nuitka/\` no longer applies to, or no longer compiles with, Nuitka's latest \`develop\`; the failed step names it. See \`scripts/compile/README.md\` for rebasing the patches."
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "$title" --body "$body" --label bug
+          fi
