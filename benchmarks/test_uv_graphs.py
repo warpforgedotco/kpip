@@ -6,7 +6,8 @@ a cache an earlier resolve filled. See ``uv_graphs`` for how the graphs are
 recorded and replayed without the network.
 
 Each iteration drops kpip's in-memory caches, so what is measured is a new
-``kpip install --dry-run`` finding the cache on disk.
+``kpip install --dry-run`` finding the cache on disk. Each graph is resolved
+with resolvelib and with nab-resolver (``--resolver=nab``).
 """
 
 from __future__ import annotations
@@ -26,19 +27,22 @@ def uv_environment() -> Iterator[None]:
         yield
 
 
-def warm(name: str, root: Path, benchmark: BenchmarkFixture) -> int:
-    """Resolve ``name`` once to fill the cache, then benchmark resolving it again."""
+def warm(
+    name: str, root: Path, benchmark: BenchmarkFixture, resolver: str = "resolvelib"
+) -> int:
+    """Resolve ``name`` once to fill the cache, then benchmark resolving it
+    again, with ``resolver``."""
     replay = uv_graphs.Replay(
         uv_graphs.served(uv_graphs.load(name), uv_graphs.load_digests(name))
     )
     cache_dir = str(root / "cache")
     report = str(root / "report.json")
     with uv_graphs.replaying(replay):
-        uv_graphs.resolve(name, cache_dir, report)
+        uv_graphs.resolve(name, cache_dir, report, resolver)
 
         def resolve_warm() -> int:
             reset_caches()
-            return uv_graphs.resolve(name, cache_dir, report)
+            return uv_graphs.resolve(name, cache_dir, report, resolver)
 
         return benchmark(resolve_warm)
 
@@ -50,3 +54,13 @@ def test_resolve_warm_jupyter(benchmark: BenchmarkFixture, tmp_path: Path) -> No
 @pytest.mark.slow
 def test_resolve_warm_airflow(benchmark: BenchmarkFixture, tmp_path: Path) -> None:
     assert warm("airflow", tmp_path, benchmark) == 584
+
+
+def test_resolve_warm_jupyter_nab(benchmark: BenchmarkFixture, tmp_path: Path) -> None:
+    assert warm("jupyter", tmp_path, benchmark, "nab") == 99
+
+
+@pytest.mark.slow
+def test_resolve_warm_airflow_nab(benchmark: BenchmarkFixture, tmp_path: Path) -> None:
+    # A valid answer, differing from resolvelib's in about 16 packages.
+    assert warm("airflow", tmp_path, benchmark, "nab") == 589
