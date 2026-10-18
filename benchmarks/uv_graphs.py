@@ -429,11 +429,20 @@ def static_sdist_metadata(build: set[str] | None = None) -> Iterator[Built]:
         yield built
 
 
-def resolve(name: str, cache_dir: str, report: str) -> int:
-    """One ``kpip install --dry-run`` of a workload; returns how many it picked."""
+# What kpip resolves with: pip's resolvelib, and nab-resolver (--resolver=nab).
+RESOLVERS = ("resolvelib", "nab")
+
+
+def resolve(
+    name: str, cache_dir: str, report: str, resolver: str = "resolvelib"
+) -> int:
+    """One ``kpip install --dry-run`` of a workload with ``resolver``;
+    returns how many it picked."""
     status = create_command("install").main(
         [
             "--dry-run",
+            "--resolver",
+            resolver,
             "--ignore-installed",
             "--quiet",
             "--quiet",
@@ -490,7 +499,8 @@ class _NewSdists(set[str]):
 
 
 def fill(names: list[str]) -> None:
-    """Resolve each workload against PyPI and add what the corpus lacked.
+    """Resolve each workload against PyPI, with each resolver, and add what
+    the corpus lacked: the resolvers read different things.
 
     Sdists already in the corpus are static; one fetched now is built for
     real, once, and stored as the static ``PKG-INFO`` of that build.
@@ -507,7 +517,12 @@ def fill(names: list[str]) -> None:
                 build=_NewSdists({key.split(" ", 1)[1] for key in recording})
             ) as built,
         ):
-            count = resolve(name, f"{root}/cache", f"{root}/report.json")
+            counts = {
+                resolver: resolve(
+                    name, f"{root}/cache-{resolver}", f"{root}/report.json", resolver
+                )
+                for resolver in RESOLVERS
+            }
         for key, (status, reason, headers, data) in replay.recorded.items():
             url = key.split(" ", 1)[1]
             if url in built:
@@ -515,7 +530,7 @@ def fill(names: list[str]) -> None:
                 digests[url] = [hashlib.sha256(data).hexdigest(), len(data)]
             recording[key] = (status, reason, headers, data)
         print(
-            f"{name}: {count} packages, {len(replay.recorded)} responses added, "
+            f"{name}: {counts} packages, {len(replay.recorded)} responses added, "
             f"approximate sdist metadata: {built.approximate or 'none'}"
         )
         save(name, recording, digests)

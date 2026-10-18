@@ -13,7 +13,7 @@ comparisons against uv, from the command line, are `scripts/benchmark`'s.
 
 | File | Measures |
 | --- | --- |
-| `test_uv_graphs.py` | uv-bench's `resolve_warm_jupyter` and `resolve_warm_airflow`: a warm `kpip install --dry-run` of each graph |
+| `test_uv_graphs.py` | uv-bench's `resolve_warm_jupyter` and `resolve_warm_airflow`: a warm `kpip install --dry-run` of each graph, with resolvelib and, in the `_nab` variants, nab-resolver |
 | `test_install.py` | uv-bench's many-files cases: unzipping and installing a 10,000-file wheel, untarring a 10,000-file sdist |
 | `test_parsing.py` | Parsing uv's compiled requirements files and the largest project pages of the airflow graph |
 
@@ -28,7 +28,8 @@ excluded. `uv_graphs.py` runs the same inputs through `kpip install
 uv-bench's marker environment in place of the running interpreter's. Each
 iteration drops kpip's in-memory caches, so it measures a new process
 finding its HTTP cache on disk. Jupyter resolves to 99 packages, airflow to
-584.
+584 (589 with nab-resolver, whose answer differs in about 16 packages).
+`fill` resolves with both resolvers, as they read different things.
 
 The airflow resolve takes seconds natively, and many times that under
 CodSpeed's simulation, so it is marked `slow` and run locally only.
