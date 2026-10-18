@@ -343,11 +343,18 @@ def _metadata_from_index(pkg_info: bytes) -> bytes:
         print(f"  no metadata from {url} ({error}); using its PKG-INFO")
         return pkg_info
     requires = info.get("requires_dist") or []
+    # The extras the release declares, including those with no requirements
+    # of their own; and, as older releases' JSON can leave it empty, those
+    # its requirements' markers name, either way round.
+    named = r"""extra\s*==\s*['"]([^'"]+)['"]|['"]([^'"]+)['"]\s*==\s*extra"""
     extras = sorted(
-        {
+        set(info.get("provides_extra") or ())
+        | {
             extra
             for requirement in requires
-            for extra in re.findall(r"""extra\s*==\s*['"]([^'"]+)['"]""", requirement)
+            for match in re.findall(named, requirement)
+            for extra in match
+            if extra
         }
     )
     lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
