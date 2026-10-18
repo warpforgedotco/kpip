@@ -110,7 +110,7 @@ index 25a5813..57d469d 100644
      def __enter__(self) -> None:
          pass
 diff --git a/src/kpip/_internal/build_env/venv.py b/src/kpip/_internal/build_env/venv.py
-index 0157cef..54e9b36 100644
+index 72ee48d..63fc46c 100644
 --- a/src/kpip/_internal/build_env/venv.py
 +++ b/src/kpip/_internal/build_env/venv.py
 @@ -1,12 +1,14 @@
@@ -175,7 +175,7 @@ index 0157cef..54e9b36 100644
          # We want backend calls to be able to use binaries installed as if this
          # virtual environment was "activated".
 diff --git a/src/kpip/_internal/build_env/virtual.py b/src/kpip/_internal/build_env/virtual.py
-index bb0fcba..4fe0888 100644
+index f623ec4..b48321e 100644
 --- a/src/kpip/_internal/build_env/virtual.py
 +++ b/src/kpip/_internal/build_env/virtual.py
 @@ -1,14 +1,13 @@
@@ -213,8 +213,8 @@ index bb0fcba..4fe0888 100644
 -        self.python_executable = sys.executable
 +        self.python_executable = build_interpreter().executable
          self.installer = installer
-         temp_dir = TempDirectory(kind=tempdir_kinds.BUILD_ENV, globally_managed=True)
- 
+         temp_dir = TempDirectory(
+             kind=TempDirectoryKind.BUILD_ENV, globally_managed=True
 diff --git a/src/kpip/_internal/interpreters/__init__.py b/src/kpip/_internal/interpreters/__init__.py
 index 1821c13..c0b36cf 100644
 --- a/src/kpip/_internal/interpreters/__init__.py

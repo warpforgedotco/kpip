@@ -144,7 +144,7 @@ index d69460b..dd121bb 100644
  DEPRECATION_MSG_PREFIX = "DEPRECATION: "
  
 diff --git a/src/kpip/_internal/utils/misc.py b/src/kpip/_internal/utils/misc.py
-index 868578d..5e715cc 100644
+index 117af84..6da21e8 100644
 --- a/src/kpip/_internal/utils/misc.py
 +++ b/src/kpip/_internal/utils/misc.py
 @@ -32,7 +32,7 @@ from kpip._vendor.packaging.requirements import Requirement
@@ -235,7 +235,7 @@ index 117de52..62d1e8c 100644
  @mock.patch("kpip._internal.cli.index_command._pip_self_version_check_fetch")
  @mock.patch.dict(os.environ, {"PIP_DISABLE_PIP_VERSION_CHECK": "no"})
 diff --git a/tests/unit/test_network_session.py b/tests/unit/test_network_session.py
-index 03e5a47..47db72c 100644
+index 5702d66..c6b5025 100644
 --- a/tests/unit/test_network_session.py
 +++ b/tests/unit/test_network_session.py
 @@ -110,7 +110,7 @@ def get_user_agent() -> str:
