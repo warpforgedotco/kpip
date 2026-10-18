@@ -27,7 +27,7 @@ default environment answer for it.
  12 files changed, 118 insertions(+), 17 deletions(-)
 
 diff --git a/src/kpip/_internal/cache.py b/src/kpip/_internal/cache.py
-index 90f384e..33408ee 100644
+index 4ea526e..c66b40e 100644
 --- a/src/kpip/_internal/cache.py
 +++ b/src/kpip/_internal/cache.py
 @@ -12,6 +12,7 @@ from typing import Any
@@ -256,7 +256,7 @@ index c8f7f20..b929864 100644
              py_version_info = normalize_version_info(py_version_info)
  
 diff --git a/src/kpip/_internal/resolution/resolvelib/candidates.py b/src/kpip/_internal/resolution/resolvelib/candidates.py
-index 2a4a558..8638bc5 100644
+index 2e105de..c017d7d 100644
 --- a/src/kpip/_internal/resolution/resolvelib/candidates.py
 +++ b/src/kpip/_internal/resolution/resolvelib/candidates.py
 @@ -1,7 +1,6 @@

@@ -20,11 +20,10 @@ import logging
 import os
 import sys
 from distutils.cmd import Command as DistutilsCommand
-from distutils.command.install import SCHEME_KEYS
 from distutils.command.install import install as distutils_install_command
 from distutils.sysconfig import get_python_lib
 
-from kpip._internal.models.scheme import Scheme
+from kpip._internal.models.scheme import SCHEME_KEYS, Scheme
 from kpip._internal.utils.compat import WINDOWS
 from kpip._internal.utils.virtualenv import running_under_virtualenv
 

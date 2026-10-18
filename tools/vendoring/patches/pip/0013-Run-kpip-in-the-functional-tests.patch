@@ -21,7 +21,7 @@ as kpip's build backend is not in the test environment.
  9 files changed, 94 insertions(+), 37 deletions(-)
 
 diff --git a/tests/conftest.py b/tests/conftest.py
-index 2a46e9c..922ece2 100644
+index e5300bb..f51e2da 100644
 --- a/tests/conftest.py
 +++ b/tests/conftest.py
 @@ -116,11 +116,60 @@ def pytest_addoption(parser: Parser) -> None:
@@ -247,10 +247,10 @@ index 638b1d7..969fd13 100644
  
  
 diff --git a/tests/functional/test_install_config.py b/tests/functional/test_install_config.py
-index b9acabf..5cb67f0 100644
+index 5993f25..8b12f6a 100644
 --- a/tests/functional/test_install_config.py
 +++ b/tests/functional/test_install_config.py
-@@ -546,11 +546,9 @@ def test_prompt_for_keyring_if_needed(
+@@ -550,11 +550,9 @@ def test_prompt_for_keyring_if_needed(
      "isolation",
      [
          pytest.param("", id="legacy-isolation"),
@@ -265,7 +265,7 @@ index b9acabf..5cb67f0 100644
      ],
  )
  def test_build_dependency_install_uses_same_keyring_as_root(
-@@ -634,7 +632,7 @@ def test_build_dependency_install_uses_same_keyring_as_root(
+@@ -638,7 +636,7 @@ def test_build_dependency_install_uses_same_keyring_as_root(
              # we removed the venv's bin directory from PATH.
              str(script.bin_path / f"python{script.exe}"),
              "-m",
@@ -275,18 +275,18 @@ index b9acabf..5cb67f0 100644
              "--no-cache-dir",
              "--index-url",
 diff --git a/tests/functional/test_no_color.py b/tests/functional/test_no_color.py
-index 9a246be..ab7da60 100644
+index 907224c..a9a8443 100644
 --- a/tests/functional/test_no_color.py
 +++ b/tests/functional/test_no_color.py
-@@ -24,7 +24,7 @@ def test_no_color(script: PipTestEnvironment) -> None:
-     # 'script' and well as the mere use of the same.
-     #
-     # This test will stay until someone has the time to rewrite it.
--    pip_command = "pip download {} setuptools==62.0.0 --no-cache-dir -d /tmp/"
-+    pip_command = "kpip download {} setuptools==62.0.0 --no-cache-dir -d /tmp/"
-     if sys.platform == "darwin":
-         command = f"script -q /tmp/pip-test-no-color.txt {pip_command}"
-     else:
+@@ -21,7 +21,7 @@ def test_no_color(script: PipTestEnvironment) -> None:
+     script.environ["SHELL"] = "/bin/sh"
+ 
+     pip_command = (
+-        ["python", script.zipapp] if script.zipapp else ["python", "-m", "pip"]
++        ["python", script.zipapp] if script.zipapp else ["python", "-m", "kpip"]
+     )
+     pip_command.extend(
+         [
 diff --git a/tests/functional/test_self_update.py b/tests/functional/test_self_update.py
 index bd09736..ff93035 100644
 --- a/tests/functional/test_self_update.py
@@ -303,10 +303,10 @@ index bd09736..ff93035 100644
      # Step 1. Install pip as non-editable. This is expected to succeed as
      # the existing pip in the environment is installed in editable mode, so
 diff --git a/tests/lib/__init__.py b/tests/lib/__init__.py
-index 089464b..97d6893 100644
+index cf258c5..dfb8ed3 100644
 --- a/tests/lib/__init__.py
 +++ b/tests/lib/__init__.py
-@@ -709,9 +709,9 @@ class PipTestEnvironment(TestFileEnvironment):
+@@ -714,9 +714,9 @@ class PipTestEnvironment(TestFileEnvironment):
              args = (self.zipapp,) + args
          elif use_module:
              exe = "python"

@@ -12,7 +12,7 @@ It now says that no Python was found.
  2 files changed, 16 insertions(+), 4 deletions(-)
 
 diff --git a/src/kpip/_internal/utils/misc.py b/src/kpip/_internal/utils/misc.py
-index 2d71df5..599d720 100644
+index 9ae0c51..b98a938 100644
 --- a/src/kpip/_internal/utils/misc.py
 +++ b/src/kpip/_internal/utils/misc.py
 @@ -95,10 +95,12 @@ def get_pip_version() -> str:

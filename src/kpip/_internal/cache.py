@@ -17,7 +17,7 @@ from kpip._internal.exceptions import InvalidWheelFilename
 from kpip._internal.models.direct_url import DirectUrl
 from kpip._internal.models.link import Link
 from kpip._internal.models.wheel import Wheel
-from kpip._internal.utils.temp_dir import TempDirectory, tempdir_kinds
+from kpip._internal.utils.temp_dir import TempDirectory, TempDirectoryKind
 from kpip._internal.utils.urls import path_to_url
 
 logger = logging.getLogger(__name__)
@@ -184,7 +184,7 @@ class EphemWheelCache(SimpleWheelCache):
 
     def __init__(self) -> None:
         self._temp_dir = TempDirectory(
-            kind=tempdir_kinds.EPHEM_WHEEL_CACHE,
+            kind=TempDirectoryKind.EPHEM_WHEEL_CACHE,
             globally_managed=True,
         )
 

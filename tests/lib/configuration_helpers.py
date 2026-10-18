@@ -9,11 +9,8 @@ from collections.abc import Iterator
 from typing import Any
 
 import kpip._internal.configuration
+from kpip._internal.configuration import Kind
 from kpip._internal.utils.misc import ensure_dir
-
-# This is so that tests don't need to import kpip._internal.configuration.
-Kind = kpip._internal.configuration.Kind
-kinds = kpip._internal.configuration.kinds
 
 
 class ConfigurationMixin:

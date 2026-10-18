@@ -54,7 +54,7 @@ index b26b38d..13111c0 100644
      callback=_handle_src,
      help="Directory to check out editable projects into. "
 diff --git a/src/kpip/_internal/cli/req_command.py b/src/kpip/_internal/cli/req_command.py
-index 0ffae50..dacdcff 100644
+index 389e844..c047c92 100644
 --- a/src/kpip/_internal/cli/req_command.py
 +++ b/src/kpip/_internal/cli/req_command.py
 @@ -14,6 +14,7 @@ from functools import partial
@@ -125,7 +125,7 @@ index 31da26f..7e3d4de 100644
          return False
  
 diff --git a/src/kpip/_internal/configuration.py b/src/kpip/_internal/configuration.py
-index 316d560..624d466 100644
+index 2ab2bec..da671af 100644
 --- a/src/kpip/_internal/configuration.py
 +++ b/src/kpip/_internal/configuration.py
 @@ -15,7 +15,6 @@ from __future__ import annotations
@@ -134,9 +134,9 @@ index 316d560..624d466 100644
  import os
 -import sys
  from collections.abc import Iterable
- from typing import Any, NewType
- 
-@@ -23,6 +22,7 @@ from kpip._internal.exceptions import (
+ from enum import Enum
+ from typing import Any
+@@ -24,6 +23,7 @@ from kpip._internal.exceptions import (
      ConfigurationError,
      ConfigurationFileCouldNotBeLoaded,
  )
@@ -144,7 +144,7 @@ index 316d560..624d466 100644
  from kpip._internal.utils import appdirs
  from kpip._internal.utils.compat import WINDOWS, get_locale_encoding
  from kpip._internal.utils.logging import getLogger
-@@ -71,7 +71,7 @@ def get_configuration_files() -> dict[Kind, list[str]]:
+@@ -79,7 +79,7 @@ def get_configuration_files() -> dict[Kind, list[str]]:
          os.path.join(path, CONFIG_BASENAME) for path in appdirs.site_config_dirs("pip")
      ]
  
@@ -613,7 +613,7 @@ index 474992d..97c8487 100644
      egg_link_names = _egg_link_names(raw_name)
      for site in sites:
 diff --git a/src/kpip/_internal/utils/misc.py b/src/kpip/_internal/utils/misc.py
-index 5e715cc..2d71df5 100644
+index 6da21e8..9ae0c51 100644
 --- a/src/kpip/_internal/utils/misc.py
 +++ b/src/kpip/_internal/utils/misc.py
 @@ -10,7 +10,6 @@ import posixpath
@@ -651,7 +651,7 @@ index 5e715cc..2d71df5 100644
  
  
  def write_output(msg: Any, *args: Any) -> None:
-@@ -649,7 +650,7 @@ def check_externally_managed() -> None:
+@@ -641,7 +642,7 @@ def check_externally_managed() -> None:
      """
      if running_under_virtualenv():
          return
