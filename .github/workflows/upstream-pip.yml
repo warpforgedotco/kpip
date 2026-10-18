@@ -44,6 +44,9 @@ jobs:
             git diff --stat -- src tests | tail -n 1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      # The unit tests expect Subversion on CI, as checks.yml installs it.
+      - name: Install Subversion
+        run: sudo apt-get update && sudo apt-get install --yes subversion
       - run: uv sync --locked --group test --python 3.15
       # A patch's new code that names something upstream has since removed
       # still applies; only an undefined name gives it away.
