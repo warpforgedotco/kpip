@@ -709,6 +709,12 @@ class PipTestEnvironment(TestFileEnvironment):
         __tracebackhide__ = True
         if self.pip_expect_warning:
             kwargs["allow_stderr_warning"] = True
+        resolver = kwargs.get("environ", self.environ).get("PIP_RESOLVER")
+        if resolver and "--isolated" in args:
+            # --isolated ignores PIP_RESOLVER: name the resolver the run
+            # tests with on the command line.
+            at = args.index("--isolated") + 1
+            args = (*args[:at], "--resolver", resolver, *args[at:])
         if self.zipapp:
             exe = "python"
             args = (self.zipapp,) + args
