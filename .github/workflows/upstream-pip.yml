@@ -1,0 +1,88 @@
+name: Upstream pip
+
+on:
+  schedule:
+    # kpip is pip's main plus patches, and pip's main moves on its own; this
+    # catches a patch that stopped applying, or a name upstream removed that
+    # a patch still uses, while upstream has moved by a day's commits.
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/upstream-pip.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Patches apply to pip's latest main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.15
+      # A bare sync moves to the latest main of each upstream the script
+      # vendors, and stops naming the patch that no longer applies.
+      - name: Sync
+        run: uv run --no-project scripts/vendor_pip.py sync
+      - name: How far upstream moved
+        if: always()
+        run: |
+          {
+            echo "pip \`$(git show HEAD:tools/vendoring/pip-upstream.txt | cut -c1-12)\` -> \`$(cut -c1-12 tools/vendoring/pip-upstream.txt)\`"
+            echo
+            echo '```'
+            git diff --stat -- src tests | tail -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - run: uv sync --locked --group test --python 3.15
+      # A patch's new code that names something upstream has since removed
+      # still applies; only an undefined name gives it away.
+      - name: ruff undefined names (generated trees)
+        run: >
+          uv run ruff check --select F821 --exclude src/kpip/_vendor
+          src/kpip tests
+      - name: Unit tests
+        run: >
+          uv run --python 3.15 pytest tests/unit
+          -n auto
+          -m "not network"
+          --color=yes -q --tb=short
+
+  report-scheduled-failure:
+    # As for the compile: a failed scheduled run only notifies whoever last
+    # edited the cron line. Keep one open issue, and add each further failed
+    # run to it until someone closes it.
+    name: Report scheduled failure
+    needs: [sync]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Scheduled sync failed against pip main"
+          body="Syncing kpip with pip's latest \`main\` failed: $RUN_URL
+
+          Usually a patch in \`tools/vendoring/patches/pip/\` no longer applies (the Sync step names it), or a patch's code names something upstream removed (the undefined-names step), or the unit tests caught a change. To fix it, run \`uv run scripts/vendor_pip.py sync\`, resolve the patch in \`build/pip\` and \`git am --continue\`, then \`export\` and \`sync\` (see AGENTS.md)."
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "$title" --body "$body" --label bug
+          fi
