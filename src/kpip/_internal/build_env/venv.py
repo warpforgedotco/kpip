@@ -115,7 +115,7 @@ class VenvBuildEnvironment(BuildEnvironment):
         if not interpreter.has_venv:
             raise VenvImportError
         self._env_path = TempDirectory(
-            kind=tempdir_kinds.BUILD_ENV, globally_managed=True
+            kind=TempDirectoryKind.BUILD_ENV, globally_managed=True
         ).path
         command = [interpreter.executable, "-m", "venv", "--without-pip"]
         if os.name != "nt":
