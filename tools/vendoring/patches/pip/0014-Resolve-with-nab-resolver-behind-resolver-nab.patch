@@ -41,8 +41,9 @@ pip's words.
  .../_internal/resolution/resolvelib/nab.py    | 890 ++++++++++++++++++
  .../resolution/resolvelib/resolver.py         |  22 +-
  tests/functional/test_install.py              |  25 +-
+ tests/lib/__init__.py                         |   6 +
  tests/unit/resolution_resolvelib/test_nab.py  | 642 +++++++++++++
- 7 files changed, 1596 insertions(+), 12 deletions(-)
+ 8 files changed, 1602 insertions(+), 12 deletions(-)
  create mode 100644 src/kpip/_internal/resolution/resolvelib/nab.py
  create mode 100644 tests/unit/resolution_resolvelib/test_nab.py
 
@@ -1144,6 +1145,23 @@ index 969fd13..0ef0f90 100644
      assert "HTTP_CACHE_CONTROL" not in environ_simplewheel
  
  
+diff --git a/tests/lib/__init__.py b/tests/lib/__init__.py
+index dfb8ed3..8d37a2c 100644
+--- a/tests/lib/__init__.py
++++ b/tests/lib/__init__.py
+@@ -709,6 +709,12 @@ class PipTestEnvironment(TestFileEnvironment):
+         __tracebackhide__ = True
+         if self.pip_expect_warning:
+             kwargs["allow_stderr_warning"] = True
++        resolver = kwargs.get("environ", self.environ).get("PIP_RESOLVER")
++        if resolver and "--isolated" in args:
++            # --isolated ignores PIP_RESOLVER: name the resolver the run
++            # tests with on the command line.
++            at = args.index("--isolated") + 1
++            args = (*args[:at], "--resolver", resolver, *args[at:])
+         if self.zipapp:
+             exe = "python"
+             args = (self.zipapp,) + args
 diff --git a/tests/unit/resolution_resolvelib/test_nab.py b/tests/unit/resolution_resolvelib/test_nab.py
 new file mode 100644
 index 0000000..ec687bf
