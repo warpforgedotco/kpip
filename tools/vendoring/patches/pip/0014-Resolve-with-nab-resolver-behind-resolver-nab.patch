@@ -1,0 +1,1794 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Tue, 6 Oct 2026 03:12:26 -0500
+Subject: [PATCH] Resolve with nab-resolver behind --resolver=nab
+
+nab-resolver, vendored beside resolvelib, is a PubGrub solver. With
+--resolver=nab it searches for the answer in place of resolvelib;
+everything around the search -- pip's factory, candidates, requirements,
+provider, the RequirementSet it builds and the errors it reports -- is
+pip's, as with resolvelib. --resolver is kpip's own option rather than a
+--use-feature value: kpip shares pip's configuration, and pip ignores a key
+it does not know but rejects a value it does not know for one it does.
+Build dependencies resolve with the same resolver.
+
+Each of pip's requirements is the range of what could be chosen while it
+is in play: what pip's finder offers for it, pre-releases included, and
+what a requirement seen admits beside it (a direct URL, a pinned yanked
+release); a range widens when one is learnt, by starting again. Which of
+those pip would offer depends on everything in play, so nab chooses a
+version by asking pip about the requirements of the user and of the
+candidates it has decided on, as resolvelib asks, and taking pip's first
+candidate in nab's range: pip's pre-release, yanked, direct-URL and
+installed-version rules, and its order, hold. Where nab has derived a range
+before what admits it is in play, a requirement seen from a parent version
+it has not ruled out may admit it; nothing else does.
+A version so chosen must be
+one pip offers beside the answer's own requirements, or the package is
+chosen again without it. A version pip finds
+is one choice, built from the first of its files that builds.
+
+As pip, nab reads no index for an installed version pip prefers: that
+version is its range until a requirement on it reads the index, or a
+resolution fails without the index, and then it starts again with it.
+
+A failure is reported through the requirements nab's derivation names, in
+pip's words.
+---
+ src/kpip/_internal/build_env/installer.py     |   9 +
+ src/kpip/_internal/cli/cmdoptions.py          |  17 +
+ src/kpip/_internal/cli/req_command.py         |   3 +
+ .../_internal/resolution/resolvelib/nab.py    | 890 ++++++++++++++++++
+ .../resolution/resolvelib/resolver.py         |  22 +-
+ tests/functional/test_install.py              |  25 +-
+ tests/unit/resolution_resolvelib/test_nab.py  | 642 +++++++++++++
+ 7 files changed, 1596 insertions(+), 12 deletions(-)
+ create mode 100644 src/kpip/_internal/resolution/resolvelib/nab.py
+ create mode 100644 tests/unit/resolution_resolvelib/test_nab.py
+
+diff --git a/src/kpip/_internal/build_env/installer.py b/src/kpip/_internal/build_env/installer.py
+index 2b5e46c..4c23b4d 100644
+--- a/src/kpip/_internal/build_env/installer.py
++++ b/src/kpip/_internal/build_env/installer.py
+@@ -43,9 +43,13 @@ class SubprocessBuildEnvironmentInstaller:
+         self,
+         finder: PackageFinder,
+         build_constraints: list[str] | None = None,
++        solver: str = "resolvelib",
+     ) -> None:
+         self.finder = finder
+         self._build_constraints = build_constraints or []
++        # The parent's --resolver, which the child may not read from the
++        # environment or configuration: it was given on the command line.
++        self._solver = solver
+ 
+     def install(
+         self,
+@@ -138,6 +142,7 @@ class SubprocessBuildEnvironmentInstaller:
+ 
+         if finder.uploaded_prior_to:
+             args.extend(["--uploaded-prior-to", finder.uploaded_prior_to.isoformat()])
++        args.extend(["--resolver", self._solver])
+         args.append("--")
+         args.extend(requirements)
+ 
+@@ -179,10 +184,12 @@ class InprocessBuildEnvironmentInstaller:
+         wheel_cache: WheelCache,
+         build_constraints: Sequence[InstallRequirement] = (),
+         verbosity: int = 0,
++        solver: str = "resolvelib",
+     ) -> None:
+         from kpip._internal.operations.prepare import RequirementPreparer
+ 
+         self._finder = finder
++        self._solver = solver
+         self._build_constraints = build_constraints
+         self._wheel_cache = wheel_cache
+         self._level = 0
+@@ -331,4 +338,6 @@ class InprocessBuildEnvironmentInstaller:
+             force_reinstall=False,
+             upgrade_strategy="to-satisfy-only",
+             py_version_info=None,
++            # Inherited: build dependencies resolve as the rest does.
++            solver=self._solver,
+         )
+diff --git a/src/kpip/_internal/cli/cmdoptions.py b/src/kpip/_internal/cli/cmdoptions.py
+index 13111c0..4975982 100644
+--- a/src/kpip/_internal/cli/cmdoptions.py
++++ b/src/kpip/_internal/cli/cmdoptions.py
+@@ -1336,6 +1336,22 @@ use_new_feature: Callable[..., Option] = partial(
+     help="Enable new functionality, that may be backward incompatible.",
+ )
+ 
++# kpip's own option, not a --use-feature value: kpip shares pip's
++# configuration, and pip ignores a key it does not know but rejects a value
++# it does not know for one it does.
++resolver: Callable[..., Option] = partial(
++    Option,
++    "--resolver",
++    dest="resolver",
++    metavar="resolver",
++    choices=["resolvelib", "nab"],
++    default="resolvelib",
++    help=(
++        "What searches for the answer: pip's resolvelib (default), or "
++        "nab-resolver, a PubGrub solver (experimental)."
++    ),
++)
++
+ use_deprecated_feature: Callable[..., Option] = partial(
+     Option,
+     "--use-deprecated",
+@@ -1382,6 +1398,7 @@ general_group: dict[str, Any] = {
+         no_python_version_warning,
+         use_new_feature,
+         use_deprecated_feature,
++        resolver,
+         resume_retries,
+     ],
+ }
+diff --git a/src/kpip/_internal/cli/req_command.py b/src/kpip/_internal/cli/req_command.py
+index c047c92..96d59a0 100644
+--- a/src/kpip/_internal/cli/req_command.py
++++ b/src/kpip/_internal/cli/req_command.py
+@@ -209,11 +209,13 @@ class RequirementCommand(IndexGroupCommand):
+                 build_constraints=build_constraint_reqs,
+                 verbosity=verbosity,
+                 wheel_cache=WheelCache(options.cache_dir),
++                solver=options.resolver,
+             )
+         else:
+             env_installer = SubprocessBuildEnvironmentInstaller(
+                 finder,
+                 build_constraints=build_constraints,
++                solver=options.resolver,
+             )
+ 
+         if not options.build_isolation:
+@@ -289,6 +291,7 @@ class RequirementCommand(IndexGroupCommand):
+                 force_reinstall=force_reinstall,
+                 upgrade_strategy=upgrade_strategy,
+                 py_version_info=py_version_info,
++                solver=options.resolver,
+             )
+         import kpip._internal.resolution.legacy.resolver
+ 
+diff --git a/src/kpip/_internal/resolution/resolvelib/nab.py b/src/kpip/_internal/resolution/resolvelib/nab.py
+new file mode 100644
+index 0000000..a8ace7e
+--- /dev/null
++++ b/src/kpip/_internal/resolution/resolvelib/nab.py
+@@ -0,0 +1,890 @@
++"""pip's resolver, solved by nab-resolver.
++
++pip's resolvelib layer -- its factory, candidates, requirements, provider and
++error reporting -- is kept as pip has it; this replaces only resolvelib's
++``Resolver``, with nab's PubGrub solver (``kpip._vendor.nab_resolver``).
++
++``NabResolver`` asks pip's ``PipProvider`` what resolvelib would ask it and
++hands the problem to nab. Each of pip's identifiers is a nab package. A nab
++version is a candidate's key: its version, and for a candidate a requirement
++names directly -- a URL, a path, an editable -- its link too, so two
++different links of one version are two choices, as they are to resolvelib.
++Each of pip's requirements is the range of the keys that could ever be
++chosen while it is in play: what ``find_matches`` gives for it beside the
++user's own requirements, with pre-releases admitted, and beside each
++requirement seen that admits more (a direct URL, a pinned yanked release).
++Which of them is eligible is pip's to say, as it depends on everything in
++play: nab chooses a version by asking ``find_matches`` about the requirements
++of the user and of the candidates it has decided on, as resolvelib asks it,
++and taking pip's first candidate in nab's range. It answers as resolvelib does
++-- a ``Result`` of the chosen candidates and their graph, or
++``ResolutionImpossible`` naming the requirements in conflict -- so pip turns
++either into what it reports.
++"""
++
++from __future__ import annotations
++
++import functools
++import logging
++import operator
++from collections.abc import Callable, Iterable, Iterator, Mapping
++from typing import Any, NamedTuple
++
++from kpip._vendor.nab_resolver.errors import ResolutionError as NabResolutionError
++from kpip._vendor.nab_resolver.ranges import Range
++from kpip._vendor.nab_resolver.resolver import BaseProvider
++from kpip._vendor.nab_resolver.resolver import Resolver as NabSolver
++from kpip._vendor.nab_resolver.types import RootRequirement
++from kpip._vendor.packaging.version import Version
++from kpip._vendor.resolvelib import (
++    BaseReporter,
++    ResolutionImpossible,
++    ResolutionTooDeep,
++)
++from kpip._vendor.resolvelib.resolvers import RequirementInformation, Result
++from kpip._vendor.resolvelib.structs import DirectedGraph
++
++from kpip._internal.exceptions import MetadataInvalid, UnsupportedWheel
++from kpip._internal.models.link import _clean_link
++from kpip._internal.resolution.resolvelib.candidates import (
++    REQUIRES_PYTHON_IDENTIFIER,
++)
++from kpip._internal.resolution.resolvelib.found_candidates import FoundCandidates
++from kpip._internal.resolution.resolvelib.requirements import UnsatisfiableRequirement
++
++logger = logging.getLogger(__name__)
++
++# pip's budget counts resolvelib's rounds. nab spends its iterations far
++# faster -- each decision a backjump undoes is made again; about 70 to a round
++# on airflow -- so it is given this many for each.
++_ITERATIONS_PER_ROUND = 100
++
++
++class _Key(NamedTuple):
++    """A nab version: a candidate's version, and the link of a candidate a
++    requirement names directly ("" for the index's and the installed)."""
++
++    version: Version
++    link: str
++
++    def __str__(self) -> str:
++        return str(self.version) if not self.link else f"{self.version} ({self.link})"
++
++
++_ROOT_KEY = _Key(Version("0"), "")
++
++
++class _Restart(Exception):
++    """A resolution must start again, knowing what it now knows."""
++
++
++class _IteratorMapping(Mapping[str, Iterator[Any]]):
++    """Requirements by identifier, as resolvelib hands them to
++    ``find_matches``: a fresh iterator each time one is asked for, since
++    pip reads them more than once."""
++
++    def __init__(self, values: Mapping[str, list[Any]]) -> None:
++        self._values = values
++
++    def __getitem__(self, key: str) -> Iterator[Any]:
++        return iter(self._values[key])
++
++    def __iter__(self) -> Iterator[str]:
++        return iter(self._values)
++
++    def __len__(self) -> int:
++        return len(self._values)
++
++
++class _Criterion(NamedTuple):
++    """What pip's reporter reads of resolvelib's criterion."""
++
++    information: list[RequirementInformation[Any, Any]]
++
++
++def _base_identifier(identifier: str) -> str:
++    return identifier.partition("[")[0]
++
++
++def _is_explicit(requirement: Any) -> bool:
++    return requirement.get_candidate_lookup()[0] is not None
++
++
++_INSTALLED = "<installed>"
++
++
++def _link_identity(link: Any) -> str:
++    """A link as pip tells links apart (``links_equivalent``)."""
++    clean = _clean_link(link)
++    return "|".join(
++        (
++            clean.parsed.geturl(),
++            repr(sorted(clean.query.items())),
++            clean.subdirectory,
++            repr(sorted(clean.hashes.items())),
++        )
++    )
++
++
++def _is_direct(candidate: Any) -> bool:
++    """Whether a requirement names the candidate's file -- a URL, a path, an
++    editable -- rather than pip finding it: pip makes an index candidate from
++    a requirement with no link of its own."""
++    candidate = getattr(candidate, "base", candidate)  # an extras candidate's
++    ireq = candidate.get_install_requirement()
++    return ireq is not None and ireq.original_link is not None
++
++
++def _candidate_key(candidate: Any) -> _Key:
++    """A built candidate's key: the installed distribution's, a named file's,
++    or, for one pip found, its version's -- whichever of its files built."""
++    if candidate.is_installed:
++        return _Key(candidate.version, _INSTALLED)
++    if _is_direct(candidate):
++        link = candidate.source_link
++        return _Key(
++            candidate.version, _link_identity(link) if link else repr(candidate)
++        )
++    return _Key(candidate.version, "")
++
++
++def _file(build: Callable[[], Any]) -> Any:
++    """The link of the file an index candidate is built from."""
++    return getattr(build, "keywords", {}).get("link")
++
++
++class _NabProvider(BaseProvider[str, _Key]):
++    """pip's provider, as nab asks it."""
++
++    def __init__(
++        self,
++        provider: Any,
++        reporter: BaseReporter[Any, Any, Any],
++        admitting: dict[str, list[Any]],
++        full: set[str],
++        strict: set[str],
++    ) -> None:
++        self._provider = provider
++        self._reporter = reporter
++        # Requirements from dependencies that make eligible a candidate the
++        # other requirements on their identifier would not offer: a direct
++        # URL, or a pinned yanked release. Learnt across attempts. Each widens
++        # every range on its identifier -- the ranges are what could ever be
++        # chosen -- and never narrows one: which candidates are eligible is
++        # pip's to say, when one is chosen.
++        self._admitting = admitting
++        # Identifiers whose index must be read although an installed version
++        # pip prefers is there: one of their requirements read it, or nab
++        # ruled the installed version out. Learnt across attempts. Until
++        # then, as pip, their index is not read, and their ranges hold the
++        # installed version only.
++        self._full = full
++        # Identifiers a version chosen beside a requirement not in play left
++        # one pip would not offer in the end: none is chosen so again.
++        self._strict = strict
++        self.fallbacks: list[tuple[str, _Key]] = []
++        self.installed_only: set[str] = set()
++        # Every requirement seen on each identifier, with what required it,
++        # and that parent's identifier and key (None for the user's).
++        self.information: dict[str, list[RequirementInformation[Any, Any]]] = {}
++        self._sources: dict[str, list[tuple[Any, str | None, _Key | None]]] = {}
++        # The user's own requirements, by identifier: always in play.
++        self._roots: dict[str, list[Any]] = {}
++        # Per identifier: how to build each key's candidate. pip offers a
++        # version it finds once, built from the first of its files, in pip's
++        # order, that builds: an index key holds each file's.
++        self._pool: dict[str, dict[_Key, dict[str, Callable[[], Any]]]] = {}
++        self._built: dict[tuple[str, _Key], Any] = {}
++        self._invalid: set[tuple[str, _Key]] = set()
++        self._yanked: set[tuple[str, _Key]] = set()
++        # Keyed by id(): built candidates are kept alive in _built.
++        self._keys: dict[int, _Key] = {}
++        # nab's decisions as of the last choice, what is in play, and the
++        # ranges it has derived, what still may be.
++        self._decisions: Mapping[str, _Key] = {}
++        self._positive_ranges: Mapping[str, Range[_Key]] = {}
++        # The decision made since nab's last snapshot.
++        self._latest: tuple[str, _Key] | None = None
++        self._decided_before: dict[str, _Key] = {}
++        # Keyed by id(): requirements are kept alive in _requirements.
++        self._ranges: dict[int, Range[_Key]] = {}
++        self._requirements: list[Any] = []
++        # Requirements compare by what they say: equal ones on one identifier
++        # have the same range.
++        self._ranges_by_content: dict[tuple[str, Any], Range[_Key]] = {}
++        # Per identifier: the requirements a range was computed for.
++        self._ranged: dict[str, list[Any]] = {}
++        self._dependencies: dict[tuple[str, _Key], dict[str, Range[_Key]]] = {}
++        self._opt_ins: dict[str, Any] = {}
++        # The first error reading a candidate's dependencies raised, for when
++        # nothing else resolves.
++        self.unreadable: Exception | None = None
++        # What pip offers for each set of requirements in play: nab asks for
++        # a package's version under the same set again and again.
++        self._offers: dict[tuple[Any, ...], list[Any]] = {}
++
++    def add_roots(
++        self, requirements: Iterable[Any]
++    ) -> list[RootRequirement[str, _Key]]:
++        """The user's requirements, each recorded before any range is asked
++        for, so every range is asked for beside all of them."""
++        requirements = list(requirements)
++        identified = []
++        for requirement in requirements:
++            identifier = self._provider.identify(requirement)
++            self._roots.setdefault(identifier, []).append(requirement)
++            identified.append((identifier, requirement))
++        return [
++            RootRequirement(identifier, self.require(requirement, None)[1], requirement)
++            for identifier, requirement in identified
++        ]
++
++    def require(
++        self, requirement: Any, parent: Any, source: tuple[str, _Key] | None = None
++    ) -> tuple[str, Range[_Key]]:
++        """Record ``requirement`` of ``parent``, whose identifier and key
++        ``source`` gives, and return its identifier and range."""
++        identifier = self._provider.identify(requirement)
++        self.information.setdefault(identifier, []).append(
++            RequirementInformation(requirement, parent)
++        )
++        name, key = source or (None, None)
++        self._sources.setdefault(identifier, []).append((requirement, name, key))
++        self._reporter.adding_requirement(requirement, parent)
++        found = self._range(identifier, requirement)
++        if parent is not None and self._admits(identifier, requirement, found):
++            self._learn_admitting(identifier, requirement)
++        return identifier, found
++
++    def _admits(self, identifier: str, requirement: Any, found: Range[_Key]) -> bool:
++        """Whether ``requirement`` makes eligible what other requirements on
++        its identifier would not offer: a candidate it names, or a yanked
++        release it pins."""
++        if identifier == REQUIRES_PYTHON_IDENTIFIER:
++            return False
++        return _is_explicit(requirement) or any(
++            (identifier, key) in self._yanked and key in found
++            for key in self._pool.get(identifier, ())
++        )
++
++    def _learn_admitting(self, identifier: str, requirement: Any) -> None:
++        """Widen every range on ``identifier`` -- and, for a base, on its
++        extras -- by what ``requirement`` admits. A range already given to nab
++        cannot widen: when one would, the resolution starts again."""
++        known = self._admitting.setdefault(identifier, [])
++        if requirement in known:
++            return
++        known.append(requirement)
++        for ranged, requirements in self._ranged.items():
++            if ranged != identifier and _base_identifier(ranged) != identifier:
++                continue
++            for other in requirements:
++                if other == requirement:
++                    continue
++                if ranged == identifier:
++                    matches = self._find(ranged, [other, requirement])
++                else:
++                    matches = self._find(ranged, [other], [requirement])
++                found = self._ranges[id(other)]
++                if any(key not in found for key in self._pool_matches(ranged, matches)):
++                    raise _Restart
++
++    def _opt_in(self, name: str) -> Any:
++        """A requirement on ``name`` that every version meets and that admits
++        pre-releases, as pip admits them once any requirement names one."""
++        opt_in = self._opt_ins.get(name)
++        if opt_in is None:
++            opt_in = next(
++                iter(
++                    self._provider._factory.make_requirements_from_spec(
++                        f"{name}>=0.dev0", None
++                    )
++                )
++            )
++            self._opt_ins[name] = opt_in
++        return opt_in
++
++    def _find(
++        self,
++        identifier: str,
++        requirements: list[Any],
++        base_requirements: Iterable[Any] = (),
++    ) -> Iterable[Any]:
++        """``find_matches`` for ``requirements`` beside the user's, with
++        pre-releases admitted: what pip could offer for them, whatever else
++        is in play."""
++        base = _base_identifier(identifier)
++        context = {identifier: [*requirements, *self._roots.get(identifier, ())]}
++        if base != identifier:
++            context[base] = [*self._roots.get(base, ()), *base_requirements]
++        if base != REQUIRES_PYTHON_IDENTIFIER:
++            context[base].append(self._opt_in(base))
++        return self._provider.find_matches(
++            identifier, _IteratorMapping(context), _IteratorMapping({identifier: []})
++        )
++
++    def _range(self, identifier: str, requirement: Any) -> Range[_Key]:
++        cached = self._ranges.get(id(requirement))
++        if cached is not None:
++            return cached
++        content_key = (identifier, requirement)
++        found = self._ranges_by_content.get(content_key)
++        if found is None:
++            found = Range.from_versions(self._permitted(identifier, requirement))
++            self._ranges_by_content[content_key] = found
++        self._ranges[id(requirement)] = found
++        self._requirements.append(requirement)
++        self._ranged.setdefault(identifier, []).append(requirement)
++        return found
++
++    def _permitted(self, identifier: str, requirement: Any) -> list[_Key]:
++        """The keys that could ever be chosen while ``requirement`` is in
++        play: what pip offers for it beside the user's requirements, and
++        beside each known requirement that admits more."""
++        if isinstance(requirement, UnsatisfiableRequirement):
++            # Nothing meets it; find_matches would not say so beside a
++            # requirement that names the project.
++            return []
++        keys = self._pool_matches(identifier, self._find(identifier, [requirement]))
++        base = _base_identifier(identifier)
++        for admitting in self._admitting.get(identifier, ()):
++            if admitting != requirement:
++                matches = self._find(identifier, [requirement, admitting])
++                keys += self._pool_matches(identifier, matches)
++        if base != identifier:
++            for admitting in self._admitting.get(base, ()):
++                matches = self._find(identifier, [requirement], [admitting])
++                keys += self._pool_matches(identifier, matches)
++        return keys
++
++    def _add(
++        self, identifier: str, key: _Key, build: Callable[[], Any], file: str = ""
++    ) -> None:
++        builds = self._pool.setdefault(identifier, {}).setdefault(key, {})
++        builds.setdefault(file, build)
++
++    def _add_infos(self, identifier: str, matches: FoundCandidates) -> list[Any]:
++        """Record each file ``matches`` offers under its version's key;
++        returns the files' versions, in pip's order."""
++        versions = []
++        for version, build in matches._get_infos():
++            key = _Key(version, "")
++            link = _file(build)
++            self._add(identifier, key, build, "" if link is None else link.url)
++            if link is not None and link.is_yanked:
++                self._yanked.add((identifier, key))
++            versions.append(version)
++        return versions
++
++    def _pool_matches(self, identifier: str, matches: Iterable[Any]) -> list[_Key]:
++        """The keys of every file ``matches`` holds, recorded with how to
++        build each; none is built."""
++        keys = []
++        if isinstance(matches, FoundCandidates):
++            installed = matches._installed
++            if installed is not None:
++                key = _Key(installed.version, _INSTALLED)
++                self._add(identifier, key, lambda: installed)
++                keys.append(key)
++                if matches._prefers_installed and identifier not in self._full:
++                    self.installed_only.add(identifier)
++                    return keys
++            self._read_index(identifier)
++            keys += [
++                _Key(version, "") for version in self._add_infos(identifier, matches)
++            ]
++        else:
++            for candidate in matches:
++                key = _candidate_key(candidate)
++                self._add(identifier, key, lambda c=candidate: c)
++                keys.append(key)
++        return keys
++
++    def _read_index(self, identifier: str) -> None:
++        """Note that ``identifier``'s index is read: a range computed without
++        it, from its installed version alone, is too narrow."""
++        if identifier in self._full:
++            return
++        self._full.add(identifier)
++        if identifier in self.installed_only:
++            raise _Restart
++
++    def _build(self, identifier: str, key: _Key) -> Any:
++        """The candidate for ``key``, built once, from the first of its files
++        that builds; None, and the key dropped, when none does or one's
++        metadata is invalid (pip then tries no other file of the version)."""
++        if (identifier, key) in self._built:
++            return self._built[identifier, key]
++        candidate = None
++        for build in list(self._pool[identifier][key].values()):
++            try:
++                candidate = build()
++            except MetadataInvalid as e:
++                logger.warning(
++                    "Ignoring version %s of %s since it has invalid metadata:\n"
++                    "%s\n"
++                    "Please use pip<24.1 if you need to use this version.",
++                    key.version,
++                    e.ireq.name,
++                    e,
++                )
++                self._invalid.add((identifier, key))
++                candidate = None
++                break
++            if candidate is not None:
++                break
++        self._built[identifier, key] = candidate
++        if candidate is None:
++            del self._pool[identifier][key]
++        else:
++            self._keys[id(candidate)] = key
++        return candidate
++
++    def meets_none_alone(self, requirement: Any) -> bool:
++        """Whether no candidate meets ``requirement`` even asked about on its
++        own, without the user's other requirements on its identifier."""
++        if isinstance(requirement, UnsatisfiableRequirement):
++            return True
++        identifier = self._provider.identify(requirement)
++        matches = self._provider.find_matches(
++            identifier,
++            _IteratorMapping({identifier: [requirement]}),
++            _IteratorMapping({identifier: []}),
++        )
++        if isinstance(matches, FoundCandidates):
++            # Without building one: iterating would prepare the first.
++            return matches._installed is None and not any(
++                True for _ in matches._get_infos()
++            )
++        return not any(True for _ in matches)
++
++    def range_of(self, requirement: Any) -> Range[_Key]:
++        return self._ranges[id(requirement)]
++
++    def key_of(self, candidate: Any) -> _Key | None:
++        return self._keys.get(id(candidate))
++
++    def candidate(self, identifier: str, key: _Key) -> Any:
++        return self._built[identifier, key]
++
++    def receive_partial_solution_hint(
++        self,
++        positive_ranges: Mapping[str, Range[_Key]],
++        decisions: Mapping[str, _Key],
++    ) -> None:
++        self._positive_ranges = positive_ranges
++        self._decisions = decisions
++        self._latest = None
++
++    def _decided(self, name: str) -> _Key | None:
++        if self._latest is not None and self._latest[0] == name:
++            return self._latest[1]
++        return self._decisions.get(name)
++
++    def _is_active(self, name: str | None, key: _Key | None) -> bool:
++        """Whether a requirement of the parent ``name`` at ``key`` is in
++        play: the user's (no parent), or one of a version nab decided on."""
++        return name is None or self._decided(name) == key
++
++    def _may_be_active(self, name: str | None, key: _Key | None) -> bool:
++        """Whether nab has not ruled out the parent ``name`` at ``key``:
++        decided another version, or derived a range without it."""
++        if name is None:
++            return True
++        decided = self._decided(name)
++        if decided is not None:
++            return decided == key
++        allowed = self._positive_ranges.get(name)
++        return allowed is None or key in allowed
++
++    def _active(self, identifier: str) -> list[Any]:
++        """The requirements in play on ``identifier``."""
++        return [
++            requirement
++            for requirement, name, key in self._sources.get(identifier, ())
++            if self._is_active(name, key)
++        ]
++
++    def choose_version(self, package: str, version_range: Range[_Key]) -> _Key | None:
++        key = self._choose(package, version_range)
++        if key is None:
++            return None
++        previous = self._decided_before.get(package)
++        if previous is not None and previous != key:
++            # resolvelib's word for nab undoing a decision.
++            self._reporter.rejecting_candidate(
++                _Criterion(self.information.get(package, [])),
++                self.candidate(package, previous),
++            )
++        self._decided_before[package] = key
++        self._latest = (package, key)
++        self._reporter.pinning(self.candidate(package, key))
++        return key
++
++    def _choose(self, package: str, version_range: Range[_Key]) -> _Key | None:
++        """pip's first candidate in ``version_range`` for the requirements in
++        play -- what resolvelib would pin. nab can know a range before what
++        admits its versions is in play: it derives that a dependency must hold
++        before deciding the package that has it."""
++        base = _base_identifier(package)
++        context = {package: self._active(package)}
++        if base != package:
++            context[base] = self._active(base)
++        key = next(self._admitted(package, context, version_range), None)
++        if key is not None:
++            return key
++        # Then a candidate pip offers beside a requirement seen on the
++        # package from a version of its parent nab has not ruled out -- what
++        # it derived the range from -- and never one no such requirement
++        # admits.
++        if package in self._strict:
++            return None
++        for requirement, name, key in self._sources.get(package, ()):
++            if self._is_active(name, key) or not self._may_be_active(name, key):
++                continue  # in play already, or ruled out
++            widened = {**context, package: [requirement, *context[package]]}
++            key = next(self._admitted(package, widened, version_range), None)
++            if key is not None:
++                self.fallbacks.append((package, key))
++                return key
++        return None
++
++    def offered_in(self, pins: Mapping[str, _Key], package: str, key: _Key) -> bool:
++        """Whether pip offers ``key`` for ``package`` beside the requirements
++        the user and the ``pins`` have on it."""
++
++        def in_play(identifier: str) -> list[Any]:
++            return [
++                requirement
++                for requirement, name, parent in self._sources.get(identifier, ())
++                if name is None or pins.get(name) == parent
++            ]
++
++        base = _base_identifier(package)
++        context = {package: in_play(package)}
++        if base != package:
++            context[base] = in_play(base)
++        return (
++            next(self._admitted(package, context, Range.singleton(key)), None)
++            is not None
++        )
++
++    def _offered(self, package: str, context: dict[str, list[Any]]) -> list[Any]:
++        """What pip offers for the requirements ``context`` holds:
++        ``find_matches``'s answer, and the versions it finds in pip's order
++        (None until read) -- or, when a requirement names one, the candidates
++        it names."""
++        base = _base_identifier(package)
++        signature = (
++            package,
++            frozenset(context[package]),
++            frozenset(context.get(base, ())),
++        )
++        offer = self._offers.get(signature)
++        if offer is None:
++            matches = self._provider.find_matches(
++                package, _IteratorMapping(context), _IteratorMapping({package: []})
++            )
++            # The index's versions are read when first needed: not while an
++            # installed version pip prefers will do.
++            found = isinstance(matches, FoundCandidates)
++            offer = [matches, None if found else list(matches)]
++            self._offers[signature] = offer
++        return offer
++
++    def _admitted(
++        self, package: str, context: dict[str, list[Any]], version_range: Range[_Key]
++    ) -> Iterator[_Key]:
++        """The keys in ``version_range`` of the candidates pip offers for
++        ``context``, in pip's order, each built only when reached:
++        ``FoundCandidates``'s iteration, keyed."""
++        offer = self._offered(package, context)
++        matches = offer[0]
++        if not isinstance(matches, FoundCandidates):
++            for candidate in offer[1]:
++                key = _candidate_key(candidate)
++                self._add(package, key, lambda c=candidate: c)
++                if key in version_range and self._build(package, key) is not None:
++                    yield key
++            return
++
++        def index(found: set[Any]) -> Iterator[tuple[Any, _Key]]:
++            # Each version once, in pip's order, unbuilt: built by the caller,
++            # as pip builds it -- after placing the installed version.
++            if offer[1] is None:
++                self._read_index(package)
++                offer[1] = self._add_infos(package, matches)
++            for version in offer[1]:
++                if version not in found:
++                    found.add(version)
++                    yield version, _Key(version, "")
++
++        def builds(key: _Key) -> bool:
++            return key in version_range and self._build(package, key) is not None
++
++        installed = matches._installed
++        if installed is None:
++            for _, key in index(set()):
++                if builds(key):
++                    yield key
++            return
++        installed_key = _Key(installed.version, _INSTALLED)
++        self._add(package, installed_key, lambda: installed)
++        if matches._prefers_installed:
++            if builds(installed_key):
++                yield installed_key
++            for _, key in index({installed.version}):
++                if builds(key):
++                    yield key
++            return
++        # The installed version among the index's, before the first that is
++        # not newer.
++        inserted = False
++        for version, key in index(set()):
++            if not inserted and installed.version >= version:
++                inserted = True
++                if builds(installed_key):
++                    yield installed_key
++            if builds(key):
++                yield key
++        if not inserted and builds(installed_key):
++            yield installed_key
++
++    def has_satisfying_version(self, package: str, version_range: Range[_Key]) -> bool:
++        return any(key in version_range for key in self._pool.get(package, {}))
++
++    def get_dependencies(
++        self, package: str, version: _Key
++    ) -> Mapping[str, Range[_Key]]:
++        known = self._dependencies.get((package, version))
++        if known is not None:
++            return known
++        candidate = self.candidate(package, version)
++        dependencies: dict[str, Range[_Key]] = {}
++        try:
++            for requirement in self._provider.get_dependencies(candidate):
++                identifier, found = self.require(
++                    requirement, candidate, (package, version)
++                )
++                if identifier in dependencies:
++                    found = dependencies[identifier] & found
++                dependencies[identifier] = found
++                if found.is_empty:
++                    # This version cannot be chosen, whatever else it needs.
++                    # The rest are not read, as resolvelib does not: reading
++                    # one can build it (a URL) -- and Requires-Python comes
++                    # first.
++                    break
++        except (FileNotFoundError, UnsupportedWheel) as error:
++            # pip prepares a URL dependency as it reads it: one that is gone,
++            # or a wheel for another platform. resolvelib meets it only on a
++            # candidate it pins -- it stops reading at the first dependency
++            # that conflicts -- and nab reads further, so this version is left
++            # instead, and the error raised if nothing else resolves.
++            if self.unreadable is None:
++                self.unreadable = error
++            dependencies[f"<unreadable dependencies of {package}>"] = Range.empty()
++        self._dependencies[package, version] = dependencies
++        return dependencies
++
++    def prioritize(
++        self,
++        package: str,
++        version_range: Range[_Key],
++        conflict_counts: Mapping[str, int],
++        culprit_counts: Mapping[str, int] | None = None,
++    ) -> Any:
++        # pip's preference reads the requirements resolvelib's criterion
++        # would hold: not those of parent versions nab has left, and those of
++        # parents it has yet to decide but has not ruled out -- it often knows
++        # a package is needed before deciding what needs it.
++        preference = self._provider.get_preference(
++            identifier=package,
++            resolutions={},
++            candidates={},
++            information={
++                package: [
++                    information
++                    for information, (_, name, key) in zip(
++                        self.information.get(package, ()),
++                        self._sources.get(package, ()),
++                    )
++                    if self._may_be_active(name, key)
++                ]
++            },
++            backtrack_causes=[],
++        )
++        # Whether the target Python meets Requires-Python is known up front.
++        return (package != REQUIRES_PYTHON_IDENTIFIER, preference)
++
++    def widen_decision(self, package: str, version: _Key) -> None:
++        return None
++
++
++def _derivation_terms(incompatibility: Any) -> dict[Any, list[Any]]:
++    """Every package a failure's derivation names, with the constraints its
++    terms put on it."""
++    terms: dict[Any, list[Any]] = {}
++    stack = [incompatibility]
++    seen: set[int] = set()
++    while stack:
++        current = stack.pop()
++        if current is None or id(current) in seen:
++            continue
++        seen.add(id(current))
++        for term in current.terms:
++            terms.setdefault(term.package, []).append(term.constraint)
++        stack.extend((current.cause_left, current.cause_right))
++    return terms
++
++
++class NabResolver:
++    """resolvelib's ``Resolver``, solving with nab."""
++
++    def __init__(self, provider: Any, reporter: BaseReporter[Any, Any, Any]) -> None:
++        self.provider = provider
++        self.reporter = reporter
++
++    def resolve(self, requirements: Iterable[Any], max_rounds: int) -> Result:
++        requirements = list(requirements)
++        self.reporter.starting()
++        admitting: dict[str, list[Any]] = {}
++        full: set[str] = set()
++        strict: set[str] = set()
++        # Each restart has learnt a requirement that admits more, an
++        # identifier whose index must be read, or one to choose strictly, so
++        # this ends.
++        while True:
++            adapter = _NabProvider(
++                self.provider, self.reporter, admitting, full, strict
++            )
++            try:
++                roots = adapter.add_roots(requirements)
++                solution = NabSolver(
++                    adapter,
++                    max_iterations=max_rounds * _ITERATIONS_PER_ROUND,
++                    root_version=_ROOT_KEY,
++                ).solve(roots)
++            except _Restart:
++                continue
++            except NabResolutionError as error:
++                if adapter.installed_only - full:
++                    # The installed versions kept were not enough: read their
++                    # index too, as resolvelib would on backtracking.
++                    full |= adapter.installed_only
++                    continue
++                if adapter.unreadable is not None:
++                    raise adapter.unreadable from error
++                if error.incompatibility is None:
++                    raise ResolutionTooDeep(max_rounds) from error
++                logger.debug("nab's derivation of the failure:\n%s", error)
++                raise ResolutionImpossible(self._causes(adapter, error)) from error
++            # A version chosen beside a requirement that is not in the answer
++            # must be one pip offers beside those that are.
++            unoffered = {
++                package
++                for package, key in adapter.fallbacks
++                if solution.pins.get(package) == key
++                and not adapter.offered_in(solution.pins, package, key)
++            }
++            if unoffered:
++                strict |= unoffered
++                continue
++            break
++
++        mapping = {
++            identifier: adapter.candidate(identifier, key)
++            for identifier, key in solution.pins.items()
++        }
++        graph: DirectedGraph[Any] = DirectedGraph()
++        graph.add(None)
++        for identifier in mapping:
++            graph.add(identifier)
++        for identifier in solution.roots:
++            graph.connect(None, identifier)
++        for parent, child in solution.edges:
++            if parent in mapping and child in mapping:
++                graph.connect(parent, child)
++        self.reporter.ending(solution)
++        return Result(mapping=mapping, graph=graph, criteria={})
++
++    @staticmethod
++    def _causes(
++        adapter: _NabProvider, error: NabResolutionError
++    ) -> list[RequirementInformation[Any, Any]]:
++        """The requirements a failure involves, as pip reports them: those on
++        the packages whose requirements no choice of their parents' versions
++        meets -- pip's failing criterion -- or, where none is, on every
++        package the derivation names; each from the user or from a version
++        of a parent the derivation names."""
++        terms = _derivation_terms(error.incompatibility)
++        # In name order: the report reads the same whatever the hash seed.
++        packages = sorted(terms, key=str)
++
++        def named(information: RequirementInformation[Any, Any]) -> bool:
++            parent = information.parent
++            if parent is None:
++                return True
++            key = adapter.key_of(parent)
++            return key is not None and any(
++                key in constraint for constraint in terms.get(parent.name, ())
++            )
++
++        relevant = {
++            package: [i for i in adapter.information.get(package, ()) if named(i)]
++            for package in packages
++        }
++
++        def unmet(informations: list[RequirementInformation[Any, Any]]) -> bool:
++            # One version of each parent is in play at a time: the user's
++            # requirements and, for each parent, any one of its versions'.
++            by_version: dict[tuple[Any, Any], Range[_Key]] = {}
++            for information in informations:
++                parent = information.parent
++                version = (
++                    None if parent is None else (parent.name, adapter.key_of(parent))
++                )
++                found = adapter.range_of(information.requirement)
++                if version in by_version:
++                    found = by_version[version] & found
++                by_version[version] = found
++            by_parent: dict[Any, Range[_Key]] = {}
++            for version, found in by_version.items():
++                name = None if version is None else version[0]
++                if name in by_parent:
++                    found = by_parent[name] | found
++                by_parent[name] = found
++            return functools.reduce(operator.and_, by_parent.values()).is_empty
++
++        failing = [
++            package
++            for package in packages
++            if relevant[package] and unmet(relevant[package])
++        ]
++        causes = []
++        seen = set()
++        for package in failing or packages:
++            informations = relevant[package]
++            # A requirement no candidate meets even on its own is the whole
++            # story for its package, as resolvelib tells it.
++            alone = [
++                information
++                for information in informations
++                if adapter.range_of(information.requirement).is_empty
++                and adapter.meets_none_alone(information.requirement)
++            ]
++            for information in alone or informations:
++                parent = information.parent
++                key = (
++                    information.requirement.format_for_error(),
++                    None if parent is None else (parent.name, parent.version),
++                )
++                if key not in seen:
++                    seen.add(key)
++                    causes.append(information)
++        return causes or [
++            information
++            for informations in adapter.information.values()
++            for information in informations
++            if information.parent is None
++        ]
+diff --git a/src/kpip/_internal/resolution/resolvelib/resolver.py b/src/kpip/_internal/resolution/resolvelib/resolver.py
+index d0322d3..49d1276 100644
+--- a/src/kpip/_internal/resolution/resolvelib/resolver.py
++++ b/src/kpip/_internal/resolution/resolvelib/resolver.py
+@@ -55,9 +55,14 @@ class Resolver(BaseResolver):
+         force_reinstall: bool,
+         upgrade_strategy: str,
+         py_version_info: tuple[int, ...] | None = None,
++        solver: str = "resolvelib",
+     ):
+         super().__init__()
+         assert upgrade_strategy in self._allowed_strategies
++        assert solver in ("resolvelib", "nab"), solver
++        # What searches for the answer: resolvelib, or nab-resolver
++        # (--resolver=nab). Everything around it is the same.
++        self.solver = solver
+         assert not (ignore_dependencies and only_dependencies)
+ 
+         self.factory = Factory(
+@@ -93,10 +98,19 @@ class Resolver(BaseResolver):
+         else:
+             reporter = PipReporter(constraints=provider.constraints)
+ 
+-        resolver: RLResolver[Requirement, Candidate, str] = RLResolver(
+-            provider,
+-            reporter,
+-        )
++        resolver: RLResolver[Requirement, Candidate, str]
++        if self.solver == "nab":
++            from kpip._internal.resolution.resolvelib.nab import NabResolver
++
++            resolver = cast(
++                "RLResolver[Requirement, Candidate, str]",
++                NabResolver(provider, reporter),
++            )
++        else:
++            resolver = RLResolver(
++                provider,
++                reporter,
++            )
+ 
+         try:
+             limit_how_complex_resolution_can_be = 200000
+diff --git a/tests/functional/test_install.py b/tests/functional/test_install.py
+index 969fd13..0ef0f90 100644
+--- a/tests/functional/test_install.py
++++ b/tests/functional/test_install.py
+@@ -90,18 +90,24 @@ def test_refresh_package_per_package(
+     for the specified package, not others.
+     """
+     server = make_mock_server()
+-    server.mock.side_effect = [
+-        package_page({"simple-3.0.tar.gz": "/files/simple-3.0.tar.gz"}),
+-        file_response(data.packages / "simple-3.0.tar.gz"),
+-        package_page(
++    # By path: in which order a resolver reads the pages is its own business.
++    responses = {
++        "/simple/simple/": package_page(
++            {"simple-3.0.tar.gz": "/files/simple-3.0.tar.gz"}
++        ),
++        "/files/simple-3.0.tar.gz": file_response(data.packages / "simple-3.0.tar.gz"),
++        "/simple/simplewheel/": package_page(
+             {
+                 "simplewheel-2.0-py2.py3-none-any.whl": (
+                     "/files/simplewheel-2.0-py2.py3-none-any.whl"
+                 )
+             }
+         ),
+-        file_response(data.packages / "simplewheel-2.0-py2.py3-none-any.whl"),
+-    ]
++        "/files/simplewheel-2.0-py2.py3-none-any.whl": file_response(
++            data.packages / "simplewheel-2.0-py2.py3-none-any.whl"
++        ),
++    }
++    server.mock.side_effect = lambda environ, _: responses[environ["PATH_INFO"]]
+     url = f"http://{server.host}:{server.port}/simple/"
+     with server_running(server):
+         script.pip(
+@@ -114,11 +120,14 @@ def test_refresh_package_per_package(
+             "simplewheel",
+         )
+ 
+-    environ_simple = server.mock.call_args_list[0].args[0]
++    requests = {
++        call.args[0]["PATH_INFO"]: call.args[0] for call in server.mock.call_args_list
++    }
++    environ_simple = requests["/simple/simple/"]
+     assert "HTTP_CACHE_CONTROL" in environ_simple
+     assert environ_simple["HTTP_CACHE_CONTROL"] == "max-age=0"
+ 
+-    environ_simplewheel = server.mock.call_args_list[2].args[0]
++    environ_simplewheel = requests["/simple/simplewheel/"]
+     assert "HTTP_CACHE_CONTROL" not in environ_simplewheel
+ 
+ 
+diff --git a/tests/unit/resolution_resolvelib/test_nab.py b/tests/unit/resolution_resolvelib/test_nab.py
+new file mode 100644
+index 0000000..ec687bf
+--- /dev/null
++++ b/tests/unit/resolution_resolvelib/test_nab.py
+@@ -0,0 +1,642 @@
++"""nab-resolver searches for the answer as resolvelib does, around the same
++pip: each test resolves one index with both and compares."""
++
++from __future__ import annotations
++
++import html
++import logging
++from collections.abc import Iterator
++from pathlib import Path
++from typing import Any
++from unittest import mock
++
++import pytest
++
++from kpip._internal.build_env.installer import SubprocessBuildEnvironmentInstaller
++from kpip._internal.cli.req_command import RequirementCommand
++from kpip._internal.commands.install import InstallCommand
++from kpip._internal.exceptions import DistributionNotFound, ResolutionTooDeepError
++from kpip._internal.index.collector import LinkCollector
++from kpip._internal.index.package_finder import PackageFinder
++from kpip._internal.models.search_scope import SearchScope
++from kpip._internal.models.selection_prefs import SelectionPreferences
++from kpip._internal.network.session import PipSession
++from kpip._internal.operations.build.build_tracker import get_build_tracker
++from kpip._internal.req.constructors import install_req_from_line
++from kpip._internal.resolution.resolvelib.resolver import Resolver
++from kpip._internal.utils.temp_dir import TempDirectory, global_tempdir_manager
++
++from tests.lib import make_test_finder
++from tests.lib.wheel import make_wheel
++
++SOLVERS = ("resolvelib", "nab")
++
++
++def _wheel(name: str, version: str, requires: list[str]) -> Any:
++    extras = sorted(
++        {
++            requirement.split('extra == "')[1].split('"')[0]
++            for requirement in requires
++            if 'extra == "' in requirement
++        }
++    )
++    # Written out rather than as metadata_updates, which wraps a long line --
++    # a URL requirement's -- into one pip cannot read.
++    lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
++    lines += [
++        r.replace("Requires-Python:", "Requires-Python: ")
++        for r in requires
++        if r.startswith("Requires-Python:")
++    ]
++    requires = [r for r in requires if not r.startswith("Requires-Python:")]
++    lines += [f"Provides-Extra: {extra}" for extra in extras]
++    lines += [f"Requires-Dist: {requirement}" for requirement in requires]
++    return make_wheel(name, version, metadata="\n".join(lines) + "\n")
++
++
++def _index(path: Path, packages: dict[str, list[str]], yanked: set[str]) -> str:
++    """A PEP 503 index of wheels for ``packages`` ("name==version" -> its
++    requirements), the releases in ``yanked`` marked yanked."""
++    files = path / "files"
++    files.mkdir(parents=True)
++    pages: dict[str, list[str]] = {}
++    for release, requires in packages.items():
++        name, _, version = release.partition("==")
++        filename = Path(_wheel(name, version, requires).save_to_dir(files)).name
++        mark = ' data-yanked=""' if release in yanked else ""
++        pages.setdefault(name, []).append(
++            f'<a href="../../files/{html.escape(filename)}"{mark}>'
++            f"{html.escape(filename)}</a><br/>"
++        )
++    for name, links in pages.items():
++        page = path / "simple" / name
++        page.mkdir(parents=True)
++        (page / "index.html").write_text(f"<html><body>{''.join(links)}</body></html>")
++    return (path / "simple").as_uri()
++
++
++@pytest.fixture
++def direct(tmp_path: Path) -> object:
++    """A wheel outside the index, for a requirement to name by URL."""
++
++    def direct(name: str, version: str, requires: list[str] = []) -> str:
++        directory = tmp_path / "direct"
++        directory.mkdir(exist_ok=True)
++        return Path(_wheel(name, version, requires).save_to_dir(directory)).as_uri()
++
++    return direct
++
++
++def _describe(candidate: Any) -> str:
++    """A picked candidate's version, and where it is from when not the index."""
++    version = str(candidate.version)
++    if candidate.is_installed:
++        return f"{version} (installed)"
++    link = candidate.source_link
++    if link is not None and "direct" in Path(link.file_path).parts:
++        return f"{version} (direct)"
++    return version
++
++
++@pytest.fixture
++def resolve(tmp_path: Path) -> Iterator[object]:
++    """Resolve requirements with one solver, against wheels for ``packages``
++    (on an index page when some are ``yanked``) or a find-links directory
++    ``find_links``; returns the picked releases as {name: version}."""
++
++    def resolve(
++        packages: dict[str, list[str]],
++        requirements: list[str],
++        solver: str,
++        *,
++        yanked: set[str] = set(),
++        find_links: Path | None = None,
++        installed: dict[str, list[str]] | None = None,
++        upgrade_strategy: str = "to-satisfy-only",
++    ) -> dict[str, str]:
++        where = tmp_path / f"index-{solver}-{len(list(tmp_path.iterdir()))}"
++        if yanked:
++            # Only an index page can say a file is yanked.
++            scope = SearchScope([], [_index(where, packages, yanked)], False)
++        else:
++            if find_links is None:
++                find_links = where
++                find_links.mkdir()
++                for release, requires in packages.items():
++                    name, _, version = release.partition("==")
++                    _wheel(name, version, requires).save_to_dir(find_links)
++            scope = SearchScope([str(find_links)], [], False)
++        session = PipSession()
++        finder = PackageFinder.create(
++            LinkCollector(session, scope),
++            SelectionPreferences(allow_yanked=True),
++        )
++        options, _ = InstallCommand("x", "y").parse_args(["--no-build-isolation"])
++        with global_tempdir_manager(), TempDirectory() as tmp:
++            with get_build_tracker() as tracker:
++                preparer = RequirementCommand.make_requirement_preparer(
++                    tmp,
++                    options=options,
++                    build_tracker=tracker,
++                    session=session,
++                    finder=finder,
++                    use_user_site=False,
++                    verbosity=0,
++                    allow_editables=True,
++                )
++                resolver = Resolver(
++                    preparer=preparer,
++                    finder=finder,
++                    wheel_cache=None,
++                    make_install_req=install_req_from_line,
++                    use_user_site=False,
++                    ignore_dependencies=False,
++                    only_dependencies=False,
++                    ignore_installed=True,
++                    ignore_requires_python=False,
++                    force_reinstall=False,
++                    upgrade_strategy=upgrade_strategy,
++                    solver=solver,
++                )
++                # What is installed, without installing it anywhere.
++                resolver.factory._installed_dists = {
++                    name: _wheel(name, version, requires).as_distribution(name)
++                    for name, _, version, requires in (
++                        (*release.partition("=="), requires)
++                        for release, requires in (installed or {}).items()
++                    )
++                }
++                ireqs = [install_req_from_line(r) for r in requirements]
++                for ireq in ireqs:
++                    ireq.user_supplied = True
++                resolver.resolve(ireqs, check_supported_wheels=True)
++                return {
++                    identifier: _describe(candidate)
++                    for identifier, candidate in resolver._result.mapping.items()
++                    if not identifier.startswith("<") and "[" not in identifier
++                }
++
++    yield resolve
++
++
++def both(
++    resolve: object,
++    packages: dict[str, list[str]],
++    requirements: list[str],
++    **options: Any,
++) -> Any:
++    answers = {}
++    for solver in SOLVERS:
++        try:
++            answers[solver] = resolve(  # type: ignore[operator]
++                packages, requirements, solver, **options
++            )
++        except DistributionNotFound as error:
++            answers[solver] = f"{type(error).__name__}: {error}"
++    assert answers["nab"] == answers["resolvelib"]
++    return answers["nab"]
++
++
++def test_newest_versions_and_their_dependencies(resolve: object) -> None:
++    packages = {
++        "app==1.0": ["lib>=1"],
++        "app==2.0": ["lib>=2"],
++        "lib==1.0": [],
++        "lib==2.0": ["leaf"],
++        "lib==3.0": ["leaf<2"],
++        "leaf==1.0": [],
++        "leaf==2.0": [],
++    }
++    assert both(resolve, packages, ["app"]) == {
++        "app": "2.0",
++        "lib": "3.0",
++        "leaf": "1.0",
++    }
++
++
++def test_backtracking_to_an_older_release(resolve: object) -> None:
++    # app 2.0 needs a lib that conflicts with the requested other.
++    packages = {
++        "app==1.0": ["lib<2"],
++        "app==2.0": ["lib>=2"],
++        "lib==1.0": [],
++        "lib==2.0": ["other>=2"],
++        "other==1.0": [],
++        "other==2.0": [],
++    }
++    assert both(resolve, packages, ["app", "other<2"]) == {
++        "app": "1.0",
++        "lib": "1.0",
++        "other": "1.0",
++    }
++
++
++def test_extras(resolve: object) -> None:
++    packages = {
++        "app==1.0": ["lib[fast]"],
++        "lib==1.0": ['speedup; extra == "fast"'],
++        "speedup==1.0": [],
++    }
++    assert both(resolve, packages, ["app"]) == {
++        "app": "1.0",
++        "lib": "1.0",
++        "speedup": "1.0",
++    }
++
++
++def test_markers_are_the_targets(resolve: object) -> None:
++    packages = {
++        "app==1.0": ['never; python_version < "3"', "always"],
++        "never==1.0": [],
++        "always==1.0": [],
++    }
++    assert both(resolve, packages, ["app"]) == {"app": "1.0", "always": "1.0"}
++
++
++@pytest.mark.parametrize("solver", SOLVERS)
++def test_a_conflict_is_reported_as_pip_reports_it(
++    resolve: object, solver: str, caplog: pytest.LogCaptureFixture
++) -> None:
++    packages = {
++        "app==1.0": ["lib==1.0"],
++        "other==1.0": ["lib==2.0"],
++        "lib==1.0": [],
++        "lib==2.0": [],
++    }
++    caplog.set_level(logging.INFO)
++    with pytest.raises(DistributionNotFound, match="ResolutionImpossible"):
++        resolve(packages, ["app", "other"], solver)  # type: ignore[operator]
++    report = caplog.text
++    assert "The conflict is caused by:" in report
++    assert "app 1.0 depends on lib==1.0" in report
++    assert "other 1.0 depends on lib==2.0" in report
++
++
++@pytest.mark.parametrize("solver", SOLVERS)
++def test_a_missing_version_is_reported_as_pip_reports_it(
++    resolve: object, solver: str
++) -> None:
++    packages = {"lib==1.0": []}
++    with pytest.raises(
++        DistributionNotFound, match="No matching distribution found for lib>=2"
++    ):
++        resolve(packages, ["lib>=2"], solver)  # type: ignore[operator]
++
++
++def test_too_deep_is_reported_as_pip_reports_it(
++    resolve: object, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.resolution.resolvelib import nab
++
++    original = nab.NabSolver
++
++    def shallow(*args: object, **kwargs: object) -> object:
++        kwargs["max_iterations"] = 1
++        return original(*args, **kwargs)
++
++    monkeypatch.setattr(nab, "NabSolver", shallow)
++    packages = {"app==1.0": ["lib"], "lib==1.0": []}
++    with pytest.raises(ResolutionTooDeepError):
++        resolve(packages, ["app"], "nab")  # type: ignore[operator]
++
++
++def test_an_extra_leaves_its_base_free_to_backtrack(resolve: object) -> None:
++    # Having tried x 2.0 for x[fast], nab must still be able to choose x 1.0.
++    packages = {
++        "web==1.0": ["x[fast]"],
++        "app==1.0": ["x<2"],
++        "x==1.0": ['speedup; extra == "fast"'],
++        "x==2.0": ['speedup; extra == "fast"'],
++        "speedup==1.0": [],
++    }
++    assert both(resolve, packages, ["web", "app"]) == {
++        "web": "1.0",
++        "app": "1.0",
++        "x": "1.0",
++        "speedup": "1.0",
++    }
++
++
++def test_an_extra_backtracks_past_an_unmet_newest(resolve: object) -> None:
++    packages = {
++        "x==1.0": ['speedup; extra == "fast"'],
++        "x==2.0": ['speedup>=3; extra == "fast"'],
++        "speedup==1.0": [],
++    }
++    assert both(resolve, packages, ["x[fast]"]) == {"x": "1.0", "speedup": "1.0"}
++
++
++def test_a_url_named_only_by_a_rejected_version_is_not_used(
++    resolve: object, direct: Any
++) -> None:
++    packages = {
++        "app==2.0": [f"lib @ {direct('lib', '1.0')}", "other>=2"],
++        "app==1.0": ["lib"],
++        "other==2.0": ["missing"],
++        "lib==2.0": [],
++    }
++    assert both(resolve, packages, ["lib", "app"]) == {"lib": "2.0", "app": "1.0"}
++
++
++def test_a_url_a_dependency_names_is_used(resolve: object, direct: Any) -> None:
++    packages = {"app==1.0": [f"lib @ {direct('lib', '1.0')}"], "lib==2.0": []}
++    assert both(resolve, packages, ["lib", "app"]) == {
++        "lib": "1.0 (direct)",
++        "app": "1.0",
++    }
++
++
++def test_many_urls_learnt_one_at_a_time(resolve: object, direct: Any) -> None:
++    # Each URL restarts the resolution; however many there are, it ends.
++    count = 25
++    packages: dict[str, list[str]] = {
++        "b==1.0": [f"a{i} @ {direct(f'a{i}', '1.0')}" for i in range(count)],
++    }
++    packages.update({f"a{i}==1.0": [] for i in range(count)})
++    requirements = [f"a{i}" for i in range(count)] + ["b"]
++    answer = resolve(packages, requirements, "nab")  # type: ignore[operator]
++    assert answer == {"b": "1.0", **{f"a{i}": "1.0 (direct)" for i in range(count)}}
++
++
++def test_a_prerelease_a_dependency_names(resolve: object) -> None:
++    packages = {
++        "numpy==1.26": [],
++        "numpy==2.0rc1": [],
++        "lib==1.0": ["numpy>=2.0rc1"],
++    }
++    assert both(resolve, packages, ["numpy", "lib"]) == {
++        "numpy": "2.0rc1",
++        "lib": "1.0",
++    }
++
++
++def test_a_prerelease_one_of_two_dependents_names(resolve: object) -> None:
++    packages = {
++        "lib==1.0": [],
++        "lib==2.0b1": [],
++        "a==1.0": ["lib"],
++        "b==1.0": ["lib>=2.0b1"],
++    }
++    assert both(resolve, packages, ["a", "b"]) == {
++        "a": "1.0",
++        "b": "1.0",
++        "lib": "2.0b1",
++    }
++
++
++def test_no_prerelease_unless_named(resolve: object) -> None:
++    packages = {"lib==1.0": [], "lib==2.0b1": [], "app==1.0": ["lib"]}
++    assert both(resolve, packages, ["app"]) == {"app": "1.0", "lib": "1.0"}
++
++
++def test_a_yanked_release_a_dependency_pins(resolve: object) -> None:
++    packages = {
++        "pkg==1.0": [],
++        "pkg==2.0": [],
++        "lib1==1.0": ["pkg>=1"],
++        "lib2==1.0": ["pkg==2.0"],
++    }
++    assert both(resolve, packages, ["lib1", "lib2"], yanked={"pkg==2.0"}) == {
++        "lib1": "1.0",
++        "lib2": "1.0",
++        "pkg": "2.0",
++    }
++
++
++def test_no_yanked_release_unless_pinned(resolve: object) -> None:
++    packages = {"pkg==1.0": [], "pkg==2.0": [], "lib==1.0": ["pkg>=1"]}
++    assert both(resolve, packages, ["lib"], yanked={"pkg==2.0"}) == {
++        "lib": "1.0",
++        "pkg": "1.0",
++    }
++
++
++def test_an_installed_version_is_preferred_not_required(resolve: object) -> None:
++    # Upgrading app needs a newer lib than the installed one.
++    packages = {
++        "app==1.0": ["lib"],
++        "app==2.0": ["lib", "other>=2"],
++        "other==2.0": ["lib>=2"],
++        "lib==1.0": [],
++        "lib==2.0": [],
++    }
++    assert both(
++        resolve,
++        packages,
++        ["app"],
++        installed={"app==1.0": ["lib"], "lib==1.0": []},
++        upgrade_strategy="only-if-needed",
++    ) == {"app": "2.0", "other": "2.0", "lib": "2.0"}
++
++
++def test_an_installed_version_is_kept(resolve: object) -> None:
++    packages = {"app==1.0": ["lib"], "lib==1.0": [], "lib==2.0": []}
++    assert both(
++        resolve,
++        packages,
++        ["app"],
++        installed={"lib==1.0": []},
++        upgrade_strategy="only-if-needed",
++    ) == {"app": "1.0", "lib": "1.0 (installed)"}
++
++
++def test_an_upgrade_falls_back_to_the_index_copy_of_the_installed_version(
++    resolve: object,
++) -> None:
++    # The installed foo 2.0's own metadata cannot be met; the index's can.
++    packages = {"foo==1.0": [], "foo==2.0": ["bar"], "bar==1.0": []}
++    assert both(
++        resolve,
++        packages,
++        ["foo", "bar>=1"],
++        installed={"foo==2.0": ["bar<1"], "bar==0.5": []},
++        upgrade_strategy="only-if-needed",
++    ) == {"foo": "2.0", "bar": "1.0"}
++
++
++def test_a_version_falls_back_to_its_next_file(resolve: object, tmp_path: Path) -> None:
++    # The preferred 2.0 wheel (build tag 1) says it is 2.0.1; pip builds the
++    # other 2.0 wheel instead.
++    links = tmp_path / "links"
++    links.mkdir()
++    for filename, version in (
++        ("lib-1.0-py2.py3-none-any.whl", "1.0"),
++        ("lib-2.0-py2.py3-none-any.whl", "2.0"),
++        ("lib-2.0-1-py2.py3-none-any.whl", "2.0.1"),
++    ):
++        metadata = f"Metadata-Version: 2.1\nName: lib\nVersion: {version}\n"
++        make_wheel("lib", filename.split("-")[1], metadata=metadata).save_to(
++            links / filename
++        )
++    assert both(resolve, {}, ["lib"], find_links=links) == {"lib": "2.0"}
++
++
++def test_preference_reads_only_the_requirements_in_play(resolve: object) -> None:
++    # app 2.0, rejected, pins lib==1.0: that must not make lib "pinned" for
++    # the rest of the resolution.
++    packages = {
++        "app==2.0": ["lib==1.0", "other<1"],
++        "app==1.0": ["lib"],
++        "lib==1.0": [],
++        "lib==0.9": [],
++        "b==2.0": ["lib<1"],
++        "b==1.0": [],
++        "other==0.5": [],
++        "other==1.0": [],
++    }
++    assert both(resolve, packages, ["app", "b", "other>=1"]) == {
++        "app": "1.0",
++        "b": "2.0",
++        "lib": "0.9",
++        "other": "1.0",
++    }
++
++
++def test_a_requirement_nothing_meets_is_not_met_by_the_users(
++    resolve: object, tmp_path: Path
++) -> None:
++    # app 2.0's lib URL says it is libx: pip cannot use it, so app 1.0 is
++    # chosen. (resolvelib fails on this with InconsistentCandidate.)
++    links = tmp_path / "links"
++    links.mkdir()
++    make_wheel(
++        "lib", "2.0", metadata="Metadata-Version: 2.1\nName: libx\nVersion: 2.0\n"
++    ).save_to(tmp_path / "lib-2.0-py2.py3-none-any.whl")
++    url = (tmp_path / "lib-2.0-py2.py3-none-any.whl").as_uri()
++    for release, requires in {
++        "lib==1.0": [],
++        "lib==2.0": [],
++        "app==2.0": [f"lib @ {url}"],
++        "app==1.0": ["lib"],
++    }.items():
++        name, _, version = release.partition("==")
++        _wheel(name, version, requires).save_to_dir(links)
++    answer = resolve({}, ["lib", "app"], "nab", find_links=links)  # type: ignore[operator]
++    assert answer == {"lib": "2.0", "app": "1.0"}
++
++
++@pytest.mark.parametrize("solver", SOLVERS)
++def test_a_failure_names_the_requirement_no_version_meets(
++    resolve: object, solver: str, caplog: pytest.LogCaptureFixture
++) -> None:
++    # Each version of a pins a different b, and every b needs a c>=2 that is
++    # not there: c is the problem, not a's two pins.
++    packages = {
++        "a==2.0": ["b==2.0"],
++        "a==1.0": ["b==1.0"],
++        "b==1.0": ["c>=2"],
++        "b==2.0": ["c>=2"],
++        "c==1.0": [],
++    }
++    caplog.set_level(logging.INFO)
++    with pytest.raises(DistributionNotFound) as failure:
++        resolve(packages, ["a"], solver)  # type: ignore[operator]
++    report = f"{failure.value}\n{caplog.text}"
++    assert "c>=2" in report
++    assert "depends on b==" not in report
++
++
++def test_the_iteration_budget_is_scaled_to_nabs_iterations(
++    resolve: object, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.resolution.resolvelib import nab
++
++    budgets = []
++    original = nab.NabSolver
++
++    def record(*args: Any, **kwargs: Any) -> Any:
++        budgets.append(kwargs["max_iterations"])
++        return original(*args, **kwargs)
++
++    monkeypatch.setattr(nab, "NabSolver", record)
++    resolve({"app==1.0": []}, ["app"], "nab")  # type: ignore[operator]
++    assert budgets == [200000 * nab._ITERATIONS_PER_ROUND]
++
++
++def test_resolver_option() -> None:
++    options, _ = InstallCommand("x", "y").parse_args([])
++    assert options.resolver == "resolvelib"
++    options, _ = InstallCommand("x", "y").parse_args(["--resolver=nab"])
++    assert options.resolver == "nab"
++    # Not a --use-feature value: pip, sharing the configuration, rejects one
++    # it does not know.
++    with pytest.raises(SystemExit):
++        InstallCommand("x", "y").parse_args(["--use-feature=nab-resolver"])
++
++
++@pytest.mark.parametrize("solver", SOLVERS)
++def test_build_dependencies_resolve_with_the_same_resolver(solver: str) -> None:
++    installer = SubprocessBuildEnvironmentInstaller(make_test_finder(), solver=solver)
++    prefix = mock.Mock(path="/prefix", venv_executable=None)
++    with mock.patch("kpip._internal.build_env.installer.call_subprocess") as call:
++        installer.install(["setuptools"], prefix, kind="build", for_req=None)
++    args = call.call_args.args[0]
++    assert args[args.index("--resolver") + 1] == solver
++
++
++def test_a_url_that_is_gone_on_a_candidate_never_chosen(
++    resolve: object, tmp_path: Path
++) -> None:
++    gone = (tmp_path / "gone" / "lib-1.0-py3-none-any.whl").as_uri()
++    packages = {
++        "base==1.0": ["other<2"],
++        "zapp==2.0": ["other>=2", f"lib @ {gone}"],
++        "zapp==1.0": [],
++        "other==1.0": [],
++        "other==2.0": [],
++    }
++    assert both(resolve, packages, ["base", "zapp"]) == {
++        "base": "1.0",
++        "other": "1.0",
++        "zapp": "1.0",
++    }
++
++
++def test_a_url_that_is_gone_is_reported_when_nothing_else_resolves(
++    resolve: object, tmp_path: Path
++) -> None:
++    gone = (tmp_path / "gone" / "lib-1.0-py3-none-any.whl").as_uri()
++    packages = {"zapp==1.0": [f"lib @ {gone}"]}
++    with pytest.raises(FileNotFoundError):
++        resolve(packages, ["zapp"], "nab")  # type: ignore[operator]
++
++
++def test_requires_python(resolve: object) -> None:
++    # "Requires-Python:..." in the list is the release's Requires-Python.
++    packages = {
++        "app==1.0": ["Requires-Python:>=3", "lib"],
++        "app==2.0": ["Requires-Python:<3", "lib"],
++        "lib==1.0": ["Requires-Python:>=3"],
++    }
++    assert both(resolve, packages, ["app"]) == {"app": "1.0", "lib": "1.0"}
++
++
++@pytest.mark.parametrize("solver", SOLVERS)
++def test_no_prerelease_for_a_requirement_left_behind(
++    resolve: object, solver: str
++) -> None:
++    # nab could reach p3 while only a parent version it later left admits
++    # p3's pre-release: what it installs must be what pip offers beside the
++    # answer's own requirements -- here, nothing, as for resolvelib.
++    packages = {
++        "p0==2.0": ["p1"],
++        "p0==3.0": ["p1<=5.0", "p2!=1.0", "p3>=1.0", "p4", "p5!=1.0"],
++        "p0==5.0b1": ["p4>2.0"],
++        "p1==1.0": ["p3", "p4<=1.0", "p5==4.0"],
++        "p1==2.0b1": ["p2", "p3", "p4<=1.0", "p5<2.0"],
++        "p1==5.0": ["p2>2.0b1", "p3>=4.0b1", "p4", "p5<=6.0"],
++        "p2==3.0b1": ["p4"],
++        "p2==4.0": ["p3", "p4", "p5!=4.0b1"],
++        "p2==5.0b1": ["p3==1.0b1", "p5>=2.0"],
++        "p3==1.0b1": [],
++        "p3==2.0b1": ["p4>6.0", "p5==4.0"],
++        "p3==4.0": ["p4", "p5==3.0b1"],
++        "p4==1.0": ["p5"],
++        "p4==3.0": ["p5"],
++        "p4==5.0": [],
++        "p5==1.0b1": [],
++        "p5==4.0": [],
++        "p5==5.0b1": [],
++    }
++    with pytest.raises(DistributionNotFound):
++        resolve(packages, ["p0"], solver)  # type: ignore[operator]

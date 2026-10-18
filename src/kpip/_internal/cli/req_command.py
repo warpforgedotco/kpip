@@ -209,11 +209,13 @@ class RequirementCommand(IndexGroupCommand):
                 build_constraints=build_constraint_reqs,
                 verbosity=verbosity,
                 wheel_cache=WheelCache(options.cache_dir),
+                solver=options.resolver,
             )
         else:
             env_installer = SubprocessBuildEnvironmentInstaller(
                 finder,
                 build_constraints=build_constraints,
+                solver=options.resolver,
             )
 
         if not options.build_isolation:
@@ -289,9 +291,7 @@ class RequirementCommand(IndexGroupCommand):
                 force_reinstall=force_reinstall,
                 upgrade_strategy=upgrade_strategy,
                 py_version_info=py_version_info,
-                solver=(
-                    "nab" if "nab-resolver" in options.features_enabled else "resolvelib"
-                ),
+                solver=options.resolver,
             )
         import kpip._internal.resolution.legacy.resolver
 

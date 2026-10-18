@@ -48,6 +48,9 @@ jobs:
         run: >
           uv run ruff check --select F821 --exclude src/kpip/_vendor
           src/kpip tests
+      # nab-resolver is vendored with patches of kpip's, unlike the rest.
+      - name: ruff undefined names (nab-resolver)
+        run: uv run ruff check --select F821 src/kpip/_vendor/nab_resolver
       - name: ruff format
         run: uv run ruff format --check scripts/vendor_pip.py benchmarks
       - name: ty
@@ -66,15 +69,12 @@ jobs:
       - run: uv run --no-project scripts/vendor_pip.py check
 
   tests:
-    name: Tests / Python ${{ matrix.python-version }} / ${{ matrix.solver }}
+    name: Tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.15"]
-        # pip's resolvelib, and nab-resolver (--use-feature=nab-resolver),
-        # which must give the same answers.
-        solver: ["resolvelib", "nab"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -89,9 +89,9 @@ jobs:
       - name: Install Subversion
         run: sudo apt-get update && sudo apt-get install --yes subversion
       - run: uv sync --locked --group test --python ${{ matrix.python-version }}
+      # The unit tests build their resolvers themselves; test_nab.py runs
+      # both solvers on each of its cases.
       - name: Unit tests
-        env:
-          PIP_USE_FEATURE: ${{ matrix.solver == 'nab' && 'nab-resolver' || '' }}
         run: >
           uv run --python ${{ matrix.python-version }} pytest tests/unit
           -n auto
@@ -126,7 +126,7 @@ jobs:
         # own. Network-marked ones are left out, so a slow index cannot fail
         # an unrelated pull request.
         env:
-          PIP_USE_FEATURE: ${{ matrix.solver == 'nab' && 'nab-resolver' || '' }}
+          PIP_RESOLVER: ${{ matrix.solver == 'nab' && 'nab' || 'resolvelib' }}
         run: >
           uv run --python ${{ matrix.python-version }} pytest tests/functional
           -n auto

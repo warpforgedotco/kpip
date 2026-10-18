@@ -1331,10 +1331,25 @@ use_new_feature: Callable[..., Option] = partial(
         "fast-deps",
         "inprocess-build-deps",
         "venv-isolation",
-        "nab-resolver",
     ]
     + ALWAYS_ENABLED_FEATURES,
     help="Enable new functionality, that may be backward incompatible.",
+)
+
+# kpip's own option, not a --use-feature value: kpip shares pip's
+# configuration, and pip ignores a key it does not know but rejects a value
+# it does not know for one it does.
+resolver: Callable[..., Option] = partial(
+    Option,
+    "--resolver",
+    dest="resolver",
+    metavar="resolver",
+    choices=["resolvelib", "nab"],
+    default="resolvelib",
+    help=(
+        "What searches for the answer: pip's resolvelib (default), or "
+        "nab-resolver, a PubGrub solver (experimental)."
+    ),
 )
 
 use_deprecated_feature: Callable[..., Option] = partial(
@@ -1383,6 +1398,7 @@ general_group: dict[str, Any] = {
         no_python_version_warning,
         use_new_feature,
         use_deprecated_feature,
+        resolver,
         resume_retries,
     ],
 }

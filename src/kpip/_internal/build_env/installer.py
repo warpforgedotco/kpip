@@ -43,9 +43,13 @@ class SubprocessBuildEnvironmentInstaller:
         self,
         finder: PackageFinder,
         build_constraints: list[str] | None = None,
+        solver: str = "resolvelib",
     ) -> None:
         self.finder = finder
         self._build_constraints = build_constraints or []
+        # The parent's --resolver, which the child may not read from the
+        # environment or configuration: it was given on the command line.
+        self._solver = solver
 
     def install(
         self,
@@ -138,6 +142,7 @@ class SubprocessBuildEnvironmentInstaller:
 
         if finder.uploaded_prior_to:
             args.extend(["--uploaded-prior-to", finder.uploaded_prior_to.isoformat()])
+        args.extend(["--resolver", self._solver])
         args.append("--")
         args.extend(requirements)
 
@@ -179,10 +184,12 @@ class InprocessBuildEnvironmentInstaller:
         wheel_cache: WheelCache,
         build_constraints: Sequence[InstallRequirement] = (),
         verbosity: int = 0,
+        solver: str = "resolvelib",
     ) -> None:
         from kpip._internal.operations.prepare import RequirementPreparer
 
         self._finder = finder
+        self._solver = solver
         self._build_constraints = build_constraints
         self._wheel_cache = wheel_cache
         self._level = 0
@@ -331,4 +338,6 @@ class InprocessBuildEnvironmentInstaller:
             force_reinstall=False,
             upgrade_strategy="to-satisfy-only",
             py_version_info=None,
+            # Inherited: build dependencies resolve as the rest does.
+            solver=self._solver,
         )
