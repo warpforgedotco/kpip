@@ -50,6 +50,13 @@
       "version": "1.2.1"
     },
     {
+      "bom-ref": "pkg:github/notatallshaw/nab@b302a681989f4249eb6efaa3fc015d9e0ff6dfd9#nab-resolver",
+      "name": "nab-resolver",
+      "purl": "pkg:github/notatallshaw/nab@b302a681989f4249eb6efaa3fc015d9e0ff6dfd9#nab-resolver",
+      "type": "library",
+      "version": "0.0.19.dev0"
+    },
+    {
       "bom-ref": "pkg:pypi/packaging@26.3",
       "name": "packaging",
       "purl": "pkg:pypi/packaging@26.3",
@@ -137,6 +144,7 @@
   "dependencies": [
     {
       "dependsOn": [
+        "pkg:github/notatallshaw/nab@b302a681989f4249eb6efaa3fc015d9e0ff6dfd9#nab-resolver",
         "pkg:pypi/CacheControl@0.14.4",
         "pkg:pypi/certifi@2026.7.22",
         "pkg:pypi/distlib@0.4.3",
@@ -151,12 +159,15 @@
         "pkg:pypi/resolvelib@1.2.1",
         "pkg:pypi/rich@14.2.0",
         "pkg:pypi/setuptools@70.3.0",
-        "pkg:pypi/tomli@2.4.1",
         "pkg:pypi/tomli-w@1.2.0",
+        "pkg:pypi/tomli@2.4.1",
         "pkg:pypi/truststore@0.10.5",
         "pkg:pypi/urllib3@2.7.0"
       ],
       "ref": "bom-ref:pip"
+    },
+    {
+      "ref": "pkg:github/notatallshaw/nab@b302a681989f4249eb6efaa3fc015d9e0ff6dfd9#nab-resolver"
     },
     {
       "ref": "pkg:pypi/CacheControl@0.14.4"
@@ -201,10 +212,10 @@
       "ref": "pkg:pypi/setuptools@70.3.0"
     },
     {
-      "ref": "pkg:pypi/tomli@2.4.1"
+      "ref": "pkg:pypi/tomli-w@1.2.0"
     },
     {
-      "ref": "pkg:pypi/tomli-w@1.2.0"
+      "ref": "pkg:pypi/tomli@2.4.1"
     },
     {
       "ref": "pkg:pypi/truststore@0.10.5"

@@ -39,6 +39,7 @@ The commits the committed trees came from are recorded in
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -211,6 +212,33 @@ def vendor_nab(nab_commit: str, checkout: Path) -> None:
     vendor_txt = checkout / NAB_DESTINATION / "vendor.txt"
     with vendor_txt.open("a", encoding="utf-8") as listing:
         listing.write(f"nab-resolver=={version}  # nab {nab_commit}\n")
+    add_to_sbom(checkout / NAB_DESTINATION / "bom.cdx.json", version, nab_commit)
+
+
+def add_to_sbom(path: Path, version: str, nab_commit: str) -> None:
+    """List nab-resolver in the vendored libraries' CycloneDX SBOM, as pip
+    lists each of its own: from nab's repository, at the commit vendored."""
+    sbom = json.loads(path.read_text(encoding="utf-8"))
+    purl = f"pkg:github/notatallshaw/nab@{nab_commit}#nab-resolver"
+    sbom["components"].append(
+        {
+            "bom-ref": purl,
+            "name": "nab-resolver",
+            "purl": purl,
+            "type": "library",
+            "version": version,
+        }
+    )
+    pip, *libraries = sbom["components"]
+    sbom["components"] = [pip, *sorted(libraries, key=lambda c: c["name"].lower())]
+    root, *others = sbom["dependencies"]
+    root["dependsOn"] = sorted([*root["dependsOn"], purl], key=str.lower)
+    sbom["dependencies"] = [
+        root,
+        *sorted([*others, {"ref": purl}], key=lambda d: d["ref"].lower()),
+    ]
+    # As pip writes it, so the rest of the file is unchanged.
+    path.write_text(json.dumps(sbom, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def generate(commit: str, checkout: Path, nab_commit: str) -> None:
@@ -367,21 +395,40 @@ def check() -> int:
 
 
 def export() -> None:
-    """Write the checkout's ``base..kpip`` commits over the patch series."""
-    PATCHES_DIR.mkdir(parents=True, exist_ok=True)
-    for patch in find_patches():
-        patch.unlink()
-    _git(
-        "format-patch",
-        "--quiet",
-        "--zero-commit",
-        "--no-signature",
-        "--no-numbered",
-        "-o",
-        str(PATCHES_DIR),
-        f"{BASE_BRANCH}..{PATCHED_BRANCH}",
-        cwd=WORK_DIR,
-    )
+    """Write the checkout's ``base..kpip`` commits over the patch series.
+
+    The series is replaced only once the new one is written: a checkout a
+    failed ``sync`` left without ``base`` exports nothing, and deletes nothing.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            _git(
+                "format-patch",
+                "--quiet",
+                "--zero-commit",
+                "--no-signature",
+                "--no-numbered",
+                "-o",
+                scratch,
+                f"{BASE_BRANCH}..{PATCHED_BRANCH}",
+                cwd=WORK_DIR,
+            )
+        except subprocess.CalledProcessError as error:
+            raise PatchError(
+                f"cannot export {BASE_BRANCH}..{PATCHED_BRANCH} from {WORK_DIR}; "
+                "the patch series is left as it is"
+            ) from error
+        exported = find_patches(Path(scratch))
+        if not exported:
+            raise PatchError(
+                f"{WORK_DIR} has no commits on {PATCHED_BRANCH} past "
+                f"{BASE_BRANCH}; the patch series is left as it is"
+            )
+        PATCHES_DIR.mkdir(parents=True, exist_ok=True)
+        for patch in find_patches():
+            patch.unlink()
+        for patch in exported:
+            shutil.move(patch, PATCHES_DIR / patch.name)
     for patch in find_patches():
         print(patch.relative_to(REPO_ROOT))
 
