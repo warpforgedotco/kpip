@@ -1,0 +1,226 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 22 Oct 2026 03:24:36 -0500
+Subject: [PATCH] Report the target interpreter in debug and the user agent
+
+pip's debug page and user agent describe the Python pip runs in, which
+is the one it installs for. Compiled, kpip runs in a CPython of its own:
+debug printed that bundle's version and implementation, and a
+sys.executable that does not exist, beside tags for the target, and the
+user agent credited every install to the bundled CPython. The user agent
+now reports the target's version and implementation, from its markers.
+debug shows the target python (executable, version, implementation,
+platform), saying when none was found, and kpip's own runtime on a line
+of its own.
+---
+ src/kpip/_internal/commands/debug.py  | 37 ++++++++++++++++-----
+ src/kpip/_internal/network/session.py | 25 ++++----------
+ tests/functional/test_debug.py        |  5 ++-
+ tests/unit/test_interpreters.py       | 48 +++++++++++++++++++++++++++
+ 4 files changed, 86 insertions(+), 29 deletions(-)
+
+diff --git a/src/kpip/_internal/commands/debug.py b/src/kpip/_internal/commands/debug.py
+index 78be254..7e84951 100644
+--- a/src/kpip/_internal/commands/debug.py
++++ b/src/kpip/_internal/commands/debug.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ import importlib
+ import logging
+ import os
++import platform
+ import sys
+ from optparse import Values
+ from types import ModuleType
+@@ -17,8 +18,10 @@ from kpip._internal.cli.base_command import Command
+ from kpip._internal.cli.cmdoptions import make_target_python
+ from kpip._internal.cli.status_codes import SUCCESS
+ from kpip._internal.configuration import Configuration
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.metadata import get_environment
+ from kpip._internal.utils.compat import get_locale_encoding, open_text_resource
++from kpip._internal.utils.compiled import is_compiled
+ from kpip._internal.utils.logging import indent_log
+ from kpip._internal.utils.misc import get_pip_version
+ 
+@@ -29,11 +32,31 @@ def show_value(name: str, value: Any) -> None:
+     logger.info("%s: %s", name, value)
+ 
+ 
+-def show_sys_implementation() -> None:
+-    logger.info("sys.implementation:")
+-    implementation_name = sys.implementation.name
++def show_runtime() -> None:
++    """The Python running kpip: compiled, the CPython it bundles."""
++    runtime = f"{platform.python_implementation()} {platform.python_version()}"
++    if is_compiled():
++        show_value("kpip runs on", f"{runtime}, compiled in")
++    else:
++        show_value("kpip runs on", f"{runtime}, {sys.executable}")
++
++
++def show_target_python() -> None:
++    """The Python kpip installs for, which the tags below are also for."""
++    target = target_interpreter()
++    markers = target.markers
++    logger.info("target python:")
+     with indent_log():
+-        show_value("name", implementation_name)
++        if target.is_bundled:
++            show_value("executable", "none found; resolving for the bundled CPython")
++        else:
++            show_value("executable", target.executable)
++        show_value("version", markers["python_full_version"])
++        show_value(
++            "implementation",
++            f"{markers['implementation_name']} {markers['implementation_version']}",
++        )
++        show_value("platform", markers["sys_platform"])
+ 
+ 
+ def create_vendor_txt_map() -> dict[str, str]:
+@@ -171,16 +194,14 @@ class DebugCommand(Command):
+             "change without notice."
+         )
+         show_value("pip version", get_pip_version())
+-        show_value("sys.version", sys.version)
+-        show_value("sys.executable", sys.executable)
++        show_runtime()
++        show_target_python()
+         show_value("sys.getdefaultencoding", sys.getdefaultencoding())
+         show_value("sys.getfilesystemencoding", sys.getfilesystemencoding())
+         show_value(
+             "locale.getencoding",
+             get_locale_encoding(),
+         )
+-        show_value("sys.platform", sys.platform)
+-        show_sys_implementation()
+ 
+         show_value("'cert' config value", ca_bundle_info(self.parser.config))
+         show_value("REQUESTS_CA_BUNDLE", os.environ.get("REQUESTS_CA_BUNDLE"))
+diff --git a/src/kpip/_internal/network/session.py b/src/kpip/_internal/network/session.py
+index 6a508b9..c51dc03 100644
+--- a/src/kpip/_internal/network/session.py
++++ b/src/kpip/_internal/network/session.py
+@@ -35,6 +35,7 @@ from kpip._vendor.urllib3.exceptions import InsecureRequestWarning
+ 
+ from kpip import __version__
+ from kpip._internal.exceptions import SSLMissingError
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.metadata import get_default_environment
+ from kpip._internal.models.link import Link
+ from kpip._internal.network.auth import MultiDomainBasicAuth
+@@ -85,30 +86,18 @@ def user_agent() -> str:
+     """
+     Return a string representing the user agent.
+     """
++    # pip reports the Python it runs in, which is the one it installs for.
++    # Compiled, kpip runs in a CPython of its own: report the target's.
++    markers = target_interpreter().markers
+     data: dict[str, Any] = {
+         "installer": {"name": "kpip", "version": __version__},
+-        "python": platform.python_version(),
++        "python": markers["python_full_version"],
+         "implementation": {
+-            "name": platform.python_implementation(),
++            "name": markers["platform_python_implementation"],
++            "version": markers["implementation_version"],
+         },
+     }
+ 
+-    if data["implementation"]["name"] == "CPython":
+-        data["implementation"]["version"] = platform.python_version()
+-    elif data["implementation"]["name"] == "PyPy":
+-        pypy_version_info = sys.pypy_version_info  # type: ignore
+-        if pypy_version_info.releaselevel == "final":
+-            pypy_version_info = pypy_version_info[:3]
+-        data["implementation"]["version"] = ".".join(
+-            [str(x) for x in pypy_version_info]
+-        )
+-    elif data["implementation"]["name"] == "Jython":
+-        # Complete Guess
+-        data["implementation"]["version"] = platform.python_version()
+-    elif data["implementation"]["name"] == "IronPython":
+-        # Complete Guess
+-        data["implementation"]["version"] = platform.python_version()
+-
+     if sys.platform.startswith("linux"):
+         from kpip._vendor import distro
+ 
+diff --git a/tests/functional/test_debug.py b/tests/functional/test_debug.py
+index 4555e55..1c4a198 100644
+--- a/tests/functional/test_debug.py
++++ b/tests/functional/test_debug.py
+@@ -14,12 +14,11 @@ from tests.lib import PipTestEnvironment
+ @pytest.mark.parametrize(
+     "expected_text",
+     [
+-        "sys.executable: ",
++        "kpip runs on: ",
++        "target python:",
+         "sys.getdefaultencoding: ",
+         "sys.getfilesystemencoding: ",
+         "locale.getencoding: ",
+-        "sys.platform: ",
+-        "sys.implementation:",
+         "'cert' config value: ",
+         "REQUESTS_CA_BUNDLE: ",
+         "CURL_CA_BUNDLE: ",
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index dcc351c..cacd26f 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -415,6 +415,54 @@ def test_markers_and_requires_python_are_the_targets(
+     assert str(RequiresPythonCandidate(None).version) == "3.11.9"
+ 
+ 
++def test_user_agent_names_the_target(other_python: facts.ProbedInterpreter) -> None:
++    import json
++
++    from kpip._internal.network.session import user_agent
++
++    user_agent.cache_clear()
++    try:
++        data = json.loads(user_agent().split(" ", 1)[1])
++    finally:
++        user_agent.cache_clear()
++    assert data["python"] == "3.11.9"
++    assert (
++        data["implementation"]["name"]
++        == other_python.markers["platform_python_implementation"]
++    )
++
++
++def test_debug_names_the_target(
++    other_python: facts.ProbedInterpreter, caplog: pytest.LogCaptureFixture
++) -> None:
++    from kpip._internal.commands.debug import show_runtime, show_target_python
++
++    with caplog.at_level("INFO"):
++        show_runtime()
++        show_target_python()
++    shown = caplog.text
++    assert f"kpip runs on: CPython {sys.version.split()[0]}" in shown
++    assert f"executable: {other_python.executable}" in shown
++    assert "version: 3.11.9" in shown
++    assert "platform: emscripten" in shown
++
++
++def test_debug_says_when_no_python_was_found(
++    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
++) -> None:
++    from kpip._internal.commands import debug
++    from kpip._internal.commands.debug import show_runtime, show_target_python
++
++    compiled(monkeypatch)
++    monkeypatch.setattr(debug, "is_compiled", lambda: True)
++    monkeypatch.setattr(interpreters, "_target", OwnInterpreter())
++    with caplog.at_level("INFO"):
++        show_runtime()
++        show_target_python()
++    assert "compiled in" in caplog.text
++    assert "none found; resolving for the bundled CPython" in caplog.text
++
++
+ def test_pylock_wheels_are_chosen_for_the_target(
+     other_python: facts.ProbedInterpreter, tmp_path: Path
+ ) -> None:

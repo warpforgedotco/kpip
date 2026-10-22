@@ -35,6 +35,7 @@ from kpip._vendor.urllib3.exceptions import InsecureRequestWarning
 
 from kpip import __version__
 from kpip._internal.exceptions import SSLMissingError
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.metadata import get_default_environment
 from kpip._internal.models.link import Link
 from kpip._internal.network.auth import MultiDomainBasicAuth
@@ -85,29 +86,17 @@ def user_agent() -> str:
     """
     Return a string representing the user agent.
     """
+    # pip reports the Python it runs in, which is the one it installs for.
+    # Compiled, kpip runs in a CPython of its own: report the target's.
+    markers = target_interpreter().markers
     data: dict[str, Any] = {
         "installer": {"name": "kpip", "version": __version__},
-        "python": platform.python_version(),
+        "python": markers["python_full_version"],
         "implementation": {
-            "name": platform.python_implementation(),
+            "name": markers["platform_python_implementation"],
+            "version": markers["implementation_version"],
         },
     }
-
-    if data["implementation"]["name"] == "CPython":
-        data["implementation"]["version"] = platform.python_version()
-    elif data["implementation"]["name"] == "PyPy":
-        pypy_version_info = sys.pypy_version_info  # type: ignore
-        if pypy_version_info.releaselevel == "final":
-            pypy_version_info = pypy_version_info[:3]
-        data["implementation"]["version"] = ".".join(
-            [str(x) for x in pypy_version_info]
-        )
-    elif data["implementation"]["name"] == "Jython":
-        # Complete Guess
-        data["implementation"]["version"] = platform.python_version()
-    elif data["implementation"]["name"] == "IronPython":
-        # Complete Guess
-        data["implementation"]["version"] = platform.python_version()
 
     if sys.platform.startswith("linux"):
         from kpip._vendor import distro

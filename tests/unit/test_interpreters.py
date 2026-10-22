@@ -415,6 +415,54 @@ def test_markers_and_requires_python_are_the_targets(
     assert str(RequiresPythonCandidate(None).version) == "3.11.9"
 
 
+def test_user_agent_names_the_target(other_python: facts.ProbedInterpreter) -> None:
+    import json
+
+    from kpip._internal.network.session import user_agent
+
+    user_agent.cache_clear()
+    try:
+        data = json.loads(user_agent().split(" ", 1)[1])
+    finally:
+        user_agent.cache_clear()
+    assert data["python"] == "3.11.9"
+    assert (
+        data["implementation"]["name"]
+        == other_python.markers["platform_python_implementation"]
+    )
+
+
+def test_debug_names_the_target(
+    other_python: facts.ProbedInterpreter, caplog: pytest.LogCaptureFixture
+) -> None:
+    from kpip._internal.commands.debug import show_runtime, show_target_python
+
+    with caplog.at_level("INFO"):
+        show_runtime()
+        show_target_python()
+    shown = caplog.text
+    assert f"kpip runs on: CPython {sys.version.split()[0]}" in shown
+    assert f"executable: {other_python.executable}" in shown
+    assert "version: 3.11.9" in shown
+    assert "platform: emscripten" in shown
+
+
+def test_debug_says_when_no_python_was_found(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from kpip._internal.commands import debug
+    from kpip._internal.commands.debug import show_runtime, show_target_python
+
+    compiled(monkeypatch)
+    monkeypatch.setattr(debug, "is_compiled", lambda: True)
+    monkeypatch.setattr(interpreters, "_target", OwnInterpreter())
+    with caplog.at_level("INFO"):
+        show_runtime()
+        show_target_python()
+    assert "compiled in" in caplog.text
+    assert "none found; resolving for the bundled CPython" in caplog.text
+
+
 def test_pylock_wheels_are_chosen_for_the_target(
     other_python: facts.ProbedInterpreter, tmp_path: Path
 ) -> None:

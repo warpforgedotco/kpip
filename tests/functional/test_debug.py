@@ -14,12 +14,11 @@ from tests.lib import PipTestEnvironment
 @pytest.mark.parametrize(
     "expected_text",
     [
-        "sys.executable: ",
+        "kpip runs on: ",
+        "target python:",
         "sys.getdefaultencoding: ",
         "sys.getfilesystemencoding: ",
         "locale.getencoding: ",
-        "sys.platform: ",
-        "sys.implementation:",
         "'cert' config value: ",
         "REQUESTS_CA_BUNDLE: ",
         "CURL_CA_BUNDLE: ",
