@@ -493,6 +493,109 @@ def case_inplace_shared_values():
     run(body)
 
 
+# -- builtins rebound, closure cells compared, annotations made, at once ------
+
+
+def builtin_len():
+    # Not assigned in this module, so compiled as a reference to the builtin.
+    return len
+
+
+class Probe:
+    # Stands in for "len" while rebound, as everything else still calls it.
+    def __call__(self, value):
+        return ORIGINAL_LEN(value)
+
+
+ORIGINAL_LEN = len
+
+
+def case_builtin_ref_released():
+    # A reference to a rebound builtin is released once used: a leak or an
+    # extra release shows in the count of an object that is not immortal.
+    import builtins
+
+    original = builtins.len
+    probe = Probe()
+    builtins.len = probe
+    try:
+        before = sys.getrefcount(probe)
+        for _ in range(ROUNDS):
+            assert builtin_len() is probe
+        after = sys.getrefcount(probe)
+    finally:
+        builtins.len = original
+    assert after == before, (before, after)
+
+
+def case_builtin_rebind():
+    # Readers take the builtin while writers rebind it to fresh objects: a
+    # reference not of the reader's own may be released under it.
+    import builtins
+
+    original = builtins.len
+
+    def body(index):
+        for _ in range(ROUNDS * 4):
+            if index % 2:
+                builtins.len = Probe()
+            else:
+                value = builtin_len()
+                assert value is original or type(value) is Probe, value
+
+    try:
+        run(body)
+    finally:
+        builtins.len = original
+
+
+def case_cell_compare_repr():
+    # Cells compared and printed while the variables in them are rebound.
+    def make():
+        value = [0]
+
+        def get():
+            return value
+
+        def set_value(new):
+            nonlocal value
+            value = new
+
+        return get, set_value
+
+    get_a, set_a = make()
+    get_b, _set_b = make()
+    cell_a = get_a.__closure__[0]
+    cell_b = get_b.__closure__[0]
+
+    def body(index):
+        for i in range(ROUNDS * 4):
+            if index % 2:
+                set_a([index, i])
+            else:
+                assert (cell_a == cell_b) in (True, False)
+                assert "compiled_cell" in repr(cell_a) or "cell" in repr(cell_a)
+
+    run(body)
+
+
+def annotated_maker(token):
+    def annotated(value: int) -> str:
+        return str(value) + token
+
+    return annotated
+
+
+def case_annotations_made_at_once():
+    # The first definitions race to fill the shared annotation code cache.
+    def body(index):
+        for _ in range(ROUNDS // 10):
+            function = annotated_maker(str(index))
+            assert function.__annotations__ == {"value": int, "return": str}
+
+    run(body)
+
+
 # -- assignment expressions in generator expressions --------------------------
 
 
@@ -589,6 +692,10 @@ CASES = [
     case_inplace_shared_values,
     case_walrus_genexpr_scope,
     case_constants_immortal,
+    case_builtin_ref_released,
+    case_builtin_rebind,
+    case_cell_compare_repr,
+    case_annotations_made_at_once,
 ]
 
 

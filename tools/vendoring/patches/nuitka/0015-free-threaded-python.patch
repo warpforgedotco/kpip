@@ -37,7 +37,10 @@ concatenation and comparison use CPython's, which lock; counters are atomic
 and code objects are completed once, under their lock. Constants are
 made immortal as "_Py_SetImmortal" does, so threads sharing them never
 count references to them, and "sum" takes list items with
-"PyList_GetItemRef".
+"PyList_GetItemRef". References to builtins in generated code, and the
+values of compiled cells being compared or printed, are taken with a
+reference of our own, and the extension module loader walks "sys.modules"
+under its lock.
 
 Also fixed, with or without the GIL: "list.remove"/"list.count" with a
 tuple argument, a double release in "list.index" with a bad stop, and a
@@ -47,6 +50,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
  nuitka/PythonVersions.py                      |   7 +-
  nuitka/build/include/nuitka/allocator.h       |  85 ++++-
+ nuitka/build/include/nuitka/builtins.h        |  29 ++
  nuitka/build/include/nuitka/compiled_cell.h   |  60 ++-
  nuitka/build/include/nuitka/freelists.h       |   4 +-
  .../include/nuitka/helper/dict_internals.h    |   3 +
@@ -54,17 +58,17 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  .../build/include/nuitka/helper/subscripts.h  |   2 +-
  nuitka/build/include/nuitka/prelude.h         |  37 ++
  .../build/static_src/CompiledAsyncgenType.c   |   6 +
- nuitka/build/static_src/CompiledCellType.c    |  13 +-
+ nuitka/build/static_src/CompiledCellType.c    |  61 ++--
  nuitka/build/static_src/CompiledCodeHelpers.c |  20 +
  .../build/static_src/CompiledCoroutineType.c  |   6 +
  .../static_src/CompiledFrameLocalsProxyType.c |  13 +-
  nuitka/build/static_src/CompiledFrameType.c   |  31 +-
  .../build/static_src/CompiledFunctionType.c   |  12 +-
  .../build/static_src/CompiledGeneratorType.c  |   6 +
- nuitka/build/static_src/CompiledMethodType.c  |   7 +-
+ nuitka/build/static_src/CompiledMethodType.c  |   9 +-
  nuitka/build/static_src/HelpersAllocator.c    |  57 ++-
  nuitka/build/static_src/HelpersAttributes.c   |  28 +-
- nuitka/build/static_src/HelpersBuiltin.c      |  31 ++
+ nuitka/build/static_src/HelpersBuiltin.c      |  43 ++-
  .../static_src/HelpersCallingGenerated.c      | 341 ++++++++----------
  nuitka/build/static_src/HelpersComparisonEq.c |  21 ++
  nuitka/build/static_src/HelpersComparisonGe.c |  21 ++
@@ -85,6 +89,8 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  .../HelpersOperationInplaceTruediv.c          |   8 +-
  nuitka/build/static_src/HelpersStrings.c      |   2 +-
  nuitka/build/static_src/HelpersTypes.c        |  17 +-
+ nuitka/build/static_src/MetaPathBasedLoader.c |   7 +
+ nuitka/code_generation/BuiltinCodes.py        |  14 +-
  nuitka/code_generation/FrameCodes.py          |  19 +-
  nuitka/code_generation/GlobalsLocalsCodes.py  |  26 +-
  nuitka/code_generation/ModuleCodes.py         |   9 +-
@@ -101,7 +107,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  .../templates_c/HelperOperationInplace.c.j2   |   2 +-
  .../templates_c/HelperSlotsFloat.c.j2         |   2 +-
  .../templates_c/HelperSlotsLong.c.j2          |   8 +-
- 56 files changed, 1053 insertions(+), 400 deletions(-)
+ 59 files changed, 1142 insertions(+), 423 deletions(-)
 
 diff --git a/nuitka/PythonVersions.py b/nuitka/PythonVersions.py
 index c9b278b..0acd512 100644
@@ -280,6 +286,53 @@ index f9c0770..e2eac2e 100644
  #endif
  
  #else
+diff --git a/nuitka/build/include/nuitka/builtins.h b/nuitka/build/include/nuitka/builtins.h
+index 8af1fc3..6658292 100644
+--- a/nuitka/build/include/nuitka/builtins.h
++++ b/nuitka/build/include/nuitka/builtins.h
+@@ -14,6 +14,8 @@ extern PyDictObject *dict_builtin;
+ 
+ #include "nuitka/calling.h"
+ 
++// Gives no reference: with the GIL, nothing can release the value while the
++// caller uses it. Without it, use "LOOKUP_BUILTIN_REF".
+ NUITKA_MAY_BE_UNUSED static PyObject *LOOKUP_BUILTIN(PyObject *name) {
+     CHECK_OBJECT(dict_builtin);
+     CHECK_OBJECT(name);
+@@ -32,6 +34,33 @@ NUITKA_MAY_BE_UNUSED static PyObject *LOOKUP_BUILTIN(PyObject *name) {
+     return result;
+ }
+ 
++// Returns a reference. Without the GIL, another thread may rebind the builtin
++// and release the previous value at any time, so it is taken as CPython's
++// "PyDict_GetItemRef" does, and the reference is kept until the caller is done.
++NUITKA_MAY_BE_UNUSED static PyObject *LOOKUP_BUILTIN_REF(PyObject *name) {
++    CHECK_OBJECT(dict_builtin);
++    CHECK_OBJECT(name);
++    assert(Nuitka_String_CheckExact(name));
++
++#ifdef Py_GIL_DISABLED
++    PyObject *result;
++    PyDict_GetItemRef((PyObject *)dict_builtin, name, &result);
++#else
++    PyObject *result = GET_STRING_DICT_VALUE(dict_builtin, (Nuitka_StringObject *)name);
++    Py_XINCREF(result);
++#endif
++
++    // This is assumed to not fail, abort if it does.
++    if (unlikely(result == NULL)) {
++        PyErr_PrintEx(0);
++        Py_Exit(1);
++    }
++
++    CHECK_OBJECT(result);
++
++    return result;
++}
++
+ // Returns a reference.
+ NUITKA_MAY_BE_UNUSED static PyObject *LOOKUP_BUILTIN_STR(char const *name) {
+     CHECK_OBJECT(dict_builtin);
 diff --git a/nuitka/build/include/nuitka/compiled_cell.h b/nuitka/build/include/nuitka/compiled_cell.h
 index 8beecaa..60aa8ee 100644
 --- a/nuitka/build/include/nuitka/compiled_cell.h
@@ -537,10 +590,89 @@ index 0ae7336..ca31864 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledCellType.c b/nuitka/build/static_src/CompiledCellType.c
-index 8ac3059..697b54b 100644
+index 8ac3059..15a9edf 100644
 --- a/nuitka/build/static_src/CompiledCellType.c
 +++ b/nuitka/build/static_src/CompiledCellType.c
-@@ -162,22 +162,21 @@ static int Nuitka_Cell_tp_clear(PyObject *self) {
+@@ -80,31 +80,44 @@ static PyObject *Nuitka_Cell_tp_richcompare(PyObject *a, PyObject *b, int op) {
+     }
+ 
+     // Now just dereference cell value, and compare from there by contents, which can
+-    // be NULL however.
+-    a = ((struct Nuitka_CellObject *)a)->ob_ref;
+-    b = ((struct Nuitka_CellObject *)b)->ob_ref;
++    // be NULL however. The values are held while compared, as another thread may
++    // replace them, releasing the previous ones, without the GIL.
++    a = Nuitka_CellOrPyCell_GET_REF(a);
++    b = Nuitka_CellOrPyCell_GET_REF(b);
+ 
+     if (a != NULL && b != NULL) {
+         switch (op) {
+         case Py_EQ:
+-            return RICH_COMPARE_EQ_OBJECT_OBJECT_OBJECT(a, b);
++            result = RICH_COMPARE_EQ_OBJECT_OBJECT_OBJECT(a, b);
++            break;
+         case Py_NE:
+-            return RICH_COMPARE_NE_OBJECT_OBJECT_OBJECT(a, b);
++            result = RICH_COMPARE_NE_OBJECT_OBJECT_OBJECT(a, b);
++            break;
+         case Py_LE:
+-            return RICH_COMPARE_LE_OBJECT_OBJECT_OBJECT(a, b);
++            result = RICH_COMPARE_LE_OBJECT_OBJECT_OBJECT(a, b);
++            break;
+         case Py_GE:
+-            return RICH_COMPARE_GE_OBJECT_OBJECT_OBJECT(a, b);
++            result = RICH_COMPARE_GE_OBJECT_OBJECT_OBJECT(a, b);
++            break;
+         case Py_LT:
+-            return RICH_COMPARE_LT_OBJECT_OBJECT_OBJECT(a, b);
++            result = RICH_COMPARE_LT_OBJECT_OBJECT_OBJECT(a, b);
++            break;
+         case Py_GT:
+-            return RICH_COMPARE_GT_OBJECT_OBJECT_OBJECT(a, b);
++            result = RICH_COMPARE_GT_OBJECT_OBJECT_OBJECT(a, b);
++            break;
+         default:
+             PyErr_BadArgument();
+-            return NULL;
++            result = NULL;
+         }
++
++        Py_DECREF(a);
++        Py_DECREF(b);
++        return result;
+     }
+ 
+     int res = (b == NULL) - (a == NULL);
++    Py_XDECREF(a);
++    Py_XDECREF(b);
+     switch (op) {
+     case Py_EQ:
+         result = BOOL_FROM(res == 0);
+@@ -135,14 +148,17 @@ static PyObject *Nuitka_Cell_tp_richcompare(PyObject *a, PyObject *b, int op) {
+ #endif
+ 
+ static PyObject *Nuitka_Cell_tp_repr(PyObject *self) {
+-    struct Nuitka_CellObject *cell = (struct Nuitka_CellObject *)self;
++    // Held while formatted, as for comparisons.
++    PyObject *value = Nuitka_CellOrPyCell_GET_REF(self);
+ 
+-    if (cell->ob_ref == NULL) {
+-        return Nuitka_String_FromFormat("<compiled_cell at %p: empty>", cell);
+-    } else {
+-        return Nuitka_String_FromFormat("<compiled_cell at %p: %s object at %p>", cell, cell->ob_ref->ob_type->tp_name,
+-                                        cell->ob_ref);
++    if (value == NULL) {
++        return Nuitka_String_FromFormat("<compiled_cell at %p: empty>", self);
+     }
++
++    PyObject *result =
++        Nuitka_String_FromFormat("<compiled_cell at %p: %s object at %p>", self, Py_TYPE(value)->tp_name, value);
++    Py_DECREF(value);
++    return result;
+ }
+ 
+ static int Nuitka_Cell_tp_traverse(PyObject *self, visitproc visit, void *arg) {
+@@ -162,22 +178,21 @@ static int Nuitka_Cell_tp_clear(PyObject *self) {
  }
  
  static PyObject *Nuitka_Cell_get_contents(PyObject *self, void *data) {
@@ -568,7 +700,7 @@ index 8ac3059..697b54b 100644
  
      if (old != NULL && value == NULL) {
          PyThreadState *tstate = PyThreadState_GET();
-@@ -187,8 +186,8 @@ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data)
+@@ -187,8 +202,8 @@ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data)
          return -1;
      }
  
@@ -806,9 +938,18 @@ index 8695e4e..8e4140e 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledMethodType.c b/nuitka/build/static_src/CompiledMethodType.c
-index 8199d6f..acbfed6 100644
+index 8199d6f..61f5ec3 100644
 --- a/nuitka/build/static_src/CompiledMethodType.c
 +++ b/nuitka/build/static_src/CompiledMethodType.c
+@@ -64,7 +64,7 @@ static PyObject *Nuitka_Method_reduce(PyObject *self, PyObject *unused) {
+     return NULL;
+ #else
+     PyObject *result = MAKE_TUPLE_EMPTY(tstate, 2);
+-    PyTuple_SET_ITEM0(result, 0, LOOKUP_BUILTIN(const_str_plain_getattr));
++    PyTuple_SET_ITEM(result, 0, LOOKUP_BUILTIN_REF(const_str_plain_getattr));
+     PyObject *arg_tuple = MAKE_TUPLE2(tstate, method->m_object, method->m_function->m_name);
+     PyTuple_SET_ITEM(result, 1, arg_tuple);
+ 
 @@ -318,13 +318,14 @@ static PyObject *Nuitka_Method_tp_descr_get(PyObject *self, PyObject *obj, PyObj
  static PyObject *Nuitka_Method_tp_getattro(PyObject *self, PyObject *name) {
      struct Nuitka_MethodObject *method = (struct Nuitka_MethodObject *)self;
@@ -1040,10 +1181,32 @@ index a7511b3..1dd6afd 100644
              if (unlikely(func_result == NULL)) {
                  return NULL;
 diff --git a/nuitka/build/static_src/HelpersBuiltin.c b/nuitka/build/static_src/HelpersBuiltin.c
-index f038300..1832800 100644
+index f038300..dd938a9 100644
 --- a/nuitka/build/static_src/HelpersBuiltin.c
 +++ b/nuitka/build/static_src/HelpersBuiltin.c
-@@ -764,6 +764,36 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
+@@ -666,7 +666,9 @@ PyObject *BUILTIN_PRINT(PyThreadState *tstate, PyObject **values, int count, PyO
+         assert(kw_dict != NULL);
+     }
+ 
+-    PyObject *result = CALL_FUNCTION(tstate, LOOKUP_BUILTIN(const_str_plain_print), args_tuple, kw_dict);
++    PyObject *print = LOOKUP_BUILTIN_REF(const_str_plain_print);
++    PyObject *result = CALL_FUNCTION(tstate, print, args_tuple, kw_dict);
++    Py_DECREF(print);
+     Py_DECREF(args_tuple);
+     Py_XDECREF(kw_dict);
+ 
+@@ -690,7 +692,9 @@ PyObject *BUILTIN_PRINT(PyThreadState *tstate, PyObject **values, int count, PyO
+         assert(kw_dict != NULL);
+     }
+ 
+-    PyObject *result = CALL_FUNCTION(tstate, LOOKUP_BUILTIN(const_str_plain_print), args_tuple, kw_dict);
++    PyObject *print = LOOKUP_BUILTIN_REF(const_str_plain_print);
++    PyObject *result = CALL_FUNCTION(tstate, print, args_tuple, kw_dict);
++    Py_DECREF(print);
+     Py_DECREF(args_tuple);
+     Py_XDECREF(kw_dict);
+ 
+@@ -764,6 +768,36 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
      CHECK_OBJECT(type);
      CHECK_OBJECT_X(obj);
  
@@ -1080,7 +1243,7 @@ index f038300..1832800 100644
      PyObject *super_value = GET_STRING_DICT_VALUE(module_dict, (Nuitka_StringObject *)const_str_plain_super);
  
      if (super_value == NULL) {
-@@ -779,6 +809,7 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
+@@ -779,6 +813,7 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
      } else {
          return CALL_FUNCTION_WITH_SINGLE_ARG(tstate, super_value, type);
      }
@@ -1088,6 +1251,17 @@ index f038300..1832800 100644
  }
  
  PyObject *BUILTIN_SUPER0(PyThreadState *tstate, PyDictObject *module_dict, PyObject *type, PyObject *obj) {
+@@ -1003,7 +1038,9 @@ PyObject *BUILTIN_PRINT1(PyThreadState *tstate, PyObject **values, int count) {
+     // a tuple, but instead uses the values directly.
+     PyObject *args_tuple = MAKE_TUPLE_VAR(tstate, values, count);
+ 
+-    PyObject *result = CALL_FUNCTION_WITH_POS_ARGS(tstate, LOOKUP_BUILTIN(const_str_plain_print), args_tuple);
++    PyObject *print = LOOKUP_BUILTIN_REF(const_str_plain_print);
++    PyObject *result = CALL_FUNCTION_WITH_POS_ARGS(tstate, print, args_tuple);
++    Py_DECREF(print);
+     Py_DECREF(args_tuple);
+ 
+     return result;
 diff --git a/nuitka/build/static_src/HelpersCallingGenerated.c b/nuitka/build/static_src/HelpersCallingGenerated.c
 index 9ec2b09..00d6219 100644
 --- a/nuitka/build/static_src/HelpersCallingGenerated.c
@@ -3320,6 +3494,82 @@ index 90cc286..91ba59a 100644
          }
      }
  
+diff --git a/nuitka/build/static_src/MetaPathBasedLoader.c b/nuitka/build/static_src/MetaPathBasedLoader.c
+index 6f3d797..a2f74f3 100644
+--- a/nuitka/build/static_src/MetaPathBasedLoader.c
++++ b/nuitka/build/static_src/MetaPathBasedLoader.c
+@@ -1164,6 +1164,9 @@ error:
+             PRINT_STRING("Scanning for sub-modules needing protection:");
+             PRINT_ITEM_LINE(base_name_prefix);
+ #endif
++            // Other threads may import meanwhile: walk "sys.modules" under its
++            // lock, as "PyDict_Next" must be, so its entries stay valid.
++            Py_BEGIN_CRITICAL_SECTION(modules_dict);
+             while (Nuitka_DictNext(modules_dict, &pos, &key, &value)) {
+                 // TODO: Should have nuitka_bool return values for these as well maybe.
+                 PyObject *starts_with_result = UNICODE_STARTSWITH2(tstate, key, base_name_prefix);
+@@ -1174,6 +1177,7 @@ error:
+ 
+                 Py_DECREF(starts_with_result);
+             }
++            Py_END_CRITICAL_SECTION();
+ 
+ #if _NUITKA_EXPERIMENTAL_DEBUG_EXTENSION_MODULE_PRESERVATION_HACK
+             PRINT_ITEM_LINE(preserved_sub_modules);
+@@ -1399,6 +1403,8 @@ error:
+             PRINT_ITEM(base_name_prefix);
+             PRINT_STRING("'\n");
+ #endif
++            // Under the lock of "sys.modules", as above.
++            Py_BEGIN_CRITICAL_SECTION(modules_dict);
+             while (Nuitka_DictNext(modules_dict, &pos, &key, &value)) {
+                 // TODO: Should have nuitka_bool return values for these as well maybe.
+                 PyObject *starts_with_result = UNICODE_STARTSWITH2(tstate, key, base_name_prefix);
+@@ -1409,6 +1415,7 @@ error:
+ 
+                 Py_DECREF(starts_with_result);
+             }
++            Py_END_CRITICAL_SECTION();
+         }
+ 
+ #if _NUITKA_EXPERIMENTAL_DEBUG_EXTENSION_MODULE_PRESERVATION_HACK
+diff --git a/nuitka/code_generation/BuiltinCodes.py b/nuitka/code_generation/BuiltinCodes.py
+index 416ac52..cc30484 100644
+--- a/nuitka/code_generation/BuiltinCodes.py
++++ b/nuitka/code_generation/BuiltinCodes.py
+@@ -8,6 +8,7 @@ bin, etc.
+ """
+ 
+ from nuitka.Builtins import builtin_anon_codes
++from nuitka.PythonVersions import isPythonWithGil
+ 
+ from .CodeHelpers import (
+     decideConversionCheckNeeded,
+@@ -42,14 +43,21 @@ def generateBuiltinRefCode(to_name, expression, emit, context):
+     with withObjectCodeTemporaryAssignment(
+         to_name, "builtin_value", expression, emit, context
+     ) as value_name:
++        # Without the GIL, a thread rebinding the builtin meanwhile could
++        # release it under us, so take a reference; with it, none is needed.
+         emit(
+-            "%s = LOOKUP_BUILTIN(%s);"
+-            % (value_name, context.getConstantCode(constant=builtin_name))
++            "%s = %s(%s);"
++            % (
++                value_name,
++                "LOOKUP_BUILTIN" if isPythonWithGil() else "LOOKUP_BUILTIN_REF",
++                context.getConstantCode(constant=builtin_name),
++            )
+         )
+ 
+         getAssertionCode(check="%s != NULL" % value_name, emit=emit)
+ 
+-        # Gives no reference
++        if not isPythonWithGil():
++            context.addCleanupTempName(value_name)
+ 
+ 
+ def generateBuiltinAnonymousRefCode(to_name, expression, emit, context):
 diff --git a/nuitka/code_generation/FrameCodes.py b/nuitka/code_generation/FrameCodes.py
 index 425b526..82a2354 100644
 --- a/nuitka/code_generation/FrameCodes.py
