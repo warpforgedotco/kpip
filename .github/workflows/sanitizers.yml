@@ -1,0 +1,123 @@
+name: Sanitizers
+
+# Races in compiled code without the GIL rarely crash a test, so the threads
+# program (tests/nuitka_programs/threads.py) also runs under ThreadSanitizer,
+# which sees a race whether or not it corrupts anything. The program is
+# compiled with the free-threaded Python setup-python provides and
+# -fsanitize=thread, and then runs against a libpython of the same version
+# built with --with-thread-sanitizer, so TSan sees CPython's side of a race
+# as well as Nuitka's. Any report fails the run.
+
+on:
+  pull_request:
+    paths:
+      - "tools/vendoring/patches/nuitka/**"
+      - "scripts/compile/tests/nuitka_programs/**"
+      - ".github/workflows/sanitizers.yml"
+  schedule:
+    # Nuitka's develop moves on its own.
+    - cron: "37 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tsan:
+    name: Threads under ThreadSanitizer / free-threaded 3.15
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      TSAN_PYTHON: ${{ github.workspace }}/.tsan-python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: "3.15t"
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: scripts/compile/uv.lock
+      - name: Install build dependencies
+        # patchelf for Nuitka's standalone binary; clang, so that the program
+        # and libpython share one TSan runtime; the rest for CPython's build.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes patchelf clang libffi-dev libssl-dev zlib1g-dev
+      - name: Let TSan map its shadow memory
+        # Newer kernels randomise mappings more than TSan allows, as CPython's
+        # own TSan job works around.
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: CPython version to match
+        id: version
+        run: |
+          "${{ steps.python.outputs.python-path }}" - >> "$GITHUB_OUTPUT" <<'EOF'
+          import sys
+          v = sys.version_info
+          level = {"alpha": "a", "beta": "b", "candidate": "rc", "final": ""}[v.releaselevel]
+          base = f"{v.major}.{v.minor}.{v.micro}"
+          print(f"base={base}")
+          print(f"full={base}{level}{v.serial if level else ''}")
+          print(f"minor={v.major}.{v.minor}")
+          EOF
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: ${{ env.TSAN_PYTHON }}
+          key: tsan-python-${{ runner.os }}-${{ steps.version.outputs.full }}-v1
+      - name: Build CPython with ThreadSanitizer
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o python.tgz \
+            "https://www.python.org/ftp/python/${{ steps.version.outputs.base }}/Python-${{ steps.version.outputs.full }}.tgz"
+          mkdir cpython && tar xzf python.tgz -C cpython --strip-components=1
+          cd cpython
+          CC=clang ./configure --quiet --disable-gil --with-thread-sanitizer \
+            --enable-shared --prefix="$TSAN_PYTHON"
+          make -s -j"$(nproc)"
+          make -s install
+          cp Tools/tsan/suppressions_free_threading.txt "$TSAN_PYTHON/"
+      - name: Compile the threads program
+        working-directory: scripts/compile
+        run: |
+          uv sync --locked --group tests --python "${{ steps.python.outputs.python-path }}"
+          nuitka_dir=$(uv run kpip-compile vendor | tail -1)
+          mkdir -p "$RUNNER_TEMP/threads"
+          cp tests/nuitka_programs/threads.py "$RUNNER_TEMP/threads/"
+          cd "$RUNNER_TEMP/threads"
+          CCFLAGS="-fsanitize=thread -g -O1" LDFLAGS="-fsanitize=thread" \
+            PYTHONPATH="$nuitka_dir" "${{ steps.python.outputs.python-path }}" -m nuitka \
+            --clang --mode=standalone --assume-yes-for-downloads --quiet \
+            --output-dir=build threads.py
+      - name: Run it against the TSan libpython
+        run: |
+          dist="$RUNNER_TEMP/threads/build/threads.dist"
+          tsan_lib="$TSAN_PYTHON/lib/libpython${{ steps.version.outputs.minor }}t.so.1.0"
+          swapped=0
+          for lib in "$dist"/libpython${{ steps.version.outputs.minor }}t.so*; do
+            [ -e "$lib" ] || continue
+            cp "$tsan_lib" "$lib"
+            swapped=$((swapped + 1))
+          done
+          # Without a libpython to swap, TSan would miss CPython's side.
+          [ "$swapped" -gt 0 ] || { echo "no libpython in $dist"; exit 1; }
+          status=0
+          TSAN_OPTIONS="suppressions=$TSAN_PYTHON/suppressions_free_threading.txt halt_on_error=0" \
+            "$dist/threads.bin" 200 > run.out 2> tsan.log || status=$?
+          cat run.out
+          if [ -s tsan.log ]; then
+            grep -E "^SUMMARY" tsan.log | sort | uniq -c | tee -a "$GITHUB_STEP_SUMMARY"
+            cat tsan.log
+          fi
+          # TSan exits 66 when it reported a race; a case that failed prints FAIL.
+          [ "$status" -eq 0 ] && ! grep -q "^FAIL" run.out
