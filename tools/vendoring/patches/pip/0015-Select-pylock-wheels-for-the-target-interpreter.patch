@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 22 Oct 2026 02:00:45 -0500
+Subject: [PATCH] Select pylock wheels for the target interpreter
+
+install -r pylock.toml chose each package's wheel with packaging's
+default tags, those of the CPython kpip runs on, so a target of another
+version, ABI or platform could be handed a wheel it cannot import. The
+selection now takes the target interpreter's tags, and its markers
+explicitly rather than through packaging's patched default environment.
+---
+ src/kpip/_internal/utils/pylock.py |  9 ++++++++-
+ tests/unit/test_interpreters.py    | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+), 1 deletion(-)
+
+diff --git a/src/kpip/_internal/utils/pylock.py b/src/kpip/_internal/utils/pylock.py
+index 40be1db..0f1f2a8 100644
+--- a/src/kpip/_internal/utils/pylock.py
++++ b/src/kpip/_internal/utils/pylock.py
+@@ -20,6 +20,7 @@ from kpip._vendor.packaging.pylock import (
+ from kpip._vendor.packaging.version import Version
+ 
+ from kpip._internal.exceptions import DiagnosticPipError, InstallationError
++from kpip._internal.interpreters import target_interpreter
+ from kpip._internal.models.link import Link
+ from kpip._internal.utils.compat import tomllib
+ from kpip._internal.utils.urls import path_to_url, url_to_path
+@@ -292,7 +293,13 @@ def select_from_pylock_path_or_url(
+     try:
+         # TODO: for completeness, pylock.select should support preferring sdist
+         # over wheels to support --no-binary
+-        yield from lock.select()
++        # Select for the target interpreter: packaging would otherwise take the
++        # tags and markers of the Python kpip runs on.
++        target = target_interpreter()
++        yield from lock.select(
++            environment=target.markers,  # type: ignore[arg-type]
++            tags=target.tags,
++        )
+     except Exception as exc:
+         raise InstallationError(
+             f"Cannot select requirements from pylock file {pylock_path_or_url!r}: {exc}"
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index 4e604ba..dcc351c 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -415,6 +415,35 @@ def test_markers_and_requires_python_are_the_targets(
+     assert str(RequiresPythonCandidate(None).version) == "3.11.9"
+ 
+ 
++def test_pylock_wheels_are_chosen_for_the_target(
++    other_python: facts.ProbedInterpreter, tmp_path: Path
++) -> None:
++    from kpip._internal.utils.pylock import select_from_pylock_path_or_url
++    from kpip._vendor.packaging.tags import sys_tags
++
++    def wheel(tag: str) -> str:
++        return (
++            f'{{ name = "demo-1.0-{tag}.whl", path = "demo-1.0-{tag}.whl", '
++            f'hashes = {{ sha256 = "{"0" * 64}" }} }}'
++        )
++
++    lock = tmp_path / "pylock.toml"
++    lock.write_text(
++        'lock-version = "1.0"\n'
++        'created-by = "test"\n'
++        "[[packages]]\n"
++        'name = "demo"\n'
++        'version = "1.0"\n'
++        "marker = \"sys_platform == 'emscripten'\"\n"
++        f"wheels = [{wheel(str(next(iter(sys_tags()))))}, "
++        f"{wheel('cp311-cp311-emscripten_3_1_58_wasm32')}]\n"
++    )
++
++    [(package, dist)] = select_from_pylock_path_or_url(str(lock), session=None)  # type: ignore[arg-type]
++    assert package.name == "demo"
++    assert dist.name == "demo-1.0-cp311-cp311-emscripten_3_1_58_wasm32.whl"  # type: ignore[union-attr]
++
++
+ def test_scripts_run_with_the_target(environment: Path, tmp_path: Path) -> None:
+     import zipfile
+ 
