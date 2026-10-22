@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 from kpip_compile.vendor import (
+    APPLIES,
+    CONFLICTS,
     STAMP_NAME,
+    UPSTREAM,
     PatchError,
     VendorSpec,
+    check_patches,
     find_patches,
     is_current,
     resolve_commit,
@@ -149,3 +153,53 @@ def test_refetch_removes_read_only_files(
     vendor_nuitka(spec, vendor_dir, force=True)
 
     assert not read_only.exists()
+
+
+def test_check_reports_every_patch(upstream: tuple[Path, str], tmp_path: Path) -> None:
+    repo, _commit = upstream
+    # Edits far enough apart that each patch's context is upstream's alone.
+    lines = [f"line{i:02}\n" for i in range(40)]
+    (repo / "bootstrap.c").write_text("".join(lines))
+    _git("commit", "--quiet", "-am", "longer", cwd=repo)
+    patches = tmp_path / "patches"
+    _patch(repo, patches, "0001-a.patch", "line05", "LINE05")
+    _patch(repo, patches, "0002-b.patch", "line15", "LINE15")
+    conflicting = _patch(repo, patches, "0003-c.patch", "line25", "LINE25")
+    conflicting.write_text(conflicting.read_text().replace(" line24", " missing"))
+    _patch(repo, patches, "0004-d.patch", "line35", "LINE35")
+    # Upstream takes 0002's change itself.
+    (repo / "bootstrap.c").write_text("".join(lines).replace("line15", "LINE15"))
+    _git("commit", "--quiet", "-am", "take b", cwd=repo)
+    spec = VendorSpec(
+        repository=str(repo),
+        commit=_git("rev-parse", "HEAD", cwd=repo),
+        patches=find_patches(patches),
+    )
+
+    results = check_patches(spec, tmp_path / "work")
+
+    # A conflict does not stop the patches after it.
+    assert [(patch.name, status) for patch, status in results] == [
+        ("0001-a.patch", APPLIES),
+        ("0002-b.patch", UPSTREAM),
+        ("0003-c.patch", CONFLICTS),
+        ("0004-d.patch", APPLIES),
+    ]
+    patched = (tmp_path / "work" / "bootstrap.c").read_text()
+    assert "LINE05" in patched and "LINE35" in patched and "LINE25" not in patched
+
+
+def test_check_refuses_an_unreadable_patch(
+    upstream: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, commit = upstream
+    patches = tmp_path / "patches"
+    patches.mkdir()
+    (patches / "0001-broken.patch").write_text("diff --git a/x b/x\n@@ garbage\n")
+    spec = VendorSpec(
+        repository=str(repo), commit=commit, patches=find_patches(patches)
+    )
+
+    # Not a conflict, which only warns: the check itself cannot run.
+    with pytest.raises(PatchError, match="0001-broken.patch"):
+        check_patches(spec, tmp_path / "work")
