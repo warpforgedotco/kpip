@@ -11,6 +11,7 @@ on:
   pull_request:
     paths:
       - "scripts/compile/src/kpip_compile/**"
+      - "tools/vendoring/patches/nuitka/**"
       - ".github/workflows/nuitka-factory.yml"
   schedule:
     - cron: "47 6 * * *"

@@ -12,6 +12,7 @@ from kpip_compile.vendor import (
     APPLIES,
     NUITKA_BRANCH,
     NUITKA_REPOSITORY,
+    PATCHES_DIR,
     STAMP_NAME,
     VENDOR_DIR,
     PatchError,
@@ -46,14 +47,17 @@ def _check_patches(branch: str) -> int:
     Returns 1 when any patch does not apply, so a caller can tell (the table
     still lists them all), and 2 when the check itself could not run.
     """
+    patches = find_patches()
+    if not patches:
+        # A table of nothing would pass without checking anything.
+        print(f"error: no patches found in {PATCHES_DIR}", file=sys.stderr)
+        return 2
     try:
         commit = resolve_commit(NUITKA_REPOSITORY, branch)
-        spec = VendorSpec(
-            repository=NUITKA_REPOSITORY, commit=commit, patches=find_patches()
-        )
+        spec = VendorSpec(repository=NUITKA_REPOSITORY, commit=commit, patches=patches)
         with tempfile.TemporaryDirectory() as work_dir:
             results = check_patches(spec, Path(work_dir) / "nuitka")
-    except subprocess.CalledProcessError as error:
+    except (subprocess.CalledProcessError, PatchError) as error:
         print(f"error: cannot check Nuitka {branch}: {error}", file=sys.stderr)
         return 2
 

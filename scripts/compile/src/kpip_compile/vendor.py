@@ -169,11 +169,22 @@ def check_patches(spec: VendorSpec, work_dir: Path) -> list[tuple[Path, str]]:
     Unlike ``vendor_nuitka``, a patch that fails does not stop the rest. One
     that applies is applied, so the next ones see it as they would; one that
     applies in reverse is already in upstream; any other conflicts and is left
-    out, so a later patch building on it may conflict as well.
+    out, so a later patch building on it may conflict as well. A patch git
+    cannot read is no such answer, and raises ``PatchError``.
     """
     _fetch(spec, work_dir)
     results = []
     for patch in spec.patches:
+        parsed = subprocess.run(
+            ["git", "apply", "--stat", str(patch)],
+            cwd=work_dir,
+            capture_output=True,
+            text=True,
+        )
+        if parsed.returncode != 0:
+            raise PatchError(
+                f"{patch.name} is not a patch git can read: {parsed.stderr}"
+            )
         if _git_succeeds("apply", "--check", str(patch), cwd=work_dir):
             _git("apply", str(patch), cwd=work_dir)
             results.append((patch, APPLIES))

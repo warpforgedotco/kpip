@@ -187,3 +187,19 @@ def test_check_reports_every_patch(upstream: tuple[Path, str], tmp_path: Path) -
     ]
     patched = (tmp_path / "work" / "bootstrap.c").read_text()
     assert "LINE05" in patched and "LINE35" in patched and "LINE25" not in patched
+
+
+def test_check_refuses_an_unreadable_patch(
+    upstream: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, commit = upstream
+    patches = tmp_path / "patches"
+    patches.mkdir()
+    (patches / "0001-broken.patch").write_text("diff --git a/x b/x\n@@ garbage\n")
+    spec = VendorSpec(
+        repository=str(repo), commit=commit, patches=find_patches(patches)
+    )
+
+    # Not a conflict, which only warns: the check itself cannot run.
+    with pytest.raises(PatchError, match="0001-broken.patch"):
+        check_patches(spec, tmp_path / "work")
