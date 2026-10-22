@@ -78,7 +78,6 @@ The patches live in a subdirectory so that `vendoring sync`, which applies
 | `0008-subscript-tuple-fast-path.patch` | A constant index into a tuple, or a subclass that keeps `tuple.__getitem__` such as a named tuple, reads the item directly. |
 | `0009-method-call-no-dict.patch` | On 3.11+, methods of objects without an instance dictionary (`dict`, `list`, `str`, `__slots__` classes) are called directly, without creating a bound method first. |
 | `0010-attribute-lookup-cache.patch` | On 3.12+, each attribute lookup site caches the type it last saw by version tag, reading `__slots__` members and class constants directly. |
-| `0011-include-package-once-per-module.patch` | `--include-package` includes a module present as both source and extension module once, as the file import resolution picks, instead of twice with a duplicate symbol at link time. |
 | `0013-constant-cache-without-slot-swapping.patch` | Loading constants no longer swaps the `tp_hash` and `tp_richcompare` slots of builtin types for the duration of a cache lookup, which threads running meanwhile could observe. |
 | `0015-free-threaded-python.patch` | Compiles for free-threaded Python 3.14, and keeps compiled code correct when threads run it at once: allocation, reference counting, shared caches and locking follow CPython's free-threaded build. Checked by `tests/test_nuitka_threads.py`. |
 
