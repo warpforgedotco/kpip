@@ -97,7 +97,7 @@ jobs:
           cd "$RUNNER_TEMP/threads"
           CCFLAGS="-fsanitize=thread -g -O1" LDFLAGS="-fsanitize=thread" \
             PYTHONPATH="$nuitka_dir" "${{ steps.python.outputs.python-path }}" -m nuitka \
-            --clang --mode=standalone --assume-yes-for-downloads --quiet \
+            --clang --mode=standalone --assume-yes-for-downloads --quiet --unstripped \
             --output-dir=build threads.py
       - name: Run it against the TSan libpython
         run: |
