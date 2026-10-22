@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 22 Oct 2026 04:13:11 -0500
+Subject: [PATCH] Find Homebrew's site configuration from the target
+ interpreter
+
+On macOS, pip reads a site pip.conf from Homebrew's share directory when
+it runs on a Homebrew Python, which platformdirs finds from
+sys.base_prefix. Compiled, that is the CPython kpip bundles, never
+Homebrew's, so kpip never read $HOMEBREW_PREFIX/share/pip/pip.conf for a
+Homebrew target. The site directories now come from a platformdirs MacOS
+that looks at the target interpreter's base prefix instead.
+---
+ src/kpip/_internal/utils/appdirs.py | 24 +++++++++++++++++++++++-
+ tests/unit/test_interpreters.py     | 21 +++++++++++++++++++++
+ 2 files changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/src/kpip/_internal/utils/appdirs.py b/src/kpip/_internal/utils/appdirs.py
+index 8cb42ae..5759611 100644
+--- a/src/kpip/_internal/utils/appdirs.py
++++ b/src/kpip/_internal/utils/appdirs.py
+@@ -10,6 +10,28 @@ import os
+ import sys
+ 
+ from kpip._vendor import platformdirs as _appdirs
++from kpip._vendor.platformdirs.macos import MacOS as _MacOS
++
++from kpip._internal.interpreters import target_interpreter
++
++
++class _TargetMacOS(_MacOS):
++    """platformdirs' macOS directories, with Homebrew's found from the target
++    interpreter: platformdirs reads ``sys.base_prefix``, which in the compiled
++    kpip is the bundled CPython's, never Homebrew's."""
++
++    def _base_site_dirs(self) -> list[str]:
++        base_prefix = target_interpreter().base_prefix
++        path_list = []
++        if "/opt/python" in base_prefix:
++            homebrew_prefix = base_prefix.split("/opt/python")[0]
++            path_list.append(
++                self._join_app_name_and_version(f"{homebrew_prefix}/share")
++            )
++        path_list.append(
++            self._join_app_name_and_version("/Library/Application Support")
++        )
++        return path_list
+ 
+ 
+ def user_cache_dir(appname: str) -> str:
+@@ -41,7 +63,7 @@ def user_config_dir(appname: str, roaming: bool = True) -> str:
+ # see <https://github.com/pypa/pip/issues/1733>
+ def site_config_dirs(appname: str) -> list[str]:
+     if sys.platform == "darwin":
+-        dirval = _appdirs.site_data_dir(appname, appauthor=False, multipath=True)
++        dirval = _TargetMacOS(appname, appauthor=False, multipath=True).site_data_dir
+         return dirval.split(os.pathsep)
+ 
+     dirval = _appdirs.site_config_dir(appname, appauthor=False, multipath=True)
+diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
+index cacd26f..7c24f29 100644
+--- a/tests/unit/test_interpreters.py
++++ b/tests/unit/test_interpreters.py
+@@ -463,6 +463,27 @@ def test_debug_says_when_no_python_was_found(
+     assert "none found; resolving for the bundled CPython" in caplog.text
+ 
+ 
++@pytest.mark.skipif(sys.platform != "darwin", reason="Homebrew's layout is macOS's")
++def test_homebrew_site_config_is_the_targets(
++    other_python: facts.ProbedInterpreter, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from kpip._internal.utils import appdirs
++
++    monkeypatch.delenv("XDG_DATA_DIRS", raising=False)
++    # kpip runs on a Python of its own; the target is Homebrew's.
++    monkeypatch.setattr(sys, "base_prefix", "/opt/kpip-bundle")
++    monkeypatch.setattr(
++        other_python,
++        "base_prefix",
++        "/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11",
++    )
++
++    assert appdirs.site_config_dirs("pip") == [
++        "/opt/homebrew/share/pip",
++        "/Library/Application Support/pip",
++    ]
++
++
+ def test_pylock_wheels_are_chosen_for_the_target(
+     other_python: facts.ProbedInterpreter, tmp_path: Path
+ ) -> None:

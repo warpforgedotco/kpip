@@ -463,6 +463,27 @@ def test_debug_says_when_no_python_was_found(
     assert "none found; resolving for the bundled CPython" in caplog.text
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Homebrew's layout is macOS's")
+def test_homebrew_site_config_is_the_targets(
+    other_python: facts.ProbedInterpreter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kpip._internal.utils import appdirs
+
+    monkeypatch.delenv("XDG_DATA_DIRS", raising=False)
+    # kpip runs on a Python of its own; the target is Homebrew's.
+    monkeypatch.setattr(sys, "base_prefix", "/opt/kpip-bundle")
+    monkeypatch.setattr(
+        other_python,
+        "base_prefix",
+        "/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11",
+    )
+
+    assert appdirs.site_config_dirs("pip") == [
+        "/opt/homebrew/share/pip",
+        "/Library/Application Support/pip",
+    ]
+
+
 def test_pylock_wheels_are_chosen_for_the_target(
     other_python: facts.ProbedInterpreter, tmp_path: Path
 ) -> None:

@@ -10,6 +10,28 @@ import os
 import sys
 
 from kpip._vendor import platformdirs as _appdirs
+from kpip._vendor.platformdirs.macos import MacOS as _MacOS
+
+from kpip._internal.interpreters import target_interpreter
+
+
+class _TargetMacOS(_MacOS):
+    """platformdirs' macOS directories, with Homebrew's found from the target
+    interpreter: platformdirs reads ``sys.base_prefix``, which in the compiled
+    kpip is the bundled CPython's, never Homebrew's."""
+
+    def _base_site_dirs(self) -> list[str]:
+        base_prefix = target_interpreter().base_prefix
+        path_list = []
+        if "/opt/python" in base_prefix:
+            homebrew_prefix = base_prefix.split("/opt/python")[0]
+            path_list.append(
+                self._join_app_name_and_version(f"{homebrew_prefix}/share")
+            )
+        path_list.append(
+            self._join_app_name_and_version("/Library/Application Support")
+        )
+        return path_list
 
 
 def user_cache_dir(appname: str) -> str:
@@ -41,7 +63,7 @@ def user_config_dir(appname: str, roaming: bool = True) -> str:
 # see <https://github.com/pypa/pip/issues/1733>
 def site_config_dirs(appname: str) -> list[str]:
     if sys.platform == "darwin":
-        dirval = _appdirs.site_data_dir(appname, appauthor=False, multipath=True)
+        dirval = _TargetMacOS(appname, appauthor=False, multipath=True).site_data_dir
         return dirval.split(os.pathsep)
 
     dirval = _appdirs.site_config_dir(appname, appauthor=False, multipath=True)
