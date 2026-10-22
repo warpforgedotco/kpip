@@ -415,6 +415,35 @@ def test_markers_and_requires_python_are_the_targets(
     assert str(RequiresPythonCandidate(None).version) == "3.11.9"
 
 
+def test_pylock_wheels_are_chosen_for_the_target(
+    other_python: facts.ProbedInterpreter, tmp_path: Path
+) -> None:
+    from kpip._internal.utils.pylock import select_from_pylock_path_or_url
+    from kpip._vendor.packaging.tags import sys_tags
+
+    def wheel(tag: str) -> str:
+        return (
+            f'{{ name = "demo-1.0-{tag}.whl", path = "demo-1.0-{tag}.whl", '
+            f'hashes = {{ sha256 = "{"0" * 64}" }} }}'
+        )
+
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(
+        'lock-version = "1.0"\n'
+        'created-by = "test"\n'
+        "[[packages]]\n"
+        'name = "demo"\n'
+        'version = "1.0"\n'
+        "marker = \"sys_platform == 'emscripten'\"\n"
+        f"wheels = [{wheel(str(next(iter(sys_tags()))))}, "
+        f"{wheel('cp311-cp311-emscripten_3_1_58_wasm32')}]\n"
+    )
+
+    [(package, dist)] = select_from_pylock_path_or_url(str(lock), session=None)  # type: ignore[arg-type]
+    assert package.name == "demo"
+    assert dist.name == "demo-1.0-cp311-cp311-emscripten_3_1_58_wasm32.whl"  # type: ignore[union-attr]
+
+
 def test_scripts_run_with_the_target(environment: Path, tmp_path: Path) -> None:
     import zipfile
 

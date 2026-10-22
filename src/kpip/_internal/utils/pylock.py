@@ -20,6 +20,7 @@ from kpip._vendor.packaging.pylock import (
 from kpip._vendor.packaging.version import Version
 
 from kpip._internal.exceptions import DiagnosticPipError, InstallationError
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.models.link import Link
 from kpip._internal.utils.compat import tomllib
 from kpip._internal.utils.urls import path_to_url, url_to_path
@@ -292,7 +293,13 @@ def select_from_pylock_path_or_url(
     try:
         # TODO: for completeness, pylock.select should support preferring sdist
         # over wheels to support --no-binary
-        yield from lock.select()
+        # Select for the target interpreter: packaging would otherwise take the
+        # tags and markers of the Python kpip runs on.
+        target = target_interpreter()
+        yield from lock.select(
+            environment=target.markers,  # type: ignore[arg-type]
+            tags=target.tags,
+        )
     except Exception as exc:
         raise InstallationError(
             f"Cannot select requirements from pylock file {pylock_path_or_url!r}: {exc}"
