@@ -8,7 +8,9 @@ Every execution of an annotated "def" unmarshalled the code object of
 its "__annotate__" function again, just to create a function from it.
 For a nested function, that is every call of the enclosing function.
 Code objects are immutable and CPython shares them between functions, so
-the maker now keeps the first one it unmarshals.
+the maker now keeps the first one it unmarshals. Without the GIL it is
+published with release ordering, so no thread sees the pointer before the
+object, and a thread that loses the race releases its own copy.
 
 Defining 20000 annotated nested functions takes 1.2 instead of 11.8 ms,
 where CPython 3.14 takes 4.0 ms.
@@ -16,21 +18,23 @@ where CPython 3.14 takes 4.0 ms.
 Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- .../code_generation/AnnotateFunctionCodes.py   | 18 +++++++++++++-----
- 1 file changed, 13 insertions(+), 5 deletions(-)
+ .../code_generation/AnnotateFunctionCodes.py  | 32 ++++++++++++++++---
+ 1 file changed, 27 insertions(+), 5 deletions(-)
 
 diff --git a/nuitka/code_generation/AnnotateFunctionCodes.py b/nuitka/code_generation/AnnotateFunctionCodes.py
-index f3881b63..8e55d2a1 100644
+index f3881b6..5c0ae02 100644
 --- a/nuitka/code_generation/AnnotateFunctionCodes.py
 +++ b/nuitka/code_generation/AnnotateFunctionCodes.py
-@@ -121,16 +121,24 @@ def _generateAnnotateFunctionMaker(function_body, function_identifier, context):
+@@ -121,16 +121,38 @@ def _generateAnnotateFunctionMaker(function_body, function_identifier, context):
  
      closure_parameter, closure_setup = _getClosureSetupCode(closure_variables)
  
 +    # The code object is immutable, so it is unmarshalled once and shared by
 +    # every function created from it, as CPython does. That matters for a
-+    # definition that is executed repeatedly, e.g. a nested function. Racing
-+    # threads can at worst each unmarshal it, and keep one.
++    # definition that is executed repeatedly, e.g. a nested function. Without
++    # the GIL, the cache is published with release ordering, so a thread that
++    # reads it never sees the pointer before the object, and a thread that
++    # loses the race to fill it releases its own copy and uses the winner's.
      maker_code = """\
  static PyObject *%(maker)s(PyThreadState *tstate%(closure_parameter)s) {
 +    static PyObject *code_cache = NULL;
@@ -39,13 +43,25 @@ index f3881b63..8e55d2a1 100644
 -        %(marshalled)s,
 -        %(marshalled_size)d);
 -    assert(code != NULL);
++#ifdef Py_GIL_DISABLED
++    PyObject *code = (PyObject *)_Py_atomic_load_ptr_acquire(&code_cache);
++#else
 +    PyObject *code = code_cache;
++#endif
 +    if (code == NULL) {
 +        code = PyMarshal_ReadObjectFromString(
 +            %(marshalled)s,
 +            %(marshalled_size)d);
 +        assert(code != NULL);
++#ifdef Py_GIL_DISABLED
++        PyObject *published = NULL;
++        if (!_Py_atomic_compare_exchange_ptr(&code_cache, &published, code)) {
++            Py_DECREF(code);
++            code = published;
++        }
++#else
 +        code_cache = code;
++#endif
 +    }
  
      result = PyFunction_NewWithQualName(code, %(module_dict)s, %(qualname)s);
