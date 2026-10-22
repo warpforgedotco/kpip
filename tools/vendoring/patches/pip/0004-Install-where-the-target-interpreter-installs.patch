@@ -125,7 +125,7 @@ index 31da26f..7e3d4de 100644
          return False
  
 diff --git a/src/kpip/_internal/configuration.py b/src/kpip/_internal/configuration.py
-index 2ab2bec..da671af 100644
+index 99eb8f6..032f280 100644
 --- a/src/kpip/_internal/configuration.py
 +++ b/src/kpip/_internal/configuration.py
 @@ -15,7 +15,6 @@ from __future__ import annotations
@@ -142,8 +142,8 @@ index 2ab2bec..da671af 100644
  )
 +from kpip._internal.interpreters import target_interpreter
  from kpip._internal.utils import appdirs
+ from kpip._internal.utils._log import getLogger
  from kpip._internal.utils.compat import WINDOWS, get_locale_encoding
- from kpip._internal.utils.logging import getLogger
 @@ -79,7 +79,7 @@ def get_configuration_files() -> dict[Kind, list[str]]:
          os.path.join(path, CONFIG_BASENAME) for path in appdirs.site_config_dirs("pip")
      ]

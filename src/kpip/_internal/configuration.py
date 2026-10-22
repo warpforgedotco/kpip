@@ -25,8 +25,8 @@ from kpip._internal.exceptions import (
 )
 from kpip._internal.interpreters import target_interpreter
 from kpip._internal.utils import appdirs
+from kpip._internal.utils._log import getLogger
 from kpip._internal.utils.compat import WINDOWS, get_locale_encoding
-from kpip._internal.utils.logging import getLogger
 from kpip._internal.utils.misc import ensure_dir
 
 RawConfigParser = configparser.RawConfigParser  # Shorthand

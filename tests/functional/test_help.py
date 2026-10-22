@@ -5,10 +5,10 @@ import pytest
 
 from kpip._vendor.rich.text import Text
 
-import kpip._internal.cli.parser
 from kpip._internal.cli.status_codes import ERROR, SUCCESS
 from kpip._internal.commands import commands_dict, create_command
 from kpip._internal.exceptions import CommandError
+from kpip._internal.utils import logging as pip_logging
 
 from tests.lib import InMemoryPip, PipTestEnvironment
 
@@ -133,12 +133,12 @@ def test_help_command_colors(
     monkeypatch.delenv("PIP_NO_COLOR", raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
 
-    PipConsole = kpip._internal.cli.parser.PipConsole
+    PipConsole = pip_logging.PipConsole
 
     TestConsole = functools.partial(
         PipConsole, force_terminal=True, color_system="standard", width=80
     )
-    monkeypatch.setattr(kpip._internal.cli.parser, "PipConsole", TestConsole)
+    monkeypatch.setattr(pip_logging, "PipConsole", TestConsole)
 
     if envvar:
         monkeypatch.setenv(envvar, "1")
