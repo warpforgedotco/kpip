@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import platform
 import sys
 from optparse import Values
 from types import ModuleType
@@ -17,8 +18,10 @@ from kpip._internal.cli.base_command import Command
 from kpip._internal.cli.cmdoptions import make_target_python
 from kpip._internal.cli.status_codes import SUCCESS
 from kpip._internal.configuration import Configuration
+from kpip._internal.interpreters import target_interpreter
 from kpip._internal.metadata import get_environment
 from kpip._internal.utils.compat import get_locale_encoding, open_text_resource
+from kpip._internal.utils.compiled import is_compiled
 from kpip._internal.utils.logging import indent_log
 from kpip._internal.utils.misc import get_pip_version
 
@@ -29,11 +32,31 @@ def show_value(name: str, value: Any) -> None:
     logger.info("%s: %s", name, value)
 
 
-def show_sys_implementation() -> None:
-    logger.info("sys.implementation:")
-    implementation_name = sys.implementation.name
+def show_runtime() -> None:
+    """The Python running kpip: compiled, the CPython it bundles."""
+    runtime = f"{platform.python_implementation()} {platform.python_version()}"
+    if is_compiled():
+        show_value("kpip runs on", f"{runtime}, compiled in")
+    else:
+        show_value("kpip runs on", f"{runtime}, {sys.executable}")
+
+
+def show_target_python() -> None:
+    """The Python kpip installs for, which the tags below are also for."""
+    target = target_interpreter()
+    markers = target.markers
+    logger.info("target python:")
     with indent_log():
-        show_value("name", implementation_name)
+        if target.is_bundled:
+            show_value("executable", "none found; resolving for the bundled CPython")
+        else:
+            show_value("executable", target.executable)
+        show_value("version", markers["python_full_version"])
+        show_value(
+            "implementation",
+            f"{markers['implementation_name']} {markers['implementation_version']}",
+        )
+        show_value("platform", markers["sys_platform"])
 
 
 def create_vendor_txt_map() -> dict[str, str]:
@@ -171,16 +194,14 @@ class DebugCommand(Command):
             "change without notice."
         )
         show_value("pip version", get_pip_version())
-        show_value("sys.version", sys.version)
-        show_value("sys.executable", sys.executable)
+        show_runtime()
+        show_target_python()
         show_value("sys.getdefaultencoding", sys.getdefaultencoding())
         show_value("sys.getfilesystemencoding", sys.getfilesystemencoding())
         show_value(
             "locale.getencoding",
             get_locale_encoding(),
         )
-        show_value("sys.platform", sys.platform)
-        show_sys_implementation()
 
         show_value("'cert' config value", ca_bundle_info(self.parser.config))
         show_value("REQUESTS_CA_BUNDLE", os.environ.get("REQUESTS_CA_BUNDLE"))
