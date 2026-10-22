@@ -105,6 +105,23 @@ def _git(*args: str, cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True)
 
 
+def _git_succeeds(*args: str, cwd: Path) -> bool:
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True).returncode == 0
+
+
+def _fetch(spec: VendorSpec, vendor_dir: Path) -> None:
+    """Make ``vendor_dir`` a fresh checkout of the spec's commit, unpatched."""
+    if vendor_dir.exists():
+        _remove_tree(vendor_dir)
+    vendor_dir.mkdir(parents=True)
+
+    _git("init", "--quiet", cwd=vendor_dir)
+    _git(
+        "fetch", "--quiet", "--depth", "1", spec.repository, spec.commit, cwd=vendor_dir
+    )
+    _git("checkout", "--quiet", "-b", BASE_BRANCH, "FETCH_HEAD", cwd=vendor_dir)
+
+
 def vendor_nuitka(
     spec: VendorSpec | None = None,
     vendor_dir: Path = VENDOR_DIR,
@@ -120,15 +137,7 @@ def vendor_nuitka(
     if not force and is_current(spec, vendor_dir):
         return vendor_dir
 
-    if vendor_dir.exists():
-        _remove_tree(vendor_dir)
-    vendor_dir.mkdir(parents=True)
-
-    _git("init", "--quiet", cwd=vendor_dir)
-    _git(
-        "fetch", "--quiet", "--depth", "1", spec.repository, spec.commit, cwd=vendor_dir
-    )
-    _git("checkout", "--quiet", "-b", BASE_BRANCH, "FETCH_HEAD", cwd=vendor_dir)
+    _fetch(spec, vendor_dir)
 
     for patch in spec.patches:
         print(f"Applying {patch.name}", flush=True)
@@ -147,3 +156,29 @@ def vendor_nuitka(
     # Written last: an interrupted run leaves no stamp and is redone.
     (vendor_dir / STAMP_NAME).write_text(spec.fingerprint() + "\n", encoding="utf-8")
     return vendor_dir
+
+
+APPLIES = "applies"
+UPSTREAM = "already upstream"
+CONFLICTS = "conflicts"
+
+
+def check_patches(spec: VendorSpec, work_dir: Path) -> list[tuple[Path, str]]:
+    """Try each patch on the spec's commit in name order, and say how it went.
+
+    Unlike ``vendor_nuitka``, a patch that fails does not stop the rest. One
+    that applies is applied, so the next ones see it as they would; one that
+    applies in reverse is already in upstream; any other conflicts and is left
+    out, so a later patch building on it may conflict as well.
+    """
+    _fetch(spec, work_dir)
+    results = []
+    for patch in spec.patches:
+        if _git_succeeds("apply", "--check", str(patch), cwd=work_dir):
+            _git("apply", str(patch), cwd=work_dir)
+            results.append((patch, APPLIES))
+        elif _git_succeeds("apply", "--check", "--reverse", str(patch), cwd=work_dir):
+            results.append((patch, UPSTREAM))
+        else:
+            results.append((patch, CONFLICTS))
+    return results

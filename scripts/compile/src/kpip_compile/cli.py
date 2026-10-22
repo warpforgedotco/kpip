@@ -3,16 +3,23 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from kpip_compile.build import DEFAULT_OUTPUT_DIR, BuildOptions, build
 from kpip_compile.pgo import PgoError
 from kpip_compile.vendor import (
+    APPLIES,
     NUITKA_BRANCH,
+    NUITKA_REPOSITORY,
     STAMP_NAME,
     VENDOR_DIR,
     PatchError,
+    VendorSpec,
+    check_patches,
     default_spec,
+    find_patches,
+    resolve_commit,
     vendor_nuitka,
 )
 
@@ -33,6 +40,31 @@ def _vendor(*, force: bool) -> Path:
     return vendor_nuitka(spec, VENDOR_DIR, force=force)
 
 
+def _check_patches(branch: str) -> int:
+    """Print how each patch fares on ``branch`` as a Markdown table.
+
+    Returns 1 when any patch does not apply, so a caller can tell (the table
+    still lists them all), and 2 when the check itself could not run.
+    """
+    try:
+        commit = resolve_commit(NUITKA_REPOSITORY, branch)
+        spec = VendorSpec(
+            repository=NUITKA_REPOSITORY, commit=commit, patches=find_patches()
+        )
+        with tempfile.TemporaryDirectory() as work_dir:
+            results = check_patches(spec, Path(work_dir) / "nuitka")
+    except subprocess.CalledProcessError as error:
+        print(f"error: cannot check Nuitka {branch}: {error}", file=sys.stderr)
+        return 2
+
+    print(f"Nuitka `{branch}` at `{commit[:12]}`\n")
+    print("| Patch | Status |")
+    print("| --- | --- |")
+    for patch, status in results:
+        print(f"| `{patch.name}` | {status} |")
+    return 0 if all(status == APPLIES for _patch, status in results) else 1
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="kpip-compile",
@@ -46,6 +78,13 @@ def _parser() -> argparse.ArgumentParser:
     vendor.add_argument(
         "--force", action="store_true", help="Refetch even if the checkout is current."
     )
+
+    check = commands.add_parser(
+        "check-patches",
+        help="Report how each patch fares on a Nuitka branch, without stopping "
+        "at the first that fails.",
+    )
+    check.add_argument("--branch", default=NUITKA_BRANCH)
 
     build_parser = commands.add_parser(
         "build",
@@ -80,6 +119,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    if args.command == "check-patches":
+        return _check_patches(args.branch)
 
     try:
         nuitka_dir = _vendor(force=args.command == "vendor" and args.force)

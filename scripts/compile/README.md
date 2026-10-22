@@ -64,6 +64,15 @@ network access, an existing checkout is used with a warning.
 When `develop` moves in a way a patch no longer applies to, the command stops
 and names the patch to rebase.
 
+`kpip-compile check-patches` tries every patch instead of stopping at the
+first that fails, and prints a table saying whether each applies, is already
+upstream, or conflicts; it exits 1 when any does not apply. `--branch` picks
+another Nuitka branch: the daily `Nuitka factory` workflow runs it on
+`factory`, where Nuitka stages work before `develop`, so a patch that will
+conflict or become redundant shows days ahead. That workflow only warns.
+Only an identical change counts as already upstream; one that `factory`
+makes differently shows as a conflict.
+
 The patches live in a subdirectory so that `vendoring sync`, which applies
 `tools/vendoring/patches/*.patch` to `src/kpip/_vendor`, never picks them up.
 
