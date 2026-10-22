@@ -12,7 +12,7 @@ on:
       - ".gitattributes"
       - ".github/workflows/compile.yml"
   schedule:
-    # kpip-compile follows Nuitka's develop, which moves on its own; this
+    # kpip-compile follows Nuitka's factory, which moves on its own; this
     # catches a patch that stopped applying without a kpip change, while
     # upstream has moved by a day's commits, not a week's.
     - cron: "17 6 * * *"
@@ -78,11 +78,19 @@ jobs:
             cache=$(cygpath "$LOCALAPPDATA")/kpip-onefile
           fi
 
-          # The first run unpacks and leaves the cache manifest; the second
-          # starts from it without unpacking.
+          # The first run unpacks into the cache; the second finds it
+          # unchanged and starts from it without writing anything. Unpacked
+          # files are dated up to a second ahead (their sub-second part is
+          # their checksum), hence the wait before marking the time.
           "$kpip" --version
-          find "$cache" -maxdepth 3 -name .nuitka-onefile-manifest | grep .
+          test -n "$(find "$cache" -type f -print -quit)"
+          sleep 2
+          touch "$RUNNER_TEMP/unpacked"
           "$kpip" --version
+          if find "$cache" -newer "$RUNNER_TEMP/unpacked" | grep .; then
+            echo "the second run unpacked again"
+            exit 1
+          fi
 
           # Commands load by module name, and HTTPS needs certifi's bundle.
           "$kpip" download certifi --no-cache-dir -d "$RUNNER_TEMP/download"
@@ -212,10 +220,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          title="Scheduled compile failed against Nuitka develop"
+          title="Scheduled compile failed against Nuitka factory"
           body="The scheduled compile failed: $RUN_URL
 
-          Usually a patch in \`tools/vendoring/patches/nuitka/\` no longer applies to, or no longer compiles with, Nuitka's latest \`develop\`; the failed step names it. See \`scripts/compile/README.md\` for rebasing the patches."
+          Usually a patch in \`tools/vendoring/patches/nuitka/\` no longer applies to, or no longer compiles with, Nuitka's latest \`factory\`; the failed step names it. See \`scripts/compile/README.md\` for rebasing the patches."
           number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
             --jq "map(select(.title == \"$title\")) | .[0].number // empty")
           if [ -n "$number" ]; then
