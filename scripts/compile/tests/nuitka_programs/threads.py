@@ -110,6 +110,22 @@ def case_list_item_replace():
     run(body)
 
 
+def case_sum_list_replace():
+    # sum() reads a list while writers replace its items: a read that does
+    # not hold the list may add an item already freed.
+    shared = [10**6 + i for i in range(64)]
+
+    def body(index):
+        for i in range(ROUNDS * 4):
+            if index % 2:
+                shared[i % 64] = 10**6 + index * ROUNDS * 4 + i
+            else:
+                total = sum(shared)
+                assert type(total) is int and total >= 64 * 10**6, total
+
+    run(body)
+
+
 # -- dicts: copies of a dict being changed -----------------------------------
 
 
@@ -535,11 +551,28 @@ def case_walrus_genexpr_scope():
     run(body)
 
 
+# -- constants: immortal, so threads sharing them never count references ----
+
+BIG_CONSTANT = 123456789012345678901234567890
+TUPLE_CONSTANT = (123456789012345678901234567890, "kpip", 2.5)
+
+
+def case_constants_immortal():
+    # Compiled constants are made immortal; without the GIL that is only
+    # so when the local count is the one "_Py_IsImmortal" checks.
+    is_immortal = getattr(sys, "_is_immortal", None)
+    if is_immortal is None:
+        return
+    for value in (BIG_CONSTANT, TUPLE_CONSTANT, 2.5):
+        assert is_immortal(value), value
+
+
 CASES = [
     case_list_append,
     case_list_insert_extend,
     case_list_remove_reverse_clear,
     case_list_item_replace,
+    case_sum_list_replace,
     case_dict_copy,
     case_module_globals,
     case_frames,
@@ -555,6 +588,7 @@ CASES = [
     case_closure_cells,
     case_inplace_shared_values,
     case_walrus_genexpr_scope,
+    case_constants_immortal,
 ]
 
 
