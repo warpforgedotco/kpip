@@ -192,6 +192,21 @@ for what CI runs. A performance change comes with a comparable
 before-and-after benchmark; a locally faster microbenchmark is not enough on
 its own.
 
+## How kpip is developed
+
+Much of kpip -- its code, its patches and their commit messages -- is
+written with AI coding agents. Every change that lands is reviewed, tested
+and measured as described above, and its maintainer takes responsibility for
+it.
+
+A commit that an agent did a meaningful part of says so with an
+`Assisted-by:` trailer, following
+[OpenInfra's policy](https://openinfra.org/legal/ai-policy) on AI-generated
+contributions. A patch offered to pip or Nuitka says how it was made in its
+pull request, as
+[CPython's guide on AI tools](https://devguide.python.org/getting-started/ai-tools/)
+asks.
+
 ## Why a courier snake?
 
 Kip is a Python carrying a Python package. The job is to get it where it
