@@ -65,3 +65,12 @@ only where the two cannot. When adding a code path, ask what the binary does
 with it: with an environment active, with only a `python3` on `PATH`, with no
 Python at all, and with `--python` naming a version other than the bundled
 one.
+
+## Commits say that an agent helped
+
+A commit you did a meaningful part of ends with an `Assisted-by:` trailer
+naming the agent and its model, such as `Assisted-by: Claude Code
+(claude-opus-5-5)`. When you squash-merge with a message of your own, keep
+the trailers of the commits it squashes. A pull request to pip or Nuitka
+that carries such work says in its description how it was made. README's
+"How kpip is developed" says this for readers.
