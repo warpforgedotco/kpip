@@ -77,7 +77,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     vendor = commands.add_parser(
-        "vendor", help="Fetch the latest Nuitka develop and apply the patches."
+        "vendor", help="Fetch the latest Nuitka factory and apply the patches."
     )
     vendor.add_argument(
         "--force", action="store_true", help="Refetch even if the checkout is current."

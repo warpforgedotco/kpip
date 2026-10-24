@@ -1,4 +1,4 @@
-"""Fetch the latest upstream Nuitka ``develop`` and apply kpip's patches on top of it."""
+"""Fetch the latest upstream Nuitka ``factory`` and apply kpip's patches on top of it."""
 
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 NUITKA_REPOSITORY = "https://github.com/Nuitka/Nuitka.git"
-# Always its latest commit; the patches under PATCHES_DIR follow it.
-NUITKA_BRANCH = "develop"
+# Always its latest commit; the patches under PATCHES_DIR follow it. factory
+# is where Nuitka stages its work before develop, and is rewritten as that
+# work is reworked.
+NUITKA_BRANCH = "factory"
 # Local branch in the checkout marking the upstream commit, the base for
 # exporting patches.
 BASE_BRANCH = "upstream"

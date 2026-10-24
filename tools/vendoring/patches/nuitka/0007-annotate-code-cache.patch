@@ -1,58 +1,45 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Kevin Turcios <turcioskevinr@gmail.com>
-Date: Thu, 24 Sep 2026 04:32:57 -0400
-Subject: [PATCH] Python3.14: Optimization: Unmarshal each "__annotate__" code
- object once
+Date: Thu, 22 Oct 2026 06:29:48 -0500
+Subject: [PATCH] Python3.14: Fix, the "__annotate__" code cache was published
+ without memory ordering
 
-Every execution of an annotated "def" unmarshalled the code object of
-its "__annotate__" function again, just to create a function from it.
-For a nested function, that is every call of the enclosing function.
-Code objects are immutable and CPython shares them between functions, so
-the maker now keeps the first one it unmarshals. Without the GIL it is
-published with release ordering, so no thread sees the pointer before the
-object, and a thread that loses the race releases its own copy.
+Without the GIL, a thread could see the cached code object's pointer before
+the code object, on a weakly ordered CPU, and two threads both filling the
+cache leaked one. The cache is now read with acquire ordering and filled by
+compare-and-swap; the thread that loses releases its copy. With the GIL the
+generated code is unchanged. Reported as Nuitka#4119.
 
-Defining 20000 annotated nested functions takes 1.2 instead of 11.8 ms,
-where CPython 3.14 takes 4.0 ms.
-
-Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- .../code_generation/AnnotateFunctionCodes.py  | 32 ++++++++++++++++---
- 1 file changed, 27 insertions(+), 5 deletions(-)
+ nuitka/code_generation/AnnotateFunctionCodes.py | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
 
 diff --git a/nuitka/code_generation/AnnotateFunctionCodes.py b/nuitka/code_generation/AnnotateFunctionCodes.py
-index f3881b6..5c0ae02 100644
+index f1f880a03..4b7c81646 100644
 --- a/nuitka/code_generation/AnnotateFunctionCodes.py
 +++ b/nuitka/code_generation/AnnotateFunctionCodes.py
-@@ -121,16 +121,38 @@ def _generateAnnotateFunctionMaker(function_body, function_identifier, context):
+@@ -116,16 +116,31 @@ def _getCodeObjectCreationCode(context, marshalled, function_identifier):
+     )
  
-     closure_parameter, closure_setup = _getClosureSetupCode(closure_variables)
- 
-+    # The code object is immutable, so it is unmarshalled once and shared by
-+    # every function created from it, as CPython does. That matters for a
-+    # definition that is executed repeatedly, e.g. a nested function. Without
-+    # the GIL, the cache is published with release ordering, so a thread that
-+    # reads it never sees the pointer before the object, and a thread that
-+    # loses the race to fill it releases its own copy and uses the winner's.
-     maker_code = """\
- static PyObject *%(maker)s(PyThreadState *tstate%(closure_parameter)s) {
-+    static PyObject *code_cache = NULL;
-     PyObject *result;
--    PyObject *code = PyMarshal_ReadObjectFromString(
--        %(marshalled)s,
--        %(marshalled_size)d);
--    assert(code != NULL);
+     if context.mayRecurse():
+-        # Racing threads can at worst each unmarshal it, and keep one.
++        # Without the GIL, the cache is published with release ordering, so a
++        # thread that reads it never sees the pointer before the object, and
++        # a thread that loses the race to fill it releases its own copy and
++        # uses the winner's.
+         code_object_setup = """\
+     static PyObject *code_cache = NULL;
 +#ifdef Py_GIL_DISABLED
 +    PyObject *code = (PyObject *)_Py_atomic_load_ptr_acquire(&code_cache);
 +#else
-+    PyObject *code = code_cache;
+     PyObject *code = code_cache;
 +#endif
-+    if (code == NULL) {
-+        code = PyMarshal_ReadObjectFromString(
-+            %(marshalled)s,
-+            %(marshalled_size)d);
-+        assert(code != NULL);
+     if (code == NULL) {
+         code = PyMarshal_ReadObjectFromString(
+             %(marshalled)s,
+             %(marshalled_size)d);
+         assert(code != NULL);
 +#ifdef Py_GIL_DISABLED
 +        PyObject *published = NULL;
 +        if (!_Py_atomic_compare_exchange_ptr(&code_cache, &published, code)) {
@@ -60,12 +47,8 @@ index f3881b6..5c0ae02 100644
 +            code = published;
 +        }
 +#else
-+        code_cache = code;
+         code_cache = code;
 +#endif
-+    }
- 
-     result = PyFunction_NewWithQualName(code, %(module_dict)s, %(qualname)s);
--    Py_DECREF(code);
-     assert(result != NULL);
- %(closure_setup)s
-     return result;
+     }
+ """ % {
+             "marshalled": marshalled_code,

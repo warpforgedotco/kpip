@@ -15,7 +15,7 @@ on:
       - "scripts/compile/tests/nuitka_programs/**"
       - ".github/workflows/sanitizers.yml"
   schedule:
-    # Nuitka's develop moves on its own.
+    # Nuitka's factory moves on its own.
     - cron: "37 7 * * *"
   workflow_dispatch:
 

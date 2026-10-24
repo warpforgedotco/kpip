@@ -129,7 +129,7 @@ Python other than the one running it -- and make kpip faster. Each is meant
 to be small enough, and measured well enough, to be offered to pip.
 
 kpip is compiled with [Nuitka](https://github.com/Nuitka/Nuitka), taken from
-its latest `develop` and patched too
+its latest `factory`, where Nuitka stages work before `develop`, and patched too
 ([`tools/vendoring/patches/nuitka`](tools/vendoring/patches/nuitka)).
 
 ## Benchmarking

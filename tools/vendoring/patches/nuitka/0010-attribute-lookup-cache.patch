@@ -21,7 +21,7 @@ this takes 61 instead of 127 ms.
  3 files changed, 96 insertions(+)
 
 diff --git a/nuitka/build/include/nuitka/helper/attributes.h b/nuitka/build/include/nuitka/helper/attributes.h
-index 1306c75d..f7c532bb 100644
+index 1306c75d5..f7c532bbd 100644
 --- a/nuitka/build/include/nuitka/helper/attributes.h
 +++ b/nuitka/build/include/nuitka/helper/attributes.h
 @@ -64,6 +64,39 @@ static inline bool hasTypeGenericGetAttr(PyTypeObject *type) {
@@ -65,7 +65,7 @@ index 1306c75d..f7c532bb 100644
  extern setattrofunc PyObject_GenericSetAttr_resolved;
  
 diff --git a/nuitka/build/static_src/HelpersAttributes.c b/nuitka/build/static_src/HelpersAttributes.c
-index 31b0c4e3..a7511b3d 100644
+index cf0347532..42a8b558d 100644
 --- a/nuitka/build/static_src/HelpersAttributes.c
 +++ b/nuitka/build/static_src/HelpersAttributes.c
 @@ -250,6 +250,42 @@ PyObject *LOOKUP_ATTRIBUTE(PyThreadState *tstate, PyObject *source, PyObject *at
@@ -112,7 +112,7 @@ index 31b0c4e3..a7511b3d 100644
      CHECK_OBJECT(source);
  
 diff --git a/nuitka/code_generation/AttributeCodes.py b/nuitka/code_generation/AttributeCodes.py
-index 5dfb132e..e8892aa5 100644
+index 5dfb132e4..e8892aa52 100644
 --- a/nuitka/code_generation/AttributeCodes.py
 +++ b/nuitka/code_generation/AttributeCodes.py
 @@ -6,6 +6,8 @@
