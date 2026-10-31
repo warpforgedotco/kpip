@@ -166,7 +166,7 @@ index 4555e55..1c4a198 100644
          "REQUESTS_CA_BUNDLE: ",
          "CURL_CA_BUNDLE: ",
 diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
-index dcc351c..cacd26f 100644
+index 39a6b5b..8d93cc4 100644
 --- a/tests/unit/test_interpreters.py
 +++ b/tests/unit/test_interpreters.py
 @@ -415,6 +415,54 @@ def test_markers_and_requires_python_are_the_targets(

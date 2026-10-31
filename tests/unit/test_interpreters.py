@@ -508,7 +508,7 @@ def test_pylock_wheels_are_chosen_for_the_target(
         f"{wheel('cp311-cp311-emscripten_3_1_58_wasm32')}]\n"
     )
 
-    [(package, dist)] = select_from_pylock_path_or_url(str(lock), session=None)  # type: ignore[arg-type]
+    [(package, dist)] = select_from_pylock_path_or_url(str(lock), None, None)  # type: ignore[arg-type]
     assert package.name == "demo"
     assert dist.name == "demo-1.0-cp311-cp311-emscripten_3_1_58_wasm32.whl"  # type: ignore[union-attr]
 

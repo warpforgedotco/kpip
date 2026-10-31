@@ -14,10 +14,10 @@ explicitly rather than through packaging's patched default environment.
  2 files changed, 37 insertions(+), 1 deletion(-)
 
 diff --git a/src/kpip/_internal/utils/pylock.py b/src/kpip/_internal/utils/pylock.py
-index 40be1db..0f1f2a8 100644
+index fe93281..ea5de3a 100644
 --- a/src/kpip/_internal/utils/pylock.py
 +++ b/src/kpip/_internal/utils/pylock.py
-@@ -20,6 +20,7 @@ from kpip._vendor.packaging.pylock import (
+@@ -21,6 +21,7 @@ from kpip._vendor.packaging.utils import NormalizedName
  from kpip._vendor.packaging.version import Version
  
  from kpip._internal.exceptions import DiagnosticPipError, InstallationError
@@ -25,23 +25,24 @@ index 40be1db..0f1f2a8 100644
  from kpip._internal.models.link import Link
  from kpip._internal.utils.compat import tomllib
  from kpip._internal.utils.urls import path_to_url, url_to_path
-@@ -292,7 +293,13 @@ def select_from_pylock_path_or_url(
+@@ -303,8 +304,14 @@ def select_from_pylock_path_or_url(
+         return False
+ 
      try:
-         # TODO: for completeness, pylock.select should support preferring sdist
-         # over wheels to support --no-binary
--        yield from lock.select()
 +        # Select for the target interpreter: packaging would otherwise take the
 +        # tags and markers of the Python kpip runs on.
 +        target = target_interpreter()
-+        yield from lock.select(
+         yield from lock.select(
+-            extras=extras, prefer_sdist_predicate=prefer_sdist_predicate
 +            environment=target.markers,  # type: ignore[arg-type]
 +            tags=target.tags,
-+        )
++            extras=extras,
++            prefer_sdist_predicate=prefer_sdist_predicate,
+         )
      except Exception as exc:
          raise InstallationError(
-             f"Cannot select requirements from pylock file {pylock_path_or_url!r}: {exc}"
 diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
-index 4e604ba..dcc351c 100644
+index 4e604ba..39a6b5b 100644
 --- a/tests/unit/test_interpreters.py
 +++ b/tests/unit/test_interpreters.py
 @@ -415,6 +415,35 @@ def test_markers_and_requires_python_are_the_targets(
@@ -72,7 +73,7 @@ index 4e604ba..dcc351c 100644
 +        f"{wheel('cp311-cp311-emscripten_3_1_58_wasm32')}]\n"
 +    )
 +
-+    [(package, dist)] = select_from_pylock_path_or_url(str(lock), session=None)  # type: ignore[arg-type]
++    [(package, dist)] = select_from_pylock_path_or_url(str(lock), None, None)  # type: ignore[arg-type]
 +    assert package.name == "demo"
 +    assert dist.name == "demo-1.0-cp311-cp311-emscripten_3_1_58_wasm32.whl"  # type: ignore[union-attr]
 +

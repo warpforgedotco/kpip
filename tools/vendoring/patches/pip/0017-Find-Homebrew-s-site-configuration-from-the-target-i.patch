@@ -58,7 +58,7 @@ index 8cb42ae..5759611 100644
  
      dirval = _appdirs.site_config_dir(appname, appauthor=False, multipath=True)
 diff --git a/tests/unit/test_interpreters.py b/tests/unit/test_interpreters.py
-index cacd26f..7c24f29 100644
+index 8d93cc4..19d6557 100644
 --- a/tests/unit/test_interpreters.py
 +++ b/tests/unit/test_interpreters.py
 @@ -463,6 +463,27 @@ def test_debug_says_when_no_python_was_found(

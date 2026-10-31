@@ -40,6 +40,7 @@ from kpip._internal.exceptions import (
 from kpip._internal.interpreters import target_interpreter
 from kpip._internal.locations import get_major_minor_version
 from kpip._internal.utils.compat import WINDOWS
+from kpip._internal.utils.deprecation import build_backend_warnings
 from kpip._internal.utils.retry import retry
 from kpip._internal.utils.virtualenv import running_under_virtualenv
 
@@ -691,17 +692,20 @@ def partition(
     return filterfalse(pred, t1), filter(pred, t2)
 
 
-def _handle_backend_unavailable(func: F) -> F:
+def _build_backend_hook(func: F) -> F:
+    """Apply warning policy and translate failures for a public backend hook."""
+
     @wraps(func)
     def wrapper(
         self: ConfiguredBuildBackendHookCaller,
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        try:
-            return func(self, *args, **kwargs)
-        except BackendUnavailable as error:
-            self._raise_backend_unavailable(func.__name__, error)
+        with build_backend_warnings(self.backend_warning_level):
+            try:
+                return func(self, *args, **kwargs)
+            except BackendUnavailable as error:
+                self._raise_backend_unavailable(func.__name__, error)
 
     return cast(F, wrapper)
 
@@ -715,11 +719,14 @@ class ConfiguredBuildBackendHookCaller(BuildBackendHookCaller):
         backend_path: str | None = None,
         runner: Callable[..., None] | None = None,
         python_executable: str | None = None,
+        *,
+        backend_warning_level: int = logging.DEBUG,
     ):
         super().__init__(
             source_dir, build_backend, backend_path, runner, python_executable
         )
         self.config_holder = config_holder
+        self.backend_warning_level = backend_warning_level
 
     def _raise_backend_unavailable(
         self, hook_name: str, error: BackendUnavailable
@@ -735,11 +742,11 @@ class ConfiguredBuildBackendHookCaller(BuildBackendHookCaller):
         logger.error("%s", exception, extra={"rich": True})
         raise exception from error
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def supports_feature(self, feature: str) -> bool:
         return feature in self._supported_features()
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def build_wheel(
         self,
         wheel_directory: str,
@@ -751,7 +758,7 @@ class ConfiguredBuildBackendHookCaller(BuildBackendHookCaller):
             wheel_directory, config_settings=cs, metadata_directory=metadata_directory
         )
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def build_sdist(
         self,
         sdist_directory: str,
@@ -760,7 +767,7 @@ class ConfiguredBuildBackendHookCaller(BuildBackendHookCaller):
         cs = self.config_holder.config_settings
         return super().build_sdist(sdist_directory, config_settings=cs)
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def build_editable(
         self,
         wheel_directory: str,
@@ -772,28 +779,28 @@ class ConfiguredBuildBackendHookCaller(BuildBackendHookCaller):
             wheel_directory, config_settings=cs, metadata_directory=metadata_directory
         )
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def get_requires_for_build_wheel(
         self, config_settings: Mapping[str, Any] | None = None
     ) -> Sequence[str]:
         cs = self.config_holder.config_settings
         return super().get_requires_for_build_wheel(config_settings=cs)
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def get_requires_for_build_sdist(
         self, config_settings: Mapping[str, Any] | None = None
     ) -> Sequence[str]:
         cs = self.config_holder.config_settings
         return super().get_requires_for_build_sdist(config_settings=cs)
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def get_requires_for_build_editable(
         self, config_settings: Mapping[str, Any] | None = None
     ) -> Sequence[str]:
         cs = self.config_holder.config_settings
         return super().get_requires_for_build_editable(config_settings=cs)
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def prepare_metadata_for_build_wheel(
         self,
         metadata_directory: str,
@@ -807,13 +814,13 @@ class ConfiguredBuildBackendHookCaller(BuildBackendHookCaller):
             _allow_fallback=_allow_fallback,
         )
 
-    @_handle_backend_unavailable
+    @_build_backend_hook
     def prepare_metadata_for_build_editable(
         self,
         metadata_directory: str,
         config_settings: Mapping[str, Any] | None = None,
         _allow_fallback: bool = True,
-    ) -> str | None:
+    ) -> str:
         cs = self.config_holder.config_settings
         return super().prepare_metadata_for_build_editable(
             metadata_directory=metadata_directory,
