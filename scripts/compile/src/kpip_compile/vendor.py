@@ -1,4 +1,4 @@
-"""Fetch the latest upstream Nuitka ``factory`` and apply kpip's patches on top of it."""
+"""Fetch the pinned upstream Nuitka commit and apply kpip's patches on top of it."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 NUITKA_REPOSITORY = "https://github.com/Nuitka/Nuitka.git"
-# Always its latest commit; the patches under PATCHES_DIR follow it. factory
+# Where the pin comes from and what ``check-patches`` compares it with. factory
 # is where Nuitka stages its work before develop, and is rewritten as that
 # work is reworked.
 NUITKA_BRANCH = "factory"
@@ -25,6 +25,8 @@ REPO_ROOT = PACKAGE_ROOT.parents[1]
 # A subdirectory, so ``vendoring sync`` (which applies ``patches/*.patch`` to
 # ``src/kpip/_vendor``) never sees them.
 PATCHES_DIR = REPO_ROOT / "tools" / "vendoring" / "patches" / "nuitka"
+# The commit the patches apply to, so that Nuitka moving breaks no build.
+PIN_FILE = REPO_ROOT / "tools" / "vendoring" / "nuitka-upstream.txt"
 VENDOR_DIR = PACKAGE_ROOT / "_vendor" / "nuitka"
 STAMP_NAME = ".kpip-compile-stamp"
 
@@ -71,10 +73,14 @@ def resolve_commit(repository: str, branch: str) -> str:
     return output.split()[0]
 
 
+def pinned_commit(pin_file: Path = PIN_FILE) -> str:
+    return pin_file.read_text(encoding="utf-8").strip()
+
+
 def default_spec() -> VendorSpec:
     return VendorSpec(
         repository=NUITKA_REPOSITORY,
-        commit=resolve_commit(NUITKA_REPOSITORY, NUITKA_BRANCH),
+        commit=pinned_commit(),
         patches=find_patches(),
     )
 

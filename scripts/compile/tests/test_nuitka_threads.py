@@ -35,9 +35,9 @@ def binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if explicit:
         nuitka_dir = Path(explicit)
     else:
-        from kpip_compile.cli import _vendor
+        from kpip_compile.vendor import default_spec, vendor_nuitka
 
-        nuitka_dir = _vendor(force=False)
+        nuitka_dir = vendor_nuitka(default_spec())
 
     workdir = tmp_path_factory.mktemp("threads")
     shutil.copy(PROGRAM, workdir / PROGRAM.name)

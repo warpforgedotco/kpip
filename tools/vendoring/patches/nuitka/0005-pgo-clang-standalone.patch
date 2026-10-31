@@ -20,20 +20,20 @@ instead of failing to link.
 Co-authored-by: wtfyd-agent[bot] <328989958+wtfyd-agent[bot]@users.noreply.github.com>
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
- nuitka/MainControl.py                 | 205 +++++++++++++++++++++-----
+ nuitka/MainControl.py                 | 204 +++++++++++++++++++++-----
  nuitka/build/SconsCompilerSettings.py |  30 +++-
  nuitka/build/SconsUtils.py            |  10 ++
  nuitka/options/OptionParsing.py       |   4 +-
  nuitka/options/Options.py             |   9 +-
- 5 files changed, 211 insertions(+), 47 deletions(-)
+ 5 files changed, 210 insertions(+), 47 deletions(-)
 
 diff --git a/nuitka/MainControl.py b/nuitka/MainControl.py
-index b8244d9dc..1149469b7 100644
+index 86e5972d4..2f777aa27 100644
 --- a/nuitka/MainControl.py
 +++ b/nuitka/MainControl.py
-@@ -20,8 +20,11 @@ from nuitka.build.SconsInterface import (
-     provideStaticSourceFilesBackend,
+@@ -21,8 +21,11 @@ from nuitka.build.SconsInterface import (
  )
+ from nuitka.build.SconsSourceIndex import createSourceFilesIndex
  from nuitka.build.SconsUtils import (
 +    getLlvmProfileDataFilename,
 +    getLlvmProfileDirectory,
@@ -43,17 +43,18 @@ index b8244d9dc..1149469b7 100644
      readSconsErrorReport,
      readSconsObjectSizes,
      readSconsReport,
-@@ -169,6 +172,9 @@ from nuitka.tree.ReformulationMultidist import createMultidistMainSourceCode
+@@ -178,7 +181,10 @@ from nuitka.tree.ReformulationMultidist import createMultidistMainSourceCode
  from nuitka.utils.Distributions import getDistribution, getDistributionName
  from nuitka.utils.Execution import (
      executeCompiledBinary,
 +    executeProcess,
 +    executeToolChecked,
+     getEnvironmentPathAdded,
 +    getExecutablePath,
      withEnvironmentVarOverridden,
      wrapCommandForDebuggerForExec,
  )
-@@ -179,6 +185,7 @@ from nuitka.utils.FileOperations import (
+@@ -189,6 +195,7 @@ from nuitka.utils.FileOperations import (
      getNormalizedPathJoin,
      getReportPath,
      isFilesystemEncodable,
@@ -61,7 +62,7 @@ index b8244d9dc..1149469b7 100644
      makeFilesystemEncodable,
      openTextFile,
      removeDirectory,
-@@ -648,6 +655,89 @@ def _deleteMsvcPGOFiles(pgo_mode):
+@@ -663,6 +670,89 @@ def _deleteMsvcPGOFiles(pgo_mode):
      return msvc_pgc_filename
  
  
@@ -151,7 +152,7 @@ index b8244d9dc..1149469b7 100644
  def _runCPgoBinary():
      # Note: For exit codes, we do not insist on anything yet, maybe we could point it out
      # or ask people to make scripts that buffer these kinds of errors, and take an error
-@@ -657,30 +747,44 @@ def _runCPgoBinary():
+@@ -672,30 +762,44 @@ def _runCPgoBinary():
          "Running created binary to produce C level PGO information:", style="blue"
      )
  
@@ -207,7 +208,7 @@ index b8244d9dc..1149469b7 100644
          )
  
          pgo_data_collected = os.path.exists(gcc_constants_pgo_filename)
-@@ -918,9 +1022,7 @@ def runSconsBackend():
+@@ -938,9 +1042,7 @@ def runSconsBackend():
  
          # Need to restart compilation from scratch here.
      if isCPgoMode():
@@ -218,7 +219,7 @@ index b8244d9dc..1149469b7 100644
          if isCPgoMode():
              scons_options["pgo_mode"] = "generate"
  
-@@ -939,7 +1041,17 @@ def runSconsBackend():
+@@ -959,7 +1061,17 @@ def runSconsBackend():
  
              # Need to make it usable before executing it.
              executePostProcessing(scons_options["result_exe"])
@@ -237,8 +238,8 @@ index b8244d9dc..1149469b7 100644
              scons_options["pgo_mode"] = "use"
  
      applyPreprocessorSymbols(scons_options, onefile=False)
-@@ -1201,8 +1313,19 @@ def _detectEarlyDLLs():
-     )
+@@ -1241,9 +1353,19 @@ def _detectEarlyDLLs():
+         )
  
  
 +_late_dlls_detected = False
@@ -246,7 +247,7 @@ index b8244d9dc..1149469b7 100644
 +
  def _detectLateDLLs(scons_options):
      assert isStandaloneMode()
-+
+ 
 +    # With C level PGO, the distribution is created for the training and then
 +    # again for the final binary, which uses the same DLLs.
 +    global _late_dlls_detected  # singleton, pylint: disable=global-statement
@@ -255,10 +256,10 @@ index b8244d9dc..1149469b7 100644
 +    _late_dlls_detected = True
 +
      binary_filename = scons_options["result_exe"]
+     main_entry_point = addMainEntryPoint(binary_filename)
  
-     detectUsedDLLs(
-@@ -1213,6 +1336,34 @@ def _detectLateDLLs(scons_options):
-     )
+@@ -1256,6 +1378,34 @@ def _detectLateDLLs(scons_options):
+         )
  
  
 +def _createStandaloneDistribution(scons_options):
@@ -292,7 +293,7 @@ index b8244d9dc..1149469b7 100644
  def _main():
      """Main program flow of Nuitka
  
-@@ -1321,29 +1472,7 @@ def _main():
+@@ -1367,29 +1517,7 @@ def _main():
      executePostProcessing(scons_options["result_exe"])
  
      if isStandaloneMode():
@@ -324,10 +325,10 @@ index b8244d9dc..1149469b7 100644
          onStandaloneDistributionFinished(
              dist_dir=dist_dir,
 diff --git a/nuitka/build/SconsCompilerSettings.py b/nuitka/build/SconsCompilerSettings.py
-index 6aeb6ab0a..1410ac387 100644
+index 15ade88c2..c479daeee 100644
 --- a/nuitka/build/SconsCompilerSettings.py
 +++ b/nuitka/build/SconsCompilerSettings.py
-@@ -53,6 +53,7 @@ from .SconsUtils import (
+@@ -56,6 +56,7 @@ from .SconsUtils import (
      getArgumentRequired,
      getExecutablePath,
      getLinkerArch,
@@ -335,7 +336,7 @@ index 6aeb6ab0a..1410ac387 100644
      getMsvcVersion,
      getMsvcVersionString,
      initScons,
-@@ -69,7 +70,7 @@ from .WindowsObjGenerator import generateWindowsCoffObject
+@@ -72,7 +73,7 @@ from .WindowsObjGenerator import generateWindowsCoffObject
  # spell-checker: ignore -freorder-functions,-ftrack,-fvisibility,-fwrapv,-municode,CCFLAGS
  # spell-checker: ignore CCVERSION,CGTHREADS,CPPDEFINES,CPPPATH,CXXFLAGS,CXXVERSION
  # spell-checker: ignore GENPROFILE,LIBPATH,LINKFLAGS,LTCG,USEPROFILE,bexpall,blibpath
@@ -344,7 +345,7 @@ index 6aeb6ab0a..1410ac387 100644
  
  
  def _detectWindowsSDK(env):
-@@ -1967,7 +1968,13 @@ def _enablePgoSettings(env):
+@@ -2114,7 +2115,13 @@ def _enablePgoSettings(env):
          env.progressbar_name = "Profile"
          env.Append(CPPDEFINES=["_NUITKA_PGO_GENERATE"])
  
@@ -359,7 +360,7 @@ index 6aeb6ab0a..1410ac387 100644
              env.Append(CCFLAGS=["-fprofile-generate"])
              env.Append(LINKFLAGS=["-fprofile-generate"])
          elif env.msvc_mode:
-@@ -1985,7 +1992,24 @@ def _enablePgoSettings(env):
+@@ -2132,7 +2139,24 @@ def _enablePgoSettings(env):
  
          env.Append(CPPDEFINES=["_NUITKA_PGO_USE"])
  
@@ -386,10 +387,10 @@ index 6aeb6ab0a..1410ac387 100644
              env.Append(LINKFLAGS=["-fprofile-use"])
          elif env.msvc_mode:
 diff --git a/nuitka/build/SconsUtils.py b/nuitka/build/SconsUtils.py
-index f54d2649c..42fa5683c 100644
+index 42863d725..01ea1e3a8 100644
 --- a/nuitka/build/SconsUtils.py
 +++ b/nuitka/build/SconsUtils.py
-@@ -782,6 +782,16 @@ def getSconsCompilerUsed(source_dir):
+@@ -792,6 +792,16 @@ def getSconsCompilerUsed(source_dir):
      return "Unknown"
  
  
@@ -407,10 +408,10 @@ index f54d2649c..42fa5683c 100644
      if source_dir not in _scons_error_reports:
          scons_error_report = OrderedDict()
 diff --git a/nuitka/options/OptionParsing.py b/nuitka/options/OptionParsing.py
-index a68e0e34d..773a14287 100644
+index 695f5c8ec..7360c99e8 100644
 --- a/nuitka/options/OptionParsing.py
 +++ b/nuitka/options/OptionParsing.py
-@@ -1702,8 +1702,8 @@ pgo_group.add_option(
+@@ -1716,8 +1716,8 @@ pgo_group.add_option(
      help="""\
  Enables C level profile guided optimization (PGO), by executing a dedicated build first
  for a profiling run, and then using the result to feedback into the C compilation.
@@ -422,10 +423,10 @@ index a68e0e34d..773a14287 100644
  
  pgo_group.add_option(
 diff --git a/nuitka/options/Options.py b/nuitka/options/Options.py
-index 35a8fcaf2..2b30dd1f6 100644
+index b610e9523..818e5d26c 100644
 --- a/nuitka/options/Options.py
 +++ b/nuitka/options/Options.py
-@@ -1366,10 +1366,11 @@ make sure that is intended."""
+@@ -1415,10 +1415,11 @@ make sure that is intended."""
              "Providing PGO arguments without enabling PGO mode has no effect."
          )
  

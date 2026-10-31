@@ -11,11 +11,12 @@ name: Sanitizers
 on:
   pull_request:
     paths:
+      - "tools/vendoring/nuitka-upstream.txt"
       - "tools/vendoring/patches/nuitka/**"
       - "scripts/compile/tests/nuitka_programs/**"
       - ".github/workflows/sanitizers.yml"
   schedule:
-    # Nuitka's factory moves on its own.
+    # Nuitka is pinned, but the free-threaded Python this runs on is not.
     - cron: "37 7 * * *"
   workflow_dispatch:
 
@@ -121,3 +122,32 @@ jobs:
           fi
           # TSan exits 66 when it reported a race; a case that failed prints FAIL.
           [ "$status" -eq 0 ] && ! grep -q "^FAIL" run.out
+
+  report-scheduled-failure:
+    # As for the compile: a failed scheduled run only notifies whoever last
+    # edited the cron line. Keep one open issue, and add each further failed
+    # run to it until someone closes it.
+    name: Report scheduled failure
+    needs: [tsan]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Scheduled ThreadSanitizer run failed"
+          body="The scheduled ThreadSanitizer run failed: $RUN_URL
+
+          Either the threads program raced, which its log and step summary show, or it no longer compiles with the pinned Nuitka and the free-threaded Python of the day; the failed step says which."
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "$title" --body "$body" --label bug
+          fi
