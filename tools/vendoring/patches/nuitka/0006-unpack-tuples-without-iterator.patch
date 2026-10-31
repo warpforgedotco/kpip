@@ -30,7 +30,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  4 files changed, 99 insertions(+), 5 deletions(-)
 
 diff --git a/nuitka/build/include/nuitka/helper/iterators.h b/nuitka/build/include/nuitka/helper/iterators.h
-index 173251e31..cb8b71892 100644
+index b09e28944..0ae1fd67f 100644
 --- a/nuitka/build/include/nuitka/helper/iterators.h
 +++ b/nuitka/build/include/nuitka/helper/iterators.h
 @@ -173,6 +173,20 @@ NUITKA_MAY_BE_UNUSED static PyObject *MAKE_UNPACK_ITERATOR(PyObject *iterated) {
@@ -54,7 +54,7 @@ index 173251e31..cb8b71892 100644
  #endif
  
  NUITKA_MAY_BE_UNUSED static PyObject *ITERATOR_NEXT_ITERATOR(PyObject *iterator) {
-@@ -240,8 +254,15 @@ NUITKA_MAY_BE_UNUSED static PyObject *BUILTIN_NEXT2(PyThreadState *tstate, PyObj
+@@ -269,8 +283,15 @@ NUITKA_MAY_BE_UNUSED static PyObject *BUILTIN_NEXT2_ITERATOR(PyThreadState *tsta
  }
  
  // For cases, where no exception raising is needed, because we know it at compile time.
@@ -71,7 +71,7 @@ index 173251e31..cb8b71892 100644
      assert(HAS_ITERNEXT(iterator));
  
      PyObject *result = (*Py_TYPE(iterator)->tp_iternext)(iterator);
-@@ -260,6 +281,14 @@ NUITKA_MAY_BE_UNUSED static PyObject *UNPACK_NEXT(PyThreadState *tstate,
+@@ -289,6 +310,14 @@ NUITKA_MAY_BE_UNUSED static PyObject *UNPACK_NEXT(PyThreadState *tstate,
  #endif
  {
      CHECK_OBJECT(iterator);
@@ -86,7 +86,7 @@ index 173251e31..cb8b71892 100644
      assert(HAS_ITERNEXT(iterator));
  
      PyObject *result = (*Py_TYPE(iterator)->tp_iternext)(iterator);
-@@ -378,6 +407,11 @@ SET_UNPACK_TOO_MANY_VALUES_ERROR(PyThreadState *tstate, struct Nuitka_ExceptionP
+@@ -407,6 +436,11 @@ SET_UNPACK_TOO_MANY_VALUES_ERROR(PyThreadState *tstate, struct Nuitka_ExceptionP
  NUITKA_MAY_BE_UNUSED static bool UNPACK_ITERATOR_CHECK(PyThreadState *tstate,
                                                         struct Nuitka_ExceptionPreservationItem *exception_state,
                                                         PyObject *iterator, int expected) {
@@ -99,10 +99,10 @@ index 173251e31..cb8b71892 100644
  
      if (likely(attempt == NULL)) {
 diff --git a/nuitka/code_generation/IteratorCodes.py b/nuitka/code_generation/IteratorCodes.py
-index 91f8ae29a..5d3a41f75 100644
+index 47f716f63..541be8cdd 100644
 --- a/nuitka/code_generation/IteratorCodes.py
 +++ b/nuitka/code_generation/IteratorCodes.py
-@@ -235,7 +235,10 @@ def generateSpecialUnpackCode(to_name, expression, emit, context):
+@@ -256,7 +256,10 @@ def generateSpecialUnpackCode(to_name, expression, emit, context):
          needs_check = expression.mayRaiseExceptionOperation()
  
          if not needs_check:
@@ -114,7 +114,7 @@ index 91f8ae29a..5d3a41f75 100644
          elif python_version < 0x350:
              (
                  exception_state_name,
-@@ -470,6 +473,43 @@ def generateBuiltinIter1Code(to_name, expression, emit, context):
+@@ -496,6 +499,43 @@ def generateBuiltinIter1Code(to_name, expression, emit, context):
  
  def generateBuiltinIterForUnpackCode(to_name, expression, emit, context):
      may_raise = expression.mayRaiseExceptionOperation()
@@ -159,10 +159,10 @@ index 91f8ae29a..5d3a41f75 100644
      generateCAPIObjectCode(
          to_name=to_name,
 diff --git a/nuitka/nodes/BuiltinIteratorNodes.py b/nuitka/nodes/BuiltinIteratorNodes.py
-index d5b63a06a..8d1ee19b9 100644
+index dd4d09def..a4f86443e 100644
 --- a/nuitka/nodes/BuiltinIteratorNodes.py
 +++ b/nuitka/nodes/BuiltinIteratorNodes.py
-@@ -376,6 +376,22 @@ class ExpressionBuiltinZip310(
+@@ -395,6 +395,22 @@ class ExpressionBuiltinZip310(
  class ExpressionBuiltinIterForUnpack(ExpressionBuiltinIter1):
      kind = "EXPRESSION_BUILTIN_ITER_FOR_UNPACK"
  
@@ -186,10 +186,10 @@ index d5b63a06a..8d1ee19b9 100644
          result = self.subnode_value.computeExpressionIter1(
              iter_node=self, trace_collection=trace_collection
 diff --git a/nuitka/tree/ReformulationAssignmentStatements.py b/nuitka/tree/ReformulationAssignmentStatements.py
-index c22b8c1af..461ad8a60 100644
+index ea1c83f1b..6c8f08ed2 100644
 --- a/nuitka/tree/ReformulationAssignmentStatements.py
 +++ b/nuitka/tree/ReformulationAssignmentStatements.py
-@@ -339,14 +339,18 @@ not enough values to unpack (expected at least %d, got %%d)""" % (len(statements
+@@ -340,14 +340,18 @@ not enough values to unpack (expected at least %d, got %%d)""" % (len(statements
              )
  
          if python_version >= 0x370:

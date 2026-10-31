@@ -1,7 +1,8 @@
 # kpip compile
 
 Builds a native `kpip` binary with [Nuitka](https://github.com/Nuitka/Nuitka),
-taken from the latest upstream `factory` and patched with kpip's own changes.
+taken from a pinned commit of upstream `factory` and patched with kpip's own
+changes.
 Nothing here ships inside kpip's own distributions; it produces the binary.
 
 Run from this directory:
@@ -55,18 +56,20 @@ Requirements:
 
 ## Vendored Nuitka
 
-`kpip-compile vendor` resolves the current commit of Nuitka's `factory`
-branch, where Nuitka stages its work before `develop`, fetches it into
-`_vendor/nuitka`, and applies `tools/vendoring/patches/nuitka/*.patch` from
-the repository root in name order. `build` does the same first. The checkout
-is reused until `factory` moves or a patch changes; `vendor --force`
-refetches it anyway. Without network access, an existing checkout is used
-with a warning.
+`kpip-compile vendor` fetches the commit of Nuitka's `factory` branch, where
+Nuitka stages its work before `develop`, that
+`tools/vendoring/nuitka-upstream.txt` names into `_vendor/nuitka`, and applies
+`tools/vendoring/patches/nuitka/*.patch` from the repository root in name
+order. `build` does the same first. The checkout is reused until the pin or a
+patch changes; `vendor --force` refetches it anyway.
 
 `factory` is rewritten as Nuitka reworks it, so it moves more often than
-`develop`, and not always forward. When it moves in a way a patch no longer
-applies to, the command stops and names the patch to rebase; the daily
-compile run reports it in an issue.
+`develop`, and not always forward. Pinning keeps that from breaking kpip's
+builds: only a pull request changes which Nuitka they use. The daily compile
+run checks the patches against the latest `factory` as well, and reports in an
+issue when one no longer applies. To move the pin, rebase the patches onto the
+new commit, as below, and write it to `nuitka-upstream.txt` in the same pull
+request.
 
 `kpip-compile check-patches` tries every patch instead of stopping at the
 first that fails, and prints a table saying whether each applies, is already
@@ -88,8 +91,8 @@ The patches live in a subdirectory so that `vendoring sync`, which applies
 | `0013-constant-cache-without-slot-swapping.patch` | Loading constants no longer swaps the `tp_hash` and `tp_richcompare` slots of builtin types for the duration of a cache lookup, which threads running meanwhile could observe. |
 | `0015-free-threaded-python.patch` | Compiles for free-threaded Python 3.14, and keeps compiled code correct when threads run it at once: allocation, reference counting, shared caches and locking follow CPython's free-threaded build. Checked by `tests/test_nuitka_threads.py`. |
 
-`_vendor/nuitka` is a git checkout whose `upstream` branch is the fetched
-`factory` commit, so `git diff` inside it shows exactly what the patches
+`_vendor/nuitka` is a git checkout whose `upstream` branch is the pinned
+commit, so `git diff` inside it shows exactly what the patches
 changed. To change or rebase a patch, commit the fixed changes on top of
 `upstream` in the checkout, one commit per patch, and export them over the old
 files:

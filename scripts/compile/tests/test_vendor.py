@@ -14,6 +14,7 @@ from kpip_compile.vendor import (
     check_patches,
     find_patches,
     is_current,
+    pinned_commit,
     resolve_commit,
     vendor_nuitka,
 )
@@ -127,6 +128,13 @@ def test_branch_resolves_to_its_latest_commit(upstream: tuple[Path, str]) -> Non
     _git("commit", "--quiet", "-am", "move", cwd=repo)
 
     assert resolve_commit(str(repo), branch) == _git("rev-parse", "HEAD", cwd=repo)
+
+
+def test_pin_is_read_without_surrounding_whitespace(tmp_path: Path) -> None:
+    pin_file = tmp_path / "nuitka-upstream.txt"
+    pin_file.write_text("abc123\n")
+
+    assert pinned_commit(pin_file) == "abc123"
 
 
 def test_checkout_marks_the_upstream_commit(
