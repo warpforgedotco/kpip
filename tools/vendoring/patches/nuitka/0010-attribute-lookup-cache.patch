@@ -65,7 +65,7 @@ index 1306c75d5..f7c532bbd 100644
  extern setattrofunc PyObject_GenericSetAttr_resolved;
  
 diff --git a/nuitka/build/static_src/HelpersAttributes.c b/nuitka/build/static_src/HelpersAttributes.c
-index cf0347532..42a8b558d 100644
+index 1d6c819ba..842c5aa0d 100644
 --- a/nuitka/build/static_src/HelpersAttributes.c
 +++ b/nuitka/build/static_src/HelpersAttributes.c
 @@ -250,6 +250,42 @@ PyObject *LOOKUP_ATTRIBUTE(PyThreadState *tstate, PyObject *source, PyObject *at

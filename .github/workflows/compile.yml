@@ -7,14 +7,15 @@ on:
     paths:
       - "src/**"
       - "scripts/compile/**"
+      - "tools/vendoring/nuitka-upstream.txt"
       - "tools/vendoring/patches/nuitka/**"
       # Decides the line endings the patches are checked out with.
       - ".gitattributes"
       - ".github/workflows/compile.yml"
   schedule:
-    # kpip-compile follows Nuitka's factory, which moves on its own; this
-    # catches a patch that stopped applying without a kpip change, while
-    # upstream has moved by a day's commits, not a week's.
+    # kpip-compile builds a pinned Nuitka, but the patches have to follow
+    # factory: this catches one that stopped applying to it, while upstream
+    # has moved by a day's commits, not a week's.
     - cron: "17 6 * * *"
   workflow_dispatch:
 
@@ -203,12 +204,33 @@ jobs:
           KPIP_NUITKA_TESTS: "1"
         run: uv run --group tests pytest tests/test_nuitka_threads.py
 
+  latest-factory:
+    # Warns before the pin has to move; builds stay on the pinned commit.
+    name: Patches apply to Nuitka's latest factory
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: scripts/compile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: scripts/compile/uv.lock
+      - name: Check the patches
+        run: uv run kpip-compile check-patches | tee -a "$GITHUB_STEP_SUMMARY"
+        shell: bash -eo pipefail {0}
+
   report-scheduled-failure:
     # A failed scheduled run only notifies whoever last edited the cron line,
     # so breakage went unnoticed for weeks. Keep one open issue instead, and
     # add each further failed run to it until someone closes it.
     name: Report scheduled failure
-    needs: [compile, threads-free-threaded]
+    needs: [compile, threads-free-threaded, latest-factory]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
@@ -220,10 +242,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          title="Scheduled compile failed against Nuitka factory"
+          title="Scheduled compile failed"
           body="The scheduled compile failed: $RUN_URL
 
-          Usually a patch in \`tools/vendoring/patches/nuitka/\` no longer applies to, or no longer compiles with, Nuitka's latest \`factory\`; the failed step names it. See \`scripts/compile/README.md\` for rebasing the patches."
+          If only the \`latest-factory\` job failed, builds are fine, and a patch in \`tools/vendoring/patches/nuitka/\` no longer applies to Nuitka's latest \`factory\`: its summary names which. Rebase before moving \`tools/vendoring/nuitka-upstream.txt\`. If a compile job failed, the pinned build itself broke; the failed step says how. See \`scripts/compile/README.md\`."
           number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
             --jq "map(select(.title == \"$title\")) | .[0].number // empty")
           if [ -n "$number" ]; then

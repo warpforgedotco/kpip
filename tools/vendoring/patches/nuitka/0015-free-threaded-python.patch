@@ -49,7 +49,7 @@ leaked cell in "__reduce__".
 Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
 ---
  nuitka/PythonVersions.py                      |   7 +-
- nuitka/build/include/nuitka/allocator.h       |  85 ++++-
+ nuitka/build/include/nuitka/allocator.h       |  79 +++-
  nuitka/build/include/nuitka/builtins.h        |  29 ++
  nuitka/build/include/nuitka/compiled_cell.h   |  60 ++-
  nuitka/build/include/nuitka/freelists.h       |   4 +-
@@ -59,16 +59,15 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  nuitka/build/include/nuitka/prelude.h         |  37 ++
  .../build/static_src/CompiledAsyncgenType.c   |   6 +
  nuitka/build/static_src/CompiledCellType.c    |  61 ++--
- nuitka/build/static_src/CompiledCodeHelpers.c |  20 +
  .../build/static_src/CompiledCoroutineType.c  |   6 +
  .../static_src/CompiledFrameLocalsProxyType.c |  13 +-
  nuitka/build/static_src/CompiledFrameType.c   |  31 +-
  .../build/static_src/CompiledFunctionType.c   |  12 +-
  .../build/static_src/CompiledGeneratorType.c  |   6 +
  nuitka/build/static_src/CompiledMethodType.c  |   9 +-
- nuitka/build/static_src/HelpersAllocator.c    |  57 ++-
+ nuitka/build/static_src/HelpersAllocator.c    |  34 +-
  nuitka/build/static_src/HelpersAttributes.c   |  28 +-
- nuitka/build/static_src/HelpersBuiltin.c      |  45 ++-
+ nuitka/build/static_src/HelpersBuiltin.c      |  14 +-
  .../static_src/HelpersCallingGenerated.c      | 341 ++++++++----------
  nuitka/build/static_src/HelpersComparisonEq.c |  21 ++
  nuitka/build/static_src/HelpersComparisonGe.c |  21 ++
@@ -76,9 +75,8 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  nuitka/build/static_src/HelpersComparisonLe.c |  21 ++
  nuitka/build/static_src/HelpersComparisonLt.c |  21 ++
  nuitka/build/static_src/HelpersComparisonNe.c |  21 ++
- nuitka/build/static_src/HelpersDictionaries.c |  57 ++-
- nuitka/build/static_src/HelpersLists.c        |  47 ++-
- .../HelpersOperationBinaryAddUtils.c          |   6 +
+ nuitka/build/static_src/HelpersDictionaries.c |  20 +-
+ nuitka/build/static_src/HelpersLists.c        |  25 ++
  .../static_src/HelpersOperationInplaceAdd.c   |  48 +--
  .../HelpersOperationInplaceFloordiv.c         |   8 +-
  .../static_src/HelpersOperationInplaceMod.c   |   8 +-
@@ -91,7 +89,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  nuitka/build/static_src/HelpersTypes.c        |  17 +-
  nuitka/build/static_src/MetaPathBasedLoader.c |   7 +
  nuitka/code_generation/BuiltinCodes.py        |  14 +-
- nuitka/code_generation/FrameCodes.py          |  19 +-
+ nuitka/code_generation/FrameCodes.py          |  21 +-
  nuitka/code_generation/GlobalsLocalsCodes.py  |  26 +-
  nuitka/code_generation/ModuleCodes.py         |   9 +-
  nuitka/code_generation/OperationCodes.py      |  26 +-
@@ -99,7 +97,7 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  .../code_generation/c_types/CTypeBooleans.py  |   6 +
  .../c_types/CTypeModuleDictVariables.py       |  10 +-
  .../c_types/CTypePyObjectPointers.py          |   9 +-
- .../templates/CodeTemplatesFrames.py          |  16 +
+ .../templates/CodeTemplatesFrames.py          |  10 +
  .../templates/CodeTemplatesVariables.py       |  53 +--
  .../CodeTemplateCallsMethodPositional.c.j2    |   4 +-
  .../CodeTemplateCallsPositional.c.j2          |  28 +-
@@ -107,13 +105,13 @@ Signed-off-by: Kevin Turcios <turcioskevinr@gmail.com>
  .../templates_c/HelperOperationInplace.c.j2   |   2 +-
  .../templates_c/HelperSlotsFloat.c.j2         |   2 +-
  .../templates_c/HelperSlotsLong.c.j2          |   8 +-
- 59 files changed, 1142 insertions(+), 425 deletions(-)
+ 57 files changed, 1003 insertions(+), 415 deletions(-)
 
 diff --git a/nuitka/PythonVersions.py b/nuitka/PythonVersions.py
-index cb7b69344..1437662ac 100644
+index 661c78ff6..c93910933 100644
 --- a/nuitka/PythonVersions.py
 +++ b/nuitka/PythonVersions.py
-@@ -555,7 +555,12 @@ def getModuleLinkerLibs():
+@@ -533,7 +533,12 @@ def getModuleLinkerLibs():
  
  
  def isPythonWithGil():
@@ -128,10 +126,10 @@ index cb7b69344..1437662ac 100644
  
  def getSitePackageCandidateNames():
 diff --git a/nuitka/build/include/nuitka/allocator.h b/nuitka/build/include/nuitka/allocator.h
-index f9c077050..e2eac2e72 100644
+index 741b68cdb..5cc7eee21 100644
 --- a/nuitka/build/include/nuitka/allocator.h
 +++ b/nuitka/build/include/nuitka/allocator.h
-@@ -359,6 +359,26 @@ NUITKA_MAY_BE_UNUSED static void NuitkaMem_Free(void *ptr) { python_mem_free(pyt
+@@ -383,6 +383,26 @@ NUITKA_MAY_BE_UNUSED static void NuitkaMem_Free(void *ptr) { python_mem_free(pyt
  #endif
  #endif
  
@@ -158,7 +156,7 @@ index f9c077050..e2eac2e72 100644
  #ifdef Py_REF_DEBUG
  static inline void Nuitka_Py_IncRefTotal(PyThreadState *tstate) {
  #if PYTHON_VERSION < 0x3c0
-@@ -511,7 +531,30 @@ static inline void _Py_SET_TYPE(PyObject *ob, PyTypeObject *type) { ob->ob_type
+@@ -535,7 +555,30 @@ static inline void _Py_SET_TYPE(PyObject *ob, PyTypeObject *type) { ob->ob_type
  // it expensive to call.
  #if PYTHON_VERSION >= 0x390
  static inline void Nuitka_Py_NewReferenceNoTotal(PyObject *op) {
@@ -189,7 +187,7 @@ index f9c077050..e2eac2e72 100644
  
  #if PYTHON_VERSION >= 0x3e0 && defined(Py_REF_DEBUG)
      _PyReftracerTrack(op, PyRefTracer_CREATE);
-@@ -532,17 +575,6 @@ static inline void Nuitka_Py_NewReference(PyObject *op) {
+@@ -556,17 +599,6 @@ static inline void Nuitka_Py_NewReference(PyObject *op) {
      op->ob_refcnt = 1;
  #endif
  #endif
@@ -207,13 +205,7 @@ index f9c077050..e2eac2e72 100644
  #endif
  
      Nuitka_Py_NewReferenceNoTotal(op);
-@@ -717,17 +749,20 @@ static PyObject *Nuitka_PyType_AllocNoTrackVar(PyTypeObject *type, Py_ssize_t ni
-     inline_values_size = Nuitka_PyType_InlineValuesSize(type);
- #endif
- 
--    char *alloc = (char *)NuitkaObject_Malloc(size + pre_size + inline_values_size);
-+    char *alloc = (char *)NuitkaObject_MallocWithType(type, size + pre_size + inline_values_size);
-     assert(alloc);
+@@ -750,12 +782,15 @@ static PyObject *Nuitka_PyType_AllocNoTrackVar(PyTypeObject *type, Py_ssize_t ni
      PyObject *obj = (PyObject *)(alloc + pre_size);
  
  #ifdef Py_GIL_DISABLED
@@ -231,7 +223,7 @@ index f9c077050..e2eac2e72 100644
  #else
      assert(pre_size != 0);
      ((PyObject **)alloc)[0] = NULL;
-@@ -738,7 +773,14 @@ static PyObject *Nuitka_PyType_AllocNoTrackVar(PyTypeObject *type, Py_ssize_t ni
+@@ -766,7 +801,14 @@ static PyObject *Nuitka_PyType_AllocNoTrackVar(PyTypeObject *type, Py_ssize_t ni
  
      // We might be able to avoid this, but it's unclear what e.g. the sentinel
      // is supposed to be.
@@ -246,13 +238,7 @@ index f9c077050..e2eac2e72 100644
  
      // This is the "var" branch, we already know we are variable size here.
      assert(type->tp_itemsize != 0);
-@@ -774,17 +816,20 @@ static PyObject *Nuitka_PyType_AllocNoTrack(PyTypeObject *type) {
-     size += Nuitka_PyType_InlineValuesSize(type);
- #endif
- 
--    char *alloc = (char *)NuitkaObject_Malloc(size + pre_size);
-+    char *alloc = (char *)NuitkaObject_MallocWithType(type, size + pre_size);
-     assert(alloc);
+@@ -811,12 +853,15 @@ static PyObject *Nuitka_PyType_AllocNoTrack(PyTypeObject *type) {
      PyObject *obj = (PyObject *)(alloc + pre_size);
  
  #ifdef Py_GIL_DISABLED
@@ -270,7 +256,7 @@ index f9c077050..e2eac2e72 100644
  #else
      assert(pre_size != 0);
      ((PyObject **)alloc)[0] = NULL;
-@@ -897,11 +942,13 @@ static inline void Py_SET_REFCNT_IMMORTAL(PyObject *obj) {
+@@ -929,8 +974,10 @@ static inline void Py_SET_REFCNT_IMMORTAL(PyObject *obj) {
      }
  
  #ifdef Py_GIL_DISABLED
@@ -281,11 +267,7 @@ index f9c077050..e2eac2e72 100644
 +    obj->ob_ref_local = _Py_IMMORTAL_REFCNT_LOCAL;
      obj->ob_ref_shared = 0;
  #if PYTHON_VERSION >= 0x3e0
--    _Py_atomic_or_uint8(&op->ob_gc_bits, _PyGC_BITS_DEFERRED);
-+    _Py_atomic_or_uint8(&obj->ob_gc_bits, _PyGC_BITS_DEFERRED);
- #endif
- 
- #else
+     _Py_atomic_or_uint8(&obj->ob_gc_bits, _PyGC_BITS_DEFERRED);
 diff --git a/nuitka/build/include/nuitka/builtins.h b/nuitka/build/include/nuitka/builtins.h
 index 0b72dcd5e..83f5c4ec3 100644
 --- a/nuitka/build/include/nuitka/builtins.h
@@ -429,11 +411,11 @@ index 8beecaace..60aa8eed2 100644
  
  #endif
 diff --git a/nuitka/build/include/nuitka/freelists.h b/nuitka/build/include/nuitka/freelists.h
-index 6fb8cb86f..17cdf105c 100644
+index 2d167faec..806c8cc93 100644
 --- a/nuitka/build/include/nuitka/freelists.h
 +++ b/nuitka/build/include/nuitka/freelists.h
-@@ -13,7 +13,9 @@
- #include "nuitka/prelude.h"
+@@ -34,7 +34,9 @@
+ #define NUITKA_FREELIST_UNLOCK(free_list)
  #endif
  
 -#ifdef _NUITKA_EXPERIMENTAL_DISABLE_FREELIST_ALL
@@ -458,10 +440,10 @@ index 85d7bbe64..b76496f6b 100644
  #endif
  static PyDictValues *_Nuitka_PyDict_new_values(Py_ssize_t size);
 diff --git a/nuitka/build/include/nuitka/helper/dictionaries.h b/nuitka/build/include/nuitka/helper/dictionaries.h
-index 5bea1ee3f..db20e22a2 100644
+index cb2724b45..0eaa40f99 100644
 --- a/nuitka/build/include/nuitka/helper/dictionaries.h
 +++ b/nuitka/build/include/nuitka/helper/dictionaries.h
-@@ -340,7 +340,12 @@ extern uint64_t nuitka_dict_version_tag_counter;
+@@ -343,7 +343,12 @@ extern uint64_t nuitka_dict_version_tag_counter;
  NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT0(PyDictObject *dict, Nuitka_StringObject *key, PyObject *value) {
      CHECK_OBJECT(value);
  
@@ -475,7 +457,7 @@ index 5bea1ee3f..db20e22a2 100644
      if (unlikely(NUITKA_DICT_IS_WATCHED(dict))) {
          DICT_SET_ITEM((PyObject *)dict, (PyObject *)key, value);
          return;
-@@ -379,6 +384,7 @@ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT0(PyDictObject *dict, Nuitka_
+@@ -382,6 +387,7 @@ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT0(PyDictObject *dict, Nuitka_
      }
  }
  
@@ -483,8 +465,8 @@ index 5bea1ee3f..db20e22a2 100644
  NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT_INPLACE(PyDictObject *dict, Nuitka_StringObject *key,
                                                              PyObject *value) {
      CHECK_OBJECT(value);
-@@ -428,12 +434,17 @@ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT_INPLACE(PyDictObject *dict,
-         CHECK_OBJECT(value);
+@@ -419,12 +425,17 @@ NUITKA_MAY_BE_UNUSED static void UPDATE_STRING_DICT_INPLACE(PyDictObject *dict,
+         Py_DECREF(old);
      }
  }
 +#endif
@@ -500,10 +482,10 @@ index 5bea1ee3f..db20e22a2 100644
 +    return;
 +#elif PYTHON_VERSION >= 0x3c0
      if (unlikely(NUITKA_DICT_IS_WATCHED(dict))) {
-         DICT_SET_ITEM((PyObject *)dict, (PyObject *)key, value);
-         Py_DECREF(value);
+         DICT_SET_ITEM1((PyObject *)dict, (PyObject *)key, value);
+         CHECK_OBJECT(value);
 diff --git a/nuitka/build/include/nuitka/helper/subscripts.h b/nuitka/build/include/nuitka/helper/subscripts.h
-index 62d1e1286..92ddb6d7c 100644
+index 45e458949..e991dc540 100644
 --- a/nuitka/build/include/nuitka/helper/subscripts.h
 +++ b/nuitka/build/include/nuitka/helper/subscripts.h
 @@ -17,7 +17,7 @@
@@ -516,10 +498,10 @@ index 62d1e1286..92ddb6d7c 100644
                                          ((PyTypeObject *)type)->tp_name);
  }
 diff --git a/nuitka/build/include/nuitka/prelude.h b/nuitka/build/include/nuitka/prelude.h
-index 2daef8f3a..2df51eff5 100644
+index 016ead341..9ba12a6e0 100644
 --- a/nuitka/build/include/nuitka/prelude.h
 +++ b/nuitka/build/include/nuitka/prelude.h
-@@ -436,6 +436,28 @@ NUITKA_MAY_BE_UNUSED static PyObject *Nuitka_TypeLookup(PyTypeObject *type, PyOb
+@@ -360,6 +360,28 @@ NUITKA_MAY_BE_UNUSED static PyObject *Nuitka_TypeLookup(PyTypeObject *type, PyOb
  
  #endif
  
@@ -548,7 +530,7 @@ index 2daef8f3a..2df51eff5 100644
  /* With the idea to reduce the amount of exported symbols in the DLLs, make it
   * clear that the module "init" function should of course be exported, but not
   * for executable, where we call it ourselves from the main code.
-@@ -603,6 +625,21 @@ typedef union Nuitka_PyCFunctionUnion {
+@@ -507,6 +529,21 @@ typedef union Nuitka_PyCFunctionUnion {
  // A long value that represents a signed digit on the helper interface.
  typedef long nuitka_digit;
  
@@ -571,10 +553,10 @@ index 2daef8f3a..2df51eff5 100644
  
  #include "nuitka/compiled_frame.h"
 diff --git a/nuitka/build/static_src/CompiledAsyncgenType.c b/nuitka/build/static_src/CompiledAsyncgenType.c
-index e3e1b2da4..00fa466c5 100644
+index f92a424dd..453f64043 100644
 --- a/nuitka/build/static_src/CompiledAsyncgenType.c
 +++ b/nuitka/build/static_src/CompiledAsyncgenType.c
-@@ -1194,8 +1194,14 @@ PyObject *Nuitka_Asyncgen_New(asyncgen_code code, PyObject *module, PyObject *na
+@@ -1200,8 +1200,14 @@ PyObject *Nuitka_Asyncgen_New(asyncgen_code code, PyObject *module, PyObject *na
      result->m_exc_state = Nuitka_ExceptionStackItem_Empty;
  #endif
  
@@ -590,10 +572,10 @@ index e3e1b2da4..00fa466c5 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledCellType.c b/nuitka/build/static_src/CompiledCellType.c
-index 8ac3059a4..15a9edfd4 100644
+index d01c62bb3..babd96412 100644
 --- a/nuitka/build/static_src/CompiledCellType.c
 +++ b/nuitka/build/static_src/CompiledCellType.c
-@@ -80,31 +80,44 @@ static PyObject *Nuitka_Cell_tp_richcompare(PyObject *a, PyObject *b, int op) {
+@@ -81,31 +81,44 @@ static PyObject *Nuitka_Cell_tp_richcompare(PyObject *a, PyObject *b, int op) {
      }
  
      // Now just dereference cell value, and compare from there by contents, which can
@@ -648,7 +630,7 @@ index 8ac3059a4..15a9edfd4 100644
      switch (op) {
      case Py_EQ:
          result = BOOL_FROM(res == 0);
-@@ -135,14 +148,17 @@ static PyObject *Nuitka_Cell_tp_richcompare(PyObject *a, PyObject *b, int op) {
+@@ -136,14 +149,17 @@ static PyObject *Nuitka_Cell_tp_richcompare(PyObject *a, PyObject *b, int op) {
  #endif
  
  static PyObject *Nuitka_Cell_tp_repr(PyObject *self) {
@@ -672,7 +654,7 @@ index 8ac3059a4..15a9edfd4 100644
  }
  
  static int Nuitka_Cell_tp_traverse(PyObject *self, visitproc visit, void *arg) {
-@@ -162,22 +178,21 @@ static int Nuitka_Cell_tp_clear(PyObject *self) {
+@@ -163,22 +179,21 @@ static int Nuitka_Cell_tp_clear(PyObject *self) {
  }
  
  static PyObject *Nuitka_Cell_get_contents(PyObject *self, void *data) {
@@ -700,7 +682,7 @@ index 8ac3059a4..15a9edfd4 100644
  
      if (old != NULL && value == NULL) {
          PyThreadState *tstate = PyThreadState_GET();
-@@ -187,8 +202,8 @@ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data)
+@@ -188,8 +203,8 @@ static int Nuitka_Cell_set_contents(PyObject *self, PyObject *value, void *data)
          return -1;
      }
  
@@ -710,49 +692,11 @@ index 8ac3059a4..15a9edfd4 100644
      Py_XDECREF(old);
  
      return 0;
-diff --git a/nuitka/build/static_src/CompiledCodeHelpers.c b/nuitka/build/static_src/CompiledCodeHelpers.c
-index b0ea8c258..79b18bee3 100644
---- a/nuitka/build/static_src/CompiledCodeHelpers.c
-+++ b/nuitka/build/static_src/CompiledCodeHelpers.c
-@@ -1400,6 +1400,25 @@ static PyObject *QUICK_ITERATOR_NEXT(PyThreadState *tstate, struct Nuitka_QuickI
-             return NULL;
-         }
-     case ITERATOR_LIST:
-+#ifdef Py_GIL_DISABLED
-+        // Other threads may change the list meanwhile, so take each item with
-+        // a reference of our own, as CPython's list iterator does. Past the
-+        // end, "PyList_GetItemRef" raises an "IndexError", which ends it.
-+        result = PyList_GetItemRef((PyObject *)qiter->iterator_data.list_data.list,
-+                                   qiter->iterator_data.list_data.list_index);
-+
-+        if (result == NULL) {
-+            CLEAR_ERROR_OCCURRED(tstate);
-+
-+            *finished = true;
-+            return NULL;
-+        }
-+
-+        qiter->iterator_data.list_data.list_index += 1;
-+
-+        *finished = false;
-+        return result;
-+#else
-         if (qiter->iterator_data.list_data.list_index < PyList_GET_SIZE(qiter->iterator_data.list_data.list)) {
-             result = PyList_GET_ITEM(qiter->iterator_data.list_data.list, qiter->iterator_data.list_data.list_index);
-             qiter->iterator_data.list_data.list_index += 1;
-@@ -1412,6 +1431,7 @@ static PyObject *QUICK_ITERATOR_NEXT(PyThreadState *tstate, struct Nuitka_QuickI
-             *finished = true;
-             return NULL;
-         }
-+#endif
-     }
- 
-     assert(false);
 diff --git a/nuitka/build/static_src/CompiledCoroutineType.c b/nuitka/build/static_src/CompiledCoroutineType.c
-index a67a97032..a157cf7c2 100644
+index 6b208416f..f564da0a1 100644
 --- a/nuitka/build/static_src/CompiledCoroutineType.c
 +++ b/nuitka/build/static_src/CompiledCoroutineType.c
-@@ -1532,8 +1532,14 @@ PyObject *Nuitka_Coroutine_New(PyThreadState *tstate, coroutine_code code, PyObj
+@@ -1546,8 +1546,14 @@ PyObject *Nuitka_Coroutine_New(PyThreadState *tstate, coroutine_code code, PyObj
      result->m_exc_state = Nuitka_ExceptionStackItem_Empty;
  #endif
  
@@ -768,7 +712,7 @@ index a67a97032..a157cf7c2 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledFrameLocalsProxyType.c b/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
-index 2316fd8cc..c307511ff 100644
+index eb2d4f572..d8882c7f6 100644
 --- a/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
 +++ b/nuitka/build/static_src/CompiledFrameLocalsProxyType.c
 @@ -76,6 +76,9 @@ static PyObject *_Nuitka_FrameLocalsProxy_to_dict(Nuitka_FrameLocalsProxyObject
@@ -803,7 +747,7 @@ index 2316fd8cc..c307511ff 100644
              var_names++;
              offset += Nuitka_FrameLocals_Size(type);
          }
-@@ -265,9 +270,8 @@ static PyObject *_Nuitka_FrameLocalsProxy_subscript(PyObject *self, PyObject *ke
+@@ -279,9 +284,8 @@ static PyObject *_Nuitka_FrameLocalsProxy_subscript(PyObject *self, PyObject *ke
          }
          case NUITKA_TYPE_DESCRIPTION_CELL: {
              struct Nuitka_CellObject *cell = *(struct Nuitka_CellObject **)slot;
@@ -814,7 +758,7 @@ index 2316fd8cc..c307511ff 100644
              return value;
          }
          case NUITKA_TYPE_DESCRIPTION_NILONG: {
-@@ -351,9 +355,8 @@ static int _Nuitka_FrameLocalsProxy_ass_subscript(PyObject *self, PyObject *key,
+@@ -365,9 +369,8 @@ static int _Nuitka_FrameLocalsProxy_ass_subscript(PyObject *self, PyObject *key,
                  return 0;
              }
  
@@ -826,7 +770,7 @@ index 2316fd8cc..c307511ff 100644
              return 0;
          }
 diff --git a/nuitka/build/static_src/CompiledFrameType.c b/nuitka/build/static_src/CompiledFrameType.c
-index 46eb9c9fe..98fc68be9 100644
+index d5030089f..3b6f2dbdc 100644
 --- a/nuitka/build/static_src/CompiledFrameType.c
 +++ b/nuitka/build/static_src/CompiledFrameType.c
 @@ -222,10 +222,11 @@ static PyObject *_Nuitka_Frame_GetLocalsDict(struct Nuitka_FrameObject *nuitka_f
@@ -842,7 +786,7 @@ index 46eb9c9fe..98fc68be9 100644
                  }
              }
  
-@@ -944,6 +945,8 @@ static struct Nuitka_FrameObject *_MAKE_COMPILED_FRAME(PyCodeObject *code, PyObj
+@@ -951,6 +952,8 @@ static struct Nuitka_FrameObject *_MAKE_COMPILED_FRAME(PyCodeObject *code, PyObj
      locals_owner->f_code = code;
  #elif PYTHON_VERSION < 0x3e0
      locals_owner->f_executable = (PyObject *)code;
@@ -850,8 +794,8 @@ index 46eb9c9fe..98fc68be9 100644
 +    locals_owner->f_executable = PyStackRef_FromPyObjectNew((PyObject *)code);
  #else
      // TODO: Why is our code object not immortal?
-     locals_owner->f_executable = _PyStackRef_FromPyObjectNew((PyObject *)code);
-@@ -1292,6 +1295,32 @@ PyCodeObject *USE_CODE_OBJECT(PyThreadState *tstate, PyObject *code_object, PyOb
+     locals_owner->f_executable = PyStackRef_FromPyObjectNew((PyObject *)code);
+@@ -1301,6 +1304,32 @@ PyCodeObject *USE_CODE_OBJECT(PyThreadState *tstate, PyObject *code_object, PyOb
      CHECK_OBJECT(module_filename_obj);
  
      PyCodeObject *co = (PyCodeObject *)code_object;
@@ -885,10 +829,10 @@ index 46eb9c9fe..98fc68be9 100644
  
      if (old == const_str_empty) {
 diff --git a/nuitka/build/static_src/CompiledFunctionType.c b/nuitka/build/static_src/CompiledFunctionType.c
-index a4e68947a..9ce07537b 100644
+index 7386b77ad..ed4b38ee5 100644
 --- a/nuitka/build/static_src/CompiledFunctionType.c
 +++ b/nuitka/build/static_src/CompiledFunctionType.c
-@@ -1392,10 +1392,12 @@ PyObject *Nuitka_Function_GetFunctionState(struct Nuitka_FunctionObject *functio
+@@ -1393,10 +1393,12 @@ PyObject *Nuitka_Function_GetFunctionState(struct Nuitka_FunctionObject *functio
              PyObject *cell = PyTuple_GET_ITEM(closure, i);
              assert(Nuitka_CellOrPyCell_Check(cell));
  
@@ -903,7 +847,7 @@ index a4e68947a..9ce07537b 100644
          }
      }
  
-@@ -1704,8 +1706,14 @@ Nuitka_Function_New(function_impl_code c_code, PyObject *name, PyObject *qualnam
+@@ -1705,8 +1707,14 @@ Nuitka_Function_New(function_impl_code c_code, PyObject *name, PyObject *qualnam
      result->m_dict = NULL;
      result->m_weakrefs = NULL;
  
@@ -919,10 +863,10 @@ index a4e68947a..9ce07537b 100644
  #if PYTHON_VERSION >= 0x380 && !defined(_NUITKA_EXPERIMENTAL_DISABLE_VECTORCALL_SLOT)
      result->m_vectorcall = (vectorcallfunc)Nuitka_Function_tp_vectorcall;
 diff --git a/nuitka/build/static_src/CompiledGeneratorType.c b/nuitka/build/static_src/CompiledGeneratorType.c
-index 30703095a..046459048 100644
+index 4ca7e0b97..3b924af4e 100644
 --- a/nuitka/build/static_src/CompiledGeneratorType.c
 +++ b/nuitka/build/static_src/CompiledGeneratorType.c
-@@ -1996,8 +1996,14 @@ PyObject *Nuitka_Generator_New(generator_code code, PyObject *module, PyObject *
+@@ -2009,8 +2009,14 @@ PyObject *Nuitka_Generator_New(generator_code code, PyObject *module, PyObject *
      result->m_resume_exception = Nuitka_ExceptionStackItem_Empty;
  #endif
  
@@ -938,7 +882,7 @@ index 30703095a..046459048 100644
      Nuitka_GC_Track(result);
      return (PyObject *)result;
 diff --git a/nuitka/build/static_src/CompiledMethodType.c b/nuitka/build/static_src/CompiledMethodType.c
-index 8199d6f4f..61f5ec3ff 100644
+index 0869e8202..ef11e6ee3 100644
 --- a/nuitka/build/static_src/CompiledMethodType.c
 +++ b/nuitka/build/static_src/CompiledMethodType.c
 @@ -64,7 +64,7 @@ static PyObject *Nuitka_Method_reduce(PyObject *self, PyObject *unused) {
@@ -969,38 +913,10 @@ index 8199d6f4f..61f5ec3ff 100644
          }
      }
 diff --git a/nuitka/build/static_src/HelpersAllocator.c b/nuitka/build/static_src/HelpersAllocator.c
-index 480d00c74..e5d8a6aa6 100644
+index efa7f10a9..d0368beb4 100644
 --- a/nuitka/build/static_src/HelpersAllocator.c
 +++ b/nuitka/build/static_src/HelpersAllocator.c
-@@ -666,7 +666,26 @@ static void Nuitka_Py_ScheduleGC(PyThreadState *tstate) {
- 
- // This is called during object creation and might trigger garbage collection
- void Nuitka_PyObject_GC_Link(PyObject *op) {
--#if PYTHON_VERSION < 0x3d0
-+#if defined(Py_GIL_DISABLED) && PYTHON_VERSION >= 0x3e0
-+    // The free-threaded collector has no generations and no GC head: an
-+    // allocation only counts towards the next collection. As CPython's
-+    // "record_allocation", counted per thread and added to the young count
-+    // every 512. Whether that calls for a collection -- which also asks
-+    // about process memory, out of reach here -- CPython decides on its own
-+    // next flush, so none is scheduled from compiled code.
-+    (void)op;
-+
-+    PyThreadState *tstate = _PyThreadState_GET();
-+    struct _gc_thread_state *gc = &((_PyThreadStateImpl *)tstate)->gc;
-+
-+    gc->alloc_count++;
-+
-+    if (gc->alloc_count >= 512) {
-+        GCState *gcstate = &tstate->interp->gc;
-+        _Py_atomic_add_int(&gcstate->young.count, (int)gc->alloc_count);
-+        gc->alloc_count = 0;
-+    }
-+#elif PYTHON_VERSION < 0x3d0
-     PyGC_Head *g = AS_GC(op);
- 
-     PyThreadState *tstate = _PyThreadState_GET();
-@@ -862,8 +881,12 @@ static bool _Nuitka_qsbr_poll(struct _qsbr_thread_state *qsbr, uint64_t goal) {
+@@ -930,8 +930,12 @@ static bool _Nuitka_qsbr_poll(struct _qsbr_thread_state *qsbr, uint64_t goal) {
  }
  
  static void _NuitkaMem_free_work_item(uintptr_t ptr) {
@@ -1014,7 +930,7 @@ index 480d00c74..e5d8a6aa6 100644
      } else {
          NuitkaMem_Free((void *)ptr);
      }
-@@ -877,14 +900,17 @@ static void _Nuitka_process_queue(struct llist_node *head, struct _qsbr_thread_s
+@@ -945,14 +949,17 @@ static void _Nuitka_process_queue(struct llist_node *head, struct _qsbr_thread_s
      while (!llist_empty(head)) {
          struct _mem_work_chunk *buf = work_queue_first(head);
  
@@ -1034,21 +950,19 @@ index 480d00c74..e5d8a6aa6 100644
          }
  
          assert(buf->rd_idx == buf->wr_idx);
-@@ -981,7 +1007,13 @@ void _NuitkaMem_ProcessDelayed(PyThreadState *tstate) {
+@@ -1049,7 +1056,11 @@ void _NuitkaMem_ProcessDelayed(PyThreadState *tstate) {
  
  static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
      // Free immediately if possible.
 +#if PYTHON_VERSION >= 0x3e0
-+    PyInterpreterState *interp = _PyInterpreterState_GET();
-+
-+    if (_PyInterpreterState_GetFinalizing(interp) != NULL || interp->stoptheworld.world_stopped) {
++    if (_PyInterpreterState_GetFinalizing(_PyInterpreterState_GET()) != NULL || Nuitka_GetStopTheWorld()->world_stopped) {
 +#else
-     if (_PyRuntime.stoptheworld.world_stopped) {
+     if (Nuitka_GetStopTheWorld()->world_stopped) {
 +#endif
          _NuitkaMem_free_work_item(ptr);
          return;
      }
-@@ -1002,9 +1034,24 @@ static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
+@@ -1070,9 +1081,24 @@ static void _NuitkaMem_FreeDelayed2(uintptr_t ptr) {
  
      if (buf == NULL) {
          buf = NuitkaMem_Calloc(1, sizeof(*buf));
@@ -1075,7 +989,7 @@ index 480d00c74..e5d8a6aa6 100644
      buf->array[buf->wr_idx].ptr = ptr;
      buf->array[buf->wr_idx].qsbr_goal = seq;
 diff --git a/nuitka/build/static_src/HelpersAttributes.c b/nuitka/build/static_src/HelpersAttributes.c
-index 42a8b558d..412ecc645 100644
+index 842c5aa0d..7e320b395 100644
 --- a/nuitka/build/static_src/HelpersAttributes.c
 +++ b/nuitka/build/static_src/HelpersAttributes.c
 @@ -113,12 +113,10 @@ PyObject *LOOKUP_ATTRIBUTE(PyThreadState *tstate, PyObject *source, PyObject *at
@@ -1134,7 +1048,7 @@ index 42a8b558d..412ecc645 100644
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
  
-@@ -751,12 +743,10 @@ int HAS_ATTR_BOOL2(PyThreadState *tstate, PyObject *source, PyObject *attr_name)
+@@ -754,12 +746,10 @@ int HAS_ATTR_BOOL2(PyThreadState *tstate, PyObject *source, PyObject *attr_name)
              }
          }
  
@@ -1148,7 +1062,7 @@ index 42a8b558d..412ecc645 100644
  
              if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
                  func = Py_TYPE(descr)->tp_descr_get;
-@@ -955,11 +945,9 @@ static bool SET_ATTRIBUTE_GENERIC(PyThreadState *tstate, PyTypeObject *type, PyO
+@@ -958,11 +948,9 @@ static bool SET_ATTRIBUTE_GENERIC(PyThreadState *tstate, PyTypeObject *type, PyO
          }
      }
  
@@ -1161,7 +1075,7 @@ index 42a8b558d..412ecc645 100644
          if (NuitkaType_HasFeatureClass(Py_TYPE(descr))) {
              descrsetfunc func = Py_TYPE(descr)->tp_descr_set;
  
-@@ -1209,16 +1197,16 @@ PyObject *LOOKUP_SPECIAL(PyThreadState *tstate, PyObject *source, PyObject *attr
+@@ -1212,16 +1200,16 @@ PyObject *LOOKUP_SPECIAL(PyThreadState *tstate, PyObject *source, PyObject *attr
      // TODO: There is heavy optimization in CPython to avoid it. Potentially
      // that's worth it to imitate that.
  
@@ -1181,10 +1095,10 @@ index 42a8b558d..412ecc645 100644
              if (unlikely(func_result == NULL)) {
                  return NULL;
 diff --git a/nuitka/build/static_src/HelpersBuiltin.c b/nuitka/build/static_src/HelpersBuiltin.c
-index 89c5b5e5f..6e7db5e75 100644
+index 1f69605a6..301958afb 100644
 --- a/nuitka/build/static_src/HelpersBuiltin.c
 +++ b/nuitka/build/static_src/HelpersBuiltin.c
-@@ -666,7 +666,9 @@ PyObject *BUILTIN_PRINT(PyThreadState *tstate, PyObject **values, int count, PyO
+@@ -702,7 +702,9 @@ PyObject *BUILTIN_PRINT(PyThreadState *tstate, PyObject **values, int count, PyO
          assert(kw_dict != NULL);
      }
  
@@ -1195,7 +1109,7 @@ index 89c5b5e5f..6e7db5e75 100644
      Py_DECREF(args_tuple);
      Py_XDECREF(kw_dict);
  
-@@ -690,7 +692,9 @@ PyObject *BUILTIN_PRINT(PyThreadState *tstate, PyObject **values, int count, PyO
+@@ -726,7 +728,9 @@ PyObject *BUILTIN_PRINT(PyThreadState *tstate, PyObject **values, int count, PyO
          assert(kw_dict != NULL);
      }
  
@@ -1206,52 +1120,7 @@ index 89c5b5e5f..6e7db5e75 100644
      Py_DECREF(args_tuple);
      Py_XDECREF(kw_dict);
  
-@@ -764,6 +768,36 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
-     CHECK_OBJECT(type);
-     CHECK_OBJECT_X(obj);
- 
-+#ifdef Py_GIL_DISABLED
-+    // Another thread may rebind "super" and release the value read.
-+    PyObject *super_value;
-+
-+    int found = PyDict_GetItemRef((PyObject *)module_dict, const_str_plain_super, &super_value);
-+
-+    if (unlikely(found < 0)) {
-+        return NULL;
-+    }
-+
-+    if (found == 0) {
-+        NUITKA_ASSIGN_BUILTIN(super);
-+
-+        super_value = NUITKA_ACCESS_BUILTIN(super);
-+        Py_INCREF(super_value);
-+    }
-+
-+    PyObject *result;
-+
-+    if (obj != NULL) {
-+        PyObject *args[] = {type, obj};
-+
-+        result = CALL_FUNCTION_WITH_ARGS2(tstate, super_value, args);
-+    } else {
-+        result = CALL_FUNCTION_WITH_SINGLE_ARG(tstate, super_value, type);
-+    }
-+
-+    Py_DECREF(super_value);
-+    return result;
-+#else
-     PyObject *super_value = GET_STRING_DICT_VALUE(module_dict, (Nuitka_StringObject *)const_str_plain_super);
- 
-     if (super_value == NULL) {
-@@ -779,6 +813,7 @@ PyObject *BUILTIN_SUPER2(PyThreadState *tstate, PyDictObject *module_dict, PyObj
-     } else {
-         return CALL_FUNCTION_WITH_SINGLE_ARG(tstate, super_value, type);
-     }
-+#endif
- }
- 
- PyObject *BUILTIN_SUPER0(PyThreadState *tstate, PyDictObject *module_dict, PyObject *type, PyObject *obj) {
-@@ -999,7 +1034,11 @@ PyObject *BUILTIN_LONG2(PyThreadState *tstate, PyObject *value, PyObject *base)
+@@ -1068,7 +1072,11 @@ PyObject *BUILTIN_LONG2(PyThreadState *tstate, PyObject *value, PyObject *base)
  PyObject *BUILTIN_PRINT1(PyThreadState *tstate, PyObject **values, int count) {
      CHECK_OBJECTS(values, count);
  
@@ -2308,7 +2177,7 @@ index 9ec2b09f7..00d621933 100644
                  func = Py_TYPE(descr)->tp_descr_get;
  
 diff --git a/nuitka/build/static_src/HelpersComparisonEq.c b/nuitka/build/static_src/HelpersComparisonEq.c
-index 5a3840f50..7e2a844b3 100644
+index c4ebdb201..a98680642 100644
 --- a/nuitka/build/static_src/HelpersComparisonEq.c
 +++ b/nuitka/build/static_src/HelpersComparisonEq.c
 @@ -10411,6 +10411,14 @@ static PyObject *COMPARE_EQ_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2324,9 +2193,9 @@ index 5a3840f50..7e2a844b3 100644
 +    }
 +#endif
  
-     if (Py_SIZE(a) != Py_SIZE(b)) {
-         bool r = false;
-@@ -11057,6 +11065,19 @@ static nuitka_bool COMPARE_EQ_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
+@@ -11071,6 +11079,19 @@ static nuitka_bool COMPARE_EQ_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
  
      PyListObject *a = (PyListObject *)operand1;
      PyListObject *b = (PyListObject *)operand2;
@@ -2344,10 +2213,10 @@ index 5a3840f50..7e2a844b3 100644
 +    }
 +#endif
  
-     if (Py_SIZE(a) != Py_SIZE(b)) {
-         bool r = false;
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
 diff --git a/nuitka/build/static_src/HelpersComparisonGe.c b/nuitka/build/static_src/HelpersComparisonGe.c
-index 045053e2a..2bb674244 100644
+index b02694089..5b76aef23 100644
 --- a/nuitka/build/static_src/HelpersComparisonGe.c
 +++ b/nuitka/build/static_src/HelpersComparisonGe.c
 @@ -10181,6 +10181,14 @@ static PyObject *COMPARE_GE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2363,9 +2232,9 @@ index 045053e2a..2bb674244 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
-@@ -10819,6 +10827,19 @@ static nuitka_bool COMPARE_GE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
+@@ -10835,6 +10843,19 @@ static nuitka_bool COMPARE_GE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
  
      PyListObject *a = (PyListObject *)operand1;
      PyListObject *b = (PyListObject *)operand2;
@@ -2383,10 +2252,10 @@ index 045053e2a..2bb674244 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
 diff --git a/nuitka/build/static_src/HelpersComparisonGt.c b/nuitka/build/static_src/HelpersComparisonGt.c
-index 17bff4233..a9582f356 100644
+index 67f520998..4ed34602e 100644
 --- a/nuitka/build/static_src/HelpersComparisonGt.c
 +++ b/nuitka/build/static_src/HelpersComparisonGt.c
 @@ -10165,6 +10165,14 @@ static PyObject *COMPARE_GT_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2402,9 +2271,9 @@ index 17bff4233..a9582f356 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
-@@ -10803,6 +10811,19 @@ static nuitka_bool COMPARE_GT_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
+@@ -10819,6 +10827,19 @@ static nuitka_bool COMPARE_GT_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
  
      PyListObject *a = (PyListObject *)operand1;
      PyListObject *b = (PyListObject *)operand2;
@@ -2422,10 +2291,10 @@ index 17bff4233..a9582f356 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
 diff --git a/nuitka/build/static_src/HelpersComparisonLe.c b/nuitka/build/static_src/HelpersComparisonLe.c
-index 302496430..72839ec62 100644
+index 275c44974..dda1e7b5d 100644
 --- a/nuitka/build/static_src/HelpersComparisonLe.c
 +++ b/nuitka/build/static_src/HelpersComparisonLe.c
 @@ -10303,6 +10303,14 @@ static PyObject *COMPARE_LE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2441,9 +2310,9 @@ index 302496430..72839ec62 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
-@@ -10941,6 +10949,19 @@ static nuitka_bool COMPARE_LE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
+@@ -10957,6 +10965,19 @@ static nuitka_bool COMPARE_LE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
  
      PyListObject *a = (PyListObject *)operand1;
      PyListObject *b = (PyListObject *)operand2;
@@ -2461,10 +2330,10 @@ index 302496430..72839ec62 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
 diff --git a/nuitka/build/static_src/HelpersComparisonLt.c b/nuitka/build/static_src/HelpersComparisonLt.c
-index 9036541b3..3889e6dd4 100644
+index aa5b9a549..84d349a4d 100644
 --- a/nuitka/build/static_src/HelpersComparisonLt.c
 +++ b/nuitka/build/static_src/HelpersComparisonLt.c
 @@ -10287,6 +10287,14 @@ static PyObject *COMPARE_LT_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2480,9 +2349,9 @@ index 9036541b3..3889e6dd4 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
-@@ -10925,6 +10933,19 @@ static nuitka_bool COMPARE_LT_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
+@@ -10941,6 +10949,19 @@ static nuitka_bool COMPARE_LT_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
  
      PyListObject *a = (PyListObject *)operand1;
      PyListObject *b = (PyListObject *)operand2;
@@ -2500,10 +2369,10 @@ index 9036541b3..3889e6dd4 100644
 +    }
 +#endif
  
-     bool found = false;
-     nuitka_bool res = NUITKA_BOOL_TRUE;
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
 diff --git a/nuitka/build/static_src/HelpersComparisonNe.c b/nuitka/build/static_src/HelpersComparisonNe.c
-index e97d48a54..a18d20cd8 100644
+index 7ef0caf54..8466ffa3a 100644
 --- a/nuitka/build/static_src/HelpersComparisonNe.c
 +++ b/nuitka/build/static_src/HelpersComparisonNe.c
 @@ -10287,6 +10287,14 @@ static PyObject *COMPARE_NE_OBJECT_LIST_LIST(PyObject *operand1, PyObject *opera
@@ -2519,9 +2388,9 @@ index e97d48a54..a18d20cd8 100644
 +    }
 +#endif
  
-     if (Py_SIZE(a) != Py_SIZE(b)) {
-         bool r = true;
-@@ -10934,6 +10942,19 @@ static nuitka_bool COMPARE_NE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
+@@ -10948,6 +10956,19 @@ static nuitka_bool COMPARE_NE_NBOOL_LIST_LIST(PyObject *operand1, PyObject *oper
  
      PyListObject *a = (PyListObject *)operand1;
      PyListObject *b = (PyListObject *)operand2;
@@ -2539,112 +2408,13 @@ index e97d48a54..a18d20cd8 100644
 +    }
 +#endif
  
-     if (Py_SIZE(a) != Py_SIZE(b)) {
-         bool r = true;
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
 diff --git a/nuitka/build/static_src/HelpersDictionaries.c b/nuitka/build/static_src/HelpersDictionaries.c
-index 7380f500a..463a62e86 100644
+index 5677792f6..8dafc8051 100644
 --- a/nuitka/build/static_src/HelpersDictionaries.c
 +++ b/nuitka/build/static_src/HelpersDictionaries.c
-@@ -95,9 +95,16 @@ static inline void ASSERT_DICT_LOCKED(PyObject *op) { _Py_CRITICAL_SECTION_ASSER
- #define LOAD_KEYS_NENTRIES(keys) _Py_atomic_load_ssize_relaxed(&keys->dk_nentries)
- 
- static inline void Nuitka_Py_dictkeys_incref(PyDictKeysObject *dk) {
-+#if PYTHON_VERSION >= 0x3e0
-+    // Immortal keys carry a negative count from 3.14, as in CPython.
-+    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) < 0) {
-+        return;
-+    }
-+#else
-     if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) == _Py_IMMORTAL_REFCNT) {
-         return;
-     }
-+#endif
- #ifdef Py_REF_DEBUG
-     _Py_IncRefTotal(_PyThreadState_GET());
- #endif
-@@ -105,9 +112,16 @@ static inline void Nuitka_Py_dictkeys_incref(PyDictKeysObject *dk) {
- }
- 
- static inline void Nuitka_Py_dictkeys_decref(PyInterpreterState *interp, PyDictKeysObject *dk, bool use_qsbr) {
-+#if PYTHON_VERSION >= 0x3e0
-+    // Immortal keys carry a negative count from 3.14, as in CPython.
-+    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) < 0) {
-+        return;
-+    }
-+#else
-     if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) == _Py_IMMORTAL_REFCNT) {
-         return;
-     }
-+#endif
-     assert(FT_ATOMIC_LOAD_SSIZE(dk->dk_refcnt) > 0);
- #ifdef Py_REF_DEBUG
-     _Py_DecRefTotal(_PyThreadState_GET());
-@@ -251,6 +265,10 @@ PyObject *DICT_GET_ITEM0(PyThreadState *tstate, PyObject *dict, PyObject *key) {
-     }
- 
-     CHECK_OBJECT(result);
-+#ifdef Py_GIL_DISABLED
-+    // Borrowed, as CPython's "PyDict_GetItem" hands it out without the GIL.
-+    Py_DECREF(result);
-+#endif
-     return result;
- #endif
- }
-@@ -340,7 +358,10 @@ PyObject *DICT_GET_ITEM1(PyThreadState *tstate, PyObject *dict, PyObject *key) {
-     }
- 
-     CHECK_OBJECT(result);
-+#ifndef Py_GIL_DISABLED
-+    // The free-threaded lookup returned a reference of our own already.
-     Py_INCREF(result);
-+#endif
-     return result;
- #endif
- }
-@@ -483,7 +504,10 @@ PyObject *DICT_GET_ITEM_WITH_ERROR(PyThreadState *tstate, PyObject *dict, PyObje
-     }
- 
-     CHECK_OBJECT(result);
-+#ifndef Py_GIL_DISABLED
-+    // The free-threaded lookup returned a reference of our own already.
-     Py_INCREF(result);
-+#endif
-     return result;
- #endif
- }
-@@ -572,6 +596,10 @@ PyObject *DICT_GET_ITEM_WITH_HASH_ERROR0(PyThreadState *tstate, PyObject *dict,
-     }
- 
-     CHECK_OBJECT(result);
-+#ifdef Py_GIL_DISABLED
-+    // Borrowed, as CPython's "PyDict_GetItem" hands it out without the GIL.
-+    Py_DECREF(result);
-+#endif
-     return result;
- #endif
- }
-@@ -664,7 +692,10 @@ PyObject *DICT_GET_ITEM_WITH_HASH_ERROR1(PyThreadState *tstate, PyObject *dict,
-     }
- 
-     CHECK_OBJECT(result);
-+#ifndef Py_GIL_DISABLED
-+    // The free-threaded lookup returned a reference of our own already.
-     Py_INCREF(result);
-+#endif
-     return result;
- #endif
- }
-@@ -755,6 +786,9 @@ int DICT_HAS_ITEM(PyThreadState *tstate, PyObject *dict, PyObject *key) {
-     if (unlikely(result == NULL)) {
-         return 0;
-     }
-+#ifdef Py_GIL_DISABLED
-+    Py_DECREF(result);
-+#endif
- #endif
-     return 1;
- #endif
-@@ -1073,7 +1107,7 @@ static PyDictObject *_Nuitka_AllocatePyDictObjectFresh(void) {
+@@ -1038,7 +1038,7 @@ static PyDictObject *_Nuitka_AllocatePyDictObjectFresh(void) {
      size_t pre_size = _PyType_PreHeaderSize(&PyDict_Type);
      size_t size = _PyObject_SIZE(&PyDict_Type);
  
@@ -2653,17 +2423,7 @@ index 7380f500a..463a62e86 100644
      assert(alloc != NULL);
  
      ((PyObject **)alloc)[0] = NULL;
-@@ -1146,7 +1180,8 @@ static PyDictObject *_Nuitka_AllocatePyDictObject(PyThreadState *tstate) {
- #endif
- 
- #if PYTHON_VERSION >= 0x360
--static PyDictKeysObject *_Nuitka_AllocatePyDictKeysObject(PyThreadState *tstate, Py_ssize_t keys_size) {
-+NUITKA_MAY_BE_UNUSED static PyDictKeysObject *_Nuitka_AllocatePyDictKeysObject(PyThreadState *tstate,
-+                                                                                 Py_ssize_t keys_size) {
-     // CPython names, spell-checker: ignore dictkeys,numfree
-     PyDictKeysObject *dk;
- 
-@@ -1236,7 +1271,7 @@ static inline PyDictValues *_Nuitka_PyDict_new_values(Py_ssize_t size) {
+@@ -1202,7 +1202,7 @@ static inline PyDictValues *_Nuitka_PyDict_new_values(Py_ssize_t size) {
  
  #if PYTHON_VERSION >= 0x3d0
  
@@ -2672,7 +2432,7 @@ index 7380f500a..463a62e86 100644
      PyDictValues *new_values = _Nuitka_PyDict_new_values(values->capacity);
      if (unlikely(new_values == NULL)) {
          return NULL;
-@@ -1313,7 +1348,15 @@ static inline Py_ssize_t Nuitka_Py_dictkeys_get_index(const PyDictKeysObject *ke
+@@ -1279,7 +1279,15 @@ static inline Py_ssize_t Nuitka_Py_dictkeys_get_index(const PyDictKeysObject *ke
  // 3.13+
  #if PYTHON_VERSION >= 0x3d0
  
@@ -2689,7 +2449,7 @@ index 7380f500a..463a62e86 100644
      PyDictObject *mp, PyDictKeysObject *dk, PyObject *key, Py_hash_t hash,
      int (*check_lookup)(PyDictObject *, PyDictKeysObject *, void *, Py_ssize_t ix, PyObject *key, Py_hash_t)) {
      void *ep0 = _DK_ENTRIES(dk);
-@@ -1434,7 +1477,7 @@ Py_ssize_t _Py_HOT_FUNCTION Nuitka_Py_unicodekeys_lookup_unicode(PyDictKeysObjec
+@@ -1400,7 +1408,7 @@ Py_ssize_t _Py_HOT_FUNCTION Nuitka_Py_unicodekeys_lookup_unicode(PyDictKeysObjec
  
  #ifdef Py_GIL_DISABLED
  
@@ -2698,7 +2458,7 @@ index 7380f500a..463a62e86 100644
  Nuitka_Py_dictkeys_compare_unicode_generic_threadsafe(PyDictObject *mp, PyDictKeysObject *dk, void *ep0, Py_ssize_t ix,
                                                        PyObject *key, Py_hash_t hash) {
      PyDictUnicodeEntry *ep = &((PyDictUnicodeEntry *)ep0)[ix];
-@@ -1473,7 +1516,7 @@ static Py_ssize_t Nuitka_Py_unicodekeys_lookup_generic_threadsafe(PyDictObject *
+@@ -1439,7 +1447,7 @@ static Py_ssize_t Nuitka_Py_unicodekeys_lookup_generic_threadsafe(PyDictObject *
      return Nuitka_Py_dictkeys_do_lookup(mp, dk, key, hash, Nuitka_Py_dictkeys_compare_unicode_generic_threadsafe);
  }
  
@@ -2707,7 +2467,7 @@ index 7380f500a..463a62e86 100644
  Nuitka_Py_dictkeys_compare_unicode_unicode_threadsafe(PyDictObject *mp, PyDictKeysObject *dk, void *ep0, Py_ssize_t ix,
                                                        PyObject *key, Py_hash_t hash) {
      PyDictUnicodeEntry *ep = &((PyDictUnicodeEntry *)ep0)[ix];
-@@ -1504,7 +1547,7 @@ static Py_ssize_t _Py_HOT_FUNCTION Nuitka_Py_unicodekeys_lookup_unicode_threadsa
+@@ -1470,7 +1478,7 @@ static Py_ssize_t _Py_HOT_FUNCTION Nuitka_Py_unicodekeys_lookup_unicode_threadsa
      return Nuitka_Py_dictkeys_do_lookup(NULL, dk, key, hash, Nuitka_Py_dictkeys_compare_unicode_unicode_threadsafe);
  }
  
@@ -2717,57 +2477,10 @@ index 7380f500a..463a62e86 100644
                                                                                   PyObject *key, Py_hash_t hash) {
      PyDictKeyEntry *ep = &((PyDictKeyEntry *)ep0)[ix];
 diff --git a/nuitka/build/static_src/HelpersLists.c b/nuitka/build/static_src/HelpersLists.c
-index b7353606b..79e24ed01 100644
+index adf80ab4c..edcdb9627 100644
 --- a/nuitka/build/static_src/HelpersLists.c
 +++ b/nuitka/build/static_src/HelpersLists.c
-@@ -130,6 +130,10 @@ PyObject *LIST_COPY(PyThreadState *tstate, PyObject *list) {
-     CHECK_OBJECT(list);
-     assert(PyList_CheckExact(list));
- 
-+#ifdef Py_GIL_DISABLED
-+    return PyList_GetSlice(list, 0, PY_SSIZE_T_MAX);
-+#endif
-+
-     Py_ssize_t size = PyList_GET_SIZE(list);
-     PyObject *result = MAKE_LIST_EMPTY(tstate, size);
- 
-@@ -146,7 +150,7 @@ PyObject *LIST_COPY(PyThreadState *tstate, PyObject *list) {
-     return result;
- }
- 
--static bool LIST_RESIZE(PyListObject *list, Py_ssize_t new_size) {
-+NUITKA_MAY_BE_UNUSED static bool LIST_RESIZE(PyListObject *list, Py_ssize_t new_size) {
-     CHECK_OBJECT(list);
-     assert(new_size >= 0);
- 
-@@ -172,7 +176,7 @@ static bool LIST_RESIZE(PyListObject *list, Py_ssize_t new_size) {
- 
-     if (array == NULL) {
-         PyErr_NoMemory();
--        return -1;
-+        return false;
-     }
-     PyObject **old_items = list->ob_item;
-     if (list->ob_item != NULL) {
-@@ -481,7 +485,16 @@ bool LIST_REMOVE(PyObject *target, PyObject *item) {
- 
-     CHECK_OBJECT(item);
- 
--#if _NUITKA_EXPERIMENTAL_DISABLE_LIST_OPT && 0
-+#if defined(Py_GIL_DISABLED)
-+    PyObject *result = PyObject_CallMethod(target, "remove", "(O)", item);
-+
-+    if (unlikely(result == NULL)) {
-+        return false;
-+    }
-+
-+    Py_DECREF(result);
-+    return true;
-+#elif _NUITKA_EXPERIMENTAL_DISABLE_LIST_OPT && 0
-     // TODO: This is not exposed, would need to delete as slice instead.
-     int res = PyList_Remove(target, item);
-     return res == 0;
-@@ -520,6 +533,11 @@ void LIST_CLEAR(PyObject *target) {
+@@ -732,6 +732,11 @@ static void _LIST_CLEAR_LOCK_HELD(PyObject *target) {
      CHECK_OBJECT(target);
      assert(PyList_CheckExact(target));
  
@@ -2779,7 +2492,7 @@ index b7353606b..79e24ed01 100644
      PyListObject *list = (PyListObject *)target;
  
      PyObject **items = list->ob_item;
-@@ -561,6 +579,10 @@ PyObject *LIST_COUNT(PyObject *list, PyObject *item) {
+@@ -780,6 +785,10 @@ static PyObject *_LIST_COUNT_LOCK_HELD(PyObject *list, PyObject *item) {
      CHECK_OBJECT(list);
      assert(PyList_CheckExact(list));
  
@@ -2790,7 +2503,7 @@ index b7353606b..79e24ed01 100644
      Py_ssize_t count = 0;
  
      for (Py_ssize_t i = 0; i < Py_SIZE(list); i++) {
-@@ -595,6 +617,10 @@ PyObject *LIST_COUNT(PyObject *list, PyObject *item) {
+@@ -823,6 +832,10 @@ PyObject *LIST_COUNT(PyObject *list, PyObject *item) {
  
  static PyObject *_LIST_INDEX_COMMON(PyThreadState *tstate, PyListObject *list, PyObject *item, Py_ssize_t start,
                                      Py_ssize_t stop) {
@@ -2801,17 +2514,7 @@ index b7353606b..79e24ed01 100644
      // Negative values for start/stop are handled here.
      if (start < 0) {
          start += Py_SIZE(list);
-@@ -718,8 +744,7 @@ PyObject *LIST_INDEX4(PyThreadState *tstate, PyObject *list, PyObject *item, PyO
-     PyObject *stop_index = Nuitka_Number_IndexAsLong(stop);
- 
-     if (unlikely(stop_index == NULL)) {
--        Py_DECREF(start_index);
--
-+        // The start index was released above already.
-         CLEAR_ERROR_OCCURRED(tstate);
- 
-         SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,
-@@ -782,6 +807,13 @@ void LIST_INSERT_CONST(PyObject *list, Py_ssize_t index, PyObject *item) {
+@@ -1040,6 +1053,13 @@ static void _LIST_INSERT_CONST_LOCK_HELD(PyObject *list, Py_ssize_t index, PyObj
      assert(PyList_CheckExact(list));
      CHECK_OBJECT(item);
  
@@ -2825,7 +2528,7 @@ index b7353606b..79e24ed01 100644
      PyListObject *list_object = (PyListObject *)list;
  
      Py_ssize_t n = Py_SIZE(list_object);
-@@ -834,6 +866,11 @@ void LIST_REVERSE(PyObject *list) {
+@@ -1098,6 +1118,11 @@ static void _LIST_REVERSE_LOCK_HELD(PyObject *list) {
      CHECK_OBJECT(list);
      assert(PyList_CheckExact(list));
  
@@ -2837,25 +2540,8 @@ index b7353606b..79e24ed01 100644
      PyListObject *list_object = (PyListObject *)list;
  
      if (Py_SIZE(list_object) > 1) {
-diff --git a/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c b/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
-index 68f2e9c74..23b0d34a4 100644
---- a/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
-+++ b/nuitka/build/static_src/HelpersOperationBinaryAddUtils.c
-@@ -20,6 +20,12 @@ static PyObject *LIST_CONCAT(PyThreadState *tstate, PyObject *operand1, PyObject
-     CHECK_OBJECT(operand2);
-     assert(PyList_CheckExact(operand2));
- 
-+#ifdef Py_GIL_DISABLED
-+    // Sized once and copied item by item, a list another thread appends to
-+    // would overflow the result: CPython's concatenation locks both.
-+    return PyList_Type.tp_as_sequence->sq_concat(operand1, operand2);
-+#endif
-+
-     Py_ssize_t size = Py_SIZE(operand1) + Py_SIZE(operand2);
- 
-     PyListObject *result = (PyListObject *)MAKE_LIST_EMPTY(tstate, size);
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceAdd.c b/nuitka/build/static_src/HelpersOperationInplaceAdd.c
-index aac40b030..94d6dab84 100644
+index 62730ed36..766935cbc 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceAdd.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceAdd.c
 @@ -636,7 +636,7 @@ static inline bool _INPLACE_OPERATION_ADD_LONG_LONG(PyObject **operand1, PyObjec
@@ -3065,7 +2751,7 @@ index aac40b030..94d6dab84 100644
          // We more or less own the operand, so we might reuse its storage and
          // execute stuff in-place.
  
-@@ -4872,7 +4872,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_OBJECT(PyObject **operand1, PyO
+@@ -4874,7 +4874,7 @@ static inline bool _INPLACE_OPERATION_ADD_OBJECT_OBJECT(PyObject **operand1, PyO
      }
  #endif
  
@@ -3075,7 +2761,7 @@ index aac40b030..94d6dab84 100644
          // execute stuff in-place.
  #if PYTHON_VERSION < 0x300
 diff --git a/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c b/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
-index 4aa8ed61e..02b95d2da 100644
+index 44dd518c9..e03971e06 100644
 --- a/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
 +++ b/nuitka/build/static_src/HelpersOperationInplaceFloordiv.c
 @@ -1187,7 +1187,7 @@ static inline bool _INPLACE_OPERATION_FLOORDIV_FLOAT_FLOAT(PyObject **operand1,
@@ -3235,10 +2921,10 @@ index 4bca9d99a..28b610368 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersOperationInplacePow.c b/nuitka/build/static_src/HelpersOperationInplacePow.c
-index f8f3e907d..d882a563c 100644
+index 156c5f611..1e34f915c 100644
 --- a/nuitka/build/static_src/HelpersOperationInplacePow.c
 +++ b/nuitka/build/static_src/HelpersOperationInplacePow.c
-@@ -148,7 +148,7 @@ static inline bool _INPLACE_OPERATION_POW_FLOAT_FLOAT(PyObject **operand1, PyObj
+@@ -184,7 +184,7 @@ static inline bool _INPLACE_OPERATION_POW_FLOAT_FLOAT(PyObject **operand1, PyObj
      }
  
  exit_result_ok_cfloat:
@@ -3247,7 +2933,7 @@ index f8f3e907d..d882a563c 100644
          PyFloat_SET_DOUBLE(*operand1, cfloat_result);
      } else {
          // We got an object handed, that we have to release.
-@@ -495,7 +495,7 @@ static inline bool _INPLACE_OPERATION_POW_OBJECT_FLOAT(PyObject **operand1, PyOb
+@@ -601,7 +601,7 @@ static inline bool _INPLACE_OPERATION_POW_OBJECT_FLOAT(PyObject **operand1, PyOb
          }
  
      exit_result_ok_cfloat:
@@ -3256,7 +2942,7 @@ index f8f3e907d..d882a563c 100644
              PyFloat_SET_DOUBLE(*operand1, cfloat_result);
          } else {
              // We got an object handed, that we have to release.
-@@ -847,7 +847,7 @@ static inline bool _INPLACE_OPERATION_POW_FLOAT_OBJECT(PyObject **operand1, PyOb
+@@ -1007,7 +1007,7 @@ static inline bool _INPLACE_OPERATION_POW_FLOAT_OBJECT(PyObject **operand1, PyOb
          }
  
      exit_result_ok_cfloat:
@@ -3436,10 +3122,10 @@ index dae4a9f35..d2ff3e9d9 100644
      } else {
          // We got an object handed, that we have to release.
 diff --git a/nuitka/build/static_src/HelpersStrings.c b/nuitka/build/static_src/HelpersStrings.c
-index 47fd2928c..3e7579342 100644
+index a42d3b441..0cab601ef 100644
 --- a/nuitka/build/static_src/HelpersStrings.c
 +++ b/nuitka/build/static_src/HelpersStrings.c
-@@ -227,7 +227,7 @@ static void _NuitkaUnicode_FastCopyCharacters(PyObject *to, Py_ssize_t to_start,
+@@ -284,7 +284,7 @@ static void _NuitkaUnicode_FastCopyCharacters(PyObject *to, Py_ssize_t to_start,
  }
  
  static int _NuitkaUnicode_modifiable(PyObject *unicode) {
@@ -3449,7 +3135,7 @@ index 47fd2928c..3e7579342 100644
      if (_PyUnicode_HASH(unicode) != -1)
          return 0;
 diff --git a/nuitka/build/static_src/HelpersTypes.c b/nuitka/build/static_src/HelpersTypes.c
-index 90cc28640..91ba59a15 100644
+index 9eb2645c6..07c7903c3 100644
 --- a/nuitka/build/static_src/HelpersTypes.c
 +++ b/nuitka/build/static_src/HelpersTypes.c
 @@ -99,7 +99,7 @@ static PyObject *lookupSpecialNoError(PyObject *source, PyObject *attr_name) {
@@ -3497,10 +3183,10 @@ index 90cc28640..91ba59a15 100644
      }
  
 diff --git a/nuitka/build/static_src/MetaPathBasedLoader.c b/nuitka/build/static_src/MetaPathBasedLoader.c
-index 89b4cb87c..6ba64b384 100644
+index 92118575d..7047342c9 100644
 --- a/nuitka/build/static_src/MetaPathBasedLoader.c
 +++ b/nuitka/build/static_src/MetaPathBasedLoader.c
-@@ -1178,6 +1178,9 @@ error:
+@@ -1191,6 +1191,9 @@ error:
              PRINT_STRING("Scanning for sub-modules needing protection:");
              PRINT_ITEM_LINE(base_name_prefix);
  #endif
@@ -3510,7 +3196,7 @@ index 89b4cb87c..6ba64b384 100644
              while (Nuitka_DictNext(modules_dict, &pos, &key, &value)) {
                  // TODO: Should have nuitka_bool return values for these as well maybe.
                  PyObject *starts_with_result = UNICODE_STARTSWITH2(tstate, key, base_name_prefix);
-@@ -1188,6 +1191,7 @@ error:
+@@ -1201,6 +1204,7 @@ error:
  
                  Py_DECREF(starts_with_result);
              }
@@ -3518,7 +3204,7 @@ index 89b4cb87c..6ba64b384 100644
  
  #if _NUITKA_EXPERIMENTAL_DEBUG_EXTENSION_MODULE_PRESERVATION_HACK
              PRINT_ITEM_LINE(preserved_sub_modules);
-@@ -1413,6 +1417,8 @@ error:
+@@ -1426,6 +1430,8 @@ error:
              PRINT_ITEM(base_name_prefix);
              PRINT_STRING("'\n");
  #endif
@@ -3527,7 +3213,7 @@ index 89b4cb87c..6ba64b384 100644
              while (Nuitka_DictNext(modules_dict, &pos, &key, &value)) {
                  // TODO: Should have nuitka_bool return values for these as well maybe.
                  PyObject *starts_with_result = UNICODE_STARTSWITH2(tstate, key, base_name_prefix);
-@@ -1423,6 +1429,7 @@ error:
+@@ -1436,6 +1442,7 @@ error:
  
                  Py_DECREF(starts_with_result);
              }
@@ -3573,19 +3259,19 @@ index 416ac528d..cc30484ae 100644
  
  def generateBuiltinAnonymousRefCode(to_name, expression, emit, context):
 diff --git a/nuitka/code_generation/FrameCodes.py b/nuitka/code_generation/FrameCodes.py
-index 425b526c9..82a2354df 100644
+index bcee3c1af..f451e945a 100644
 --- a/nuitka/code_generation/FrameCodes.py
 +++ b/nuitka/code_generation/FrameCodes.py
-@@ -8,7 +8,7 @@ of frames for different uses.
+@@ -7,7 +7,7 @@ This is about frame stacks and their management. There are different kinds
+ of frames for different uses.
  """
  
- from nuitka.options.Options import isExperimental
 -from nuitka.PythonVersions import python_version
 +from nuitka.PythonVersions import isPythonWithGil, python_version
  from nuitka.utils.Jinja2 import renderTemplateFromString
  
  from .CodeHelpers import _generateStatementSequenceCode
-@@ -245,13 +245,19 @@ def getFrameGuardHeavyCode(
+@@ -399,7 +399,9 @@ def getFrameGuardHeavyCode(
      no_exception_exit = context.allocateLabel("frame_no_exception")
  
      frame_identifier = context.getFrameHandle()
@@ -3596,17 +3282,20 @@ index 425b526c9..82a2354df 100644
          frame_cache_identifier = context.variable_storage.addFrameCacheDeclaration(
              frame_identifier.code_name
          )
-     else:
-         frame_cache_identifier = None
+@@ -408,6 +410,12 @@ def getFrameGuardHeavyCode(
  
-+    # A module frame is made once and kept; any other one made per call is
-+    # released as it is left.
-+    release_frame = frame_cache_identifier is None and frame_node.getGuardMode() == "full"
+     cache_claim_identifier = _getFrameCacheClaimIdentifier(frame_identifier)
+ 
++    # A module frame is made once and kept; without the frame cache, any other
++    # one made per call is released as it is left.
++    release_frame = (
++        frame_cache_identifier is None and frame_node.getGuardMode() == "full"
++    )
 +
-     frame_init_code = ""
-     frame_exit_code = ""
- 
-@@ -389,6 +395,7 @@ Nuitka_Frame_ClearLocals(%(frame_identifier)s);
+     if frame_node.isStatementsFrameClass():
+         (
+             attach_locals_code,
+@@ -460,6 +468,7 @@ def getFrameGuardHeavyCode(
              frame_exit_code=frame_exit_code,
              context_identifier=context_identifier,
              is_python3=python_version >= 0x300,
@@ -3614,7 +3303,7 @@ index 425b526c9..82a2354df 100644
          )
      )
  
-@@ -401,6 +408,7 @@ Nuitka_Frame_ClearLocals(%(frame_identifier)s);
+@@ -473,6 +482,7 @@ def getFrameGuardHeavyCode(
                  frame_return_exit=frame_return_exit,
                  needs_preserve=needs_preserve,
                  frame_exit_code=frame_exit_code,
@@ -3622,7 +3311,7 @@ index 425b526c9..82a2354df 100644
              )
          )
  
-@@ -424,6 +432,7 @@ Nuitka_Frame_ClearLocals(%(frame_identifier)s);
+@@ -496,6 +506,7 @@ def getFrameGuardHeavyCode(
                  needs_preserve=needs_preserve,
                  exception_state_name=exception_state_name,
                  exception_lineno=exception_lineno,
@@ -3630,7 +3319,7 @@ index 425b526c9..82a2354df 100644
              )
          )
  
-@@ -453,8 +462,10 @@ def getFrameGuardGeneratorCode(
+@@ -525,8 +536,10 @@ def getFrameGuardGeneratorCode(
      no_exception_exit = context.allocateLabel("frame_no_exception")
  
      frame_identifier = context.getFrameHandle()
@@ -3642,12 +3331,12 @@ index 425b526c9..82a2354df 100644
 +        else None
      )
  
-     # TODO: Wire the FrameLocalsProxy to generator/coroutine/asyncgen frames by
+     cache_claim_identifier = _getFrameCacheClaimIdentifier(frame_identifier)
 diff --git a/nuitka/code_generation/GlobalsLocalsCodes.py b/nuitka/code_generation/GlobalsLocalsCodes.py
-index b6fd85761..6927c677d 100644
+index 51d8192c4..ec5db7ad8 100644
 --- a/nuitka/code_generation/GlobalsLocalsCodes.py
 +++ b/nuitka/code_generation/GlobalsLocalsCodes.py
-@@ -121,14 +121,16 @@ def _getVariableDictUpdateCode(
+@@ -124,14 +124,16 @@ def _getVariableDictUpdateCode(
  
      access_code = SourceCodeCollector()
  
@@ -3671,7 +3360,7 @@ index b6fd85761..6927c677d 100644
          variable=variable,
          variable_trace=variable_trace,
          needs_check=False,
-@@ -137,6 +139,14 @@ def _getVariableDictUpdateCode(
+@@ -140,6 +142,14 @@ def _getVariableDictUpdateCode(
          context=context,
      )
  
@@ -3686,7 +3375,7 @@ index b6fd85761..6927c677d 100644
      if is_dict:
          if initial:
              template = template_set_locals_dict_value
-@@ -150,6 +160,7 @@ def _getVariableDictUpdateCode(
+@@ -153,6 +163,7 @@ def _getVariableDictUpdateCode(
                  "var_name": context.getConstantCode(constant=variable.getName()),
                  "test_code": test_code,
                  "access_code": indented(access_code),
@@ -3694,7 +3383,7 @@ index b6fd85761..6927c677d 100644
              }
          )
      else:
-@@ -168,6 +179,7 @@ def _getVariableDictUpdateCode(
+@@ -171,6 +182,7 @@ def _getVariableDictUpdateCode(
                  "test_code": test_code,
                  "access_code": access_code,
                  "tmp_name": res_name,
@@ -3797,7 +3486,7 @@ index ce41610a5..10d9858a2 100644
          if needs_argument_swap:
              arg1_name = right_name
 diff --git a/nuitka/code_generation/VariableCodes.py b/nuitka/code_generation/VariableCodes.py
-index b07ae2cc1..84d45884e 100644
+index 4298cdf70..28281b75f 100644
 --- a/nuitka/code_generation/VariableCodes.py
 +++ b/nuitka/code_generation/VariableCodes.py
 @@ -7,7 +7,7 @@ from nuitka.nodes.shapes.BuiltinTypeShapes import (
@@ -3806,10 +3495,10 @@ index b07ae2cc1..84d45884e 100644
  )
 -from nuitka.PythonVersions import python_version
 +from nuitka.PythonVersions import isPythonWithGil, python_version
+ from nuitka.States import states
  from nuitka.utils.CStrings import encodePythonIdentifierToC
  
- from .c_types.CTypeNuitkaBooleans import CTypeNuitkaBoolEnum
-@@ -153,6 +153,42 @@ if (unlikely(%(value_name)s == NULL)) {
+@@ -158,6 +158,42 @@ if (unlikely(%(value_name)s == NULL)) {
              needs_check=needs_check,
          )
  
@@ -3852,7 +3541,7 @@ index b07ae2cc1..84d45884e 100644
  
  def getNonModuleVariableReferenceCode(
      to_name, variable, variable_trace, needs_check, conversion_check, emit, context
-@@ -164,6 +200,20 @@ def getNonModuleVariableReferenceCode(
+@@ -169,6 +205,20 @@ def getNonModuleVariableReferenceCode(
              context, variable, variable_trace
          )
  
@@ -3873,7 +3562,7 @@ index b07ae2cc1..84d45884e 100644
          value_name = variable_declaration.getCType().emitValueAccessCode(
              value_name=variable_declaration, emit=emit, context=context
          )
-@@ -221,6 +271,11 @@ def generateVariableReferenceCode(to_name, expression, emit, context):
+@@ -226,6 +276,11 @@ def generateVariableReferenceCode(to_name, expression, emit, context):
              else:
                  use_caching = True
  
@@ -3986,42 +3675,37 @@ index 228f369a8..422d4f616 100644
  
          else:
 diff --git a/nuitka/code_generation/templates/CodeTemplatesFrames.py b/nuitka/code_generation/templates/CodeTemplatesFrames.py
-index 2ee5db9d5..137d2ddb1 100644
+index babfc25fe..b0860b62a 100644
 --- a/nuitka/code_generation/templates/CodeTemplatesFrames.py
 +++ b/nuitka/code_generation/templates/CodeTemplatesFrames.py
-@@ -53,7 +53,11 @@ pushFrameStackGeneratorCompiledFrame(tstate, {{frame_identifier}});
- {% else %}
- pushFrameStackCompiledFrame(tstate, {{frame_identifier}});
+@@ -50,6 +50,8 @@ pushFrameStackCompiledFrame(tstate, {{frame_identifier}});
  {% endif %}
-+{% if context_identifier and not frame_cache_identifier %}
+ {% if context_identifier and frame_cache_identifier %}
+ assert(Py_REFCNT({{frame_identifier}}) == ({{cache_claim_identifier}} != NULL ? 2 : 1));
++{% elif context_identifier %}
 +assert(Py_REFCNT({{frame_identifier}}) == 1); // The generator's only
-+{% else %}
+ {% else %}
  assert(Py_REFCNT({{frame_identifier}}) == 2);
-+{% endif %}
- 
- {% if context_identifier and is_python3 %}
- // Store currently existing exception as the one to publish again when we
-@@ -80,6 +84,9 @@ RESTORE_FRAME_EXCEPTION(tstate, {{frame_identifier}});
  {% endif %}
- // Put the previous frame back on top.
+@@ -81,6 +83,8 @@ RESTORE_FRAME_EXCEPTION(tstate, {{frame_identifier}});
  popFrameStack(tstate);
-+{% if release_frame %}
+ {% if frame_cache_identifier %}
+ Nuitka_FrameCache_Return({{frame_identifier}});
++{% elif release_frame %}
 +Py_DECREF({{frame_identifier}});
-+{% endif %}
+ {% endif %}
  {% endif %}
  
- goto {{no_exception_exit}};
-@@ -96,6 +103,9 @@ RESTORE_FRAME_EXCEPTION(tstate, {{frame_identifier}});
- {% endif %}
- // Put the previous frame back on top.
+@@ -101,6 +105,8 @@ RESTORE_FRAME_EXCEPTION(tstate, {{frame_identifier}});
  popFrameStack(tstate);
-+{% if release_frame %}
+ {% if frame_cache_identifier %}
+ Nuitka_FrameCache_Return({{frame_identifier}});
++{% elif release_frame %}
 +Py_DECREF({{frame_identifier}});
-+{% endif %}
+ {% endif %}
  
  goto {{return_exit}};
- """
-@@ -145,6 +155,10 @@ assertFrameObject({{frame_identifier}});
+@@ -145,6 +151,10 @@ assertFrameObject({{frame_identifier}});
  
  // Put the previous frame back on top.
  popFrameStack(tstate);
@@ -4032,24 +3716,8 @@ index 2ee5db9d5..137d2ddb1 100644
  
  // Return the error.
  goto {{parent_exception_exit}};
-@@ -184,6 +198,7 @@ if (!EXCEPTION_STATE_MATCH_GENERATOR(tstate, &{{exception_state_name}})) {
- 
- {{attach_locals}}
- 
-+{% if frame_cache_identifier %}
-     // Release cached frame if used for exception.
-     if ({{frame_identifier}} == {{frame_cache_identifier}}) {
- #if _DEBUG_REFCOUNTS
-@@ -194,6 +209,7 @@ if (!EXCEPTION_STATE_MATCH_GENERATOR(tstate, &{{exception_state_name}})) {
-         Py_DECREF({{frame_cache_identifier}});
-         {{frame_cache_identifier}} = NULL;
-     }
-+{% endif %}
- 
-     assertFrameObject({{frame_identifier}});
- }
 diff --git a/nuitka/code_generation/templates/CodeTemplatesVariables.py b/nuitka/code_generation/templates/CodeTemplatesVariables.py
-index f5c05aafd..389b2fd06 100644
+index e38b8f71d..2117e1289 100644
 --- a/nuitka/code_generation/templates/CodeTemplatesVariables.py
 +++ b/nuitka/code_generation/templates/CodeTemplatesVariables.py
 @@ -59,17 +59,15 @@ template_write_local_clear_ref1 = """\
@@ -4138,7 +3806,7 @@ index f5c05aafd..389b2fd06 100644
      %(tmp_name)s = true;
  }
  """
-@@ -365,39 +360,50 @@ static PyObject *%(accessor_function_name)s(PyThreadState *tstate) {
+@@ -367,39 +362,50 @@ static PyObject *%(accessor_function_name)s(PyThreadState *tstate) {
  }
  """
  
@@ -4197,7 +3865,7 @@ index f5c05aafd..389b2fd06 100644
      Py_XDECREF(old);
  
      %(result)s = old != NULL;
-@@ -406,8 +412,7 @@ template_del_py_cell_intolerant = """\
+@@ -408,8 +414,7 @@ template_del_py_cell_intolerant = """\
  
  template_del_py_cell_known = """\
  {
@@ -4299,7 +3967,7 @@ index 50d6e93d9..e1d340369 100644
  
  
 diff --git a/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2 b/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
-index da8306084..0a109c5ce 100644
+index 4e275e8ce..75cf31106 100644
 --- a/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
 +++ b/nuitka/code_generation/templates_c/HelperOperationComparisonList.c.j2
 @@ -7,6 +7,23 @@ static {{ target.getTypeDecl() }} COMPARE_{{op_code}}_{{target.getHelperCodeName
@@ -4324,10 +3992,10 @@ index da8306084..0a109c5ce 100644
 +    }
 +#endif
  
- {# Shortcut for equality, driven by length check. #}
- {% if operator in ("==", "!=") %}
+ #ifdef Py_GIL_DISABLED
+     PyCriticalSection2 _cs;
 diff --git a/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2 b/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
-index bd5e31850..daf020deb 100644
+index 708ade3f4..99d479f33 100644
 --- a/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
 +++ b/nuitka/code_generation/templates_c/HelperOperationInplace.c.j2
 @@ -100,7 +100,7 @@ static inline bool _INPLACE_OPERATION_{{op_code}}_{{left.getHelperCodeName()}}_{
@@ -4340,10 +4008,10 @@ index bd5e31850..daf020deb 100644
          // execute stuff in-place.
  {% if operator == "+" and left.mayBothHaveType(right, "str") %}
 diff --git a/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2 b/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
-index 439734795..f1ba81424 100644
+index 09759ec7f..6bc77b554 100644
 --- a/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
 +++ b/nuitka/code_generation/templates_c/HelperSlotsFloat.c.j2
-@@ -264,7 +264,7 @@ exit_result_ok_cfloat:
+@@ -298,7 +298,7 @@ exit_result_ok_cfloat:
      {{ target.getAssignFromFloatExpressionCode(result, "cfloat_result") }}
  {% else %}
      {# TODO: Check the reference we were handed down. #}

@@ -13,7 +13,6 @@ from kpip_compile.vendor import (
     NUITKA_BRANCH,
     NUITKA_REPOSITORY,
     PATCHES_DIR,
-    STAMP_NAME,
     VENDOR_DIR,
     PatchError,
     VendorSpec,
@@ -23,22 +22,6 @@ from kpip_compile.vendor import (
     resolve_commit,
     vendor_nuitka,
 )
-
-
-def _vendor(*, force: bool) -> Path:
-    try:
-        spec = default_spec()
-    except subprocess.CalledProcessError:
-        # Offline: an earlier checkout still builds, just not the latest one.
-        if not force and (VENDOR_DIR / STAMP_NAME).exists():
-            print(
-                f"warning: cannot resolve Nuitka {NUITKA_BRANCH}, "
-                f"using the existing checkout in {VENDOR_DIR}",
-                file=sys.stderr,
-            )
-            return VENDOR_DIR
-        raise
-    return vendor_nuitka(spec, VENDOR_DIR, force=force)
 
 
 def _check_patches(branch: str) -> int:
@@ -77,7 +60,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     vendor = commands.add_parser(
-        "vendor", help="Fetch the latest Nuitka factory and apply the patches."
+        "vendor", help="Fetch the pinned Nuitka commit and apply the patches."
     )
     vendor.add_argument(
         "--force", action="store_true", help="Refetch even if the checkout is current."
@@ -128,7 +111,9 @@ def main(argv: list[str] | None = None) -> int:
         return _check_patches(args.branch)
 
     try:
-        nuitka_dir = _vendor(force=args.command == "vendor" and args.force)
+        nuitka_dir = vendor_nuitka(
+            default_spec(), VENDOR_DIR, force=args.command == "vendor" and args.force
+        )
     except PatchError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
