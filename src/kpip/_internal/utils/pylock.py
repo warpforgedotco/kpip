@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit
@@ -17,6 +17,7 @@ from kpip._vendor.packaging.pylock import (
     Pylock,
     is_valid_pylock_path,
 )
+from kpip._vendor.packaging.utils import NormalizedName
 from kpip._vendor.packaging.version import Version
 
 from kpip._internal.exceptions import DiagnosticPipError, InstallationError
@@ -26,6 +27,7 @@ from kpip._internal.utils.compat import tomllib
 from kpip._internal.utils.urls import path_to_url, url_to_path
 
 if TYPE_CHECKING:
+    from kpip._internal.index.package_finder import FormatControl
     from kpip._internal.network.session import PipSession
     from kpip._internal.req.req_install import InstallRequirement
 
@@ -268,6 +270,9 @@ def _get_pylock_path_or_url_content(path_or_url: str, session: PipSession) -> st
 def select_from_pylock_path_or_url(
     pylock_path_or_url: str,
     session: PipSession,
+    format_control: FormatControl | None,
+    *,
+    extras: Collection[str] | None = None,
 ) -> Iterator[
     tuple[
         Package,
@@ -290,15 +295,23 @@ def select_from_pylock_path_or_url(
             f"Invalid pylock file {pylock_path_or_url!r}: {exc}"
         ) from exc
 
+    def prefer_sdist_predicate(name: NormalizedName) -> bool:
+        if format_control is None:
+            return False
+        allowed_formats = format_control.get_allowed_formats(name)
+        if "source" in allowed_formats and "binary" not in allowed_formats:
+            return True
+        return False
+
     try:
-        # TODO: for completeness, pylock.select should support preferring sdist
-        # over wheels to support --no-binary
         # Select for the target interpreter: packaging would otherwise take the
         # tags and markers of the Python kpip runs on.
         target = target_interpreter()
         yield from lock.select(
             environment=target.markers,  # type: ignore[arg-type]
             tags=target.tags,
+            extras=extras,
+            prefer_sdist_predicate=prefer_sdist_predicate,
         )
     except Exception as exc:
         raise InstallationError(

@@ -94,10 +94,10 @@ index 2b5e46c..4c23b4d 100644
 +            solver=self._solver,
          )
 diff --git a/src/kpip/_internal/cli/cmdoptions.py b/src/kpip/_internal/cli/cmdoptions.py
-index 13111c0..4975982 100644
+index 7fe40c9..d226d3c 100644
 --- a/src/kpip/_internal/cli/cmdoptions.py
 +++ b/src/kpip/_internal/cli/cmdoptions.py
-@@ -1336,6 +1336,22 @@ use_new_feature: Callable[..., Option] = partial(
+@@ -1319,6 +1319,22 @@ use_new_feature: Callable[..., Option] = partial(
      help="Enable new functionality, that may be backward incompatible.",
  )
  
@@ -120,7 +120,7 @@ index 13111c0..4975982 100644
  use_deprecated_feature: Callable[..., Option] = partial(
      Option,
      "--use-deprecated",
-@@ -1382,6 +1398,7 @@ general_group: dict[str, Any] = {
+@@ -1365,6 +1381,7 @@ general_group: dict[str, Any] = {
          no_python_version_warning,
          use_new_feature,
          use_deprecated_feature,
@@ -129,10 +129,10 @@ index 13111c0..4975982 100644
      ],
  }
 diff --git a/src/kpip/_internal/cli/req_command.py b/src/kpip/_internal/cli/req_command.py
-index c047c92..96d59a0 100644
+index cc91e09..2ea027e 100644
 --- a/src/kpip/_internal/cli/req_command.py
 +++ b/src/kpip/_internal/cli/req_command.py
-@@ -209,11 +209,13 @@ class RequirementCommand(IndexGroupCommand):
+@@ -224,11 +224,13 @@ class RequirementCommand(IndexGroupCommand):
                  build_constraints=build_constraint_reqs,
                  verbosity=verbosity,
                  wheel_cache=WheelCache(options.cache_dir),
@@ -146,7 +146,7 @@ index c047c92..96d59a0 100644
              )
  
          if not options.build_isolation:
-@@ -289,6 +291,7 @@ class RequirementCommand(IndexGroupCommand):
+@@ -304,6 +306,7 @@ class RequirementCommand(IndexGroupCommand):
                  force_reinstall=force_reinstall,
                  upgrade_strategy=upgrade_strategy,
                  py_version_info=py_version_info,
@@ -1094,7 +1094,7 @@ index d0322d3..49d1276 100644
          try:
              limit_how_complex_resolution_can_be = 200000
 diff --git a/tests/functional/test_install.py b/tests/functional/test_install.py
-index 969fd13..0ef0f90 100644
+index 2210195..17764cb 100644
 --- a/tests/functional/test_install.py
 +++ b/tests/functional/test_install.py
 @@ -90,18 +90,24 @@ def test_refresh_package_per_package(
@@ -1146,7 +1146,7 @@ index 969fd13..0ef0f90 100644
  
  
 diff --git a/tests/lib/__init__.py b/tests/lib/__init__.py
-index dfb8ed3..8d37a2c 100644
+index ea2cb72..c9ab15f 100644
 --- a/tests/lib/__init__.py
 +++ b/tests/lib/__init__.py
 @@ -709,6 +709,12 @@ class PipTestEnvironment(TestFileEnvironment):

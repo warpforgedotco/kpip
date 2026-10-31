@@ -250,7 +250,7 @@ index 3de33dc..fb1c433 100644
      result = autocomplete_script.run(
          executable_name,
 diff --git a/tests/functional/test_install.py b/tests/functional/test_install.py
-index 638b1d7..969fd13 100644
+index 49ecf89..2210195 100644
 --- a/tests/functional/test_install.py
 +++ b/tests/functional/test_install.py
 @@ -185,11 +185,11 @@ def test_pep518_build_env_uses_same_pip(
@@ -285,7 +285,7 @@ index 638b1d7..969fd13 100644
      assert not system_pip_dir.exists()
      system_pip_dir.mkdir()
      with open(system_pip_dir / "__init__.py", "w") as fp:
-@@ -2616,7 +2616,7 @@ def test_install_logs_pip_version_in_debug(
+@@ -2613,7 +2613,7 @@ def test_install_logs_pip_version_in_debug(
  ) -> None:
      fake_package = shared_data.packages / "simple-2.0.tar.gz"
      result = script.pip("install", "--no-build-isolation", "-v", fake_package)
@@ -351,7 +351,7 @@ index bd09736..ff93035 100644
      # Step 1. Install pip as non-editable. This is expected to succeed as
      # the existing pip in the environment is installed in editable mode, so
 diff --git a/tests/lib/__init__.py b/tests/lib/__init__.py
-index cf258c5..dfb8ed3 100644
+index 05c0c9c..ea2cb72 100644
 --- a/tests/lib/__init__.py
 +++ b/tests/lib/__init__.py
 @@ -714,9 +714,9 @@ class PipTestEnvironment(TestFileEnvironment):

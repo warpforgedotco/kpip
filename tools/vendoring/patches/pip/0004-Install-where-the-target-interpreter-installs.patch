@@ -30,7 +30,7 @@ since which Python a command installs for is not known before it starts.
  15 files changed, 222 insertions(+), 60 deletions(-)
 
 diff --git a/src/kpip/_internal/cli/cmdoptions.py b/src/kpip/_internal/cli/cmdoptions.py
-index b26b38d..13111c0 100644
+index b257f07..7fe40c9 100644
 --- a/src/kpip/_internal/cli/cmdoptions.py
 +++ b/src/kpip/_internal/cli/cmdoptions.py
 @@ -27,7 +27,7 @@ from kpip._vendor.packaging.utils import canonicalize_name
@@ -42,7 +42,7 @@ index b26b38d..13111c0 100644
  from kpip._internal.models.format_control import FormatControl
  from kpip._internal.models.index import PyPI
  from kpip._internal.models.release_control import ReleaseControl
-@@ -646,7 +646,9 @@ src: Callable[..., Option] = partial(
+@@ -629,7 +629,9 @@ src: Callable[..., Option] = partial(
      dest="src_dir",
      type="path",
      metavar="dir",
@@ -54,7 +54,7 @@ index b26b38d..13111c0 100644
      callback=_handle_src,
      help="Directory to check out editable projects into. "
 diff --git a/src/kpip/_internal/cli/req_command.py b/src/kpip/_internal/cli/req_command.py
-index 389e844..c047c92 100644
+index cbd3a1d..cc91e09 100644
 --- a/src/kpip/_internal/cli/req_command.py
 +++ b/src/kpip/_internal/cli/req_command.py
 @@ -14,6 +14,7 @@ from functools import partial
@@ -65,7 +65,7 @@ index 389e844..c047c92 100644
  from kpip._internal.build_env import (
      BuildEnvironmentInstaller,
      BuildIsolationMode,
-@@ -230,7 +231,7 @@ class RequirementCommand(IndexGroupCommand):
+@@ -245,7 +246,7 @@ class RequirementCommand(IndexGroupCommand):
  
          return RequirementPreparer(
              build_dir=temp_build_dir_path,
@@ -75,7 +75,7 @@ index 389e844..c047c92 100644
              build_isolation=build_isolation,
              build_isolation_installer=env_installer,
 diff --git a/src/kpip/_internal/commands/install.py b/src/kpip/_internal/commands/install.py
-index 31da26f..7e3d4de 100644
+index 4a3b3c3..6c340d5 100644
 --- a/src/kpip/_internal/commands/install.py
 +++ b/src/kpip/_internal/commands/install.py
 @@ -6,7 +6,6 @@ import json
@@ -453,7 +453,7 @@ index e36b40b..3d89c29 100644
  def is_osx_framework() -> bool:
      return bool(sysconfig.get_config_var("PYTHONFRAMEWORK"))
 diff --git a/src/kpip/_internal/metadata/base.py b/src/kpip/_internal/metadata/base.py
-index 30eef28..1e79c7f 100644
+index 14dc929..f11a7fb 100644
 --- a/src/kpip/_internal/metadata/base.py
 +++ b/src/kpip/_internal/metadata/base.py
 @@ -22,7 +22,13 @@ from kpip._vendor.packaging.utils import NormalizedName, canonicalize_name
@@ -613,7 +613,7 @@ index 474992d..97c8487 100644
      egg_link_names = _egg_link_names(raw_name)
      for site in sites:
 diff --git a/src/kpip/_internal/utils/misc.py b/src/kpip/_internal/utils/misc.py
-index 6da21e8..9ae0c51 100644
+index 3122c3a..524ca3d 100644
 --- a/src/kpip/_internal/utils/misc.py
 +++ b/src/kpip/_internal/utils/misc.py
 @@ -10,7 +10,6 @@ import posixpath
@@ -631,8 +631,8 @@ index 6da21e8..9ae0c51 100644
 +from kpip._internal.interpreters import target_interpreter
  from kpip._internal.locations import get_major_minor_version
  from kpip._internal.utils.compat import WINDOWS
- from kpip._internal.utils.retry import retry
-@@ -401,7 +401,8 @@ def renames(old: str, new: str) -> None:
+ from kpip._internal.utils.deprecation import build_backend_warnings
+@@ -402,7 +402,8 @@ def renames(old: str, new: str) -> None:
  
  def is_local(path: str) -> bool:
      """
@@ -642,7 +642,7 @@ index 6da21e8..9ae0c51 100644
  
      If we're not in a virtualenv, all paths are considered "local."
  
-@@ -410,7 +411,7 @@ def is_local(path: str) -> bool:
+@@ -411,7 +412,7 @@ def is_local(path: str) -> bool:
      """
      if not running_under_virtualenv():
          return True
@@ -651,7 +651,7 @@ index 6da21e8..9ae0c51 100644
  
  
  def write_output(msg: Any, *args: Any) -> None:
-@@ -641,7 +642,7 @@ def check_externally_managed() -> None:
+@@ -642,7 +643,7 @@ def check_externally_managed() -> None:
      """
      if running_under_virtualenv():
          return
